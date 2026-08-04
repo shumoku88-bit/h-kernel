@@ -74,7 +74,7 @@ testStaleReject =
           }
     result <- publishActualAppend intent
     pure $ case result of
-      Left (StaleFile "original") -> True
+      Left StaleFile -> show result == "Left StaleFile"
       _ -> False
 
 testActualWrite :: IO Bool
