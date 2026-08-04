@@ -28,33 +28,34 @@ coding assistantは、作業開始時にこの文書を読み、次を同じ現�
 ```text
 canonical source     separate private data repository
 current writer       bqn-ledger editor
-current h-kernel role reader/report engine + Actual preview/safe writer library
-h-kernel write path  explicit ActualWriter API for rehearsal only
-editor component     ActualAppend + ActualWriter
+current h-kernel role reader/report engine + explicit Actual editor CLI
+h-kernel write path  h-kernel-editor-cli --commit for rehearsal only
+editor component     ActualAppend + ActualWriter + independent CLI
 ```
 
 - 外部private directoryは一つだけの正規世帯sourceである。
 - bqn-ledger editorが現在のcanonical write effectを所有する。
-- `ActualAppend`がpure candidateを作り、`ActualWriter`がstale check、backup、sibling temporary file、atomic publish、post-admission、rollbackを順序づける。
-- focused testはsynthetic temporary sourceだけを変更し、private canonical sourceを対象にしない。
-- command surfaceとinteractive UIはまだ実装していない。
+- `h-kernel-editor-cli`がargumentsからtyped intentを作り、previewを常に表示し、明示`--commit`の場合だけsafe writerへ委譲する。
+- commandは対象Journal pathを明示し、private sourceをdefaultとして推測しない。
+- focused testとrehearsalはsynthetic temporary sourceだけを変更する。
+- interactive UIとtransaction reverseはまだ実装していない。
 - writer authorityは、明示的なcutover PRがmergeされるまで移動しない。
 
 詳細なsource ownershipは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)が所有する。
 
 ### NEXT
 
-次の有限sliceは、typed intent、preview、safe writerを接続する独立Actual editor command surfaceである。
+次の有限sliceは、既存transactionをidentity/provenanceごと選び、新しいreversal transactionとしてappendするE4である。
 
 ```text
-CLI arguments
-  -> typed ActualEditIntent
-  -> prepareActualAppend
-  -> preview
-  -> optional explicit publishActualAppend
+selected existing transaction
+  -> typed reversal intent
+  -> reversed ordered postings
+  -> complete-source preview
+  -> existing safe writer
 ```
 
-main Report CLI、interactive UI、writer authority cutover、他sourceのmutationを混ぜない。
+original transactionの破壊的変更、interactive UI、writer authority cutover、他sourceのmutationを混ぜない。
 
 ## 3. bqn-ledgerとの関係
 
