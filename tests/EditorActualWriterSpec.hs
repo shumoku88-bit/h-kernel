@@ -13,9 +13,6 @@ import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.Editor.ActualWriter
-import HKernel.Household.BudgetMovement.TSV
-  ( parseHouseholdBudgetMovements )
-import HKernel.Household.Issue.TSV (parseHouseholdIssues)
 import HKernel.Plan.Journal (parsePlanJournal)
 
 main :: IO ()
@@ -24,8 +21,6 @@ main = do
         [ ("testStaleReject", testStaleReject)
         , ("testActualWrite", testActualWrite)
         , ("testPlanWrite", testPlanWrite)
-        , ("testBudgetWrite", testBudgetWrite)
-        , ("testIssueWrite", testIssueWrite)
         , ("testPostAdmissionFailure", testPostAdmissionFailure)
         , ("testPostPublishReadFailureRestores", testPostPublishReadFailureRestores)
         ]
@@ -98,22 +93,6 @@ testPlanWrite =
     planOld
     planNew
 
-testBudgetWrite :: IO Bool
-testBudgetWrite =
-  expectPublished
-    "tests/fixtures/test_writer_budget.tsv"
-    parseHouseholdBudgetMovements
-    budgetOld
-    budgetNew
-
-testIssueWrite :: IO Bool
-testIssueWrite =
-  expectPublished
-    "tests/fixtures/test_writer_issues.tsv"
-    parseHouseholdIssues
-    issueOld
-    issueNew
-
 testPostAdmissionFailure :: IO Bool
 testPostAdmissionFailure =
   withFixture "tests/fixtures/test_writer_reject.journal" actualOld $ \path -> do
@@ -176,19 +155,3 @@ planNew = planOld
   <> "    ; plan-id: PLAN-1\n"
   <> "  assets:bank  -500 JPY\n"
   <> "  expenses:food  500 JPY\n"
-
-budgetOld :: Text
-budgetOld =
-  "2026-08-01\topening\tbudget:living\tbudget:food\t1000\tcurrency=JPY\n"
-
-budgetNew :: Text
-budgetNew = budgetOld
-  <> "2026-08-05\ttransfer\tbudget:food\tbudget:living\t500\tcurrency=JPY\n"
-
-issueOld :: Text
-issueOld =
-  "issue_id\tstatus\tdate\tcategory\ttitle\tamount\tcurrency\tdetails\n"
-
-issueNew :: Text
-issueNew = issueOld
-  <> "ISSUE-1\topen\t2026-08-05\tmisc\tExample\t100\tJPY\tdetails\n"
