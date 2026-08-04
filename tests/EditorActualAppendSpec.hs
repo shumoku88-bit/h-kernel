@@ -60,6 +60,7 @@ testOrdinaryTwoPosting =
         , intentDescription = "test"
         , intentPostings = IntentPosting accBank (qty "50") (Just (comm "JPY"))
                         :| [IntentPosting accOpening (qty "-50") (Just (comm "JPY"))]
+        , intentMetadata = []
         }
       result = prepareActualAppend fixtureSource intent
   in case result of
@@ -73,6 +74,7 @@ testUndeclaredAccount =
         , intentDescription = "test"
         , intentPostings = IntentPosting accUnknown (qty "50") (Just (comm "JPY"))
                         :| [IntentPosting accOpening (qty "-50") (Just (comm "JPY"))]
+        , intentMetadata = []
         }
       result = prepareActualAppend fixtureSource intent
   in case result of
@@ -86,6 +88,7 @@ testZeroAmount =
         , intentDescription = "test"
         , intentPostings = IntentPosting accBank (qty "0") (Just (comm "JPY"))
                         :| [IntentPosting accOpening (qty "0") (Just (comm "JPY"))]
+        , intentMetadata = []
         }
       result = prepareActualAppend fixtureSource intent
   in case result of
@@ -99,6 +102,7 @@ testUnbalanced =
         , intentDescription = "test"
         , intentPostings = IntentPosting accBank (qty "50") (Just (comm "JPY"))
                         :| [IntentPosting accOpening (qty "-40") (Just (comm "JPY"))]
+        , intentMetadata = []
         }
       result = prepareActualAppend fixtureSource intent
   in case result of

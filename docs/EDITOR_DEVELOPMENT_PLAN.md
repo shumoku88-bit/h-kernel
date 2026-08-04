@@ -30,7 +30,7 @@ canonical source     separate private data repository
 current writer       bqn-ledger editor
 current h-kernel role reader/report engine + explicit Actual editor CLI
 h-kernel write path  h-kernel-editor-cli --commit for rehearsal only
-editor component     Actual + Account + Budget movement + Issue append previews, safe writer, independent CLI
+editor component     Actual + Account + Budget movement + Issue + Plan lifecycle previews, safe writer, independent CLI
 ```
 
 - 外部private directoryは一つだけの正規世帯sourceである。
@@ -39,6 +39,7 @@ editor component     Actual + Account + Budget movement + Issue append previews,
 - commandは対象source pathを明示し、private sourceをdefaultとして推測しない。
 - transaction reverseはoriginalを変更せず、identity/provenanceを持つ新しいtransactionとしてActual Journalへappendする。
 - Account declaration、Budget movement、Household Issueのappendは、それぞれのstable ownerとcomplete-source admissionを使う。
+- Plan lifecycle commandはPlan identityとtransaction全体を保ち、add、edit、finishのcandidateをPlan Journal admissionで検証する。
 - focused testとrehearsalはsynthetic temporary sourceだけを変更する。
 - interactive UIはまだ実装していない。
 - writer authorityは、明示的なcutover PRがmergeされるまで移動しない。
@@ -47,17 +48,16 @@ editor component     Actual + Account + Budget movement + Issue append previews,
 
 ### NEXT
 
-次の有限sliceは E6: Plan add / select / edit / finish である。Plan identity、transaction全体、lifecycle relationを保ち、各操作をPlan Journalのstable admissionへ戻して検証する。
+次の有限sliceは E7: Interactive Editor Orchestration & Presentation である。既存commandのtyped intent、preview、safe writerを再利用し、interaction layerへdomain ruleを複製しない。
 
 ```text
-Plan lifecycle intent
-  -> typed Plan transformation
-  -> complete-source preview
-  -> Plan Journal admission
-  -> safe writer
+user interaction
+  -> existing typed command intent
+  -> existing preview and confirmation
+  -> existing safe writer
 ```
 
-Actual transactionの破壊的変更、source migration、interactive UI、writer authority cutoverを混ぜない。
+新しいdomain mutation、source migration、writer authority cutoverを混ぜない。
 
 ## 3. bqn-ledgerとの関係
 
@@ -328,9 +328,9 @@ prepareActualAppend
 | E2 | safe single-file writer | E1のcandidate complete sourceとerror contractがstable |
 | E3 | Actual add / multi-add command | E2のstale、backup、atomic publish、restore evidence |
 | E4 | transaction reverse | E3とtransaction identity/provenanceの合意 |
-| E5 | Account / Budget / Issue append | 各stable ownerとsourceごとのappend contract |
-| E6 | Plan add / select / edit / finish | Plan identity、completion、exact replaceの安全契約 |
-| E7 | interactive orchestration | 日常command surfaceがstable |
+| E5 | Account / Budget / Issue append | DONE |
+| E6 | Plan add / select / edit / finish | DONE |
+| E7 | interactive orchestration | CURRENT |
 | E8 | writer cutover | parity、運用試験、rollback、作者の明示承認 |
 
 段階番号は依存順を示す。複数能力を一つのPRへまとめる理由にはしない。E5内でもAccount、Budget、Issueは別sliceにできる。
