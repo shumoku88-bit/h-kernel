@@ -1,6 +1,6 @@
 # h-kernel Editor correctness review
 
-ステータス: 再レビュー済み・修復未着手  
+ステータス: 再レビュー済み・T01検証中  
 Owner: h-kernel editor review  
 Canonical: yes  
 基準日: 2026-08-05  
@@ -19,6 +19,7 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 - open PR #14: `spike(editor): Brick Actual add preview TUIを追加する`
 - #14 head: `f8d2cbadcbea6975bbbd13c990b2afeaa3637070`
 - #14はE7完了ではなくActual add read-only preview spike
+- T01実装PR #16はDraftで検証中
 
 ## 3. 判定語彙
 
@@ -28,7 +29,7 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 
 重大度:
 
-- P0: silent source corruption、誤った意味の記録、または復旧不能の危険
+- P0: silent source corruption、誤った意味の記録、復旧不能、またはprivate source内容の露出の危険
 - P1: advertised commandが実行不能、または正しいsource ownerでpublishされない
 - P2: valid domain stateを扱えない、process crash、identity/provenance欠落
 - P3: coverage、diagnostic、presentation、documentationの不足
@@ -50,6 +51,7 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 | ER-011 | confirmed | P2 | admitted empty Issue sourceへheaderを補わずappendするためcandidateが失敗する |
 | ER-012 | confirmed | P0 | publish後のread IOExceptionではbackup restoreを試さずFileIOErrorだけを返す |
 | ER-013 | confirmed | P2 | Plan addがPlan sourceを`prepareActualAppend`経由でActual admissionする |
+| ER-014 | confirmed | P0 | stale mismatch errorが実際のsource全文を保持し、CLI診断へ露出し得る |
 
 ## 5. Finding details
 
@@ -134,15 +136,21 @@ writerはtarget rename後にsourceを再読込する。そのreadがIOException�
 
 Plan parserが無関係metadataとして許す`event-id`をActual parserは意味のあるidentityとして解釈する。したがってPlan ownerではvalidなsourceがEditor経路で拒否され得る。transaction rendererとsource-specific admissionを分ける必要がある。
 
+### ER-014 stale source content exposure
+
+writerの`StaleFile`は、比較に使った実際のsource全体を`staleActualBytes`としてerrorへ保持する。CLIはwrite errorを`show`しているため、private canonical sourceの全内容をterminalやlogへ出す可能性がある。
+
+stale判定には内容の不一致だけが必要であり、actual bytesを診断へ含めない。内容非表示のtyped mismatchとして返し、testでも`Show`結果にsource内容が含まれないことを固定する。
+
 ## 6. Ordered TODO
 
 一つのPRで複数段階を混ぜない。
 
-- [ ] **T00: E7を保留状態へ戻す**  
+- [x] **T00: E7を保留状態へ戻す**  
   PR #14をDraftへ戻し、correctness recovery完了までmergeしない。
 
 - [ ] **T01: safe writer contract recovery**  
-  source-specific post-admissionをwriterへ注入できる形にし、Actual、Plan、Budget、Issueのtemporary-file commit integration testを追加する。publish後IOExceptionでもrestoreを試み、結果へ復旧状態を残す。対象: ER-002、ER-012。
+  source-specific post-admissionをwriterへ注入できる形にし、Actual、Plan、Budget、Issueのtemporary-file commit integration testを追加する。publish後IOExceptionでもrestoreを試み、結果へ復旧状態を残す。stale mismatchの診断はsource内容を保持しない。対象: ER-002、ER-012、ER-014。Draft PR #16で検証中。
 
 - [ ] **T02: pure CLI admission boundary**  
   argv parsingをIO処理から分離し、Budget pattern、command-local `--commit`、Plan必須日付、Issue amount pairをtyped admissionで固定する。executable-level contract testを追加する。対象: ER-001、ER-003のCLI部分、ER-005の日付、ER-008、ER-009。
