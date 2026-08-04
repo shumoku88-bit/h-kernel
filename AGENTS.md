@@ -8,7 +8,8 @@
 2. 対象fileと並行作業の変更fileを比較し、重複を避ける。
 3. [`docs/CODE_MAP_AND_DESIGN_SKETCH.md`](docs/CODE_MAP_AND_DESIGN_SKETCH.md)で、リポジトリ全体の現在の編成と設計スケッチを確認する。
 4. 対象領域のpolicy、architecture、contract、source ownership文書を読む。
-5. private household sourceへ触れる場合は、writer authority、公開境界、実データが維持されることを先に確認する。
+5. editorまたはwriter effectへ触れる場合は、[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)でmain能力、NEXT、並行path、cutover gateを確認する。
+6. private household sourceへ触れる場合は、writer authority、公開境界、実データが維持されることを先に確認する。
 
 ## コードスコアの読み方
 
@@ -89,6 +90,7 @@ HKERNEL_LEDGER_DATA_DIR=/absolute/path/to/private-ledger-data ./report all >/dev
 - [`docs/CODE_MAP_AND_DESIGN_SKETCH.md`](docs/CODE_MAP_AND_DESIGN_SKETCH.md): 全体のコードスコアと設計机
 - [`docs/REPOSITORY_POLICY.md`](docs/REPOSITORY_POLICY.md): 作業手順と文書寿命
 - [`docs/HASKELL_NATIVE_CODE_POLICY.md`](docs/HASKELL_NATIVE_CODE_POLICY.md): domainとHaskellの対応、コードの書法と受入条件
+- [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): editorのmain能力、次のslice、安全なwrite effect、writer cutover gate
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): 会計核の不変条件と依存方向
 - [`docs/INDEX.toml`](docs/INDEX.toml): 稼働中の正規文書一覧
 - [`SECURITY.md`](SECURITY.md): 公開データと秘密情報の境界
