@@ -60,7 +60,11 @@ public h-kernel     code, docs, synthetic evidence only
 
 `currency`はapplicationの`DEFAULT_CURRENCY`とは別である。Account名prefixからrole、Budget membership、liquidityを推測せず、unknown keyを黙って破棄しない。
 
-`HKernel.Household.AccountProfile`は、この分類のsource-independentなsynthetic contractを所有する。`AccountDeclaration`をidentity ownerとして再利用し、Budget policy evidence、Household policy evidence、unclassified metadataを別の値へ分ける。physical `accounts.tsv` admissionとActual Journal parityは後続sliceである。
+`HKernel.Household.AccountProfile`は、この分類のsource-independentなsemantic contractを所有する。`AccountDeclaration`をidentity ownerとして再利用し、Budget policy evidence、Household policy evidence、unclassified metadataを別の値へ分ける。
+
+`HKernel.Household.AccountProfile.TSV`はretained `accounts.tsv`の物理admissionを所有する。`role`と`currency`を既存smart constructorで`AccountDeclaration`へ変換し、残る全metadataをsemantic classifierへ渡す。Account identity、`AccountType`、default CommodityはActual Journal registryと双方向に照合し、unknown key、適用外key、独立したinvalid座標を黙って失わない。
+
+このstable adapterをHousehold Report compositionへ切り替え、Spike内の旧`AccountFact` parserを削除する作業は別のfinite sliceで行う。private source format、writer authority、target TOML生成はこのadmission追加では変更しない。
 
 ### `cycle.tsv`
 
