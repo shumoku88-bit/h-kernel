@@ -28,36 +28,33 @@ coding assistantは、作業開始時にこの文書を読み、次を同じ現�
 ```text
 canonical source     separate private data repository
 current writer       bqn-ledger editor
-current h-kernel role reader/report engine + pure Actual append preview
-h-kernel write path  none
-editor component     h-kernel-editor with ActualAppend
+current h-kernel role reader/report engine + Actual preview/safe writer library
+h-kernel write path  explicit ActualWriter API for rehearsal only
+editor component     ActualAppend + ActualWriter
 ```
 
 - 外部private directoryは一つだけの正規世帯sourceである。
-- bqn-ledger editorが現在のwrite effectを所有する。
-- `HKernel.Editor.ActualAppend`がtyped intent、candidate native block、complete-source re-admission、dry-run previewを所有する。
-- previewは元sourceを変更せず、Account、Commodity、exact Quantity、posting balanceを既存core ownerで検証する。
-- safe writer、editor CLI、interactive UIはまだ実装していない。
+- bqn-ledger editorが現在のcanonical write effectを所有する。
+- `ActualAppend`がpure candidateを作り、`ActualWriter`がstale check、backup、sibling temporary file、atomic publish、post-admission、rollbackを順序づける。
+- focused testはsynthetic temporary sourceだけを変更し、private canonical sourceを対象にしない。
+- command surfaceとinteractive UIはまだ実装していない。
 - writer authorityは、明示的なcutover PRがmergeされるまで移動しない。
 
 詳細なsource ownershipは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)が所有する。
 
 ### NEXT
 
-次の有限sliceは、E1のvalidated candidateを受け取るActual専用のsafe single-file writerである。
+次の有限sliceは、typed intent、preview、safe writerを接続する独立Actual editor command surfaceである。
 
 ```text
-validated candidate
-  + expected old bytes
-  -> stale check
-  -> ignored backup
-  -> sibling temporary file
-  -> atomic publish
-  -> post-admission
-  -> success or recoverable failure
+CLI arguments
+  -> typed ActualEditIntent
+  -> prepareActualAppend
+  -> preview
+  -> optional explicit publishActualAppend
 ```
 
-command surface、interactive UI、writer authority cutover、他sourceのmutationを混ぜない。
+main Report CLI、interactive UI、writer authority cutover、他sourceのmutationを混ぜない。
 
 ## 3. bqn-ledgerとの関係
 
