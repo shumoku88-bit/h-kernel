@@ -30,14 +30,15 @@ canonical source     separate private data repository
 current writer       bqn-ledger editor
 current h-kernel role reader/report engine + explicit Actual editor CLI
 h-kernel write path  h-kernel-editor-cli --commit for rehearsal only
-editor component     ActualAppend + ActualReverse + ActualWriter + independent CLI
+editor component     Actual + Account + Budget movement + Issue append previews, safe writer, independent CLI
 ```
 
 - 外部private directoryは一つだけの正規世帯sourceである。
 - bqn-ledger editorが現在のcanonical write effectを所有する。
 - `h-kernel-editor-cli`がargumentsからtyped intentを作り、previewを常に表示し、明示`--commit`の場合だけsafe writerへ委譲する。
-- commandは対象Journal pathを明示し、private sourceをdefaultとして推測しない。
+- commandは対象source pathを明示し、private sourceをdefaultとして推測しない。
 - transaction reverseはoriginalを変更せず、identity/provenanceを持つ新しいtransactionとしてActual Journalへappendする。
+- Account declaration、Budget movement、Household Issueのappendは、それぞれのstable ownerとcomplete-source admissionを使う。
 - focused testとrehearsalはsynthetic temporary sourceだけを変更する。
 - interactive UIはまだ実装していない。
 - writer authorityは、明示的なcutover PRがmergeされるまで移動しない。
@@ -46,17 +47,17 @@ editor component     ActualAppend + ActualReverse + ActualWriter + independent C
 
 ### NEXT
 
-次の有限sliceは E5: Account / Budget / Issue append である。Account、Budget movement、Household Issueは異なるstable ownerとsource contractを持つため、必要に応じて別sliceとして進める。
+次の有限sliceは E6: Plan add / select / edit / finish である。Plan identity、transaction全体、lifecycle relationを保ち、各操作をPlan Journalのstable admissionへ戻して検証する。
 
 ```text
-source-specific edit intent
-  -> typed domain validation
+Plan lifecycle intent
+  -> typed Plan transformation
   -> complete-source preview
-  -> stable source admission
+  -> Plan Journal admission
   -> safe writer
 ```
 
-source migration、interactive UI、writer authority cutover、複数sourceのatomic mutationを混ぜない。
+Actual transactionの破壊的変更、source migration、interactive UI、writer authority cutoverを混ぜない。
 
 ## 3. bqn-ledgerとの関係
 

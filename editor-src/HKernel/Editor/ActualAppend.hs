@@ -28,7 +28,8 @@ import HKernel.Account
   , lookupAccountDeclaration
   )
 import HKernel.Actual.Journal
-  ( ActualJournalError
+  ( ActualJournal
+  , ActualJournalError
   , actualJournalValue
   , parseActualJournal
   )
@@ -90,23 +91,38 @@ prepareActualAppend
   -> ActualEditIntent
   -> Either (NonEmpty ActualEditError) ActualAppendPreview
 prepareActualAppend existingSource intent = do
-  actualJournal <- first (pure . SourceParseError) (parseActualJournal existingSource)
-
-  let registry = journalAccountRegistry (actualJournalValue actualJournal)
+  journal <- parseSource existingSource
+  postings <- resolvePostings (journalAccountRegistry (actualJournalValue journal)) (intentPostings intent)
+  txn <- buildTransaction intent postings
   
-  postings <- case partitionEithers (NonEmpty.toList (fmap (resolvePosting registry) (intentPostings intent))) of
-    (err:errs, _) -> Left (err NonEmpty.:| errs)
-    ([], validPostings) -> pure (NonEmpty.fromList validPostings)
+  let preview = buildPreview existingSource txn
+  
+  _ <- first (pure . CandidateSourceParseError) (parseActualJournal (candidateCompleteSource preview))
+  pure preview
 
-  transaction <- first (pure . ValidationError) $
+parseSource :: Text -> Either (NonEmpty ActualEditError) ActualJournal
+parseSource = first (pure . SourceParseError) . parseActualJournal
+
+resolvePostings :: AccountRegistry -> NonEmpty IntentPosting -> Either (NonEmpty ActualEditError) (NonEmpty Posting)
+resolvePostings registry intents =
+  case partitionEithers (NonEmpty.toList (fmap (resolvePosting registry) intents)) of
+    (err:errs, _) -> Left (err NonEmpty.:| errs)
+    ([], p:ps)    -> Right (p NonEmpty.:| ps)
+    ([], [])      -> error "unreachable: input was NonEmpty"
+
+buildTransaction :: ActualEditIntent -> NonEmpty Posting -> Either (NonEmpty ActualEditError) Transaction
+buildTransaction intent postings =
+  first (pure . ValidationError) $
     mkTransaction (intentDate intent) (intentDescription intent) postings
 
-  let block = renderTransaction transaction
-  let candidateSource = appendBlock existingSource block
-
-  _ <- first (pure . CandidateSourceParseError) (parseActualJournal candidateSource)
-
-  pure (ActualAppendPreview block candidateSource)
+buildPreview :: Text -> Transaction -> ActualAppendPreview
+buildPreview existingSource txn =
+  ActualAppendPreview
+    { candidateBlock = block
+    , candidateCompleteSource = appendBlock existingSource block
+    }
+  where
+    block = renderTransaction txn
 
 resolvePosting
   :: AccountRegistry

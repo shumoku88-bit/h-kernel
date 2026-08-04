@@ -31,33 +31,42 @@ data WriteError
   deriving (Eq, Show)
 
 publishActualAppend :: WriteIntent -> IO (Either WriteError ())
-publishActualAppend intent = catch performWrite handleError
+publishActualAppend intent = catch (checkStaleAndWrite intent) handleError
   where
-    filePath = targetFilePath intent
-    backupPath = filePath <> ".backup.tmp"
-    newPath    = filePath <> ".new.tmp"
-
-    performWrite = do
-      currentBytes <- T.readFile filePath
-      if currentBytes /= expectedOldBytes intent
-        then pure (Left (StaleFile currentBytes))
-        else do
-          T.writeFile backupPath currentBytes
-          T.writeFile newPath (candidateNewBytes intent)
-          renameFile newPath filePath
-          
-          -- Post-admission
-          postBytes <- T.readFile filePath
-          case parseActualJournal postBytes of
-            Left errs -> do
-              -- Recoverable failure: attempt to restore from backup
-              restoreSuccess <- catch (renameFile backupPath filePath >> pure True)
-                                      (\(_ :: IOException) -> pure False)
-              pure (Left (PostAdmissionFailed errs restoreSuccess))
-            Right _ -> do
-              -- Success: remove backup
-              _ <- catch (removeFile backupPath) (\(_ :: IOException) -> pure ())
-              pure (Right ())
-
     handleError :: IOException -> IO (Either WriteError ())
     handleError e = pure (Left (FileIOError (show e)))
+
+checkStaleAndWrite :: WriteIntent -> IO (Either WriteError ())
+checkStaleAndWrite intent = do
+  currentBytes <- T.readFile (targetFilePath intent)
+  if currentBytes /= expectedOldBytes intent
+    then pure (Left (StaleFile currentBytes))
+    else withAtomicSwap intent
+
+withAtomicSwap :: WriteIntent -> IO (Either WriteError ())
+withAtomicSwap intent = do
+  let filePath = targetFilePath intent
+      backupPath = filePath <> ".backup.tmp"
+      newPath    = filePath <> ".new.tmp"
+      
+  T.writeFile backupPath (expectedOldBytes intent)
+  T.writeFile newPath (candidateNewBytes intent)
+  renameFile newPath filePath
+  
+  verifyOrRollback filePath backupPath
+
+verifyOrRollback :: FilePath -> FilePath -> IO (Either WriteError ())
+verifyOrRollback filePath backupPath = do
+  postBytes <- T.readFile filePath
+  case parseActualJournal postBytes of
+    Left errs -> Left <$> rollback errs
+    Right _   -> Right <$> commit
+  where
+    rollback errs = do
+      restored <- catch (renameFile backupPath filePath >> pure True)
+                        (\(_ :: IOException) -> pure False)
+      pure (PostAdmissionFailed errs restored)
+      
+    commit = do
+      _ <- catch (removeFile backupPath) (\(_ :: IOException) -> pure ())
+      pure ()
