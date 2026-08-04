@@ -62,9 +62,11 @@ public h-kernel     code, docs, synthetic evidence only
 
 `HKernel.Household.AccountProfile`は、この分類のsource-independentなsemantic contractを所有する。`AccountDeclaration`をidentity ownerとして再利用し、Budget policy evidence、Household policy evidence、unclassified metadataを別の値へ分ける。
 
-`HKernel.Household.AccountProfile.TSV`はretained `accounts.tsv`の物理admissionを所有する。`role`と`currency`を既存smart constructorで`AccountDeclaration`へ変換し、残る全metadataをsemantic classifierへ渡す。Account identity、`AccountType`、default CommodityはActual Journal registryと双方向に照合し、unknown key、適用外key、独立したinvalid座標を黙って失わない。
+`HKernel.Household.AccountProfile.TSV`はretained `accounts.tsv`の物理admissionを所有する。`role`と`currency`を既存smart constructorで`AccountDeclaration`へ変換し、残る全metadataをsemantic classifierへ渡す。Account identityと`AccountType`はActual Journal registryと双方向に照合する。Actual Journalがper-Account default Commodityを明示する場合はretained evidenceとの一致を要求し、省略している場合は矛盾ではなく未宣言として扱う。unknown key、適用外key、独立したinvalid座標は黙って失わない。
 
 Household Report compositionはstable adapterを使用し、`AccountProfileTSVError`を既存`HouseholdSourceError`へ翻訳するだけである。Spike-local `AccountFact`、旧`parseAccounts`、metadata parser、role parser、type-only registry gateは削除済みである。private source format、writer authority、target TOML生成はこのcutoverでは変更していない。
+
+将来生成する`accounts.journal`にはretained Commodity evidenceをper-Account metadataとして明示し、`parseAccountJournal`で再admitした`AccountDeclaration`とprojectionをexact equalityで照合する。current compatibility parityとnative target parityを同一の条件へ潰さない。
 
 ### `cycle.tsv`
 
