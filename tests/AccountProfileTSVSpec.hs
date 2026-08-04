@@ -136,21 +136,23 @@ characterizeAccountJournalShadow = do
   let profiles = mustRight (parseRetainedAccountProfiles validAccountsTSV)
       reorderedProfiles =
         mustRight (parseRetainedAccountProfiles reorderedAccountsTSV)
-      shadow = renderRetainedAccountJournalShadow profiles
+      shadow = mustRight (renderRetainedAccountJournalShadow profiles)
       parsedRegistry = mustRight (parseAccountJournal shadow)
       expectedDeclarations = projectRetainedAccountDeclarations profiles
       openingEquity = mustRight (mkAccount "equity:opening")
       declarationWithoutCommodity = declareAccount openingEquity Equity
+      commentAccount = mustRight (mkAccount "assets:cash;archived")
+      unrepresentableDeclaration = declareAccount commentAccount Asset
 
   assertEqual "shadow text has one stable canonical spelling"
     expectedAccountJournalShadow
     shadow
   assertEqual "the same admitted input renders the same Text repeatedly"
     shadow
-    (renderRetainedAccountJournalShadow profiles)
+    (mustRight (renderRetainedAccountJournalShadow profiles))
   assertEqual "retained TSV row order does not affect shadow Text"
     shadow
-    (renderRetainedAccountJournalShadow reorderedProfiles)
+    (mustRight (renderRetainedAccountJournalShadow reorderedProfiles))
   assertEqual "parse-back retains the exact declaration collection"
     expectedDeclarations
     (accountDeclarations parsedRegistry)
@@ -164,7 +166,12 @@ characterizeAccountJournalShadow = do
       [ "account equity:opening"
       , "  type: Equity"
       ])
-    (renderAccountDeclarationsShadow [declarationWithoutCommodity])
+    (mustRight
+      (renderAccountDeclarationsShadow [declarationWithoutCommodity]))
+  assertShadowErrors
+    "an Account that collides with Journal comment syntax is rejected"
+    [AccountJournalShadowUnrepresentableDeclaration 1]
+    (renderAccountDeclarationsShadow [unrepresentableDeclaration])
 
 characterizeSourceDiagnostics :: IO ()
 characterizeSourceDiagnostics = do
@@ -419,6 +426,18 @@ assertErrors label expected result = case result of
   Right _ -> do
     putStrLn ("  [FAIL] " ++ label)
     putStrLn "    source was unexpectedly accepted"
+    exitFailure
+
+assertShadowErrors
+  :: String
+  -> [AccountJournalShadowError]
+  -> Either (NonEmpty.NonEmpty AccountJournalShadowError) value
+  -> IO ()
+assertShadowErrors label expected result = case result of
+  Left errors -> assertEqual label expected (NonEmpty.toList errors)
+  Right _ -> do
+    putStrLn ("  [FAIL] " ++ label)
+    putStrLn "    declaration was unexpectedly rendered"
     exitFailure
 
 assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
