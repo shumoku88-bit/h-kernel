@@ -7,6 +7,7 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import HKernel.Account
+import HKernel.Account.Journal (parseAccountJournal)
 import HKernel.Actual.Journal
 import HKernel.Budget (envelopeIdText)
 import HKernel.Household.AccountProfile
@@ -19,6 +20,7 @@ main :: IO ()
 main = do
   characterizeSyntaxAndClassification
   characterizeActualRegistryParity
+  characterizeAccountJournalShadow
   characterizeSourceDiagnostics
 
 characterizeSyntaxAndClassification :: IO ()
@@ -129,6 +131,41 @@ characterizeActualRegistryParity = do
       (actualRegistry actualWithAdditionalAccount)
       validAccountsTSV)
 
+characterizeAccountJournalShadow :: IO ()
+characterizeAccountJournalShadow = do
+  let profiles = mustRight (parseRetainedAccountProfiles validAccountsTSV)
+      reorderedProfiles =
+        mustRight (parseRetainedAccountProfiles reorderedAccountsTSV)
+      shadow = renderRetainedAccountJournalShadow profiles
+      parsedRegistry = mustRight (parseAccountJournal shadow)
+      expectedDeclarations = projectRetainedAccountDeclarations profiles
+      openingEquity = mustRight (mkAccount "equity:opening")
+      declarationWithoutCommodity = declareAccount openingEquity Equity
+
+  assertEqual "shadow text has one stable canonical spelling"
+    expectedAccountJournalShadow
+    shadow
+  assertEqual "the same admitted input renders the same Text repeatedly"
+    shadow
+    (renderRetainedAccountJournalShadow profiles)
+  assertEqual "retained TSV row order does not affect shadow Text"
+    shadow
+    (renderRetainedAccountJournalShadow reorderedProfiles)
+  assertEqual "parse-back retains the exact declaration collection"
+    expectedDeclarations
+    (accountDeclarations parsedRegistry)
+  assertEqual "repeated parse publishes the same registry"
+    parsedRegistry
+    (mustRight (parseAccountJournal shadow))
+  assertRight "render and parse-back exact parity succeeds"
+    (validateRetainedAccountJournalShadow profiles)
+  assertEqual "optional default Commodity remains optional in native syntax"
+    (T.unlines
+      [ "account equity:opening"
+      , "  type: Equity"
+      ])
+    (renderAccountDeclarationsShadow [declarationWithoutCommodity])
+
 characterizeSourceDiagnostics :: IO ()
 characterizeSourceDiagnostics = do
   assertErrors "duplicate Account identity reports the repeated physical line"
@@ -206,6 +243,50 @@ validAccountsTSV = T.unlines
       , "envelope_role=dynamic"
       , "budget_group=daily"
       ]
+  ]
+
+reorderedAccountsTSV :: Text
+reorderedAccountsTSV = T.unlines
+  [ T.intercalate "\t"
+      [ "budget:food"
+      , "role=Budget"
+      , "currency=JPY"
+      , "kind=envelope"
+      , "budget=Food"
+      , "envelope_role=dynamic"
+      , "budget_group=daily"
+      ]
+  , T.intercalate "\t"
+      [ "expenses:food"
+      , "role=Expense"
+      , "currency=JPY"
+      , "budget=Food"
+      , "fixed=0"
+      , "spend_class=variable"
+      ]
+  , T.intercalate "\t"
+      [ "assets:cash"
+      , "role=Asset"
+      , "currency=JPY"
+      , "type=liquid"
+      , "budget=Cash"
+      , "future-key=kept"
+      ]
+  ]
+
+expectedAccountJournalShadow :: Text
+expectedAccountJournalShadow = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , ""
+  , "account budget:food"
+  , "  type: Budget"
+  , "  commodity: JPY"
+  , ""
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
   ]
 
 matchingActualJournal :: Text
