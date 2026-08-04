@@ -13,8 +13,10 @@ import System.IO (hPutStrLn, stderr)
 
 import HKernel.Account (mkAccount)
 import HKernel.Editor.ActualAppend
+import HKernel.Editor.ActualReverse
 import HKernel.Editor.ActualWriter
 import HKernel.Money (mkCommodity, parseQuantity)
+import HKernel.Plan.Completion (mkActualTransactionId)
 
 die :: String -> IO a
 die msg = hPutStrLn stderr msg >> exitFailure
@@ -56,7 +58,7 @@ main = do
           die $ "Validation errors:\n" <> unlines (map show (NonEmpty.toList errs))
         Right preview -> do
           TIO.putStrLn "--- Preview ---"
-          TIO.putStr (candidateBlock preview)
+          TIO.putStr (HKernel.Editor.ActualAppend.candidateBlock preview)
           TIO.putStrLn "---------------"
 
           if commitFlag
@@ -64,7 +66,7 @@ main = do
               let writeIntent = WriteIntent
                     { targetFilePath = journalFile
                     , expectedOldBytes = existingSource
-                    , candidateNewBytes = candidateCompleteSource preview
+                    , candidateNewBytes = HKernel.Editor.ActualAppend.candidateCompleteSource preview
                     }
               writeRes <- publishActualAppend writeIntent
               case writeRes of
@@ -73,4 +75,37 @@ main = do
             else do
               TIO.putStrLn "Run with --commit to apply changes."
 
-    _ -> die "Usage: h-kernel-editor-cli append <journal.txt> <YYYY-MM-DD> <desc> [<acct> <qty> <comm> ...] [--commit]\nExample: h-kernel-editor-cli append j.txt 2023-01-01 'Buy' assets:cash -500 JPY expenses:food 500 -"
+    ("reverse":journalFile:targetIdStr:dateStr:descWords) -> do
+      let desc = unwords descWords
+      date <- case parseTimeM True defaultTimeLocale "%Y-%m-%d" dateStr of
+        Just d -> pure (d :: Day)
+        Nothing -> die "Invalid date format. Expected YYYY-MM-DD."
+      
+      targetId <- either (die . show) pure (mkActualTransactionId (T.pack targetIdStr))
+      
+      let intent = ActualReverseIntent targetId date (T.pack desc)
+      
+      existingSource <- TIO.readFile journalFile
+      case prepareActualReverse existingSource intent of
+        Left errs -> do
+          die $ "Validation errors:\n" <> unlines (map show (NonEmpty.toList errs))
+        Right preview -> do
+          TIO.putStrLn "--- Preview ---"
+          TIO.putStr (HKernel.Editor.ActualReverse.candidateBlock preview)
+          TIO.putStrLn "---------------"
+
+          if commitFlag
+            then do
+              let writeIntent = WriteIntent
+                    { targetFilePath = journalFile
+                    , expectedOldBytes = existingSource
+                    , candidateNewBytes = HKernel.Editor.ActualReverse.candidateCompleteSource preview
+                    }
+              writeRes <- publishActualAppend writeIntent
+              case writeRes of
+                Right () -> TIO.putStrLn "Successfully reversed in journal."
+                Left err -> die $ "Write failed: " <> show err
+            else do
+              TIO.putStrLn "Run with --commit to apply changes."
+
+    _ -> die "Usage:\n  h-kernel-editor-cli append <journal.txt> <YYYY-MM-DD> <desc> [<acct> <qty> <comm> ...] [--commit]\n  h-kernel-editor-cli reverse <journal.txt> <event-id> <YYYY-MM-DD> <desc...> [--commit]"
