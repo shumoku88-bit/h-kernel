@@ -87,11 +87,15 @@ library h-kernel-household
 
 library h-kernel-editor
     exposed-modules:  HKernel.Editor.ActualAppend
+                    , HKernel.Editor.ActualAccountAppend
                     , HKernel.Editor.ActualReverse
                     , HKernel.Editor.ActualWriter
+                    , HKernel.Editor.BudgetMovementAppend
+                    , HKernel.Editor.IssueAppend
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
                     , h-kernel
+                    , h-kernel-household
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
                     , directory >= 1.3 && < 1.4
@@ -610,7 +614,46 @@ executable h-kernel-editor-cli
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
                     , h-kernel
+                    , h-kernel-household
                     , h-kernel-editor
     hs-source-dirs:   editor-app
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-editor-actual-account-append-test
+    type:             exitcode-stdio-1.0
+    main-is:          EditorActualAccountAppendSpec.hs
+    hs-source-dirs:   tests
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-editor
+                    , text
+                    , time
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-editor-budget-movement-append-test
+    type:             exitcode-stdio-1.0
+    main-is:          EditorBudgetMovementAppendSpec.hs
+    hs-source-dirs:   tests
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-household
+                    , h-kernel-editor
+                    , text
+                    , time
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-editor-issue-append-test
+    type:             exitcode-stdio-1.0
+    main-is:          EditorIssueAppendSpec.hs
+    hs-source-dirs:   tests
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-household
+                    , h-kernel-editor
+                    , text
+                    , time
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
