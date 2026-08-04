@@ -26,7 +26,7 @@ data WriteIntent = WriteIntent
   } deriving (Eq, Show)
 
 data WriteError sourceError
-  = StaleFile { staleActualBytes :: Text }
+  = StaleFile
   | PostAdmissionFailed
       { failedSourceError  :: NonEmpty sourceError
       , restoredFromBackup :: Bool
@@ -87,7 +87,7 @@ checkStaleAndWrite
 checkStaleAndWrite fileSystem admit intent = do
   currentBytes <- readTextFile fileSystem (targetFilePath intent)
   if currentBytes /= expectedOldBytes intent
-    then pure (Left (StaleFile currentBytes))
+    then pure (Left StaleFile)
     else withAtomicSwap fileSystem admit intent
 
 withAtomicSwap
