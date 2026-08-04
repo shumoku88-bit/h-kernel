@@ -60,6 +60,8 @@ public h-kernel     code, docs, synthetic evidence only
 
 `currency`はapplicationの`DEFAULT_CURRENCY`とは別である。Account名prefixからrole、Budget membership、liquidityを推測せず、unknown keyを黙って破棄しない。
 
+`HKernel.Household.AccountProfile`は、この分類のsource-independentなsynthetic contractを所有する。`AccountDeclaration`をidentity ownerとして再利用し、Budget policy evidence、Household policy evidence、unclassified metadataを別の値へ分ける。physical `accounts.tsv` admissionとActual Journal parityは後続sliceである。
+
 ### `cycle.tsv`
 
 | field | 意味 | target |
