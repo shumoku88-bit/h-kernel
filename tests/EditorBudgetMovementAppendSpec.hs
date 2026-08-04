@@ -1,7 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Main (main) where
 
+import Control.Exception (IOException, catch)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -9,7 +11,12 @@ import Data.Time.Calendar (fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (mkAccount)
-import HKernel.Editor.ActualWriter (WriteIntent(..), publishWithAdmission)
+import HKernel.Editor.ActualWriter
+  ( WriteIntent(..)
+  , WriterFileSystem(..)
+  , defaultWriterFileSystem
+  , publishWithAdmission
+  )
 import HKernel.Editor.BudgetMovementAppend
   ( BudgetMovementAppendPreview(..)
   , prepareBudgetMovementAppend
@@ -62,8 +69,9 @@ testValidBudgetMovement =
 testBudgetMovementCommit :: IO Bool
 testBudgetMovementCommit = do
   let path = "tests/fixtures/test_editor_budget_commit.tsv"
+  cleanup path
   TIO.writeFile path fixtureSource
-  case prepareBudgetMovementAppend fixtureSource testMovement of
+  result <- case prepareBudgetMovementAppend fixtureSource testMovement of
     Left err -> print err >> pure False
     Right preview -> do
       writeResult <- publishWithAdmission
@@ -77,3 +85,17 @@ testBudgetMovementCommit = do
         Left err -> print err >> pure False
         Right () ->
           (== candidateCompleteSource preview) <$> TIO.readFile path
+  cleanup path
+  pure result
+
+cleanup :: FilePath -> IO ()
+cleanup path = do
+  removeIfPresent path
+  removeIfPresent (path <> ".backup.tmp")
+  removeIfPresent (path <> ".new.tmp")
+
+removeIfPresent :: FilePath -> IO ()
+removeIfPresent path =
+  catch
+    (removeTextFile defaultWriterFileSystem path)
+    (\(_ :: IOException) -> pure ())
