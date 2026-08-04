@@ -30,32 +30,33 @@ canonical source     separate private data repository
 current writer       bqn-ledger editor
 current h-kernel role reader/report engine + explicit Actual editor CLI
 h-kernel write path  h-kernel-editor-cli --commit for rehearsal only
-editor component     ActualAppend + ActualWriter + independent CLI
+editor component     ActualAppend + ActualReverse + ActualWriter + independent CLI
 ```
 
 - 外部private directoryは一つだけの正規世帯sourceである。
 - bqn-ledger editorが現在のcanonical write effectを所有する。
 - `h-kernel-editor-cli`がargumentsからtyped intentを作り、previewを常に表示し、明示`--commit`の場合だけsafe writerへ委譲する。
 - commandは対象Journal pathを明示し、private sourceをdefaultとして推測しない。
+- transaction reverseはoriginalを変更せず、identity/provenanceを持つ新しいtransactionとしてActual Journalへappendする。
 - focused testとrehearsalはsynthetic temporary sourceだけを変更する。
-- interactive UIとtransaction reverseはまだ実装していない。
+- interactive UIはまだ実装していない。
 - writer authorityは、明示的なcutover PRがmergeされるまで移動しない。
 
 詳細なsource ownershipは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)が所有する。
 
 ### NEXT
 
-次の有限sliceは、既存transactionをidentity/provenanceごと選び、新しいreversal transactionとしてappendするE4である。
+次の有限sliceは E5: Account / Budget / Issue append である。Account、Budget movement、Household Issueは異なるstable ownerとsource contractを持つため、必要に応じて別sliceとして進める。
 
 ```text
-selected existing transaction
-  -> typed reversal intent
-  -> reversed ordered postings
+source-specific edit intent
+  -> typed domain validation
   -> complete-source preview
-  -> existing safe writer
+  -> stable source admission
+  -> safe writer
 ```
 
-original transactionの破壊的変更、interactive UI、writer authority cutover、他sourceのmutationを混ぜない。
+source migration、interactive UI、writer authority cutover、複数sourceのatomic mutationを混ぜない。
 
 ## 3. bqn-ledgerとの関係
 

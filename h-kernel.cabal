@@ -87,6 +87,7 @@ library h-kernel-household
 
 library h-kernel-editor
     exposed-modules:  HKernel.Editor.ActualAppend
+                    , HKernel.Editor.ActualReverse
                     , HKernel.Editor.ActualWriter
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
@@ -152,6 +153,18 @@ test-suite h-kernel-editor-actual-append-test
                     , text
                     , time
                     , QuickCheck
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-editor-actual-reverse-test
+    type:             exitcode-stdio-1.0
+    main-is:          EditorActualReverseSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-editor
+                    , text
+                    , time
     hs-source-dirs:   tests
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns

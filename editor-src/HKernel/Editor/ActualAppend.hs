@@ -6,6 +6,7 @@ module HKernel.Editor.ActualAppend
   , ActualEditError(..)
   , ActualAppendPreview(..)
   , prepareActualAppend
+  , appendBlock
   ) where
 
 import Control.Applicative ((<|>))
