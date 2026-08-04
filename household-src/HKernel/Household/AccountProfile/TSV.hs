@@ -56,11 +56,12 @@ data ParsedProfile = ParsedProfile
 
 -- | Privacy-preserving failure from rendering and re-admitting one shadow.
 --
--- The constructor identifies only the failed declaration coordinate. It does
--- not retain Account names, source rows, or rendered Journal text, so a private
+-- The constructors identify only the failure coordinate or a count. They do not
+-- retain Account names, source rows, or rendered Journal text, so a private
 -- validation gate can report the failure kind without publishing source data.
 data AccountJournalShadowError
-  = AccountJournalShadowParseRejected Int
+  = AccountJournalShadowUnrepresentableDeclaration Int
+  | AccountJournalShadowParseRejected Int
   | AccountJournalShadowAccountSetMismatch
   | AccountJournalShadowAccountTypeMismatch
   | AccountJournalShadowDefaultCommodityMismatch
@@ -190,18 +191,26 @@ projectRetainedAccountDeclarations =
 
 -- | Render declarations in canonical Account identity order.
 --
--- Every current 'AccountDeclaration' is representable because Account and
--- Commodity smart constructors have already excluded whitespace and control
--- shapes that this Journal syntax cannot carry. Exhaustive AccountType matching
--- makes a future unhandled category a compile-time failure.
-renderAccountDeclarationsShadow :: [AccountDeclaration] -> Text
+-- Account identity currently permits the Journal comment delimiter. Because
+-- the existing parser would truncate such an identity, the renderer rejects it
+-- rather than inventing an escape syntax or silently changing the declaration.
+-- Exhaustive AccountType matching makes a future unhandled category a
+-- compile-time failure.
+renderAccountDeclarationsShadow
+  :: [AccountDeclaration]
+  -> Either (NonEmpty AccountJournalShadowError) Text
 renderAccountDeclarationsShadow declarations =
-  T.intercalate "\n" (map renderDeclaration (sortDeclarations declarations))
+  case length (filter (not . declarationIsRepresentable) ordered) of
+    0 -> Right (T.intercalate "\n" (map renderDeclaration ordered))
+    count -> Left
+      (AccountJournalShadowUnrepresentableDeclaration count NonEmpty.:| [])
+  where
+    ordered = sortDeclarations declarations
 
 -- | Render admitted retained profiles as a deterministic declaration Journal.
 renderRetainedAccountJournalShadow
   :: Map Account RetainedAccountProfile
-  -> Text
+  -> Either (NonEmpty AccountJournalShadowError) Text
 renderRetainedAccountJournalShadow =
   renderAccountDeclarationsShadow . projectRetainedAccountDeclarations
 
@@ -213,7 +222,8 @@ renderRetainedAccountJournalShadow =
 validateRetainedAccountJournalShadow
   :: Map Account RetainedAccountProfile
   -> Either (NonEmpty AccountJournalShadowError) ()
-validateRetainedAccountJournalShadow profiles =
+validateRetainedAccountJournalShadow profiles = do
+  rendered <- renderAccountDeclarationsShadow expected
   case parseAccountJournal rendered of
     Left errors ->
       Left (AccountJournalShadowParseRejected (NonEmpty.length errors)
@@ -225,10 +235,13 @@ validateRetainedAccountJournalShadow profiles =
         Nothing -> Right ()
   where
     expected = projectRetainedAccountDeclarations profiles
-    rendered = renderAccountDeclarationsShadow expected
 
 sortDeclarations :: [AccountDeclaration] -> [AccountDeclaration]
 sortDeclarations = sortOn (accountName . declaredAccount)
+
+declarationIsRepresentable :: AccountDeclaration -> Bool
+declarationIsRepresentable =
+  not . T.any (== ';') . accountName . declaredAccount
 
 renderDeclaration :: AccountDeclaration -> Text
 renderDeclaration declaration = T.unlines
