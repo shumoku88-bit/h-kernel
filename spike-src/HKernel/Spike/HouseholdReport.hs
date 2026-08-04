@@ -25,8 +25,6 @@ module HKernel.Spike.HouseholdReport
 import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map.Strict as Map
-import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -48,6 +46,13 @@ import HKernel.Budget.Config (parseBudgetPolicy)
 import HKernel.Engine
   ( LedgerEntry(..)
   , journalEntries
+  )
+import HKernel.Household.AccountProfile.TSV
+  ( AccountProfileTSVError
+  , accountProfileTSVErrorLine
+  , accountProfileTSVErrorMessage
+  , accountProfileTSVErrorSource
+  , admitRetainedAccountProfiles
   )
 import HKernel.Household.Backing
   ( HouseholdBackingPlan(..)
@@ -118,16 +123,6 @@ data HouseholdSourceError = HouseholdSourceError
   , householdSourceMessage :: Text
   } deriving (Eq, Show)
 
-data AccountFact = AccountFact
-  { accountFactAccount     :: Account
-  , accountFactRole        :: AccountType
-  , accountFactCurrency    :: Commodity
-  , accountFactKind        :: Maybe Text
-  , accountFactClass       :: Maybe Text
-  , accountFactBudget      :: Maybe Text
-  , accountFactBudgetGroup :: Maybe Text
-  } deriving (Eq, Show)
-
 -- | A future income movement used only as evidence for cycle resolution.
 --
 -- It is deliberately not represented by 'CommittedOutgoingPlan'.
@@ -169,8 +164,10 @@ buildHouseholdReportSurfaceFromPlanJournal
   -> Text
   -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
 buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsText budgetText budgetPolicyText householdPolicyText planJournal configText issuesText dailyScopeText = do
-  accounts <- parseAccounts accountsText
-  validateRegistry journal accounts
+  _ <- mapLeft accountProfileSourceErrors
+    (admitRetainedAccountProfiles
+      (journalAccountRegistry journal)
+      accountsText)
   _ <- mapLeft applicationConfigSourceErrors
     (parseApplicationConfig configText)
   budgetPolicy <- mapLeft budgetPolicySourceErrors
@@ -364,6 +361,16 @@ applicationConfigSourceErrors = fmap toSourceError
       (applicationConfigErrorLine err)
       (applicationConfigErrorMessage err)
 
+accountProfileSourceErrors
+  :: NonEmpty AccountProfileTSVError
+  -> NonEmpty HouseholdSourceError
+accountProfileSourceErrors = fmap toSourceError
+  where
+    toSourceError err = sourceError
+      (accountProfileTSVErrorSource err)
+      (accountProfileTSVErrorLine err)
+      (accountProfileTSVErrorMessage err)
+
 dailyTargetSourceErrors
   :: NonEmpty DailyTargetTSVError
   -> NonEmpty HouseholdSourceError
@@ -393,111 +400,6 @@ issueSourceErrors = fmap toSourceError
       "issues.tsv"
       (householdIssueTSVErrorLine err)
       (householdIssueTSVErrorMessage err)
-
-meaningfulLines :: Text -> [(Int, Text)]
-meaningfulLines =
-  filter (not . ignored . snd) . zip [1..] . T.lines
-  where
-    ignored line =
-      let stripped = T.strip line
-      in T.null stripped || "#" `T.isPrefixOf` stripped
-
-parseAccounts
-  :: Text
-  -> Either (NonEmpty HouseholdSourceError) (Map Account AccountFact)
-parseAccounts input = collectUnique "accounts.tsv" accountFactAccount
-  =<< mapLeft NonEmpty.singleton
-        (traverse parseAccountLine (meaningfulLines input))
-
-parseAccountLine :: (Int, Text) -> Either HouseholdSourceError AccountFact
-parseAccountLine (lineNumber, line) = case T.splitOn "\t" line of
-  accountText : fields -> do
-    account <- mapLeft (sourceError "accounts.tsv" lineNumber . tshow)
-      (mkAccount accountText)
-    metadata <- parseAccountMetadata lineNumber fields
-    roleText <- requireField "accounts.tsv" lineNumber "role" metadata
-    role <- parseRole lineNumber roleText
-    currencyText <- requireField "accounts.tsv" lineNumber "currency" metadata
-    currency <- mapLeft (sourceError "accounts.tsv" lineNumber . tshow)
-      (mkCommodity currencyText)
-    pure AccountFact
-      { accountFactAccount = account
-      , accountFactRole = role
-      , accountFactCurrency = currency
-      , accountFactKind = Map.lookup "kind" metadata
-      , accountFactClass = Map.lookup "type" metadata
-      , accountFactBudget = Map.lookup "budget" metadata
-      , accountFactBudgetGroup = Map.lookup "budget_group" metadata
-      }
-  _ -> Left (sourceError "accounts.tsv" lineNumber "expected an account row")
-
-parseAccountMetadata
-  :: Int
-  -> [Text]
-  -> Either HouseholdSourceError (Map Text Text)
-parseAccountMetadata lineNumber fields = do
-  entries <- traverse parseField fields
-  case duplicateKeys fst entries of
-    [] -> Right (Map.fromList entries)
-    duplicate : _ -> Left (sourceError "accounts.tsv" lineNumber
-      ("duplicate metadata key " <> duplicate))
-  where
-    parseField field = case T.breakOn "=" field of
-      (key, remainder)
-        | not (T.null key)
-        , not (T.null remainder)
-        , let value = T.drop 1 remainder
-        , not (T.null value) -> Right (key, value)
-      _ -> Left (sourceError "accounts.tsv" lineNumber
-        ("malformed metadata field " <> field
-          <> "; expected non-empty key=value"))
-
-parseRole :: Int -> Text -> Either HouseholdSourceError AccountType
-parseRole lineNumber role = case T.toCaseFold role of
-  "asset" -> Right Asset
-  "liability" -> Right Liability
-  "equity" -> Right Equity
-  "income" -> Right Income
-  "expense" -> Right Expense
-  "budget" -> Right Budget
-  _ -> Left (sourceError "accounts.tsv" lineNumber
-    ("unsupported role " <> role))
-
-validateRegistry
-  :: Journal
-  -> Map Account AccountFact
-  -> Either (NonEmpty HouseholdSourceError) ()
-validateRegistry journal accounts = case NonEmpty.nonEmpty errors of
-  Nothing -> Right ()
-  Just values -> Left values
-  where
-    registry = journalAccountRegistry journal
-    errors = sourceErrors ++ journalErrors
-    sourceErrors = concatMap validateSourceAccount (Map.toAscList accounts)
-    journalErrors =
-      [ sourceError "actual.journal" 0
-          ("actual.journal Account is missing from accounts.tsv: "
-            <> accountName account)
-      | declaration <- accountDeclarations registry
-      , let account = declaredAccount declaration
-      , Map.notMember account accounts
-      ]
-    validateSourceAccount (account, fact) =
-      case lookupAccountDeclaration account registry of
-        Nothing ->
-          [ sourceError "accounts.tsv" 0
-              ("accounts.tsv Account is not declared in actual.journal: "
-                <> accountName account)
-          ]
-        Just declaration
-          | declaredAccountType declaration == accountFactRole fact -> []
-          | otherwise ->
-              [ sourceError "accounts.tsv" 0
-                  ("Account type disagrees between accounts.tsv and actual.journal for "
-                    <> accountName account
-                    <> ": accounts.tsv=" <> tshow (accountFactRole fact)
-                    <> ", actual.journal=" <> tshow (declaredAccountType declaration))
-              ]
 
 resolveCycles
   :: Day
@@ -548,36 +450,6 @@ openPlansInPeriod period registry openPlanIds =
         && accountTypeFor (planFactFrom plan) registry == Just Asset
         && accountTypeFor (planFactTo plan) registry
           `elem` [Just Expense, Just Liability]
-
-collectUnique
-  :: Ord key
-  => Text
-  -> (value -> key)
-  -> [value]
-  -> Either (NonEmpty HouseholdSourceError) (Map key value)
-collectUnique source keyOf values = case duplicates of
-  [] -> Right (Map.fromList [(keyOf value, value) | value <- values])
-  _ -> Left (sourceError source 0 "duplicate identity" NonEmpty.:| [])
-  where
-    duplicates = duplicateKeys keyOf values
-
-duplicateKeys :: Ord key => (value -> key) -> [value] -> [key]
-duplicateKeys keyOf values =
-  [ key
-  | (key, count) <- Map.toAscList
-      (Map.fromListWith (+) [(keyOf value, 1 :: Int) | value <- values])
-  , count > 1
-  ]
-
-requireField
-  :: Text
-  -> Int
-  -> Text
-  -> Map Text Text
-  -> Either HouseholdSourceError Text
-requireField source lineNumber field metadata =
-  maybe (Left (sourceError source lineNumber ("missing " <> field))) Right
-    (Map.lookup field metadata)
 
 mapLeft :: (left -> right) -> Either left value -> Either right value
 mapLeft f result = case result of
