@@ -83,6 +83,17 @@ library h-kernel-household
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
 
+library h-kernel-editor
+    exposed-modules:  HKernel.Editor.ActualAppend
+    build-depends:    base >= 4.14 && < 5
+                    , containers >= 0.6 && < 0.8
+                    , h-kernel
+                    , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
+    hs-source-dirs:   editor-src
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
 library h-kernel-spike-household-report
     exposed-modules:  HKernel.Spike.HouseholdReport
                     , HKernel.Spike.HouseholdReport.Render
@@ -127,6 +138,19 @@ executable repository-audit
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
 
+
+test-suite h-kernel-editor-actual-append-test
+    type:             exitcode-stdio-1.0
+    main-is:          EditorActualAppendSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-editor
+                    , text
+                    , time
+                    , QuickCheck
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-test
     type:             exitcode-stdio-1.0
