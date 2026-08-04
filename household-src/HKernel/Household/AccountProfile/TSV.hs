@@ -11,14 +11,25 @@
 -- accounting type must agree in both directions. An explicitly declared Actual
 -- default Commodity must agree with retained evidence; an omitted per-Account
 -- default does not contradict the retained compatibility source.
+--
+-- This module also owns the read-only migration shadow from admitted retained
+-- profiles to the strict declaration-only Account Journal syntax. That
+-- projection carries only Account identity, AccountType, and optional default
+-- Commodity. It does not move policy metadata or writer authority.
 module HKernel.Household.AccountProfile.TSV
   ( AccountProfileTSVError(..)
   , parseRetainedAccountProfiles
   , validateRetainedAccountProfileRegistry
   , admitRetainedAccountProfiles
+  , AccountJournalShadowError(..)
+  , projectRetainedAccountDeclarations
+  , renderAccountDeclarationsShadow
+  , renderRetainedAccountJournalShadow
+  , validateRetainedAccountJournalShadow
   ) where
 
 import Data.Either (partitionEithers)
+import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
@@ -26,8 +37,9 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import HKernel.Account
+import HKernel.Account.Journal (parseAccountJournal)
 import HKernel.Household.AccountProfile
-import HKernel.Money (mkCommodity)
+import HKernel.Money (commodityCode, mkCommodity)
 
 -- | Source-local diagnostic that retains coordinates but never a complete
 -- private row.
@@ -41,6 +53,18 @@ data ParsedProfile = ParsedProfile
   { parsedProfileLine  :: Int
   , parsedProfileValue :: RetainedAccountProfile
   } deriving (Eq, Show)
+
+-- | Privacy-preserving failure from rendering and re-admitting one shadow.
+--
+-- The constructor identifies only the failed declaration coordinate. It does
+-- not retain Account names, source rows, or rendered Journal text, so a private
+-- validation gate can report the failure kind without publishing source data.
+data AccountJournalShadowError
+  = AccountJournalShadowParseRejected Int
+  | AccountJournalShadowAccountSetMismatch
+  | AccountJournalShadowAccountTypeMismatch
+  | AccountJournalShadowDefaultCommodityMismatch
+  deriving (Eq, Show)
 
 -- | Parse the retained TSV syntax and classify every admitted row.
 --
@@ -151,6 +175,98 @@ admitRetainedAccountProfiles actualRegistry input = do
   profiles <- parseRetainedAccountProfiles input
   validateRetainedAccountProfileRegistry actualRegistry profiles
   Right profiles
+
+-- | Project only the declaration coordinates owned by @accounts.journal@.
+--
+-- Ordering is explicit and source-independent. Neither TSV row order nor the
+-- internal ordering of the input 'Map' is treated as migration evidence.
+projectRetainedAccountDeclarations
+  :: Map Account RetainedAccountProfile
+  -> [AccountDeclaration]
+projectRetainedAccountDeclarations =
+  sortDeclarations
+    . map retainedAccountDeclaration
+    . Map.elems
+
+-- | Render declarations in canonical Account identity order.
+--
+-- Every current 'AccountDeclaration' is representable because Account and
+-- Commodity smart constructors have already excluded whitespace and control
+-- shapes that this Journal syntax cannot carry. Exhaustive AccountType matching
+-- makes a future unhandled category a compile-time failure.
+renderAccountDeclarationsShadow :: [AccountDeclaration] -> Text
+renderAccountDeclarationsShadow declarations =
+  T.intercalate "\n" (map renderDeclaration (sortDeclarations declarations))
+
+-- | Render admitted retained profiles as a deterministic declaration Journal.
+renderRetainedAccountJournalShadow
+  :: Map Account RetainedAccountProfile
+  -> Text
+renderRetainedAccountJournalShadow =
+  renderAccountDeclarationsShadow . projectRetainedAccountDeclarations
+
+-- | Render, parse with the existing strict Account Journal owner, and require
+-- exact declaration parity.
+--
+-- The comparison separates Account identity, AccountType, and default
+-- Commodity so a failure can be reported without embedding private values.
+validateRetainedAccountJournalShadow
+  :: Map Account RetainedAccountProfile
+  -> Either (NonEmpty AccountJournalShadowError) ()
+validateRetainedAccountJournalShadow profiles =
+  case parseAccountJournal rendered of
+    Left errors ->
+      Left (AccountJournalShadowParseRejected (NonEmpty.length errors)
+        NonEmpty.:| [])
+    Right registry ->
+      case NonEmpty.nonEmpty
+          (declarationParityErrors expected (accountDeclarations registry)) of
+        Just errors -> Left errors
+        Nothing -> Right ()
+  where
+    expected = projectRetainedAccountDeclarations profiles
+    rendered = renderAccountDeclarationsShadow expected
+
+sortDeclarations :: [AccountDeclaration] -> [AccountDeclaration]
+sortDeclarations = sortOn (accountName . declaredAccount)
+
+renderDeclaration :: AccountDeclaration -> Text
+renderDeclaration declaration = T.unlines
+  ( [ "account " <> accountName (declaredAccount declaration)
+    , "  type: " <> renderAccountType (declaredAccountType declaration)
+    ]
+    ++ maybe []
+      (pure . ("  commodity: " <>) . commodityCode)
+      (declaredAccountDefaultCommodity declaration)
+  )
+
+renderAccountType :: AccountType -> Text
+renderAccountType accountType = case accountType of
+  Asset     -> "Asset"
+  Liability -> "Liability"
+  Equity    -> "Equity"
+  Income    -> "Income"
+  Expense   -> "Expense"
+  Budget    -> "Budget"
+
+declarationParityErrors
+  :: [AccountDeclaration]
+  -> [AccountDeclaration]
+  -> [AccountJournalShadowError]
+declarationParityErrors expected actual
+  | expectedAccounts /= actualAccounts =
+      [AccountJournalShadowAccountSetMismatch]
+  | otherwise =
+      [ AccountJournalShadowAccountTypeMismatch
+      | map declaredAccountType expected /= map declaredAccountType actual
+      ]
+      ++ [ AccountJournalShadowDefaultCommodityMismatch
+         | map declaredAccountDefaultCommodity expected
+             /= map declaredAccountDefaultCommodity actual
+         ]
+  where
+    expectedAccounts = map declaredAccount expected
+    actualAccounts = map declaredAccount actual
 
 parseRow
   :: (Int, Text)
