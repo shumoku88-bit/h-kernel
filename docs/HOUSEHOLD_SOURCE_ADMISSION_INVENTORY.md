@@ -25,7 +25,9 @@ stable accounts.tsv compatibility admission
 
 Journal、Plan Journal、application source selection、Budget policy、Household policy、Daily Target scope、Household Issue、Household Budget movement、retained Account profileには名前付きadmission ownerがある。
 
-`HKernel.Household.AccountProfile.TSV`が`accounts.tsv`のsyntax、semantic classification、Actual Journal registry parityを所有する。Household Report compositionはstable adapterを呼び、`AccountProfileTSVError`を既存`HouseholdSourceError`へ翻訳するだけである。
+`HKernel.Household.AccountProfile.TSV`が`accounts.tsv`のsyntax、semantic classification、Actual Journal registry compatibility parityを所有する。同じownerは、admitted profileからAccount declarationだけをstable orderで`accounts.journal` shadowへ写し、既存`parseAccountJournal`でexact declaration parityを確認するread-only migration boundaryも所有する。
+
+Household Report compositionはstable adapterを呼び、`AccountProfileTSVError`を既存`HouseholdSourceError`へ翻訳するだけである。shadow conversionはReport compositionやcurrent readerへ接続されていない。
 
 Spike内にはcurrent-format source syntax parserが残っていない。同じTSV系surfaceを一つのgeneric parserとして扱わず、それぞれの意味に対応するownerへ移している。
 
@@ -33,7 +35,7 @@ Spike内にはcurrent-format source syntax parserが残っていない。同じT
 
 | Source | 現在の入口 | typed output | 現在の役割 | 隠れた依存 | ownership |
 |---|---|---|---|---|---|
-| `accounts.tsv` | `admitRetainedAccountProfiles` | `Map Account RetainedAccountProfile` | Account declaration、Budget policy evidence、Household policy evidence、unknown metadataを分離し、Actual Journal registryと双方向に照合する | `AccountRegistry`、AccountType、default Commodity、retained compatibility metadata | stable `HKernel.Household.AccountProfile.TSV` |
+| `accounts.tsv` | `admitRetainedAccountProfiles` | `Map Account RetainedAccountProfile` | Account declaration、Budget policy evidence、Household policy evidence、unknown metadataを分離し、Actual Journal registryと双方向に照合する。declaration座標だけのdeterministic shadowを生成できる | `AccountRegistry`、AccountType、default Commodity、retained compatibility metadata、`parseAccountJournal` | stable `HKernel.Household.AccountProfile.TSV` |
 | `config.tsv` | `parseApplicationConfig` | `ApplicationConfig` | `ACTUAL_JOURNAL_FILE=actual.journal`という運用上のsource選択を確認する | file path、application startup、未知keyと重複keyの現在挙動 | stable `HKernel.Application.Config` |
 | `budget_alloc.tsv` | `parseHouseholdBudgetMovements` | `[HouseholdBudgetMovement]` | retained allocation rowをEntitlementとBackingが共有するmovement factへ変換する | Account、exact Amount、physical line coordinate | stable `HKernel.Household.BudgetMovement.TSV` |
 | `issues.tsv` | `parseHouseholdIssues` | `[HouseholdIssue]` | user-authored household matterをtyped Issueへadmitする | `HouseholdIssue` smart constructorだけ。Journal、Account registry、Budget policyへ依存しない | stable `HKernel.Household.Issue.TSV` |
@@ -82,6 +84,28 @@ accounts.tsv Text
 source-local errorはprivate rowを保持せず、source名、physical line、messageだけを返す。duplicate Account、duplicate metadata、malformed field、unsupported role、invalid Commodity、semantic classification failureをadmission境界で拒否する。
 
 Household Report compositionはstable errorを`HouseholdSourceError`へ翻訳し、TSV field、role、Commodity、registry reconciliationを再実装しない。Spike-local `AccountFact`、`parseAccounts`、`parseAccountMetadata`、`parseRole`、旧registry gateは削除済みである。
+
+### CURRENT declaration shadow
+
+Account declarationだけのread-only shadow conversionは同じstable ownerに置く。
+
+```text
+Map Account RetainedAccountProfile
+  -> projectRetainedAccountDeclarations
+  -> Account identityによるstable ordering
+  -> renderRetainedAccountJournalShadow
+  -> accounts.journal shadow Text
+  -> parseAccountJournal
+  -> exact AccountDeclaration parity
+```
+
+shadowはAccount identity、`AccountType`、optional default Commodityだけを運ぶ。retained sourceにCommodity evidenceがある場合は、各Accountの`commodity:` metadataとして必ず明示する。global `commodity` directiveは生成しない。
+
+rendererはsource row orderや入力`Map`の偶然の内部順序を証拠にせず、Account identityで明示的に並べる。同じadmitted valueは同じTextを生成し、入力TSVのrow orderを変えても同じTextになる。生成Textは既存`parseAccountJournal`で再admitし、Account集合、identity、AccountType、default Commodityのexact equalityを確認する。
+
+shadow parity errorはfailure coordinateまたはparse error件数だけを保持し、Account名、source row、生成Textを保持しない。これはprivate canonical sourceへ内容非表示で追加検証するための境界であり、public testとCIは独立したsynthetic sourceだけを使う。
+
+このshadowはfileへ保存せず、current reader、Report composition、writer、source selectionへ接続しない。`accounts.journal`の正規source採用を意味しない。
 
 ## `config.tsv`
 
@@ -167,22 +191,22 @@ Spikeはこのerrorを既存の`HouseholdSourceError`へ翻訳し、Report compo
 
 ## 次の依存順
 
-current-format source admissionのownership移動は完了した。Household Report compositionは全sourceを名前付きstable admissionから受け取り、Spikeはtyped compositionとerror translationだけを行う。
-
-次のAccount migration sliceは、現在のreaderを変えずにAccount declarationのdeterministic shadow conversionを置く。
+current-format source admissionのownership移動と、Account declarationだけのdeterministic shadow conversionは完了した。Household Report compositionは全sourceを名前付きstable admissionから受け取り、Spikeはtyped compositionとerror translationだけを行う。
 
 ```text
 retained accounts.tsv
   -> stable Account profile admission
   -> AccountDeclaration projection
-  -> synthetic accounts.journal shadow
+  -> deterministic accounts.journal shadow
   -> parseAccountJournal
   -> exact declaration parity
 ```
 
-compatibility readerではActualの省略されたper-Account Commodityを矛盾とみなさない。一方、生成する`accounts.journal`にはretained Commodity evidenceを明示し、その生成物を再admitした`AccountDeclaration`とprojectionをexact equalityで照合する。
+compatibility readerではActualの省略されたper-Account Commodityを矛盾とみなさない。一方、shadow `accounts.journal`にはretained Commodity evidenceを明示し、その生成物を再admitした`AccountDeclaration`とprojectionをexact equalityで照合する。current compatibility parityとnative target parityは別の条件として維持する。
 
-Account declaration shadow conversionと、retained Budget/Household policy evidenceのTOML移行を同じsliceへ混ぜない。writer authority、private source format、current Report値は別の明示gateまで変更しない。
+次のAccount migration decisionは、private canonical sourceを内容非表示で同じgateへ通すrehearsalと、その証拠を受けたnative source adoptionの可否である。rehearsalはshadow Textを保存せず、成功・失敗と秘密を含まない件数だけを扱う。source adoption、reader切替、writer cutoverはそれぞれ別の明示sliceとする。
+
+Account declaration shadow conversionと、retained Budget/Household policy evidenceのTOML移行を混ぜない。writer authority、private source format、current Report値は別の明示gateまで変更しない。
 
 これは全体ロードマップではない。新しい証拠や設計合意に応じて更新する。
 
