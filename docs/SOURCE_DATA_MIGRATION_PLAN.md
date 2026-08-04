@@ -66,7 +66,22 @@ public h-kernel     code, docs, synthetic evidence only
 
 Household Report compositionはstable adapterを使用し、`AccountProfileTSVError`を既存`HouseholdSourceError`へ翻訳するだけである。Spike-local `AccountFact`、旧`parseAccounts`、metadata parser、role parser、type-only registry gateは削除済みである。private source format、writer authority、target TOML生成はこのcutoverでは変更していない。
 
-将来生成する`accounts.journal`にはretained Commodity evidenceをper-Account metadataとして明示し、`parseAccountJournal`で再admitした`AccountDeclaration`とprojectionをexact equalityで照合する。current compatibility parityとnative target parityを同一の条件へ潰さない。
+同じ`HKernel.Household.AccountProfile.TSV`は、admitted `Map Account RetainedAccountProfile`からAccount declarationだけを射影し、Account identityで明示的に並べたdeterministic `accounts.journal` shadow Textを生成する。生成するAccount directiveは`type:`を必ず持ち、retained Commodity evidenceがある場合は各Accountの`commodity:` metadataとして必ず明示する。global `commodity` directiveへ畳まない。
+
+```text
+retained accounts.tsv
+  -> stable Account profile admission
+  -> AccountDeclaration projection
+  -> deterministic accounts.journal shadow Text
+  -> parseAccountJournal
+  -> exact declaration parity
+```
+
+exact parityはAccount集合、Account identity、`AccountType`、default Commodityを別座標として確認する。同じadmitted valueは同じTextを生成し、source row順序を変えても同じTextになる。生成Textを繰り返しparseしても同じ`AccountRegistry`を得る。optional default Commodityを持たないnative declarationもrendererで表現できる。
+
+shadow parity errorはparse rejection件数または不一致座標の種類だけを保持し、Account名、source row、生成Textを保持しない。public testとCIは独立したsynthetic sourceだけを使う。private canonical sourceの追加rehearsalではshadowをfileへ保存せず、stdout、CI、PR、Issueへ内容を出さず、成功・失敗と秘密を含まない件数だけを扱う。
+
+このshadow conversionはcurrent reader、Report composition、source selection、writerへ接続しない。`accounts.tsv`のretire、`accounts.journal`の正規source採用、Actual JournalのAccount directive削除、writer authority移動は、それぞれ別の明示sliceでのみ行う。current compatibility parityとnative target parityを同一条件へ潰さない。
 
 ### `cycle.tsv`
 
@@ -202,3 +217,5 @@ private canonical sourceへ影響する変更では、内容を出力せず明�
 ```sh
 HKERNEL_LEDGER_DATA_DIR=/absolute/path/to/private-ledger-data ./report all >/dev/null
 ```
+
+Account declaration shadow rehearsalでは、stable Account admission後のprofileをmemory上でrender・parse-backし、shadow Textを保存または出力しない。failure時はAccount集合、AccountType、default Commodity、parse rejectionのどの種類かだけを報告し、値を含めない。
