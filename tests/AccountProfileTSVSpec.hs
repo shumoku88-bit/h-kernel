@@ -7,6 +7,7 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import HKernel.Account
+import HKernel.Account.Journal (parseAccountJournal)
 import HKernel.Actual.Journal
 import HKernel.Budget (envelopeIdText)
 import HKernel.Household.AccountProfile
@@ -19,6 +20,7 @@ main :: IO ()
 main = do
   characterizeSyntaxAndClassification
   characterizeActualRegistryParity
+  characterizeAccountJournalShadow
   characterizeSourceDiagnostics
 
 characterizeSyntaxAndClassification :: IO ()
@@ -129,6 +131,48 @@ characterizeActualRegistryParity = do
       (actualRegistry actualWithAdditionalAccount)
       validAccountsTSV)
 
+characterizeAccountJournalShadow :: IO ()
+characterizeAccountJournalShadow = do
+  let profiles = mustRight (parseRetainedAccountProfiles validAccountsTSV)
+      reorderedProfiles =
+        mustRight (parseRetainedAccountProfiles reorderedAccountsTSV)
+      shadow = mustRight (renderRetainedAccountJournalShadow profiles)
+      parsedRegistry = mustRight (parseAccountJournal shadow)
+      expectedDeclarations = projectRetainedAccountDeclarations profiles
+      openingEquity = mustRight (mkAccount "equity:opening")
+      declarationWithoutCommodity = declareAccount openingEquity Equity
+      commentAccount = mustRight (mkAccount "assets:cash;archived")
+      unrepresentableDeclaration = declareAccount commentAccount Asset
+
+  assertEqual "shadow text has one stable canonical spelling"
+    expectedAccountJournalShadow
+    shadow
+  assertEqual "the same admitted input renders the same Text repeatedly"
+    shadow
+    (mustRight (renderRetainedAccountJournalShadow profiles))
+  assertEqual "retained TSV row order does not affect shadow Text"
+    shadow
+    (mustRight (renderRetainedAccountJournalShadow reorderedProfiles))
+  assertEqual "parse-back retains the exact declaration collection"
+    expectedDeclarations
+    (accountDeclarations parsedRegistry)
+  assertEqual "repeated parse publishes the same registry"
+    parsedRegistry
+    (mustRight (parseAccountJournal shadow))
+  assertRight "render and parse-back exact parity succeeds"
+    (validateRetainedAccountJournalShadow profiles)
+  assertEqual "optional default Commodity remains optional in native syntax"
+    (T.unlines
+      [ "account equity:opening"
+      , "  type: Equity"
+      ])
+    (mustRight
+      (renderAccountDeclarationsShadow [declarationWithoutCommodity]))
+  assertShadowErrors
+    "an Account that collides with Journal comment syntax is rejected"
+    [AccountJournalShadowUnrepresentableDeclaration 1]
+    (renderAccountDeclarationsShadow [unrepresentableDeclaration])
+
 characterizeSourceDiagnostics :: IO ()
 characterizeSourceDiagnostics = do
   assertErrors "duplicate Account identity reports the repeated physical line"
@@ -206,6 +250,50 @@ validAccountsTSV = T.unlines
       , "envelope_role=dynamic"
       , "budget_group=daily"
       ]
+  ]
+
+reorderedAccountsTSV :: Text
+reorderedAccountsTSV = T.unlines
+  [ T.intercalate "\t"
+      [ "budget:food"
+      , "role=Budget"
+      , "currency=JPY"
+      , "kind=envelope"
+      , "budget=Food"
+      , "envelope_role=dynamic"
+      , "budget_group=daily"
+      ]
+  , T.intercalate "\t"
+      [ "expenses:food"
+      , "role=Expense"
+      , "currency=JPY"
+      , "budget=Food"
+      , "fixed=0"
+      , "spend_class=variable"
+      ]
+  , T.intercalate "\t"
+      [ "assets:cash"
+      , "role=Asset"
+      , "currency=JPY"
+      , "type=liquid"
+      , "budget=Cash"
+      , "future-key=kept"
+      ]
+  ]
+
+expectedAccountJournalShadow :: Text
+expectedAccountJournalShadow = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , ""
+  , "account budget:food"
+  , "  type: Budget"
+  , "  commodity: JPY"
+  , ""
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
   ]
 
 matchingActualJournal :: Text
@@ -338,6 +426,18 @@ assertErrors label expected result = case result of
   Right _ -> do
     putStrLn ("  [FAIL] " ++ label)
     putStrLn "    source was unexpectedly accepted"
+    exitFailure
+
+assertShadowErrors
+  :: String
+  -> [AccountJournalShadowError]
+  -> Either (NonEmpty.NonEmpty AccountJournalShadowError) value
+  -> IO ()
+assertShadowErrors label expected result = case result of
+  Left errors -> assertEqual label expected (NonEmpty.toList errors)
+  Right _ -> do
+    putStrLn ("  [FAIL] " ++ label)
+    putStrLn "    declaration was unexpectedly rendered"
     exitFailure
 
 assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
