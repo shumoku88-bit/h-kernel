@@ -7,9 +7,10 @@
 -- remains after @role@ and @currency@ are consumed. The retained metadata is
 -- then classified by 'HKernel.Household.AccountProfile'.
 --
--- Actual Journal parity is a separate named gate: Account identity, accounting
--- type, and default Commodity must agree in both directions before the profiles
--- are admitted to Household composition.
+-- Actual Journal parity is a separate named gate. Account identity and
+-- accounting type must agree in both directions. An explicitly declared Actual
+-- default Commodity must agree with retained evidence; an omitted per-Account
+-- default does not contradict the retained compatibility source.
 module HKernel.Household.AccountProfile.TSV
   ( AccountProfileTSVError(..)
   , parseRetainedAccountProfiles
@@ -74,8 +75,9 @@ parseRetainedAccountProfiles input =
 -- | Compare retained declarations with the Actual Journal registry.
 --
 -- The relation is total in both directions. Matching Account identity alone is
--- insufficient: accounting type and default Commodity are independent parts of
--- the declaration and are diagnosed separately.
+-- insufficient: accounting type and explicitly declared default Commodity are
+-- independent coordinates. Actual omission means “not asserted here”, not a
+-- contradictory Commodity declaration.
 validateRetainedAccountProfileRegistry
   :: AccountRegistry
   -> Map Account RetainedAccountProfile
@@ -122,18 +124,21 @@ validateRetainedAccountProfileRegistry actualRegistry profiles =
                 <> tshow (declaredAccountType actualDeclaration))
           ]
 
-    commodityErrors sourceDeclaration actualDeclaration
-      | declaredAccountDefaultCommodity sourceDeclaration
-          == declaredAccountDefaultCommodity actualDeclaration = []
-      | otherwise =
-          [ errorAt accountsSource 0
-              ("default Commodity disagrees between accounts.tsv and actual.journal for "
-                <> accountName (declaredAccount sourceDeclaration)
-                <> ": accounts.tsv="
-                <> tshow (declaredAccountDefaultCommodity sourceDeclaration)
-                <> ", actual.journal="
-                <> tshow (declaredAccountDefaultCommodity actualDeclaration))
-          ]
+    commodityErrors sourceDeclaration actualDeclaration =
+      case declaredAccountDefaultCommodity actualDeclaration of
+        Nothing -> []
+        Just actualCommodity
+          | declaredAccountDefaultCommodity sourceDeclaration
+              == Just actualCommodity -> []
+          | otherwise ->
+              [ errorAt accountsSource 0
+                  ("default Commodity disagrees between accounts.tsv and actual.journal for "
+                    <> accountName (declaredAccount sourceDeclaration)
+                    <> ": accounts.tsv="
+                    <> tshow (declaredAccountDefaultCommodity sourceDeclaration)
+                    <> ", actual.journal="
+                    <> tshow (declaredAccountDefaultCommodity actualDeclaration))
+              ]
 
 -- | Admit retained profiles only when syntax, classification, and Actual
 -- Journal declaration parity all succeed.
