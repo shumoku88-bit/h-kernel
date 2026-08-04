@@ -1,7 +1,7 @@
 # Household source admission inventory
 
 ステータス: 現在状態のownership inventory  
-更新日: 2026-08-04
+更新日: 2026-08-05
 
 ## 目的
 
@@ -18,14 +18,14 @@ stable application config admission
 stable daily_target_scope.tsv admission
 stable issues.tsv admission
 stable budget_alloc.tsv admission
-remaining current-format admission
+retained accounts.tsv compatibility admission
   -> HKernel.Spike.HouseholdReport
   -> HouseholdReportSurface
 ```
 
 Journal、Plan Journal、application source selection、Budget policy、Household policy、Daily Target scope、Household Issue、Household Budget movementには名前付きadmission ownerがある。
 
-Spike内に残るcurrent-format admissionは`accounts.tsv`だけである。
+`HKernel.Household.AccountProfile.TSV`は`accounts.tsv`のstable syntax、semantic classification、Actual Journal registry parityを所有する。現在のHousehold Report compositionはまだSpike内の旧`parseAccounts`を呼ぶため、runtime切替と旧parser削除は次の有限sliceで行う。
 
 同じTSV系surfaceを一つのgeneric parserとして扱わず、それぞれの意味に対応するownerへ移している。
 
@@ -33,7 +33,7 @@ Spike内に残るcurrent-format admissionは`accounts.tsv`だけである。
 
 | Source | 現在の入口 | typed output | 現在の役割 | 隠れた依存 | ownership |
 |---|---|---|---|---|---|
-| `accounts.tsv` | `parseAccounts` | `Map Account AccountFact` | retained Account metadataをadmitし、Actual Journal registryと双方向に照合する | `AccountRegistry`、Account role、将来のCommodity evidence、互換metadata | Spike |
+| `accounts.tsv` | stable `parseRetainedAccountProfiles` / `admitRetainedAccountProfiles`; current Reportは旧`parseAccounts` | `Map Account RetainedAccountProfile` | Account declaration、Budget policy evidence、Household policy evidence、unknown metadataを分離し、Actual Journal registryと双方向に照合する | `AccountRegistry`、AccountType、default Commodity、retained compatibility metadata | stable adapter。Report composition cutover pending |
 | `config.tsv` | `parseApplicationConfig` | `ApplicationConfig` | `ACTUAL_JOURNAL_FILE=actual.journal`という運用上のsource選択を確認する | file path、application startup、未知keyと重複keyの現在挙動 | stable `HKernel.Application.Config` |
 | `budget_alloc.tsv` | `parseHouseholdBudgetMovements` | `[HouseholdBudgetMovement]` | retained allocation rowをEntitlementとBackingが共有するmovement factへ変換する | Account、exact Amount、physical line coordinate | stable `HKernel.Household.BudgetMovement.TSV` |
 | `issues.tsv` | `parseHouseholdIssues` | `[HouseholdIssue]` | user-authored household matterをtyped Issueへadmitする | `HouseholdIssue` smart constructorだけ。Journal、Account registry、Budget policyへ依存しない | stable `HKernel.Household.Issue.TSV` |
@@ -51,18 +51,36 @@ Spike内に残るcurrent-format admissionは`accounts.tsv`だけである。
 - 任意の`type`
 - 任意の`budget`
 - 任意の`budget_group`
+- 任意の`envelope_role`
+- 任意の`fixed`
+- 任意の`spend_class`
+- 未分類の任意metadata
 
-現在のregistry gateは次を確認する。
+stable admissionは`role`と`currency`を`AccountDeclaration`へ変換し、それ以外のmetadataを`HKernel.Household.AccountProfile`へ渡す。unknown keyとAccountTypeに適用できない既知keyは削除せず、unclassified metadataとして保持する。
+
+stable registry gateは次を確認する。
 
 - `accounts.tsv`の全Accountが`actual.journal`に宣言されている
 - `actual.journal`の全Accountが`accounts.tsv`に存在する
 - Account roleが一致する
+- default Commodityが一致する
 
-`currency`はtyped `Commodity`としてadmitされるが、現在のregistry gateではActual Journal declarationとのCommodity一致を照合していない。これは移動時に推測で補わず、Commodity evidenceをどのownerが照合するか合意してから扱う。
+AccountTypeとdefault Commodityは別の座標として診断する。一方が一致しても、もう一方の不一致を隠さない。
 
-### 現在地
+### CURRENT owner
 
-Account identityとaccounting typeの正規ownerはJournal側にあり、`accounts.tsv`にはretained household metadataもある。物理rowをそのままstable ownerへ移す前に、正規Account declarationと互換metadataの境界を決める必要がある。
+```text
+accounts.tsv Text
+  -> HKernel.Household.AccountProfile.TSV
+  -> AccountDeclaration + retained metadata
+  -> HKernel.Household.AccountProfile
+  -> Map Account RetainedAccountProfile
+  -> Actual Journal AccountRegistry parity
+```
+
+source-local errorはprivate rowを保持せず、source名、physical line、messageだけを返す。duplicate Account、duplicate metadata、malformed field、unsupported role、invalid Commodity、semantic classification failureをadmission境界で拒否する。
+
+Household Report compositionはまだ旧Spike parserを使う。stable adapterへ切り替えるsliceではReport値を変えず、`AccountFact`、`parseAccounts`、`parseAccountMetadata`、`parseRole`、旧registry gateを削除する。
 
 ## `config.tsv`
 
@@ -148,9 +166,15 @@ Spikeはこのerrorを既存の`HouseholdSourceError`へ翻訳し、Report compo
 
 ## 次の依存順
 
-現時点でSpikeに残るadmissionは`accounts.tsv`だけである。
+次のfinite sliceはHousehold Report compositionをstable Account profile adapterへ切り替え、Spike内の重複parserと型だけを削除する。
 
-次のfinite sliceでは、Account declarationとretained household metadataの境界、Commodity evidenceの照合ownerを先に合意し、`accounts.tsv`の物理rowをそのまま安定ownerへ移すと仮定しない。
+```text
+HKernel.Spike.HouseholdReport
+  old: parseAccounts + validateRegistry
+  new: admitRetainedAccountProfiles
+```
+
+この切替ではprivate source format、Report値、target source、writer authorityを変更しない。切替後に初めて、`accounts.journal`へのdeterministic shadow conversionとretained policy evidenceの移行先を別sliceで扱う。
 
 これは全体ロードマップではない。新しい証拠や設計合意に応じて更新する。
 
