@@ -64,6 +64,7 @@ data ActualEditIntent = ActualEditIntent
   { intentDate        :: Day
   , intentDescription :: Text
   , intentPostings    :: NonEmpty IntentPosting
+  , intentMetadata    :: [(Text, Text)]
   } deriving (Eq, Show)
 
 data IntentPosting = IntentPosting
@@ -95,7 +96,7 @@ prepareActualAppend existingSource intent = do
   postings <- resolvePostings (journalAccountRegistry (actualJournalValue journal)) (intentPostings intent)
   txn <- buildTransaction intent postings
   
-  let preview = buildPreview existingSource txn
+  let preview = buildPreview (intentMetadata intent) existingSource txn
   
   _ <- first (pure . CandidateSourceParseError) (parseActualJournal (candidateCompleteSource preview))
   pure preview
@@ -115,14 +116,14 @@ buildTransaction intent postings =
   first (pure . ValidationError) $
     mkTransaction (intentDate intent) (intentDescription intent) postings
 
-buildPreview :: Text -> Transaction -> ActualAppendPreview
-buildPreview existingSource txn =
+buildPreview :: [(Text, Text)] -> Text -> Transaction -> ActualAppendPreview
+buildPreview metadata existingSource txn =
   ActualAppendPreview
     { candidateBlock = block
     , candidateCompleteSource = appendBlock existingSource block
     }
   where
-    block = renderTransaction txn
+    block = renderTransaction metadata txn
 
 resolvePosting
   :: AccountRegistry
@@ -138,12 +139,16 @@ resolvePosting registry (IntentPosting acc qty mComm) = do
 
   pure (mkPosting acc (mkAmount commodity qty))
 
-renderTransaction :: Transaction -> Text
-renderTransaction txn =
+renderTransaction :: [(Text, Text)] -> Transaction -> Text
+renderTransaction meta txn =
   T.pack (formatTime defaultTimeLocale "%Y-%m-%d" (transactionDate txn))
   <> " " <> transactionDescription txn <> "\n"
+  <> (if null meta then "" else T.intercalate "\n" (map renderMeta meta) <> "\n")
   <> T.intercalate "\n" (map renderPosting (NonEmpty.toList (transactionPostings txn)))
   <> "\n"
+
+renderMeta :: (Text, Text) -> Text
+renderMeta (k, v) = "    ; " <> k <> ": " <> v
 
 renderPosting :: Posting -> Text
 renderPosting p =

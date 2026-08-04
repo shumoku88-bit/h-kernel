@@ -7,18 +7,19 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Time.Calendar (Day)
+import Data.Time.Calendar (Day, fromGregorian)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 
-import HKernel.Account (AccountType(..), mkAccount, declareAccount, declareAccountWithDefaultCommodity, AccountDeclaration)
+import HKernel.Account (AccountType(..), mkAccount, declareAccount, declareAccountWithDefaultCommodity, AccountDeclaration, accountName)
 import HKernel.Editor.ActualAppend (ActualEditIntent(..), IntentPosting(..), prepareActualAppend, candidateBlock, candidateCompleteSource)
 import HKernel.Editor.ActualReverse
 import HKernel.Editor.ActualAccountAppend
 import HKernel.Editor.BudgetMovementAppend
 import HKernel.Editor.IssueAppend
+import HKernel.Editor.PlanLifecycle
 import HKernel.Editor.ActualWriter
 import HKernel.Money (mkCommodity, parseQuantity)
 import HKernel.Plan.Completion (mkActualTransactionId)
@@ -47,6 +48,8 @@ data EditorCommand
   | AccountCmd FilePath AccountDeclaration
   | BudgetMovementCmd FilePath HouseholdBudgetMovement
   | IssueCmd FilePath IssueAppendIntent
+  | PlanAddCmd FilePath FilePath PlanAddIntent
+  | PlanFinishCmd FilePath FilePath PlanFinishIntent
 
 parseDate :: String -> IO Day
 parseDate dateStr = case parseTimeM True defaultTimeLocale "%Y-%m-%d" dateStr of
@@ -58,7 +61,7 @@ parseCommand ("append":journalFile:dateStr:desc:postingArgs) = do
   date <- parseDate dateStr
   postingList <- parsePostings postingArgs
   when (null postingList) (die "At least one posting is required.")
-  pure (AppendCmd journalFile (ActualEditIntent date (T.pack desc) (NonEmpty.fromList postingList)))
+  pure (AppendCmd journalFile (ActualEditIntent date (T.pack desc) (NonEmpty.fromList postingList) []))
 parseCommand ("reverse":journalFile:targetIdStr:dateStr:descWords) = do
   date <- parseDate dateStr
   targetId <- either (die . show) pure (mkActualTransactionId (T.pack targetIdStr))
@@ -93,7 +96,58 @@ parseCommand ("issue":tsvFile:idStr:statusStr:dateStr:category:title:qtyStr:comm
       pure (Just (mkAmount comm qty))
   let intent = IssueAppendIntent issueId status date (T.pack category) (T.pack title) amount (T.pack (unwords detailsWords))
   pure (IssueCmd tsvFile intent)
-parseCommand _ = die "Usage:\n  h-kernel-editor-cli append <journal.txt> <YYYY-MM-DD> <desc> [<acct> <qty> <comm> ...] [--commit]\n  h-kernel-editor-cli reverse <journal.txt> <event-id> <YYYY-MM-DD> <desc...> [--commit]\n  h-kernel-editor-cli account <journal.txt> <account> <type> [<commodity>] [--commit]\n  h-kernel-editor-cli budget <budget_alloc.tsv> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm> [--commit]\n  h-kernel-editor-cli issue <issues.tsv> <id> <status> <YYYY-MM-DD> <category> <title> <qty|-> <comm|-> <details...> [--commit]"
+parseCommand ("plan":"add":planFile:actualFile:args) = do
+  let dummyPosting = IntentPosting (either (error "") id (mkAccount "dummy:dummy")) (either (error "") id (parseQuantity "0")) Nothing
+  let emptyIntent = PlanAddIntent (fromGregorian 2000 1 1) "" (dummyPosting NonEmpty.:| []) Nothing Nothing
+  intent <- parsePlanAddArgs args emptyIntent
+  when (isDummyPosting (NonEmpty.head (addPostings intent))) (die "At least one posting is required for plan add.")
+  when (T.null (addDescription intent)) (die "--description is required for plan add.")
+  pure (PlanAddCmd planFile actualFile intent)
+parseCommand ("plan":"finish":planFile:actualFile:args) = do
+  let emptyIntent = PlanFinishIntent "" (fromGregorian 2000 1 1) Nothing
+  intent <- parsePlanFinishArgs args emptyIntent
+  when (T.null (finishPlanId intent)) (die "--id is required for plan finish.")
+  pure (PlanFinishCmd planFile actualFile intent)
+parseCommand _ = die "Usage:\n  h-kernel-editor-cli append <journal.txt> <YYYY-MM-DD> <desc> [<acct> <qty> <comm> ...] [--commit]\n  h-kernel-editor-cli reverse <journal.txt> <event-id> <YYYY-MM-DD> <desc...> [--commit]\n  h-kernel-editor-cli account <journal.txt> <account> <type> [<commodity>] [--commit]\n  h-kernel-editor-cli budget <budget_alloc.tsv> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm> [--commit]\n  h-kernel-editor-cli issue <issues.tsv> <id> <status> <YYYY-MM-DD> <category> <title> <qty|-> <comm|-> <details...> [--commit]\n  h-kernel-editor-cli plan add <plan.journal> <actual.journal> --date YYYY-MM-DD --description DESC --posting ACCT QTY COMM ... [--id ID] [--series SERIES] [--commit]\n  h-kernel-editor-cli plan finish <plan.journal> <actual.journal> --id ID --actual-date YYYY-MM-DD [--actual-amount QTY] [--commit]"
+
+isDummyPosting :: IntentPosting -> Bool
+isDummyPosting p = accountName (intentAccount p) == "dummy:dummy"
+
+parsePlanAddArgs :: [String] -> PlanAddIntent -> IO PlanAddIntent
+parsePlanAddArgs [] intent = pure intent
+parsePlanAddArgs ("--date":d:rest) intent = do
+  date <- parseDate d
+  parsePlanAddArgs rest intent { addDate = date }
+parsePlanAddArgs ("--description":desc:rest) intent =
+  parsePlanAddArgs rest intent { addDescription = T.pack desc }
+parsePlanAddArgs ("--posting":acct:qty:comm:rest) intent = do
+  a <- either (die . show) pure (mkAccount (T.pack acct))
+  q <- either (die . show) pure (parseQuantity (T.pack qty))
+  c <- either (die . show) pure (mkCommodity (T.pack comm))
+  let p = IntentPosting a q (Just c)
+  let ps = case addPostings intent of
+             p0 NonEmpty.:| [] | isDummyPosting p0 -> p NonEmpty.:| []
+             ps' -> NonEmpty.fromList (NonEmpty.toList ps' ++ [p])
+  parsePlanAddArgs rest intent { addPostings = ps }
+parsePlanAddArgs ("--series":s:rest) intent =
+  parsePlanAddArgs rest intent { addSeries = Just (T.pack s) }
+parsePlanAddArgs ("--id":i:rest) intent =
+  parsePlanAddArgs rest intent { addRequestedId = Just (T.pack i) }
+parsePlanAddArgs ("--commit":rest) intent = parsePlanAddArgs rest intent
+parsePlanAddArgs (flag:_) _ = die $ "Unknown plan add flag: " <> flag
+
+parsePlanFinishArgs :: [String] -> PlanFinishIntent -> IO PlanFinishIntent
+parsePlanFinishArgs [] intent = pure intent
+parsePlanFinishArgs ("--id":i:rest) intent =
+  parsePlanFinishArgs rest intent { finishPlanId = T.pack i }
+parsePlanFinishArgs ("--actual-date":d:rest) intent = do
+  date <- parseDate d
+  parsePlanFinishArgs rest intent { finishActualDate = date }
+parsePlanFinishArgs ("--actual-amount":qty:rest) intent = do
+  q <- either (die . show) pure (parseQuantity (T.pack qty))
+  parsePlanFinishArgs rest intent { finishActualAmount = Just q }
+parsePlanFinishArgs ("--commit":rest) intent = parsePlanFinishArgs rest intent
+parsePlanFinishArgs (flag:_) _ = die $ "Unknown plan finish flag: " <> flag
 
 parseIssueStatus :: String -> IO IssueStatus
 parseIssueStatus "open" = pure Open
@@ -167,6 +221,28 @@ main = do
           executePreview tsvFile existingSource
             (HKernel.Editor.IssueAppend.candidateBlock preview)
             (HKernel.Editor.IssueAppend.candidateCompleteSource preview)
+            commitFlag
+
+    PlanAddCmd planFile actualFile intent -> do
+      planSource <- TIO.readFile planFile
+      actualSource <- TIO.readFile actualFile
+      case preparePlanAdd planSource actualSource intent of
+        Left errs -> die $ "Validation errors:\n" <> unlines (map show (NonEmpty.toList errs))
+        Right preview ->
+          executePreview planFile planSource
+            (HKernel.Editor.PlanLifecycle.addCandidateBlock preview)
+            (HKernel.Editor.PlanLifecycle.addCandidateCompleteSource preview)
+            commitFlag
+
+    PlanFinishCmd planFile actualFile intent -> do
+      planSource <- TIO.readFile planFile
+      actualSource <- TIO.readFile actualFile
+      case preparePlanFinish planSource actualSource intent of
+        Left errs -> die $ "Validation errors:\n" <> unlines (map show (NonEmpty.toList errs))
+        Right preview ->
+          executePreview actualFile actualSource
+            (HKernel.Editor.PlanLifecycle.finishCandidateBlock preview)
+            (HKernel.Editor.PlanLifecycle.finishCandidateCompleteSource preview)
             commitFlag
 
 executePreview :: FilePath -> Text -> Text -> Text -> Bool -> IO ()
