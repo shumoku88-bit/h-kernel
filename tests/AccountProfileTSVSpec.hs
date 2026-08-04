@@ -83,6 +83,12 @@ characterizeActualRegistryParity = do
   assertRight "matching type and default Commodity pass bidirectional parity"
     (admitRetainedAccountProfiles registry validAccountsTSV)
 
+  assertRight
+    "omitted Actual per-Account Commodity does not contradict retained evidence"
+    (admitRetainedAccountProfiles
+      (actualRegistry actualWithoutPerAccountCommodities)
+      validAccountsTSV)
+
   assertErrors "Account type mismatch is diagnosed independently"
     [ AccountProfileTSVError
         "accounts.tsv"
@@ -209,6 +215,13 @@ matchingActualJournal = declarationJournal
   , ("budget:food", "Budget", "JPY")
   ]
 
+actualWithoutPerAccountCommodities :: Text
+actualWithoutPerAccountCommodities = declarationJournalWithoutCommodities
+  [ ("assets:cash", "Asset")
+  , ("expenses:food", "Expense")
+  , ("budget:food", "Budget")
+  ]
+
 typeMismatchActualJournal :: Text
 typeMismatchActualJournal = declarationJournal
   [ ("assets:cash", "Asset", "JPY")
@@ -245,6 +258,16 @@ declarationJournal declarations = T.unlines
       [ "account " <> account
       , "  ; type: " <> accountType
       , "  ; commodity: " <> commodity
+      , ""
+      ]
+
+declarationJournalWithoutCommodities :: [(Text, Text)] -> Text
+declarationJournalWithoutCommodities declarations = T.unlines
+  (["commodity JPY", ""] ++ concatMap declarationBlock declarations)
+  where
+    declarationBlock (account, accountType) =
+      [ "account " <> account
+      , "  ; type: " <> accountType
       , ""
       ]
 
