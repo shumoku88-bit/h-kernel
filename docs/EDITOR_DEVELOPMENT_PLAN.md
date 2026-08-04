@@ -28,34 +28,36 @@ coding assistantは、作業開始時にこの文書を読み、次を同じ現�
 ```text
 canonical source     separate private data repository
 current writer       bqn-ledger editor
-current h-kernel role strict reader and report engine
+current h-kernel role reader/report engine + pure Actual append preview
 h-kernel write path  none
-editor component     not yet implemented
+editor component     h-kernel-editor with ActualAppend
 ```
 
 - 外部private directoryは一つだけの正規世帯sourceである。
 - bqn-ledger editorが現在のwrite effectを所有する。
-- h-kernelはtyped admission、会計計算、Reportを所有するが、正規世帯sourceを書き換えない。
-- h-kernel内には、editor intent、append preview、safe writer、editor CLI、interactive UIのstable ownerはまだない。
-- h-kernel editorは同一repository内の独立Cabal componentとして育てる。別repositoryには分けない。
+- `HKernel.Editor.ActualAppend`がtyped intent、candidate native block、complete-source re-admission、dry-run previewを所有する。
+- previewは元sourceを変更せず、Account、Commodity、exact Quantity、posting balanceを既存core ownerで検証する。
+- safe writer、editor CLI、interactive UIはまだ実装していない。
 - writer authorityは、明示的なcutover PRがmergeされるまで移動しない。
 
 詳細なsource ownershipは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)が所有する。
 
 ### NEXT
 
-次の有限sliceは、独立した`h-kernel-editor` componentを置き、Actual Journalの**純粋なappend preview**を実装することである。
+次の有限sliceは、E1のvalidated candidateを受け取るActual専用のsafe single-file writerである。
 
 ```text
-existing actual.journal Text
-  + typed edit intent
-  -> validated native Journal block
-  -> candidate complete source
-  -> complete-source re-admission
-  -> dry-run preview
+validated candidate
+  + expected old bytes
+  -> stale check
+  -> ignored backup
+  -> sibling temporary file
+  -> atomic publish
+  -> post-admission
+  -> success or recoverable failure
 ```
 
-このsliceはファイルを書き換えない。backup、atomic rename、stale check、confirmation、restore、UIを混ぜない。
+command surface、interactive UI、writer authority cutover、他sourceのmutationを混ぜない。
 
 ## 3. bqn-ledgerとの関係
 
