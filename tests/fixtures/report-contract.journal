@@ -1,0 +1,55 @@
+account assets:cash
+    type: asset
+    commodity: JPY
+
+account equity:opening
+    type: equity
+    commodity: JPY
+
+account income:salary
+    type: income
+    commodity: JPY
+
+account income:refund
+    type: income
+    commodity: JPY
+
+account expenses:food
+    type: expense
+    commodity: JPY
+
+account expenses:travel
+    type: expense
+    commodity: JPY
+
+2026-04-01 Opening balance
+    assets:cash  10000 JPY
+    equity:opening
+
+2026-04-15 Spring food
+    expenses:food  400 JPY
+    assets:cash
+
+2026-06-20 Travel
+    expenses:travel  800 JPY
+    assets:cash
+
+2026-07-01 Salary
+    assets:cash  5000 JPY
+    income:salary
+
+2026-07-10 Food
+    expenses:food  600 JPY
+    assets:cash
+
+2026-07-20 Refund
+    assets:cash  100 JPY
+    income:refund
+
+2026-07-31 Month end food
+    expenses:food  300 JPY
+    assets:cash
+
+2026-08-01 After contract as-of
+    expenses:food  50 JPY
+    assets:cash

@@ -1,0 +1,55 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BIN_DIR=${HKERNEL_REPORT_BIN_DIR:-"$ROOT/.report-bin"}
+BIN="$BIN_DIR/h-kernel"
+RUNS=${RUNS:-5}
+
+case "$RUNS" in
+  ''|*[!0-9]*|0)
+    printf 'RUNS must be a positive integer\n' >&2
+    exit 1
+    ;;
+esac
+
+if [ "$#" -eq 0 ]; then
+  set -- all
+fi
+
+sh "$ROOT/report-build" >/dev/null
+
+TIMINGS=$(mktemp "${TMPDIR:-/tmp}/h_kernel_timings.XXXXXX")
+trap 'rm -f "$TIMINGS"' 0 HUP INT TERM
+
+if ! "$BIN" "$@" >/dev/null; then
+  printf 'report warm-up failed\n' >&2
+  exit 1
+fi
+
+: >"$TIMINGS"
+iteration=1
+while [ "$iteration" -le "$RUNS" ]; do
+  if ! { /usr/bin/time -p "$BIN" "$@" >/dev/null; } 2>>"$TIMINGS"; then
+    printf 'benchmark run %s failed\n' "$iteration" >&2
+    exit 1
+  fi
+  iteration=$((iteration + 1))
+done
+
+printf 'benchmarking optimized report binary with stdout discarded\n'
+printf 'command:'
+printf ' %s' "$@"
+printf '\n'
+awk '
+  $1 == "real" {
+    value = $2; total += value; count += 1
+    if (count == 1 || value < minimum) minimum = value
+    if (count == 1 || value > maximum) maximum = value
+  }
+  END {
+    if (count == 0) exit 1
+    printf "report: runs=%d average=%.3fs min=%.3fs max=%.3fs\n",
+      count, total / count, minimum, maximum
+  }
+' "$TIMINGS"

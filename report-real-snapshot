@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+DATA_DIR=${HKERNEL_LEDGER_DATA_DIR:-}
+BIN_DIR=${HKERNEL_REPORT_BIN_DIR:-"$ROOT/.report-bin"}
+ARTIFACT_DIR="$ROOT/.report-artifacts/real-household-report"
+
+if [ -z "$DATA_DIR" ] && [ -f "$ROOT/ledger-data.local" ]; then
+  DATA_DIR=$(awk 'NF { print; exit }' "$ROOT/ledger-data.local")
+fi
+if [ -z "$DATA_DIR" ]; then
+  printf 'set HKERNEL_LEDGER_DATA_DIR or create ledger-data.local\n' >&2
+  exit 2
+fi
+
+for source in actual.journal accounts.tsv budget_alloc.tsv budget.toml cycle.tsv household.toml plan.journal plan.tsv config.tsv issues.tsv daily_target_scope.tsv; do
+  if [ ! -f "$DATA_DIR/$source" ]; then
+    printf 'required household source is missing: %s\n' "$source" >&2
+    exit 1
+  fi
+done
+
+sh "$ROOT/report-build" >/dev/null
+mkdir -p "$ARTIFACT_DIR"
+(
+  cd "$ROOT"
+  HKERNEL_LEDGER_DATA_DIR="$DATA_DIR" "$BIN_DIR/h-kernel"
+) >"$ARTIFACT_DIR/report.ansi.txt"
+sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g' \
+  "$ARTIFACT_DIR/report.ansi.txt" >"$ARTIFACT_DIR/report.txt"
+
+printf 'canonical household report written under ignored local artifacts:\n'
+printf '  %s\n' "$ARTIFACT_DIR/report.ansi.txt"
+printf '  %s\n' "$ARTIFACT_DIR/report.txt"

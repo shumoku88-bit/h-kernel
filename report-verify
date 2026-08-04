@@ -1,0 +1,118 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BIN_DIR=${HKERNEL_REPORT_BIN_DIR:-"$ROOT/.report-bin"}
+BIN="$BIN_DIR/h-kernel"
+PYTHON=${PYTHON:-python3}
+FIXTURE="$ROOT/tests/fixtures/report-contract.journal"
+CORPUS_DIR="$ROOT/tests/corpus/synthetic-v1"
+CORPUS_JOURNAL="$CORPUS_DIR/synthetic.journal"
+GOLDEN_DIR="$ROOT/tests/golden"
+FIXED_AS_OF=2026-07-31
+
+usage() {
+  cat <<'EOF'
+usage:
+  sh ./report-verify --fixture [--accept]
+  sh ./report-verify --corpus [--accept]
+  sh ./report-verify --observe JOURNAL AS_OF
+
+environment:
+  REPORT_VERIFY_SKIP_BUILD=1  use the binary already present in .report-bin
+  HKERNEL_REPORT_BIN_DIR=DIR  use another binary directory
+EOF
+}
+
+prepare_binary() {
+  if [ "${REPORT_VERIFY_SKIP_BUILD:-0}" != 1 ]; then
+    sh "$ROOT/report-build" >/dev/null
+  fi
+  if [ ! -x "$BIN" ]; then
+    printf 'report binary is missing; run sh ./report-build\n' >&2
+    exit 1
+  fi
+}
+
+validate_as_of() {
+  value=$1
+  case "$value" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) printf 'invalid as-of date: %s; expected YYYY-MM-DD\n' "$value" >&2; exit 2 ;;
+  esac
+  "$PYTHON" -c 'from datetime import date; import sys; date.fromisoformat(sys.argv[1])' "$value"
+}
+
+render_plain() {
+  journal=$1
+  as_of=$2
+  destination=$3
+  journal_dir=$(CDPATH= cd -- "$(dirname -- "$journal")" && pwd)
+  journal_abs="$journal_dir/$(basename -- "$journal")"
+  runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/h_kernel_verify_runtime.XXXXXX")
+  (
+    unset HKERNEL_REPORT_CONFIG
+    unset HKERNEL_LEDGER_DATA_DIR
+    cd "$runtime_dir"
+    "$BIN" "$journal_abs" all "$as_of"
+  ) >"$destination.ansi"
+  rm -rf "$runtime_dir"
+  "$PYTHON" "$ROOT/tools/report_sections.py" strip "$destination.ansi" "$destination"
+  rm -f "$destination.ansi"
+}
+
+verify_contract() {
+  journal=$1
+  golden_name=$2
+  accept=$3
+  work=$(mktemp "${TMPDIR:-/tmp}/h_kernel_report_contract.XXXXXX")
+  trap 'rm -f "$work"' 0 HUP INT TERM
+  render_plain "$journal" "$FIXED_AS_OF" "$work"
+  expected="$GOLDEN_DIR/$golden_name.txt"
+  if [ "$accept" = --accept ]; then
+    cp "$work" "$expected"
+    printf 'accepted %s report snapshot\n' "$golden_name"
+  elif ! diff -u "$expected" "$work"; then
+    printf '%s report contract changed; review the diff instead of regenerating blindly\n' "$golden_name" >&2
+    exit 1
+  else
+    printf '%s report snapshot matches\n' "$golden_name"
+  fi
+}
+
+mode=${1:-}
+case "$mode" in
+  --fixture|--corpus)
+    accept=${2:-}
+    if [ -n "$accept" ] && [ "$accept" != --accept ]; then usage >&2; exit 2; fi
+    prepare_binary
+    if [ "$mode" = --fixture ]; then
+      verify_contract "$FIXTURE" report-contract "$accept"
+    else
+      "$PYTHON" "$ROOT/tools/verify_report_corpus.py" "$CORPUS_DIR/MANIFEST"
+      verify_contract "$CORPUS_JOURNAL" report-corpus-synthetic-v1 "$accept"
+    fi
+    ;;
+  --observe)
+    if [ "$#" -ne 3 ]; then usage >&2; exit 2; fi
+    journal=$2
+    as_of=$3
+    validate_as_of "$as_of"
+    [ -f "$journal" ] || { printf 'journal not found: %s\n' "$journal" >&2; exit 1; }
+    prepare_binary
+    source_sha=$(git -C "$ROOT" rev-parse HEAD)
+    journal_hash=$(git hash-object "$journal")
+    artifact_dir="$ROOT/.report-artifacts/${source_sha}-${journal_hash}-${as_of}"
+    mkdir -p "$artifact_dir"
+    render_plain "$journal" "$as_of" "$artifact_dir/report.txt"
+    {
+      printf 'source_sha=%s\n' "$source_sha"
+      printf 'journal=%s\n' "$journal"
+      printf 'journal_hash=%s\n' "$journal_hash"
+      printf 'as_of=%s\n' "$as_of"
+      printf 'report_config=disabled_by_isolated_working_directory\n'
+    } >"$artifact_dir/evidence.txt"
+    printf 'observation evidence: %s\n' "$artifact_dir"
+    ;;
+  *) usage >&2; exit 2 ;;
+esac

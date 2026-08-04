@@ -1,0 +1,21 @@
+; Public synthetic example. All names, dates, and amounts are fictional.
+
+account assets:demo-wallet
+    type: asset
+    commodity: JPY
+
+account equity:demo-opening
+    type: equity
+    commodity: JPY
+
+account expenses:demo-books
+    type: expense
+    commodity: JPY
+
+2026-01-01 Fictional opening balance
+    assets:demo-wallet  50000 JPY
+    equity:demo-opening
+
+2026-01-08 Fictional book purchase
+    expenses:demo-books  3200 JPY
+    assets:demo-wallet

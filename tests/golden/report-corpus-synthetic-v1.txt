@@ -1,0 +1,160 @@
+== Account Balances (h-kernel Engine) ==
+As of: 2026-07-31
+
+Account                  |                    Balance
+-----------------------------------------------------
+assets:studio-bank       |                652,850 JPY
+assets:travel-wallet     |                  3,070 USD
+equity:exchange          |      16,000 JPY, (100 USD)
+equity:opening           | (480,000 JPY), (2,400 USD)
+expenses:lodging         |                    180 USD
+expenses:materials       |                 24,300 JPY
+expenses:meals           |                  5,100 JPY
+expenses:rail            |                  9,750 JPY
+income:design-sales      |              (210,000 JPY)
+income:translation-sales |                  (750 USD)
+income:workshop-grant    |               (10,000 JPY)
+liabilities:studio-card  |                (8,000 JPY)
+
+Balanced: YES
+
+== Balance Sheet (h-kernel Engine) ==
+As of: 2026-07-31
+
+Assets
+Account              |                Balance
+---------------------------------------------
+assets:studio-bank   |            652,850 JPY
+assets:travel-wallet |              3,070 USD
+Total assets         | 652,850 JPY, 3,070 USD
+
+Liabilities
+Account                 |   Balance
+-----------------------------------
+liabilities:studio-card | 8,000 JPY
+Total liabilities       | 8,000 JPY
+
+Equity
+Account          |                Balance
+-----------------------------------------
+equity:exchange  |  (16,000 JPY), 100 USD
+equity:opening   | 480,000 JPY, 2,400 USD
+Current earnings |   180,850 JPY, 570 USD
+Total equity     | 644,850 JPY, 3,070 USD
+
+
+Balanced: YES (Net Check: 0)
+
+== Profit & Loss Statement (h-kernel Engine) ==
+Period: 2026-07-01..2026-07-31
+
+Income
+Account               |     Amount
+----------------------------------
+income:workshop-grant | 10,000 JPY
+Total Income          | 10,000 JPY
+
+Expenses
+Account                        |                 Amount
+-------------------------------------------------------
+expenses:lodging               |                180 USD
+expenses:materials             |              7,200 JPY
+expenses:meals                 |              3,200 JPY
+expenses:rail                  |              1,350 JPY
+Total Expenses                 |    11,750 JPY, 180 USD
+-------------------------------------------------------
+Net Profit (Income - Expenses) | (1,750 JPY), (180 USD)
+
+
+
+== Daily Flow (Category × Date) ==
+Requested period: through 2026-07-31 | Displayed: 2026-04-18 .. 2026-07-31 (10 flow days) | Max date columns: 14
+
+Dates: 2026-04-18 .. 2026-07-31 | Block 1/1
+Category           |        04-18 |       05-06 |       05-19 |   06-14 |       06-28 |     07-03 |       07-09 |       07-24 |      07-28 |       07-31 |         Window total
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Income             |            0 | 210,000 JPY |           0 | 750 USD |           0 |         0 |           0 |           0 | 10,000 JPY |           0 | 220,000 JPY, 750 USD
+expenses:lodging   |            0 |           0 |           0 |       0 |           0 |   180 USD |           0 |           0 |          0 |           0 |              180 USD
+expenses:materials |   12,500 JPY |           0 |   4,600 JPY |       0 |           0 |         0 |           0 |   7,200 JPY |          0 |           0 |           24,300 JPY
+expenses:meals     |            0 |           0 |   1,900 JPY |       0 |           0 |         0 |   2,400 JPY |     800 JPY |          0 |           0 |            5,100 JPY
+expenses:rail      |            0 |           0 |           0 |       0 |   8,400 JPY |         0 |           0 |           0 |          0 |   1,350 JPY |            9,750 JPY
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Net Flow           | (12,500 JPY) | 210,000 JPY | (6,500 JPY) | 750 USD | (8,400 JPY) | (180 USD) | (2,400 JPY) | (8,000 JPY) | 10,000 JPY | (1,350 JPY) | 180,850 JPY, 570 USD
+
+
+
+== Recent Transactions (Last 5 Transactions) ==
+As of: 2026-07-31
+
+2026-07-31  Fictional month-end rail fare
+Account            |      Amount
+--------------------------------
+expenses:rail      |   1,350 JPY
+assets:studio-bank | (1,350 JPY)
+
+2026-07-28  Fictional workshop grant
+Account               |       Amount
+------------------------------------
+assets:studio-bank    |   10,000 JPY
+income:workshop-grant | (10,000 JPY)
+
+2026-07-24  Fictional three-line supply order
+Account                 |      Amount
+-------------------------------------
+expenses:materials      |   7,200 JPY
+expenses:meals          |     800 JPY
+liabilities:studio-card | (8,000 JPY)
+
+2026-07-17  Fictional mixed-commodity exchange
+Account              |       Amount
+-----------------------------------
+assets:travel-wallet |      100 USD
+equity:exchange      |    (100 USD)
+equity:exchange      |   16,000 JPY
+assets:studio-bank   | (16,000 JPY)
+
+2026-07-09  Fictional lunch meeting
+Account            |      Amount
+--------------------------------
+expenses:meals     |   2,400 JPY
+assets:studio-bank | (2,400 JPY)
+
+
+== Monthly Accounts (Account × Month) ==
+Period: 2026-07-01 .. 2026-07-31 | Displayed months: 1
+
+Account               |                2026-07 |           Period total
+-----------------------------------------------------------------------
+Income                |                        |
+income:workshop-grant |             10,000 JPY |             10,000 JPY
+Total Income          |             10,000 JPY |             10,000 JPY
+Expenses              |                        |
+expenses:lodging      |                180 USD |                180 USD
+expenses:materials    |              7,200 JPY |              7,200 JPY
+expenses:meals        |              3,200 JPY |              3,200 JPY
+expenses:rail         |              1,350 JPY |              1,350 JPY
+Total Expenses        |    11,750 JPY, 180 USD |    11,750 JPY, 180 USD
+-----------------------------------------------------------------------
+Net Profit            | (1,750 JPY), (180 USD) | (1,750 JPY), (180 USD)
+
+
+
+== Cycle Accounts & Comparison Matrix ==
+Status: NOT IMPLEMENTED
+explicit current and previous cycles are not part of the combined report input; use cycle-accounts with two half-open periods
+
+== Daily Target ==
+Status: NOT IMPLEMENTED
+no typed Daily Target model exists for eligible backing, open commitments, target date policy, and commodity-separated allowance
+
+== Planned Transactions ==
+Status: NOT IMPLEMENTED
+Plan admission exists, but no typed source collection or completion projection is connected
+
+== Household Issues ==
+Status: NOT IMPLEMENTED
+HouseholdIssue values exist, but no typed source collection is connected
+
+== Envelope & Backing ==
+Status: NOT AVAILABLE IN COMBINED REPORT
+Envelope entitlement/consumption/remaining requires an explicit external policy; use envelope-budget. Pool backing, commitments, unallocated, and shortage remain NOT IMPLEMENTED.

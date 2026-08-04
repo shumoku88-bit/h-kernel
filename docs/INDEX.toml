@@ -1,0 +1,96 @@
+# repository-audit 用の正規ドキュメント一覧。
+#
+# role は、そのドキュメントが稼働中のリポジトリに属する理由を示す。
+# ライフサイクルと詳細なステータスは各ドキュメント内に残し、ここでは重複させない。
+
+[[documents]]
+path = "docs/REPOSITORY_POLICY.md"
+role = "policy"
+
+[[documents]]
+path = "docs/ARCHITECTURE.md"
+role = "architecture"
+
+[[documents]]
+path = "docs/BALANCE_ALGEBRA.md"
+role = "contract"
+
+[[documents]]
+path = "docs/BUDGET_BACKING_OBSERVATION.md"
+role = "observation"
+
+[[documents]]
+path = "docs/BUDGET_MODEL_OBSERVATION.md"
+role = "observation"
+
+[[documents]]
+path = "docs/BUDGET_PLAN_COMMITMENT_OBSERVATION.md"
+role = "observation"
+
+[[documents]]
+path = "docs/CODE_MAP_AND_DESIGN_SKETCH.md"
+role = "architecture"
+
+[[documents]]
+path = "docs/DAILY_TARGET_POLICY.md"
+role = "contract"
+
+[[documents]]
+path = "docs/FACT_POLICY_PROJECTION_BOUNDARY.md"
+role = "architecture"
+
+[[documents]]
+path = "docs/HASKELL_NATIVE_CODE_POLICY.md"
+role = "policy"
+
+[[documents]]
+path = "docs/HOUSEHOLD_BACKING.md"
+role = "contract"
+
+[[documents]]
+path = "docs/HOUSEHOLD_REPORT_SPIKE_REVIEW.md"
+role = "architecture"
+
+[[documents]]
+path = "docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md"
+role = "architecture"
+
+[[documents]]
+path = "docs/LIABILITY_POSITION_DESIGN_SKETCH.md"
+role = "architecture"
+
+[[documents]]
+path = "docs/PLAN_JOURNAL_ADMISSION.md"
+role = "architecture"
+
+[[documents]]
+path = "docs/PLATFORM_NEUTRAL_APPLICATION_POLICY.md"
+role = "policy"
+
+[[documents]]
+path = "docs/REPORT_CONFIGURATION.md"
+role = "contract"
+
+[[documents]]
+path = "docs/REPORT_FACTS_OWNER.md"
+role = "architecture"
+
+[[documents]]
+path = "docs/REPORT_FLOW_OWNER.md"
+role = "architecture"
+
+[[documents]]
+path = "docs/REPORT_PIPELINE_POLICY.md"
+role = "policy"
+
+[[documents]]
+path = "docs/REPORT_QUERY_PLAN_OBSERVATION.md"
+role = "observation"
+
+[[documents]]
+path = "docs/REPORT_VERIFICATION.md"
+role = "contract"
+
+[[documents]]
+path = "docs/SOURCE_DATA_MIGRATION_PLAN.md"
+role = "architecture"

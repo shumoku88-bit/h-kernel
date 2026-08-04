@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BIN_DIR=${HKERNEL_REPORT_BIN_DIR:-"$ROOT/.report-bin"}
+BIN="$BIN_DIR/h-kernel"
+
+if [ ! -x "$BIN" ]; then
+  printf 'report binary is missing; run sh ./report-build first\n' >&2
+  exit 1
+fi
+
+exec "$BIN" "$@"

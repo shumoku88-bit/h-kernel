@@ -1,0 +1,27 @@
+[presentation.amounts]
+negative-style = "parentheses"
+# negative-color = "red" # red, bright-red, green, yellow, blue, magenta, cyan, white
+
+
+[reports.trial-balance]
+as-of = "latest"
+
+[reports.balance-sheet]
+as-of = "latest"
+
+[reports.profit-and-loss]
+from = "2026-06-15"
+through = "latest"
+
+[reports.daily-flow]
+from = "2026-07-01"
+through = "latest"
+max-date-columns = 5
+
+[reports.monthly-accounts]
+from = "beginning"
+through = "latest"
+
+[reports.recent-transactions]
+through = "latest"
+count = 5

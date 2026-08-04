@@ -1,0 +1,529 @@
+cabal-version:      3.0
+name:               h-kernel
+version:            0.1.0.0
+synopsis:           Pure Haskell Double-Entry Household Accounting Engine
+description:        A Haskell double-entry accounting engine with explicit account metadata and exact multi-commodity arithmetic.
+license:            MIT
+license-file:       LICENSE
+category:           Finance
+build-type:         Simple
+extra-source-files: docs/*.md
+                  , docs/INDEX.toml
+
+library
+    exposed-modules:  HKernel.Account
+                    , HKernel.Account.Journal
+                    , HKernel.Actual.Journal
+                    , HKernel.Application.Config
+                    , HKernel.Budget
+                    , HKernel.Budget.Config
+                    , HKernel.Budget.Consumption
+                    , HKernel.Budget.Distribution
+                    , HKernel.Budget.Entitlement
+                    , HKernel.Budget.History
+                    , HKernel.Budget.Policy
+                    , HKernel.Budget.Remaining
+                    , HKernel.Budget.Routing
+                    , HKernel.Budget.TSV
+                    , HKernel.CLI
+                    , HKernel.Engine
+                    , HKernel.Envelope
+                    , HKernel.Envelope.Render
+                    , HKernel.HouseholdIssue
+                    , HKernel.HouseholdIssue.Render
+                    , HKernel.Journal
+                    , HKernel.Ledger
+                    , HKernel.Loader
+                    , HKernel.Money
+                    , HKernel.Period
+                    , HKernel.Plan
+                    , HKernel.Plan.Journal
+                    , HKernel.Plan.Completion
+                    , HKernel.Plan.Reservation
+                    , HKernel.Plan.Render
+                    , HKernel.Render
+                    , HKernel.Render.TerminalStyle
+                    , HKernel.Report
+                    , HKernel.Report.Config
+                    , HKernel.Report.CycleAccounts
+                    , HKernel.Report.Matrix
+                    , HKernel.Report.Plan
+                    , HKernel.Report.Presentation
+    other-modules:    HKernel.Engine.Facts
+                    , HKernel.Report.Flow
+                    , HKernel.Report.RecentTransactions
+    build-depends:    base >= 4.14 && < 5
+                    , containers >= 0.6 && < 0.8
+                    , filepath >= 1.4 && < 1.6
+                    , scientific >= 0.3 && < 0.4
+                    , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
+                    , toml-parser >= 2.0.2 && < 2.1
+                    , transformers >= 0.5 && < 0.7
+    hs-source-dirs:   src
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+library h-kernel-household
+    exposed-modules:  HKernel.Household.Backing
+                    , HKernel.Household.BudgetMovement
+                    , HKernel.Household.BudgetMovement.TSV
+                    , HKernel.Household.Config
+                    , HKernel.Household.DailyTarget
+                    , HKernel.Household.DailyTarget.TSV
+                    , HKernel.Household.Issue.TSV
+                    , HKernel.Household.Policy
+    build-depends:    base >= 4.14 && < 5
+                    , containers >= 0.6 && < 0.8
+                    , h-kernel
+                    , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
+                    , toml-parser >= 2.0.2 && < 2.1
+    hs-source-dirs:   household-src
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+library h-kernel-spike-household-report
+    exposed-modules:  HKernel.Spike.HouseholdReport
+                    , HKernel.Spike.HouseholdReport.Render
+    other-modules:    HKernel.Spike.HouseholdConsumption
+    build-depends:    base >= 4.14 && < 5
+                    , containers >= 0.6 && < 0.8
+                    , filepath >= 1.4 && < 1.6
+                    , h-kernel
+                    , h-kernel-household
+                    , scientific >= 0.3 && < 0.4
+                    , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
+                    , toml-parser >= 2.0.2 && < 2.1
+                    , transformers >= 0.5 && < 0.7
+    hs-source-dirs:   spike-src
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+executable h-kernel
+    main-is:          Main.hs
+    build-depends:    base >= 4.14 && < 5
+                    , directory
+                    , filepath >= 1.4 && < 1.6
+                    , h-kernel
+                    , h-kernel-spike-household-report
+                    , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
+    hs-source-dirs:   app
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+executable repository-audit
+    main-is:          Main.hs
+    other-modules:    RepositoryAudit
+    build-depends:    base >= 4.14 && < 5
+                    , containers >= 0.6 && < 0.8
+                    , filepath >= 1.4 && < 1.6
+                    , process
+                    , text >= 1.2 && < 2.2
+                    , toml-parser >= 2.0.2 && < 2.1
+    hs-source-dirs:   tools/repository-audit
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+
+test-suite h-kernel-test
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , QuickCheck
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-application-config-test
+    type:             exitcode-stdio-1.0
+    main-is:          ApplicationConfigSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-balance-law-test
+    type:             exitcode-stdio-1.0
+    main-is:          BalanceLawSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , QuickCheck
+                    , text
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-daily-target-test
+    type:             exitcode-stdio-1.0
+    main-is:          DailyTargetSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , containers >= 0.6 && < 0.8
+                    , h-kernel
+                    , h-kernel-household
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-household-backing-test
+    type:             exitcode-stdio-1.0
+    main-is:          HouseholdBackingSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-household
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-household-budget-movement-tsv-test
+    type:             exitcode-stdio-1.0
+    main-is:          HouseholdBudgetMovementTSVSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-household
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-account-journal-test
+    type:             exitcode-stdio-1.0
+    main-is:          AccountJournalSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-actual-journal-test
+    type:             exitcode-stdio-1.0
+    main-is:          ActualJournalSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-balance-sheet-test
+    type:             exitcode-stdio-1.0
+    main-is:          BalanceSheetSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-loader-test
+    type:             exitcode-stdio-1.0
+    main-is:          LoaderSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , directory
+                    , filepath
+                    , h-kernel
+                    , text
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-report-book-test
+    type:             exitcode-stdio-1.0
+    main-is:          ReportBookSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-report-config-test
+    type:             exitcode-stdio-1.0
+    main-is:          ReportConfigSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-report-matrix-test
+    type:             exitcode-stdio-1.0
+    main-is:          ReportMatrixSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-daily-flow-test
+    type:             exitcode-stdio-1.0
+    main-is:          DailyFlowSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , containers
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-monthly-accounts-test
+    type:             exitcode-stdio-1.0
+    main-is:          MonthlyAccountsSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-cycle-accounts-test
+    type:             exitcode-stdio-1.0
+    main-is:          CycleAccountsSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-period-test
+    type:             exitcode-stdio-1.0
+    main-is:          PeriodSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-household-report-test
+    type:             exitcode-stdio-1.0
+    main-is:          HouseholdReportSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-household
+                    , h-kernel-spike-household-report
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-household-issue-test
+    type:             exitcode-stdio-1.0
+    main-is:          HouseholdIssueSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-household-issue-tsv-test
+    type:             exitcode-stdio-1.0
+    main-is:          HouseholdIssueTSVSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-household
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-plan-test
+    type:             exitcode-stdio-1.0
+    main-is:          PlanSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-plan-journal-test
+    type:             exitcode-stdio-1.0
+    main-is:          PlanJournalSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-plan-completion-test
+    type:             exitcode-stdio-1.0
+    main-is:          PlanCompletionSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-plan-reservation-test
+    type:             exitcode-stdio-1.0
+    main-is:          PlanReservationSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-recent-transactions-test
+    type:             exitcode-stdio-1.0
+    main-is:          RecentTransactionsSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-budget-model-test
+    type:             exitcode-stdio-1.0
+    main-is:          BudgetModelSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-budget-history-test
+    type:             exitcode-stdio-1.0
+    main-is:          BudgetHistorySpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-budget-entitlement-test
+    type:             exitcode-stdio-1.0
+    main-is:          BudgetEntitlementSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-budget-remaining-test
+    type:             exitcode-stdio-1.0
+    main-is:          BudgetRemainingSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-budget-tsv-test
+    type:             exitcode-stdio-1.0
+    main-is:          BudgetTSVSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-budget-config-test
+    type:             exitcode-stdio-1.0
+    main-is:          BudgetConfigSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-budget-routing-test
+    type:             exitcode-stdio-1.0
+    main-is:          BudgetRoutingSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-budget-consumption-test
+    type:             exitcode-stdio-1.0
+    main-is:          BudgetConsumptionSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-envelope-budget-test
+    type:             exitcode-stdio-1.0
+    main-is:          EnvelopeBudgetSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-cli-test
+    type:             exitcode-stdio-1.0
+    main-is:          CLISpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite repository-audit-test
+    type:             exitcode-stdio-1.0
+    main-is:          RepositoryAuditSpec.hs
+    other-modules:    RepositoryAudit
+    build-depends:    base >= 4.14 && < 5
+                    , containers >= 0.6 && < 0.8
+                    , filepath >= 1.4 && < 1.6
+                    , text >= 1.2 && < 2.2
+                    , toml-parser >= 2.0.2 && < 2.1
+    hs-source-dirs:   tests
+                    , tools/repository-audit
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns

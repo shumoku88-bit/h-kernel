@@ -1,0 +1,119 @@
+; Fully synthetic report corpus. All names, dates, and amounts are fictional.
+
+account assets:studio-bank
+    type: asset
+    commodity: JPY
+
+account assets:travel-wallet
+    type: asset
+    commodity: USD
+
+account liabilities:studio-card
+    type: liability
+    commodity: JPY
+
+account equity:opening
+    type: equity
+
+account equity:exchange
+    type: equity
+
+account income:design-sales
+    type: income
+    commodity: JPY
+
+account income:translation-sales
+    type: income
+    commodity: USD
+
+account income:workshop-grant
+    type: income
+    commodity: JPY
+
+account expenses:materials
+    type: expense
+    commodity: JPY
+    ; default-envelope: Studio
+
+account expenses:meals
+    type: expense
+    commodity: JPY
+    ; default-envelope: Everyday
+
+account expenses:rail
+    type: expense
+    commodity: JPY
+    ; default-envelope: Travel
+
+account expenses:lodging
+    type: expense
+    commodity: USD
+    ; default-envelope: Travel
+
+2026-04-01 Fictional opening balance in yen
+    assets:studio-bank  480000 JPY
+    equity:opening
+
+2026-04-01 Fictional opening balance in dollars
+    assets:travel-wallet  2400 USD
+    equity:opening
+
+2026-04-18 Fictional materials purchase
+    expenses:materials  12500 JPY
+    liabilities:studio-card
+
+2026-05-06 Fictional design sale
+    assets:studio-bank  210000 JPY
+    income:design-sales
+
+2026-05-19 Fictional split purchase
+    expenses:materials  4600 JPY
+    expenses:meals  1900 JPY
+    liabilities:studio-card
+
+2026-06-02 Fictional card settlement
+    liabilities:studio-card  19000 JPY
+    assets:studio-bank
+
+2026-06-14 Fictional translation sale
+    assets:travel-wallet  750 USD
+    income:translation-sales
+
+2026-06-28 Fictional rail journey
+    expenses:rail  8400 JPY
+    assets:studio-bank
+
+2026-07-03 Fictional lodging deposit
+    expenses:lodging  180 USD
+    assets:travel-wallet
+
+2026-07-09 Fictional lunch meeting
+    expenses:meals  2400 JPY
+    assets:studio-bank
+
+2026-07-17 Fictional mixed-commodity exchange
+    assets:travel-wallet  100 USD
+    equity:exchange  -100 USD
+    equity:exchange  16000 JPY
+    assets:studio-bank  -16000 JPY
+
+2026-07-24 Fictional three-line supply order
+    expenses:materials  7200 JPY
+    expenses:meals  800 JPY
+    liabilities:studio-card
+
+2026-07-28 Fictional workshop grant
+    assets:studio-bank  10000 JPY
+    income:workshop-grant
+
+2026-07-31 Fictional month-end rail fare
+    expenses:rail  1350 JPY
+    assets:studio-bank
+
+2026-08-01 Fictional transaction after the as-of boundary
+    expenses:meals  950 JPY
+    assets:studio-bank
+
+2026-08-12 Fictional dollar expense after the as-of boundary
+    expenses:lodging  75 USD
+    assets:travel-wallet

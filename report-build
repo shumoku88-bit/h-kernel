@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BIN_DIR=${HKERNEL_REPORT_BIN_DIR:-"$ROOT/.report-bin"}
+
+cd "$ROOT"
+mkdir -p "$BIN_DIR"
+
+cabal build exe:h-kernel --enable-optimization=2
+
+SOURCE=$(cabal list-bin exe:h-kernel --enable-optimization=2)
+cp "$SOURCE" "$BIN_DIR/h-kernel"
+chmod 755 "$BIN_DIR/h-kernel"
+
+printf 'prepared optimized report binary in %s\n' "$BIN_DIR"

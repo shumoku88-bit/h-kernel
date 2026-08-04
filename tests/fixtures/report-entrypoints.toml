@@ -1,0 +1,25 @@
+[presentation.amounts]
+negative-style = "minus"
+
+[reports.trial-balance]
+as-of = "2026-07-31"
+
+[reports.balance-sheet]
+as-of = "2026-07-31"
+
+[reports.profit-and-loss]
+from = "2026-07-01"
+through = "2026-07-31"
+
+[reports.daily-flow]
+from = "2026-07-01"
+through = "2026-07-31"
+max-date-columns = 5
+
+[reports.monthly-accounts]
+from = "2026-07-01"
+through = "2026-07-31"
+
+[reports.recent-transactions]
+through = "2026-07-31"
+count = 5

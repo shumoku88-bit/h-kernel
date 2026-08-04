@@ -1,0 +1,224 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | TOML admission for household coordinates layered on an admitted
+-- 'BudgetPolicy'.
+--
+-- General envelope, pacing, Expense assignment, and backing-pool syntax belongs
+-- to 'HKernel.Budget.Config'. This module parses only household-specific
+-- coordinates and combines both values immediately into 'HouseholdPolicy'.
+module HKernel.Household.Config
+  ( parseHouseholdPolicy
+  , renderHouseholdPolicyErrors
+  ) where
+
+import Data.Either (partitionEithers)
+import Data.List (foldl')
+import qualified Data.List.NonEmpty as NonEmpty
+import Data.Maybe (fromMaybe)
+import Data.Text (Text)
+import qualified Data.Text as T
+import HKernel.Account
+  ( Account
+  , AccountError(..)
+  , accountName
+  , mkAccount
+  )
+import HKernel.Budget
+  ( EnvelopeIdError(..)
+  , envelopeIdText
+  , mkEnvelopeId
+  )
+import HKernel.Budget.Policy (BudgetPolicy)
+import HKernel.Household.Policy
+import Toml (decode)
+import Toml.Schema
+  ( FromValue(..)
+  , Result(..)
+  , optKey
+  , parseTableFromValue
+  , reqKey
+  )
+
+data RawHouseholdPolicy = RawHouseholdPolicy RawCycle RawHouseholdBudget
+
+data RawCycle = RawCycle Text Text
+
+data RawHouseholdBudget = RawHouseholdBudget
+  [RawEnvelopeCoordinates]
+  [Text]
+
+data RawEnvelopeCoordinates = RawEnvelopeCoordinates
+  Text
+  Text
+  (Maybe [Text])
+
+instance FromValue RawHouseholdPolicy where
+  fromValue = parseTableFromValue
+    (RawHouseholdPolicy
+      <$> reqKey "cycle"
+      <*> reqKey "budget")
+
+instance FromValue RawCycle where
+  fromValue = parseTableFromValue
+    (RawCycle
+      <$> reqKey "mode"
+      <*> reqKey "income-account")
+
+instance FromValue RawHouseholdBudget where
+  fromValue = parseTableFromValue
+    (RawHouseholdBudget
+      <$> reqKey "envelopes"
+      <*> reqKey "unassigned-accounts")
+
+instance FromValue RawEnvelopeCoordinates where
+  fromValue = parseTableFromValue
+    (RawEnvelopeCoordinates
+      <$> reqKey "id"
+      <*> reqKey "allocation-account"
+      <*> optKey "plan-destination-accounts")
+
+-- | Decode @household.toml@ and layer its coordinates over an already admitted
+-- general Budget policy. Unknown keys are rejected rather than retained as
+-- warnings.
+parseHouseholdPolicy
+  :: BudgetPolicy
+  -> Text
+  -> Either [Text] HouseholdPolicy
+parseHouseholdPolicy budgetPolicy input =
+  case (decode input :: Result String RawHouseholdPolicy) of
+    Failure errors -> Left (map T.pack errors)
+    Success warnings raw
+      | null warnings -> rawToHouseholdPolicy budgetPolicy raw
+      | otherwise -> Left (map T.pack warnings)
+
+renderHouseholdPolicyErrors :: [Text] -> Text
+renderHouseholdPolicyErrors = T.unlines . map ("  " <>)
+
+rawToHouseholdPolicy
+  :: BudgetPolicy
+  -> RawHouseholdPolicy
+  -> Either [Text] HouseholdPolicy
+rawToHouseholdPolicy budgetPolicy
+    (RawHouseholdPolicy rawCycle rawHouseholdBudget) = do
+  cyclePolicy <- parseRawCycle rawCycle
+  case rawHouseholdBudget of
+    RawHouseholdBudget rawEnvelopes rawUnassigned ->
+      case syntaxErrors of
+        [] -> case mkHouseholdPolicy
+            cyclePolicy budgetPolicy envelopeCoordinates unassignedAccounts of
+          Right policy -> Right policy
+          Left errors -> Left
+            (map renderHouseholdPolicyError (NonEmpty.toList errors))
+        _ -> Left syntaxErrors
+      where
+        (envelopeErrorGroups, envelopeCoordinates) = partitionEithers
+          (zipWith parseRawEnvelopeCoordinates [0 :: Int ..] rawEnvelopes)
+        (unassignedErrors, unassignedAccounts) = parseAccounts
+          "budget.unassigned-accounts"
+          rawUnassigned
+        syntaxErrors = concat envelopeErrorGroups ++ unassignedErrors
+
+parseRawCycle :: RawCycle -> Either [Text] HouseholdCyclePolicy
+parseRawCycle (RawCycle rawMode rawAccount)
+  | rawMode /= "income-anchor" = Left
+      [ "cycle.mode: expected income-anchor; got " <> quoted rawMode ]
+  | otherwise = case mkAccount rawAccount of
+      Right account -> Right (incomeAnchorCyclePolicy account)
+      Left err -> Left [renderAccountError "cycle.income-account" err]
+
+parseRawEnvelopeCoordinates
+  :: Int
+  -> RawEnvelopeCoordinates
+  -> Either [Text] HouseholdEnvelopeCoordinates
+parseRawEnvelopeCoordinates index
+    (RawEnvelopeCoordinates rawId rawAllocation rawPlanDestinations) =
+  case (envelopeIdResult, allocationResult, errors) of
+    (Right envelopeId, Right allocationAccount, []) -> Right
+      (defineHouseholdEnvelopeCoordinates
+        envelopeId allocationAccount planDestinationAccounts)
+    _ -> Left errors
+  where
+    path = indexedPath "budget.envelopes" index
+    envelopeIdResult = mkEnvelopeId rawId
+    allocationResult = mkAccount rawAllocation
+    (planErrors, planDestinationAccounts) = parseAccounts
+      (path <> ".plan-destination-accounts")
+      (fromMaybe [] rawPlanDestinations)
+    errors =
+      either
+        (pure . renderEnvelopeIdError (path <> ".id"))
+        (const [])
+        envelopeIdResult
+        ++ either
+          (pure . renderAccountError (path <> ".allocation-account"))
+          (const [])
+          allocationResult
+        ++ planErrors
+
+parseAccounts :: Text -> [Text] -> ([Text], [Account])
+parseAccounts path = finish . foldl' add ([], []) . zip [0 :: Int ..]
+  where
+    add (errors, accounts) (index, rawAccount) =
+      case mkAccount rawAccount of
+        Right account -> (errors, account : accounts)
+        Left err ->
+          ( renderAccountError (indexedPath path index) err : errors
+          , accounts
+          )
+    finish (errors, accounts) = (reverse errors, reverse accounts)
+
+indexedPath :: Text -> Int -> Text
+indexedPath path index = path <> "[" <> T.pack (show index) <> "]"
+
+renderHouseholdPolicyError :: HouseholdPolicyError -> Text
+renderHouseholdPolicyError err = case err of
+  DuplicateHouseholdEnvelopeCoordinates envelope ->
+    "budget.envelopes: duplicate household coordinates for "
+      <> quoted (envelopeIdText envelope)
+  HouseholdCoordinatesReferenceUnknownEnvelope envelope ->
+    "budget.envelopes: unknown Budget envelope "
+      <> quoted (envelopeIdText envelope)
+  HouseholdEnvelopeMissingCoordinates envelope ->
+    "budget.envelopes: missing household coordinates for "
+      <> quoted (envelopeIdText envelope)
+  DuplicateAllocationAccount account firstEnvelope repeatedEnvelope ->
+    "budget.envelopes: allocation Account " <> quoted (accountName account)
+      <> " belongs to both " <> quoted (envelopeIdText firstEnvelope)
+      <> " and " <> quoted (envelopeIdText repeatedEnvelope)
+  DuplicatePlanDestinationAccount account firstEnvelope repeatedEnvelope ->
+    "budget.envelopes: Plan destination Account " <> quoted (accountName account)
+      <> " belongs to both " <> quoted (envelopeIdText firstEnvelope)
+      <> " and " <> quoted (envelopeIdText repeatedEnvelope)
+  HouseholdPolicyHasNoUnassignedBudgetAccounts ->
+    "budget.unassigned-accounts: expected at least one Budget Account identity"
+  DuplicateUnassignedBudgetAccount account ->
+    "budget.unassigned-accounts: duplicate Account "
+      <> quoted (accountName account)
+  AllocationAccountAlsoUnassigned account envelope ->
+    "budget.unassigned-accounts: allocation Account "
+      <> quoted (accountName account)
+      <> " for envelope " <> quoted (envelopeIdText envelope)
+      <> " cannot also be unassigned"
+
+renderEnvelopeIdError :: Text -> EnvelopeIdError -> Text
+renderEnvelopeIdError path err = path <> ": " <> case err of
+  EmptyEnvelopeId -> "expected a non-empty envelope identity"
+  EnvelopeIdHasSurroundingWhitespace value ->
+    "surrounding whitespace is not allowed; got " <> quoted value
+  EnvelopeIdContainsControlCharacter value ->
+    "control characters are not allowed; got " <> quoted value
+  EnvelopeIdContainsWhitespace value ->
+    "whitespace is not allowed; got " <> quoted value
+  ReservedEnvelopeId value ->
+    quoted value <> " is derived and cannot be a spendable envelope identity"
+
+renderAccountError :: Text -> AccountError -> Text
+renderAccountError path err = path <> ": " <> case err of
+  EmptyAccount -> "expected a non-empty Account identity"
+  AccountHasSurroundingWhitespace value ->
+    "surrounding whitespace is not allowed; got " <> quoted value
+  AccountContainsControlCharacter value ->
+    "control characters are not allowed; got " <> quoted value
+
+quoted :: Text -> Text
+quoted value = "‘" <> value <> "’"

@@ -1,0 +1,6 @@
+# SHA-256 manifest for the immutable public synthetic corpus v1
+70e582d386b2ae9277ef320c3e04da4c6cff34bd081a5687ab92001e421656fa  budget_alloc.tsv
+fce571e0eab559e55a3e25c40173ee9a50f9c2dcf54be9eeea4f8ee0109691e1  cycle.tsv
+072c7b6ae6e8496a8a87b638ab9c11cbb998e2702f7f361a0ce57e0fd939ac35  issues.tsv
+e8fa3f3e3c9bbf284a40180c714358b151fd2f358fa42a3046f9116d7dc6db01  plan.tsv
+a63a2a18a58478f0558051d6b0fd0939ff3c17299d7b7f1bab1e0c1a1dcf7d5d  synthetic.journal

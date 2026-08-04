@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+TARGET_JOURNAL="${1:-$ROOT/examples/sample.journal}"
+AS_OF="${2:-2026-07-31}"
+BIN_DIR="${HKERNEL_REPORT_BIN_DIR:-$ROOT/.report-bin}"
+ARTIFACT_DIR="$ROOT/.report-artifacts/synthetic-household-report"
+
+printf '📸 Building report binary...\n'
+sh "$ROOT/report-build" >/dev/null
+
+JOURNAL_DIR=$(CDPATH= cd -- "$(dirname -- "$TARGET_JOURNAL")" && pwd)
+JOURNAL_ABS="$JOURNAL_DIR/$(basename -- "$TARGET_JOURNAL")"
+RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/h_kernel_snapshot.XXXXXX")
+trap 'rm -rf "$RUNTIME_DIR"' EXIT
+
+mkdir -p "$ARTIFACT_DIR"
+(
+  unset HKERNEL_REPORT_CONFIG
+  unset HKERNEL_LEDGER_DATA_DIR
+  cd "$RUNTIME_DIR"
+  "$BIN_DIR/h-kernel" "$JOURNAL_ABS" all "$AS_OF"
+) > "$ARTIFACT_DIR/report.ansi.txt"
+
+sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g' \
+  "$ARTIFACT_DIR/report.ansi.txt" \
+  > "$ARTIFACT_DIR/report.txt"
+
+printf 'synthetic household report written under ignored local artifacts:\n'
+printf '  %s\n' "$ARTIFACT_DIR/report.ansi.txt"
+printf '  %s\n' "$ARTIFACT_DIR/report.txt"
+printf '  observation date: %s\n' "$AS_OF"

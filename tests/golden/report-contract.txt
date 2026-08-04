@@ -1,0 +1,142 @@
+== Account Balances (h-kernel Engine) ==
+As of: 2026-07-31
+
+Account         |      Balance
+------------------------------
+assets:cash     |   13,000 JPY
+equity:opening  | (10,000 JPY)
+expenses:food   |    1,300 JPY
+expenses:travel |      800 JPY
+income:refund   |    (100 JPY)
+income:salary   |  (5,000 JPY)
+
+Balanced: YES
+
+== Balance Sheet (h-kernel Engine) ==
+As of: 2026-07-31
+
+Assets
+Account      |    Balance
+-------------------------
+assets:cash  | 13,000 JPY
+Total assets | 13,000 JPY
+
+Liabilities
+Account           | Balance
+---------------------------
+Total liabilities |       0
+
+Equity
+Account          |    Balance
+-----------------------------
+equity:opening   | 10,000 JPY
+Current earnings |  3,000 JPY
+Total equity     | 13,000 JPY
+
+
+Balanced: YES (Net Check: 0)
+
+== Profit & Loss Statement (h-kernel Engine) ==
+Period: 2026-07-01..2026-07-31
+
+Income
+Account       |    Amount
+-------------------------
+income:refund |   100 JPY
+income:salary | 5,000 JPY
+Total Income  | 5,100 JPY
+
+Expenses
+Account                        |    Amount
+------------------------------------------
+expenses:food                  |   900 JPY
+Total Expenses                 |   900 JPY
+------------------------------------------
+Net Profit (Income - Expenses) | 4,200 JPY
+
+
+
+== Daily Flow (Category × Date) ==
+Requested period: through 2026-07-31 | Displayed: 2026-04-15 .. 2026-07-31 (6 flow days) | Max date columns: 14
+
+Dates: 2026-04-15 .. 2026-07-31 | Block 1/1
+Category        |     04-15 |     06-20 |     07-01 |     07-10 |   07-20 |     07-31 | Window total
+----------------------------------------------------------------------------------------------------
+Income          |         0 |         0 | 5,000 JPY |         0 | 100 JPY |         0 |    5,100 JPY
+expenses:food   |   400 JPY |         0 |         0 |   600 JPY |       0 |   300 JPY |    1,300 JPY
+expenses:travel |         0 |   800 JPY |         0 |         0 |       0 |         0 |      800 JPY
+----------------------------------------------------------------------------------------------------
+Net Flow        | (400 JPY) | (800 JPY) | 5,000 JPY | (600 JPY) | 100 JPY | (300 JPY) |    3,000 JPY
+
+
+
+== Recent Transactions (Last 5 Transactions) ==
+As of: 2026-07-31
+
+2026-07-31  Month end food
+Account       |    Amount
+-------------------------
+expenses:food |   300 JPY
+assets:cash   | (300 JPY)
+
+2026-07-20  Refund
+Account       |    Amount
+-------------------------
+assets:cash   |   100 JPY
+income:refund | (100 JPY)
+
+2026-07-10  Food
+Account       |    Amount
+-------------------------
+expenses:food |   600 JPY
+assets:cash   | (600 JPY)
+
+2026-07-01  Salary
+Account       |      Amount
+---------------------------
+assets:cash   |   5,000 JPY
+income:salary | (5,000 JPY)
+
+2026-06-20  Travel
+Account         |    Amount
+---------------------------
+expenses:travel |   800 JPY
+assets:cash     | (800 JPY)
+
+
+== Monthly Accounts (Account × Month) ==
+Period: 2026-07-01 .. 2026-07-31 | Displayed months: 1
+
+Account        |   2026-07 | Period total
+-----------------------------------------
+Income         |           |
+income:refund  |   100 JPY |      100 JPY
+income:salary  | 5,000 JPY |    5,000 JPY
+Total Income   | 5,100 JPY |    5,100 JPY
+Expenses       |           |
+expenses:food  |   900 JPY |      900 JPY
+Total Expenses |   900 JPY |      900 JPY
+-----------------------------------------
+Net Profit     | 4,200 JPY |    4,200 JPY
+
+
+
+== Cycle Accounts & Comparison Matrix ==
+Status: NOT IMPLEMENTED
+explicit current and previous cycles are not part of the combined report input; use cycle-accounts with two half-open periods
+
+== Daily Target ==
+Status: NOT IMPLEMENTED
+no typed Daily Target model exists for eligible backing, open commitments, target date policy, and commodity-separated allowance
+
+== Planned Transactions ==
+Status: NOT IMPLEMENTED
+Plan admission exists, but no typed source collection or completion projection is connected
+
+== Household Issues ==
+Status: NOT IMPLEMENTED
+HouseholdIssue values exist, but no typed source collection is connected
+
+== Envelope & Backing ==
+Status: NOT AVAILABLE IN COMBINED REPORT
+Envelope entitlement/consumption/remaining requires an explicit external policy; use envelope-budget. Pool backing, commitments, unallocated, and shortage remain NOT IMPLEMENTED.
