@@ -26,7 +26,6 @@ import qualified Data.Text as T
 import HKernel.Account
   ( Account
   , AccountDeclaration
-  , AccountRegistry
   , AccountType(..)
   , accountDeclarations
   , accountName
