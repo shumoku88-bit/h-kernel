@@ -63,9 +63,9 @@ stable registry gateは次を確認する。
 - `accounts.tsv`の全Accountが`actual.journal`に宣言されている
 - `actual.journal`の全Accountが`accounts.tsv`に存在する
 - Account roleが一致する
-- default Commodityが一致する
+- Actual Journalがper-Account default Commodityを明示している場合、その値がretained evidenceと一致する
 
-AccountTypeとdefault Commodityは別の座標として診断する。一方が一致しても、もう一方の不一致を隠さない。
+AccountTypeと明示されたdefault Commodityは別の座標として診断する。Actual側のper-Account defaultが省略されている場合は「別のCommodity」ではなく「このsourceでは未宣言」と扱い、`accounts.tsv`のretained evidenceを失わない。
 
 ### CURRENT owner
 
@@ -75,7 +75,7 @@ accounts.tsv Text
   -> AccountDeclaration + retained metadata
   -> HKernel.Household.AccountProfile
   -> Map Account RetainedAccountProfile
-  -> Actual Journal AccountRegistry parity
+  -> Actual Journal AccountRegistry compatibility parity
   -> Household Report composition
 ```
 
@@ -177,8 +177,10 @@ retained accounts.tsv
   -> AccountDeclaration projection
   -> synthetic accounts.journal shadow
   -> parseAccountJournal
-  -> declaration parity
+  -> exact declaration parity
 ```
+
+compatibility readerではActualの省略されたper-Account Commodityを矛盾とみなさない。一方、生成する`accounts.journal`にはretained Commodity evidenceを明示し、その生成物を再admitした`AccountDeclaration`とprojectionをexact equalityで照合する。
 
 Account declaration shadow conversionと、retained Budget/Household policy evidenceのTOML移行を同じsliceへ混ぜない。writer authority、private source format、current Report値は別の明示gateまで変更しない。
 
