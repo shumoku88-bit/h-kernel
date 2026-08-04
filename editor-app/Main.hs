@@ -14,6 +14,7 @@ import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 
 import HKernel.Account (AccountType(..), mkAccount, declareAccount, declareAccountWithDefaultCommodity, AccountDeclaration, accountName)
+import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.Editor.ActualAppend (ActualEditIntent(..), IntentPosting(..), prepareActualAppend, candidateBlock, candidateCompleteSource)
 import HKernel.Editor.ActualReverse
 import HKernel.Editor.ActualAccountAppend
@@ -21,11 +22,14 @@ import HKernel.Editor.BudgetMovementAppend
 import HKernel.Editor.IssueAppend
 import HKernel.Editor.PlanLifecycle
 import HKernel.Editor.ActualWriter
-import HKernel.Money (mkCommodity, parseQuantity)
-import HKernel.Plan.Completion (mkActualTransactionId)
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
+import HKernel.Household.BudgetMovement.TSV (parseHouseholdBudgetMovements)
+import HKernel.Household.Issue.TSV (parseHouseholdIssues)
 import HKernel.HouseholdIssue (IssueStatus(..), mkIssueId)
+import HKernel.Money (mkCommodity, parseQuantity)
 import HKernel.Money (mkAmount)
+import HKernel.Plan.Completion (mkActualTransactionId)
+import HKernel.Plan.Journal (parsePlanJournal)
 
 die :: String -> IO a
 die msg = hPutStrLn stderr msg >> exitFailure
@@ -178,7 +182,7 @@ main = do
       case prepareActualAppend existingSource intent of
         Left errs -> die $ "Validation errors:\n" <> unlines (map show (NonEmpty.toList errs))
         Right preview ->
-          executePreview journalFile existingSource
+          executePreview parseActualJournal journalFile existingSource
             (HKernel.Editor.ActualAppend.candidateBlock preview)
             (HKernel.Editor.ActualAppend.candidateCompleteSource preview)
             commitFlag
@@ -188,7 +192,7 @@ main = do
       case prepareActualReverse existingSource intent of
         Left errs -> die $ "Validation errors:\n" <> unlines (map show (NonEmpty.toList errs))
         Right preview ->
-          executePreview journalFile existingSource
+          executePreview parseActualJournal journalFile existingSource
             (HKernel.Editor.ActualReverse.candidateBlock preview)
             (HKernel.Editor.ActualReverse.candidateCompleteSource preview)
             commitFlag
@@ -198,7 +202,7 @@ main = do
       case prepareActualAccountAppend existingSource decl of
         Left errs -> die $ "Validation errors:\n" <> unlines (map show (NonEmpty.toList errs))
         Right preview ->
-          executePreview journalFile existingSource
+          executePreview parseActualJournal journalFile existingSource
             (HKernel.Editor.ActualAccountAppend.candidateBlock preview)
             (HKernel.Editor.ActualAccountAppend.candidateCompleteSource preview)
             commitFlag
@@ -208,7 +212,7 @@ main = do
       case prepareBudgetMovementAppend existingSource movement of
         Left errs -> die $ "Validation errors:\n" <> unlines (map show (NonEmpty.toList errs))
         Right preview ->
-          executePreview tsvFile existingSource
+          executePreview parseHouseholdBudgetMovements tsvFile existingSource
             (HKernel.Editor.BudgetMovementAppend.candidateBlock preview)
             (HKernel.Editor.BudgetMovementAppend.candidateCompleteSource preview)
             commitFlag
@@ -218,7 +222,7 @@ main = do
       case prepareIssueAppend existingSource intent of
         Left errs -> die $ "Validation errors:\n" <> unlines (map show (NonEmpty.toList errs))
         Right preview ->
-          executePreview tsvFile existingSource
+          executePreview parseHouseholdIssues tsvFile existingSource
             (HKernel.Editor.IssueAppend.candidateBlock preview)
             (HKernel.Editor.IssueAppend.candidateCompleteSource preview)
             commitFlag
@@ -229,7 +233,7 @@ main = do
       case preparePlanAdd planSource actualSource intent of
         Left errs -> die $ "Validation errors:\n" <> unlines (map show (NonEmpty.toList errs))
         Right preview ->
-          executePreview planFile planSource
+          executePreview parsePlanJournal planFile planSource
             (HKernel.Editor.PlanLifecycle.addCandidateBlock preview)
             (HKernel.Editor.PlanLifecycle.addCandidateCompleteSource preview)
             commitFlag
@@ -240,13 +244,21 @@ main = do
       case preparePlanFinish planSource actualSource intent of
         Left errs -> die $ "Validation errors:\n" <> unlines (map show (NonEmpty.toList errs))
         Right preview ->
-          executePreview actualFile actualSource
+          executePreview parseActualJournal actualFile actualSource
             (HKernel.Editor.PlanLifecycle.finishCandidateBlock preview)
             (HKernel.Editor.PlanLifecycle.finishCandidateCompleteSource preview)
             commitFlag
 
-executePreview :: FilePath -> Text -> Text -> Text -> Bool -> IO ()
-executePreview journalFile existingSource block completeSource commitFlag = do
+executePreview
+  :: Show sourceError
+  => (Text -> Either (NonEmpty.NonEmpty sourceError) admitted)
+  -> FilePath
+  -> Text
+  -> Text
+  -> Text
+  -> Bool
+  -> IO ()
+executePreview admit sourceFile existingSource block completeSource commitFlag = do
   TIO.putStrLn "--- Preview ---"
   TIO.putStr block
   TIO.putStrLn "---------------"
@@ -254,13 +266,13 @@ executePreview journalFile existingSource block completeSource commitFlag = do
   if commitFlag
     then do
       let writeIntent = WriteIntent
-            { targetFilePath = journalFile
+            { targetFilePath = sourceFile
             , expectedOldBytes = existingSource
             , candidateNewBytes = completeSource
             }
-      writeRes <- publishActualAppend writeIntent
-      case writeRes of
-        Right () -> TIO.putStrLn "Successfully updated journal."
+      writeResult <- publishWithAdmission admit writeIntent
+      case writeResult of
+        Right () -> TIO.putStrLn "Successfully updated source."
         Left err -> die $ "Write failed: " <> show err
-    else do
+    else
       TIO.putStrLn "Run with --commit to apply changes."
