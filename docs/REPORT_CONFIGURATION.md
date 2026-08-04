@@ -213,6 +213,52 @@ count = 5
 - 最近のトランザクションでは、トランザクション全体が保持されます。
 
 
+## Legacy Report manifestとの関係
+
+private canonical sourceの`report_all_human.tsv`、`report_all_compact.tsv`、`report_manifests.tsv`は、bqn-ledger daily workflowのlegacy execution configurationである。現在の`report.toml` schemaへそのままcopyするsourceではない。
+
+| legacy coordinate | owner |
+|---|---|
+| Report key | typed Report kind / future named preset |
+| human / compact surface | presentation preset |
+| date、month、count | Report query default |
+| Commodity | Report query coordinate |
+| comparison mode | typed comparison strategy |
+| source filename | Application source selection |
+| Account list | Household semantic scopeまたはReport-only filter |
+| manifest filename | legacy set selectionまたは不要なindirection |
+
+source filename、Household Account classification、Envelope membershipを`report.toml`へ埋め込まない。これらはApplication configまたはHousehold policyが所有する。
+
+将来`report.toml`は、typed entrypointがstableになったReportについてnamed presetとordered setを所有できる。
+
+```text
+named report preset
+  = report kind
+  + typed query defaults
+  + presentation selection
+  + optional reference to an already-validated Household scope
+
+named report set
+  = ordered preset references
+```
+
+exact TOML syntaxはまだ固定しない。Reportごとにtyped request、typed query coordinate、Household scope owner、source selectionの分離、legacy invocationとのsemantic parity、shared rendererを確認する。gate前にlegacy rowをgeneric argument arrayとしてTOML化しない。
+
+## Canonical dataとの境界
+
+`report.toml`はReport application configであり、Actual、Plan、Budget、Issue、Account declaration、Household policyの正本ではない。
+
+```text
+canonical household facts/policy
+  -> typed Report request
+  + report.toml defaults/presentation
+  + explicit CLI override
+  -> rendered Report
+```
+
+repository標準profileの配置はdeployment decisionである。legacy manifestがprivate canonical directoryにあることを理由に、`report.toml`をcanonical household factへ格上げしない。legacy Report TSVは、対応するtyped entrypoint、Report preset、parity evidenceが揃った後にretireする。
+
 ## エラー
 
 
