@@ -85,11 +85,13 @@ library h-kernel-household
 
 library h-kernel-editor
     exposed-modules:  HKernel.Editor.ActualAppend
+                    , HKernel.Editor.ActualWriter
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
                     , h-kernel
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
+                    , directory >= 1.3 && < 1.4
     hs-source-dirs:   editor-src
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
@@ -551,3 +553,14 @@ test-suite repository-audit-test
                     , tools/repository-audit
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
+test-suite h-kernel-editor-actual-writer-test
+    type:             exitcode-stdio-1.0
+    main-is:          EditorActualWriterSpec.hs
+    hs-source-dirs:   tests
+    build-depends:    base >= 4.14 && < 5
+                    , text >= 1.2 && < 2.2
+                    , directory >= 1.3 && < 1.4
+                    , h-kernel
+                    , h-kernel-editor
+    default-language: Haskell2010
+    ghc-options:      -Wall
