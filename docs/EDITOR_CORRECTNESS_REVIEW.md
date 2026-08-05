@@ -1,10 +1,10 @@
 # h-kernel Editor correctness review
 
-ステータス: 再レビュー済み・T01検証中  
+ステータス: 再レビュー済み・T02検証完了  
 Owner: h-kernel editor review  
 Canonical: yes  
 基準日: 2026-08-05  
-基準main: `339d6af929bd3064a71288f5478504e87024d919`
+基準main: `89161c48e3cf747d08d8cc2e0da52c7205be4c8f`
 
 ## 1. 役割
 
@@ -14,12 +14,13 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 
 ## 2. Remote baseline
 
-- main HEAD: `339d6af929bd3064a71288f5478504e87024d919`
+- main HEAD: `89161c48e3cf747d08d8cc2e0da52c7205be4c8f`
 - E4、E5、E6はmainへmerge済み
+- T01実装PR #16はmainへmerge済み
 - open PR #14: `spike(editor): Brick Actual add preview TUIを追加する`
 - #14 head: `f8d2cbadcbea6975bbbd13c990b2afeaa3637070`
-- #14はE7完了ではなくActual add read-only preview spike
-- T01実装PR #16はDraftで検証中
+- #14はE7完了ではなくActual add read-only preview spikeで、correctness recovery完了までDraft保留
+- T02実装PR #17は全CI gate成功、merge待ち
 
 ## 3. 判定語彙
 
@@ -149,11 +150,11 @@ stale判定には内容の不一致だけが必要であり、actual bytesを診
 - [x] **T00: E7を保留状態へ戻す**  
   PR #14をDraftへ戻し、correctness recovery完了までmergeしない。
 
-- [ ] **T01: safe writer contract recovery**  
-  source-specific post-admissionをwriterへ注入できる形にし、Actual、Plan、Budget、Issueのtemporary-file commit integration testを追加する。publish後IOExceptionでもrestoreを試み、結果へ復旧状態を残す。stale mismatchの診断はsource内容を保持しない。対象: ER-002、ER-012、ER-014。Draft PR #16で検証中。
+- [x] **T01: safe writer contract recovery**  
+  source-specific post-admission、Actual・Plan・Budget・Issueのtemporary-file commit evidence、publish後IOExceptionのrestore、content-hidden stale診断をPR #16で固定し、mainへmergeした。対象: ER-002、ER-012、ER-014。
 
 - [ ] **T02: pure CLI admission boundary**  
-  argv parsingをIO処理から分離し、Budget pattern、command-local `--commit`、Plan必須日付、Issue amount pairをtyped admissionで固定する。executable-level contract testを追加する。対象: ER-001、ER-003のCLI部分、ER-005の日付、ER-008、ER-009。
+  argv parsingをIO処理から分離し、Budget pattern、command-local `--commit`、Plan必須日付、Issue amount pairをtyped admissionで固定する。command-surface contract testを追加する。対象: ER-001、ER-003のCLI部分、ER-005の日付、ER-008、ER-009。PR #17は全CI gate成功、merge待ち。
 
 - [ ] **T03: Plan amount and identity safety**  
   finish amountをpositive magnitudeとしてadmitし、generated Plan ID失敗をtyped errorへする。negative、zero、invalid seriesをfocused testへ追加する。対象: ER-005のpartial failure、ER-010。
