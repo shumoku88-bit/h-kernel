@@ -13,7 +13,7 @@ import qualified Data.Text as T
 import Data.Time.Format (defaultTimeLocale, formatTime)
 
 import HKernel.Account (accountName)
-import HKernel.Editor.ActualAppend (appendBlock)
+import HKernel.Editor.SourceAppend (appendSourceBlock)
 import HKernel.Household.BudgetMovement
   ( HouseholdBudgetMovement(..)
   )
@@ -39,14 +39,15 @@ prepareBudgetMovementAppend
   -> Either (NonEmpty BudgetMovementAppendError) BudgetMovementAppendPreview
 prepareBudgetMovementAppend existingSource movement = do
   _ <- first (pure . SourceParseError) (parseHouseholdBudgetMovements existingSource)
-  
+
   let block = renderHouseholdBudgetMovement movement
       preview = BudgetMovementAppendPreview
         { candidateBlock = block
-        , candidateCompleteSource = appendBlock existingSource block
+        , candidateCompleteSource = appendSourceBlock existingSource block
         }
-  
-  _ <- first (pure . CandidateSourceParseError) (parseHouseholdBudgetMovements (candidateCompleteSource preview))
+
+  _ <- first (pure . CandidateSourceParseError)
+    (parseHouseholdBudgetMovements (candidateCompleteSource preview))
   pure preview
 
 renderHouseholdBudgetMovement :: HouseholdBudgetMovement -> Text
