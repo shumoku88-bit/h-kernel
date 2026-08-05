@@ -14,7 +14,7 @@ import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 
-import HKernel.Editor.ActualAppend (appendBlock)
+import HKernel.Editor.SourceAppend (appendSourceBlock)
 import HKernel.HouseholdIssue
   ( HouseholdIssueError
   , IssueId
@@ -82,7 +82,7 @@ prepareIssueAppend existingSource intent = do
         | otherwise = householdIssuesHeader <> "\n" <> block
       preview = IssueAppendPreview
         { candidateBlock = block
-        , candidateCompleteSource = appendBlock existingSource appendBody
+        , candidateCompleteSource = appendSourceBlock existingSource appendBody
         }
 
   _ <- first (pure . CandidateSourceParseError)
