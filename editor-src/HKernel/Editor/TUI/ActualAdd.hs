@@ -104,7 +104,6 @@ data ActualAddAction
 data ActualAddWriteFailure
   = ActualAddPostAdmissionFailure
   | ActualAddPostPublishReadFailure
-  | ActualAddFileIOFailure
   deriving (Eq, Show)
 
 data ActualAddWriteOutcome
@@ -112,6 +111,7 @@ data ActualAddWriteOutcome
   | ActualAddWriteStale
   | ActualAddWriteRecovered ActualAddWriteFailure
   | ActualAddWriteFailed ActualAddWriteFailure
+  | ActualAddWriteFileIOFailed
   deriving (Eq, Show)
 
 emptyActualAddInput :: ActualAddInput
@@ -233,4 +233,4 @@ classifyActualAddWriteResult result = case result of
   Left (PostPublishReadFailed { restoredFromBackup = False }) ->
     ActualAddWriteFailed ActualAddPostPublishReadFailure
   Left (FileIOError _) ->
-    ActualAddWriteFailed ActualAddFileIOFailure
+    ActualAddWriteFileIOFailed
