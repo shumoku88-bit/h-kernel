@@ -1,10 +1,10 @@
 # h-kernel Editor correctness review
 
-ステータス: 再レビュー済み・T05検証完了  
+ステータス: 再レビュー済み・T06検証完了  
 Owner: h-kernel editor review  
 Canonical: yes  
 基準日: 2026-08-05  
-基準main: `12f6c3b3b51e131093730db848142959301c4385`
+基準main: `abcbe97056280fc2415ec52e29b88d757993b5d4`
 
 ## 1. 役割
 
@@ -14,16 +14,17 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 
 ## 2. Remote baseline
 
-- main HEAD: `12f6c3b3b51e131093730db848142959301c4385`
+- main HEAD: `abcbe97056280fc2415ec52e29b88d757993b5d4`
 - E4、E5、E6はmainへmerge済み
 - T01実装PR #16はmainへmerge済み
 - T02実装PR #17はmainへmerge済み
 - T03実装PR #18はmainへmerge済み
 - T04実装PR #19はmainへmerge済み
+- T05実装PR #20はmainへmerge済み
 - open PR #14: `spike(editor): Brick Actual add preview TUIを追加する`
 - #14 head: `f8d2cbadcbea6975bbbd13c990b2afeaa3637070`
 - #14はE7完了ではなくActual add read-only preview spikeで、correctness recovery完了までDraft保留
-- T05実装PR #20は全CI gate成功、merge待ち
+- T06実装PR #21は全CI gate成功、merge待ち
 
 ## 3. 判定語彙
 
@@ -165,11 +166,11 @@ stale判定には内容の不一致だけが必要であり、actual bytesを診
 - [x] **T04: Account declaration exact round-trip**  
   Account Journal ownerへcanonical rendererとprivacy-preserving typed errorを置き、全AccountTypeのrender/parse-back exact parityを検証した。`;`を含むunrepresentable identityはsource公開前にrejectし、complete candidate registryでも追加対象declarationのexact equalityを再確認し、PR #19でmainへmergeした。対象: ER-004。
 
-- [ ] **T05: Issue source contract alignment**  
-  amount・currencyの両方blankを`Nothing`としてstable TSV admissionし、片側blankはtyped errorとしてrejectする。blank・comment-only sourceへの初回appendではstable headerを生成し、parser、Editor preview、temporary-file commitをPR #20で固定した。対象: ER-003、ER-011。PR #20は全CI gate成功、merge待ち。
+- [x] **T05: Issue source contract alignment**  
+  amount・currencyの両方blankを`Nothing`としてstable TSV admissionし、片側blankはtyped errorとしてrejectする。blank・comment-only sourceへの初回appendではstable headerを生成し、parser、Editor preview、temporary-file commitをPR #20で固定してmainへmergeした。対象: ER-003、ER-011。
 
 - [ ] **T06: Plan rendering/admission ownership**  
-  validated transactionのrenderingをActual source admissionから分離し、Plan addはPlan sourceだけをPlan ownerでadmitする。対象: ER-013とER-002のPlan部分。
+  source-neutralなvalidated transaction block境界をActual appendから分離し、Plan addはPlan JournalのAccount registryでpostingを検証・描画する。Plan sourceをActual admissionへ流さず、PlanとしてvalidかつActualとしてinvalidなmetadata sourceのfocused evidenceをPR #21で固定した。対象: ER-013とER-002のPlan部分。PR #21は全CI gate成功、merge待ち。
 
 - [ ] **T07: reversal identity/provenance decision**  
   reverse transaction自身のidentity、元transaction参照key、typed retention、duplicate ruleを合意してから実装する。対象: ER-006。
