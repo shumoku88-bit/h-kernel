@@ -56,6 +56,10 @@ path = "docs/EDITOR_OPERATION_PARITY_INVENTORY_001.md"
 role = "observation"
 
 [[documents]]
+path = "docs/ACTUAL_EDITOR_SEMANTIC_COMPARISON_001.md"
+role = "observation"
+
+[[documents]]
 path = "docs/HASKELL_NATIVE_CODE_POLICY.md"
 role = "policy"
 

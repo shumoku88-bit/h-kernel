@@ -6,7 +6,9 @@ module Main (main) where
 import Control.Exception (IOException, catch, throwIO)
 import Data.IORef (atomicModifyIORef', newIORef)
 import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
+import qualified Data.Text as Text
 import qualified Data.Text.IO as TIO
 import System.Directory (removeFile)
 import System.Exit (exitFailure, exitSuccess)
@@ -28,6 +30,10 @@ main = do
         , ( "testActualBlockPostAdmissionFailureRestores"
           , testActualBlockPostAdmissionFailureRestores
           )
+        , ("testActualSemanticAddParity", testActualSemanticAddParity)
+        , ("testActualSemanticReverseGap", testActualSemanticReverseGap)
+        , ("testActualSemanticPrefixReject", testActualSemanticPrefixReject)
+        , ("testActualSemanticSanitizedCode", testActualSemanticSanitizedCode)
         ]
   rs <- sequence [action | (_, action) <- results]
   let namedResults = zip (map fst results) rs
@@ -168,6 +174,49 @@ testActualBlockPostAdmissionFailureRestores =
         Left (PostAdmissionFailed _ True) -> currentSource == actualOld
         _ -> False)
 
+testActualSemanticAddParity :: IO Bool
+testActualSemanticAddParity =
+  pure $
+    compareActualCandidateSemantics
+      comparisonExisting
+      bqnAddCandidate
+      haskellAddCandidate
+    == Right []
+
+testActualSemanticReverseGap :: IO Bool
+testActualSemanticReverseGap =
+  pure $
+    compareActualCandidateSemantics
+      comparisonExisting
+      bqnReverseCandidate
+      haskellReverseCandidate
+    == Right
+      [ ActualIdentityDiffers
+      , ActualReversalTargetDiffers
+      ]
+
+testActualSemanticPrefixReject :: IO Bool
+testActualSemanticPrefixReject =
+  pure $ case compareActualCandidateSemantics
+      comparisonExisting
+      changedPrefixCandidate
+      haskellAddCandidate of
+    Left errors ->
+      CandidatePrefixChanged BqnCandidate
+        `elem` NonEmpty.toList errors
+    Right _ -> False
+
+testActualSemanticSanitizedCode :: IO Bool
+testActualSemanticSanitizedCode =
+  pure $ case compareActualCandidateSemantics
+      comparisonExisting
+      invalidCandidate
+      haskellAddCandidate of
+    Left errors ->
+      map renderActualComparisonErrorCode (NonEmpty.toList errors)
+        == ["bqn_candidate_source_rejected"]
+    Right _ -> False
+
 actualOld :: Text
 actualOld =
   "account assets:bank\n"
@@ -204,3 +253,70 @@ planNew = planOld
   <> "    ; plan-id: PLAN-1\n"
   <> "  assets:bank  -500 JPY\n"
   <> "  expenses:food  500 JPY\n"
+
+comparisonExisting :: Text
+comparisonExisting = Text.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , ""
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , ""
+  , "2026-08-04 * Original purchase"
+  , "    ; event-id: event-123"
+  , "    assets:cash    -100 JPY"
+  , "    expenses:food    100 JPY"
+  ]
+
+bqnAddCandidate :: Text
+bqnAddCandidate = comparisonExisting <> Text.unlines
+  [ ""
+  , "2026-08-05 * Coffee"
+  , "    assets:cash    -25 JPY"
+  , "    expenses:food    25 JPY"
+  ]
+
+haskellAddCandidate :: Text
+haskellAddCandidate = comparisonExisting <> Text.unlines
+  [ ""
+  , "2026-08-05 Coffee"
+  , "  assets:cash  -25 JPY"
+  , "  expenses:food  25 JPY"
+  ]
+
+bqnReverseCandidate :: Text
+bqnReverseCandidate = comparisonExisting <> Text.unlines
+  [ ""
+  , "2026-08-06 * [reverse]Original purchase"
+  , "    assets:cash    100 JPY"
+  , "    expenses:food    -100 JPY"
+  ]
+
+haskellReverseCandidate :: Text
+haskellReverseCandidate = comparisonExisting <> Text.unlines
+  [ ""
+  , "2026-08-06 [reverse]Original purchase"
+  , "  ; event-id: event-123-reversal-1"
+  , "  ; reverses: event-123"
+  , "  assets:cash  100 JPY"
+  , "  expenses:food  -100 JPY"
+  ]
+
+changedPrefixCandidate :: Text
+changedPrefixCandidate =
+  Text.replace "Original purchase" "Changed purchase" comparisonExisting
+  <> Text.unlines
+    [ ""
+    , "2026-08-05 Coffee"
+    , "  assets:cash  -25 JPY"
+    , "  expenses:food  25 JPY"
+    ]
+
+invalidCandidate :: Text
+invalidCandidate =
+  comparisonExisting
+  <> "\n2026-08-05 invalid\n"
+  <> "  assets:unknown  25 JPY\n"
+  <> "  expenses:food  -25 JPY\n"
