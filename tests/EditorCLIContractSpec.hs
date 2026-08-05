@@ -5,11 +5,16 @@ module Main (main) where
 import Data.Time.Calendar (fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
-import HKernel.Editor.ActualReverse (reverseDescription)
+import HKernel.Editor.ActualReverse
+  ( reverseDescription
+  , reverseEventId
+  , reverseTargetId
+  )
 import HKernel.Editor.CLI
 import HKernel.Editor.IssueAppend (intentAmount, intentDetails)
 import HKernel.Editor.PlanLifecycle (addDate)
 import HKernel.Household.BudgetMovement (householdBudgetMovementMemo)
+import HKernel.Plan.Completion (actualTransactionIdText)
 
 main :: IO ()
 main = do
@@ -18,6 +23,7 @@ main = do
         , ("budget extra argument is rejected", testBudgetExtraArgument)
         , ("budget memo named --commit remains data", testBudgetCommitTextIsData)
         , ("commit is admitted after the leaf command", testCommandLocalCommit)
+        , ("reverse admits new and target identities", testReverseIdentityAdmission)
         , ("Issue amount pair rejects one-sided omission", testIssueAmountPair)
         , ("Issue blank amount and details are preserved", testIssueBlankAmount)
         , ("Plan add requires explicit date", testPlanAddDateRequired)
@@ -80,6 +86,7 @@ testCommandLocalCommit = case parseEditorCommand
   [ "reverse"
   , "--commit"
   , "actual.journal"
+  , "event-124"
   , "event-123"
   , "2026-08-05"
   , "refund"
@@ -87,6 +94,20 @@ testCommandLocalCommit = case parseEditorCommand
   ] of
     Right (CommitRequested, ReverseCmd _ intent) ->
       reverseDescription intent == "refund --commit"
+    _ -> False
+
+testReverseIdentityAdmission :: Bool
+testReverseIdentityAdmission = case parseEditorCommand
+  [ "reverse"
+  , "actual.journal"
+  , "event-124"
+  , "event-123"
+  , "2026-08-05"
+  , "refund"
+  ] of
+    Right (PreviewOnly, ReverseCmd "actual.journal" intent) ->
+      actualTransactionIdText (reverseEventId intent) == "event-124"
+        && actualTransactionIdText (reverseTargetId intent) == "event-123"
     _ -> False
 
 testIssueAmountPair :: Bool
