@@ -91,6 +91,7 @@ library h-kernel-editor
                     , HKernel.Editor.ActualReverse
                     , HKernel.Editor.ActualWriter
                     , HKernel.Editor.BudgetMovementAppend
+                    , HKernel.Editor.CLI
                     , HKernel.Editor.IssueAppend
                     , HKernel.Editor.PlanLifecycle
     build-depends:    base >= 4.14 && < 5
@@ -597,6 +598,7 @@ test-suite repository-audit-test
                     , tools/repository-audit
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
+
 test-suite h-kernel-editor-actual-writer-test
     type:             exitcode-stdio-1.0
     main-is:          EditorActualWriterSpec.hs
@@ -671,3 +673,15 @@ test-suite h-kernel-editor-plan-lifecycle-test
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
 
+test-suite h-kernel-editor-cli-contract-test
+    type:             exitcode-stdio-1.0
+    main-is:          EditorCLIContractSpec.hs
+    hs-source-dirs:   tests
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-household
+                    , h-kernel-editor
+                    , text
+                    , time
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
