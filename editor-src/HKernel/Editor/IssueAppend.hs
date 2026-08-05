@@ -25,9 +25,17 @@ import HKernel.HouseholdIssue
   )
 import HKernel.Household.Issue.TSV
   ( HouseholdIssueTSVError
+  , householdIssueSourceHasHeader
+  , householdIssuesHeader
   , parseHouseholdIssues
   )
-import HKernel.Money (Amount, amountCommodity, amountQuantity, commodityCode, renderQuantity)
+import HKernel.Money
+  ( Amount
+  , amountCommodity
+  , amountQuantity
+  , commodityCode
+  , renderQuantity
+  )
 
 data IssueAppendIntent = IssueAppendIntent
   { intentIssueId       :: IssueId
@@ -64,16 +72,21 @@ prepareIssueAppend existingSource intent = do
       (intentAmount intent)
       (intentTitle intent)
       ("[" <> intentCategory intent <> "] " <> intentDetails intent)
-  
-  _ <- first (pure . SourceParseError) (parseHouseholdIssues existingSource)
-  
+
+  _ <- first (pure . SourceParseError)
+    (parseHouseholdIssues existingSource)
+
   let block = renderIntent intent
+      appendBody
+        | householdIssueSourceHasHeader existingSource = block
+        | otherwise = householdIssuesHeader <> "\n" <> block
       preview = IssueAppendPreview
         { candidateBlock = block
-        , candidateCompleteSource = appendBlock existingSource block
+        , candidateCompleteSource = appendBlock existingSource appendBody
         }
-  
-  _ <- first (pure . CandidateSourceParseError) (parseHouseholdIssues (candidateCompleteSource preview))
+
+  _ <- first (pure . CandidateSourceParseError)
+    (parseHouseholdIssues (candidateCompleteSource preview))
   pure preview
 
 renderIntent :: IssueAppendIntent -> Text
