@@ -19,6 +19,11 @@ main = do
   characterizeCompletionMetadataAdmission
   characterizeExplicitCompletionResolution
   characterizePlanReferenceWithoutEventIdentity
+  characterizeReversalMetadataAdmission
+  allowReverseOfReverse
+  rejectReversalWithoutEventIdentity
+  rejectUnknownReversalTarget
+  rejectDuplicateReversalTarget
   rejectDuplicateMetadataKey
   rejectDuplicateEventIdentity
   rejectInvalidPlanIdentity
@@ -79,6 +84,66 @@ characterizePlanReferenceWithoutEventIdentity = do
       )
     | declaration <- declarations
     ]
+
+characterizeReversalMetadataAdmission :: IO ()
+characterizeReversalMetadataAdmission = do
+  let admitted = mustRight (parseActualJournal reversalJournal)
+  assertEqual "reverses metadata remains typed after Actual admission"
+    [("actual-reversal-1", "actual-original")]
+    [ ( actualTransactionIdText (reversalTransactionId declaration)
+      , actualTransactionIdText (reversedTransactionId declaration)
+      )
+    | declaration <- actualJournalReversalDeclarations admitted
+    ]
+
+allowReverseOfReverse :: IO ()
+allowReverseOfReverse = do
+  let admitted = mustRight (parseActualJournal reverseOfReverseJournal)
+  assertEqual "a reversal may itself be reversed through its durable identity"
+    [ ("actual-reversal-1", "actual-original")
+    , ("actual-reversal-2", "actual-reversal-1")
+    ]
+    [ ( actualTransactionIdText (reversalTransactionId declaration)
+      , actualTransactionIdText (reversedTransactionId declaration)
+      )
+    | declaration <- actualJournalReversalDeclarations admitted
+    ]
+
+rejectReversalWithoutEventIdentity :: IO ()
+rejectReversalWithoutEventIdentity =
+  assertLeftSatisfies "reversal provenance requires its own explicit event-id"
+    (any isMissingIdentity . NonEmpty.toList)
+    (parseActualJournal reversalWithoutEventIdJournal)
+  where
+    isMissingIdentity err = case err of
+      ActualReversalMissingEventId _ targetId ->
+        actualTransactionIdText targetId == "actual-original"
+      _ -> False
+
+rejectUnknownReversalTarget :: IO ()
+rejectUnknownReversalTarget =
+  assertLeftSatisfies "reversal target must name an admitted Actual identity"
+    (any isUnknownTarget . NonEmpty.toList)
+    (parseActualJournal unknownReversalTargetJournal)
+  where
+    isUnknownTarget err = case err of
+      UnknownActualReversalTarget reversalId targetId ->
+        actualTransactionIdText reversalId == "actual-reversal-1"
+          && actualTransactionIdText targetId == "actual-missing"
+      _ -> False
+
+rejectDuplicateReversalTarget :: IO ()
+rejectDuplicateReversalTarget =
+  assertLeftSatisfies "one target cannot be reversed directly more than once"
+    (any isDuplicateTarget . NonEmpty.toList)
+    (parseActualJournal duplicateReversalTargetJournal)
+  where
+    isDuplicateTarget err = case err of
+      DuplicateActualReversalTarget targetId reversalIds ->
+        actualTransactionIdText targetId == "actual-original"
+          && map actualTransactionIdText (NonEmpty.toList reversalIds)
+            == ["actual-reversal-1", "actual-reversal-2"]
+      _ -> False
 
 rejectDuplicateMetadataKey :: IO ()
 rejectDuplicateMetadataKey =
@@ -144,6 +209,62 @@ planWithoutEventIdJournal = declarations <> T.unlines
   , "  ; plan-id: plan-wifi"
   , "  assets:cash      -300 JPY"
   , "  expenses:wifi    300 JPY"
+  ]
+
+reversalJournal :: T.Text
+reversalJournal = declarations <> T.unlines
+  [ "2026-08-01 * original"
+  , "  ; event-id: actual-original"
+  , "  assets:cash      -100 JPY"
+  , "  expenses:wifi    100 JPY"
+  , ""
+  , "2026-08-02 * reversal"
+  , "  ; event-id: actual-reversal-1"
+  , "  ; reverses: actual-original"
+  , "  assets:cash      100 JPY"
+  , "  expenses:wifi    -100 JPY"
+  ]
+
+reverseOfReverseJournal :: T.Text
+reverseOfReverseJournal = reversalJournal <> T.unlines
+  [ ""
+  , "2026-08-03 * restore original effect"
+  , "  ; event-id: actual-reversal-2"
+  , "  ; reverses: actual-reversal-1"
+  , "  assets:cash      -100 JPY"
+  , "  expenses:wifi    100 JPY"
+  ]
+
+reversalWithoutEventIdJournal :: T.Text
+reversalWithoutEventIdJournal = declarations <> T.unlines
+  [ "2026-08-01 * original"
+  , "  ; event-id: actual-original"
+  , "  assets:cash      -100 JPY"
+  , "  expenses:wifi    100 JPY"
+  , ""
+  , "2026-08-02 * anonymous reversal"
+  , "  ; reverses: actual-original"
+  , "  assets:cash      100 JPY"
+  , "  expenses:wifi    -100 JPY"
+  ]
+
+unknownReversalTargetJournal :: T.Text
+unknownReversalTargetJournal = declarations <> T.unlines
+  [ "2026-08-02 * orphan reversal"
+  , "  ; event-id: actual-reversal-1"
+  , "  ; reverses: actual-missing"
+  , "  assets:cash      100 JPY"
+  , "  expenses:wifi    -100 JPY"
+  ]
+
+duplicateReversalTargetJournal :: T.Text
+duplicateReversalTargetJournal = reversalJournal <> T.unlines
+  [ ""
+  , "2026-08-03 * duplicate direct reversal"
+  , "  ; event-id: actual-reversal-2"
+  , "  ; reverses: actual-original"
+  , "  assets:cash      100 JPY"
+  , "  expenses:wifi    -100 JPY"
   ]
 
 duplicateEventKeyJournal :: T.Text
