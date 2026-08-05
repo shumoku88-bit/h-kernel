@@ -23,10 +23,7 @@ import HKernel.Account
   , declareAccountWithDefaultCommodity
   , mkAccount
   )
-import HKernel.Editor.ActualAppend
-  ( ActualEditIntent(..)
-  , IntentPosting(..)
-  )
+import HKernel.Editor.ActualAppend (ActualEditIntent(..))
 import HKernel.Editor.ActualReverse (ActualReverseIntent(..))
 import HKernel.Editor.IssueAppend (IssueAppendIntent(..))
 import HKernel.Editor.PlanLifecycle
@@ -35,6 +32,7 @@ import HKernel.Editor.PlanLifecycle
   , PositivePlanFinishAmount
   , mkPositivePlanFinishAmount
   )
+import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.HouseholdIssue (IssueStatus(..), mkIssueId)
 import HKernel.Money

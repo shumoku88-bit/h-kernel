@@ -29,10 +29,10 @@ import HKernel.Actual.Journal
   , actualJournalValue
   , parseActualJournal
   )
+import HKernel.Editor.SourceAppend (appendSourceBlock)
 import HKernel.Journal
   ( journalAccountRegistry
   )
-import HKernel.Editor.ActualAppend (appendBlock)
 
 data ActualAccountAppendError
   = SourceParseError (NonEmpty ActualJournalError)
@@ -92,5 +92,5 @@ buildPreview :: Text -> Text -> ActualAccountAppendPreview
 buildPreview existingSource block =
   ActualAccountAppendPreview
     { candidateBlock = block
-    , candidateCompleteSource = appendBlock existingSource block
+    , candidateCompleteSource = appendSourceBlock existingSource block
     }

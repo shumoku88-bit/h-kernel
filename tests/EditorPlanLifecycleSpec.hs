@@ -11,8 +11,8 @@ import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (Account, mkAccount)
 import HKernel.Actual.Journal (parseActualJournal)
-import HKernel.Editor.ActualAppend (IntentPosting(..))
 import HKernel.Editor.PlanLifecycle
+import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Money (Commodity, Quantity, mkCommodity, parseQuantity)
 import HKernel.Plan.Journal (parsePlanJournal)
 

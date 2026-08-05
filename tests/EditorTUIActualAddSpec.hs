@@ -8,11 +8,9 @@ import qualified Data.Text.IO as TIO
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (accountName)
-import HKernel.Editor.ActualAppend
-  ( ActualEditIntent(..)
-  , IntentPosting(..)
-  )
+import HKernel.Editor.ActualAppend (ActualEditIntent(..))
 import HKernel.Editor.TUI.ActualAdd
+import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Money (renderQuantity)
 
 main :: IO ()

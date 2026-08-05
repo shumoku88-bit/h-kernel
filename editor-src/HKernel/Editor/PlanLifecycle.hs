@@ -28,14 +28,16 @@ import Data.Time.Format (defaultTimeLocale, formatTime)
 import HKernel.Actual.Journal (ActualJournalError, parseActualJournal, actualJournalCompletionDeclarations)
 import HKernel.Editor.ActualAppend
   ( ActualEditIntent(..)
-  , IntentPosting(..)
-  , TransactionBlockIntent(..)
-  , TransactionBlockError
   , ActualEditError(..)
   , ActualAppendPreview(..)
-  , prepareTransactionBlock
   , prepareActualAppend
-  , appendBlock
+  )
+import HKernel.Editor.SourceAppend (appendSourceBlock)
+import HKernel.Editor.TransactionBlock
+  ( IntentPosting(..)
+  , TransactionBlockIntent(..)
+  , TransactionBlockError
+  , prepareTransactionBlock
   )
 import HKernel.Journal (journalAccountRegistry)
 import HKernel.Ledger (Posting, Transaction, transactionDescription, transactionPostings, postingAccount, postingAmount, mkPosting)
@@ -164,7 +166,7 @@ preparePlanAdd planSource actualSource intent = do
 
   let preview = PlanAddPreview
         { addCandidateBlock = block
-        , addCandidateCompleteSource = appendBlock planSource block
+        , addCandidateCompleteSource = appendSourceBlock planSource block
         }
 
   _ <- first (pure . AddCandidateParseError) (parsePlanJournal (addCandidateCompleteSource preview))
