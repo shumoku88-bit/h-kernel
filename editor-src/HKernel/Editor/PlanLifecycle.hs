@@ -25,20 +25,32 @@ import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 
-import HKernel.Actual.Journal (ActualJournalError, parseActualJournal, actualJournalCompletionDeclarations)
+import HKernel.Actual.Journal
+  ( ActualJournalError
+  , actualJournalCompletionDeclarations
+  , parseActualJournal
+  )
 import HKernel.Editor.ActualAppend
-  ( ActualEditIntent(..)
-  , IntentPosting(..)
-  , TransactionBlockIntent(..)
-  , TransactionBlockError
+  ( ActualAppendPreview(..)
   , ActualEditError(..)
-  , ActualAppendPreview(..)
-  , prepareTransactionBlock
+  , ActualEditIntent(..)
   , prepareActualAppend
-  , appendBlock
+  )
+import HKernel.Editor.SourceAppend (appendSourceBlock)
+import HKernel.Editor.TransactionBlock
+  ( IntentPosting(..)
+  , TransactionBlockError
+  , TransactionBlockIntent(..)
+  , prepareTransactionBlock
   )
 import HKernel.Journal (journalAccountRegistry)
-import HKernel.Ledger (Posting, Transaction, transactionDescription, transactionPostings, postingAccount, postingAmount, mkPosting)
+import HKernel.Ledger
+  ( transactionDescription
+  , transactionPostings
+  , postingAccount
+  , postingAmount
+  , mkPosting
+  )
 import HKernel.Money
   ( Quantity
   , amountCommodity
@@ -54,16 +66,15 @@ import HKernel.Plan
   , mkPlanId
   , planIdText
   )
+import HKernel.Plan.Completion (declaredCompletionPlanId)
 import HKernel.Plan.Journal
   ( PlanJournalError
-  , parsePlanJournal
-  , planJournalValue
-  , planJournalTransactions
   , identifiedPlanId
   , identifiedPlanTransaction
-  , IdentifiedPlanTransaction
+  , parsePlanJournal
+  , planJournalTransactions
+  , planJournalValue
   )
-import HKernel.Plan.Completion (declaredCompletionPlanId)
 
 -- Plan Add
 
@@ -91,10 +102,18 @@ data PlanAddError
   deriving (Eq, Show)
 
 slugify :: Text -> Text
-slugify t =
+slugify text =
   let
-    mapped = T.map (\c -> if isAsciiUpper c then toLower c else if isAsciiLower c || (c >= '0' && c <= '9') then c else '-') t
-    collapsed = T.intercalate "-" (filter (not . T.null) (T.splitOn "-" mapped))
+    mapped = T.map
+      (\character ->
+        if isAsciiUpper character
+          then toLower character
+          else if isAsciiLower character || (character >= '0' && character <= '9')
+            then character
+            else '-')
+      text
+    collapsed = T.intercalate "-"
+      (filter (not . T.null) (T.splitOn "-" mapped))
   in collapsed
 
 generatePlanId
@@ -103,13 +122,13 @@ generatePlanId
   -> Maybe Text
   -> [PlanId]
   -> Either PlanIdError PlanId
-generatePlanId date desc mSeries existingIds = go 1
+generatePlanId date description maybeSeries existingIds = go 1
   where
     prefix = "plan-" <> T.pack (formatTime defaultTimeLocale "%Y-%m-%d" date) <> "-"
-    suffix = case mSeries of
+    suffix = case maybeSeries of
       Just series -> series
       Nothing ->
-        let slug = slugify desc
+        let slug = slugify description
         in if T.null slug then "plan" else slug
     base = prefix <> suffix
 
@@ -131,11 +150,15 @@ preparePlanAdd
   -> PlanAddIntent
   -> Either (NonEmpty PlanAddError) PlanAddPreview
 preparePlanAdd planSource actualSource intent = do
-  planJ <- first (pure . AddPlanJournalSyntaxError) (parsePlanJournal planSource)
-  actualJ <- first (pure . AddActualJournalSyntaxError) (parseActualJournal actualSource)
+  planJournal <- first (pure . AddPlanJournalSyntaxError)
+    (parsePlanJournal planSource)
+  actualJournal <- first (pure . AddActualJournalSyntaxError)
+    (parseActualJournal actualSource)
 
-  let existingPlanIds = map identifiedPlanId (planJournalTransactions planJ)
-                        ++ map declaredCompletionPlanId (actualJournalCompletionDeclarations actualJ)
+  let existingPlanIds =
+        map identifiedPlanId (planJournalTransactions planJournal)
+        <> map declaredCompletionPlanId
+          (actualJournalCompletionDeclarations actualJournal)
 
   newPlanId <- case addRequestedId intent of
     Nothing -> first (pure . AddGeneratedIdError)
@@ -145,10 +168,10 @@ preparePlanAdd planSource actualSource intent = do
         (addSeries intent)
         existingPlanIds)
     Just requested -> do
-      pId <- first (pure . AddInvalidId) (mkPlanId requested)
-      if pId `elem` existingPlanIds
-        then Left (pure (AddDuplicateId pId))
-        else Right pId
+      planId <- first (pure . AddInvalidId) (mkPlanId requested)
+      if planId `elem` existingPlanIds
+        then Left (pure (AddDuplicateId planId))
+        else Right planId
 
   let blockIntent = TransactionBlockIntent
         { blockDate = addDate intent
@@ -159,18 +182,18 @@ preparePlanAdd planSource actualSource intent = do
 
   block <- first (pure . AddTransactionBlockError)
     (prepareTransactionBlock
-      (journalAccountRegistry (planJournalValue planJ))
+      (journalAccountRegistry (planJournalValue planJournal))
       blockIntent)
 
   let preview = PlanAddPreview
         { addCandidateBlock = block
-        , addCandidateCompleteSource = appendBlock planSource block
+        , addCandidateCompleteSource = appendSourceBlock planSource block
         }
 
-  _ <- first (pure . AddCandidateParseError) (parsePlanJournal (addCandidateCompleteSource preview))
+  _ <- first (pure . AddCandidateParseError)
+    (parsePlanJournal (addCandidateCompleteSource preview))
 
   pure preview
-
 
 -- Plan Finish
 
@@ -219,23 +242,28 @@ preparePlanFinish
   -> PlanFinishIntent
   -> Either (NonEmpty PlanFinishError) PlanFinishPreview
 preparePlanFinish planSource actualSource intent = do
-  planJ <- first (pure . FinishPlanJournalSyntaxError) (parsePlanJournal planSource)
-  actualJ <- first (pure . FinishActualJournalSyntaxError) (parseActualJournal actualSource)
+  planJournal <- first (pure . FinishPlanJournalSyntaxError)
+    (parsePlanJournal planSource)
+  actualJournal <- first (pure . FinishActualJournalSyntaxError)
+    (parseActualJournal actualSource)
 
-  pId <- first (pure . FinishInvalidId) (mkPlanId (finishPlanId intent))
+  planId <- first (pure . FinishInvalidId) (mkPlanId (finishPlanId intent))
 
-  let existingCompletions = map declaredCompletionPlanId (actualJournalCompletionDeclarations actualJ)
-  if pId `elem` existingCompletions
-    then Left (pure (FinishPlanAlreadyClosed pId))
+  let existingCompletions =
+        map declaredCompletionPlanId
+          (actualJournalCompletionDeclarations actualJournal)
+  if planId `elem` existingCompletions
+    then Left (pure (FinishPlanAlreadyClosed planId))
     else Right ()
 
-  let planTransactions = planJournalTransactions planJ
-  identifiedPlanTx <- case filter (\p -> identifiedPlanId p == pId) planTransactions of
-    [] -> Left (pure (FinishPlanNotFound pId))
-    (p:_) -> Right p
+  identifiedPlanTransactionValue <- case filter
+      ((== planId) . identifiedPlanId)
+      (planJournalTransactions planJournal) of
+    [] -> Left (pure (FinishPlanNotFound planId))
+    planTransaction : _ -> Right planTransaction
 
-  let txn = identifiedPlanTransaction identifiedPlanTx
-      originalPostings = transactionPostings txn
+  let transaction = identifiedPlanTransaction identifiedPlanTransactionValue
+      originalPostings = transactionPostings transaction
 
   updatedPostings <- case finishActualAmount intent of
     Nothing -> Right originalPostings
@@ -244,29 +272,42 @@ preparePlanFinish planSource actualSource intent = do
         then Left (pure FinishActualAmountOnlyForBinaryPlan)
         else
           let
-            newQty = positivePlanFinishAmountQuantity positiveAmount
-            modifyPosting p =
-              let oldQty = amountQuantity (postingAmount p)
-                  qty = if quantityToRational oldQty < 0 then negateQuantity newQty else newQty
-              in mkPosting (postingAccount p) (mkAmount (amountCommodity (postingAmount p)) qty)
+            newQuantity = positivePlanFinishAmountQuantity positiveAmount
+            modifyPosting posting =
+              let oldQuantity = amountQuantity (postingAmount posting)
+                  quantity =
+                    if quantityToRational oldQuantity < 0
+                      then negateQuantity newQuantity
+                      else newQuantity
+              in mkPosting
+                  (postingAccount posting)
+                  (mkAmount (amountCommodity (postingAmount posting)) quantity)
           in Right (fmap modifyPosting originalPostings)
 
-  let intentPostings = fmap (\p -> IntentPosting (postingAccount p) (amountQuantity (postingAmount p)) (Just (amountCommodity (postingAmount p)))) updatedPostings
+  let intentPostings = fmap
+        (\posting ->
+          IntentPosting
+            (postingAccount posting)
+            (amountQuantity (postingAmount posting))
+            (Just (amountCommodity (postingAmount posting))))
+        updatedPostings
 
-  let actualIntent = ActualEditIntent
+      actualIntent = ActualEditIntent
         { intentDate = finishActualDate intent
-        , intentDescription = transactionDescription txn
+        , intentDescription = transactionDescription transaction
         , intentPostings = intentPostings
-        , intentMetadata = [("plan-id", planIdText pId)]
+        , intentMetadata = [("plan-id", planIdText planId)]
         }
 
-  actualPreview <- first (pure . FinishActualEditError) (prepareActualAppend actualSource actualIntent)
+  actualPreview <- first (pure . FinishActualEditError)
+    (prepareActualAppend actualSource actualIntent)
 
   let preview = PlanFinishPreview
         { finishCandidateBlock = candidateBlock actualPreview
         , finishCandidateCompleteSource = candidateCompleteSource actualPreview
         }
 
-  _ <- first (pure . FinishCandidateParseError) (parseActualJournal (finishCandidateCompleteSource preview))
+  _ <- first (pure . FinishCandidateParseError)
+    (parseActualJournal (finishCandidateCompleteSource preview))
 
   pure preview
