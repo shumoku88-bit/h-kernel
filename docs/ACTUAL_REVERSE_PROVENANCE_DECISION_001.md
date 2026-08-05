@@ -133,19 +133,46 @@ cross-process shared lock、dual-editor alternating write rehearsal、lock conte
 
 Gate 8のsemantic comparisonでは、Actual reverseのexpected resultを「現在の差を受容する」から「canonical contractへ収束させる」に更新する。
 
+## Daily-use cutover target
+
+日常利用を`bqn-ledger`から`h-kernel`へ切り替える条件は、BQN editorの全operationを移植することではない。次の二本柱が揃うこととする。
+
+1. Haskell editorが、日常的に必要なsource writeをpreview、strict admission、stale rejection付きで実行できる。
+2. `bqn-ledger`の`tools/bl`に相当する一つのcommand hubが、report、editor、check、helpなど既存ownerへの入口をまとめる。
+
+command hubは会計計算やsource mutationを再実装しない。小さなdoorwayとして既存の`h-kernel` report executable、`h-kernel-editor-cli`、repository checksへ引数を渡す。
+
+```text
+one daily command
+  -> report
+  -> edit
+  -> check
+  -> help
+```
+
+この二本柱をnon-canonical copyで一度確認した後、日常入口を`h-kernel`へ切り替える。BQN-only maintenance operation、historical cleanup、完全なsource migrationは、日常切替より後へ送れる。
+
 ## Next finite slice
 
-次はActual multi-posting add semantic comparisonとする。
+次はh-kernel daily command hubの最小実装とする。
 
 有限な問い:
 
-> same input intentから生成されたBQN candidateとHaskell candidateは、2 postingを超えるTransactionでも、ordered Posting、exact Quantity、Commodity別balance、zero rejection、identity projectionについて同じadmitted meaningへ収束するか。
+> accounting、editor、checkの意味を複製せず、既存ownerへ委譲する一つのdaily-use入口を作れるか。
+
+最初のsurfaceは次に限定する。
+
+- default report
+- editor CLIへの委譲
+- repository checkへの委譲
+- help
+- direct subcommand operation
 
 次sliceでは次を混ぜない。
 
 - reverse implementation change
 - bqn-ledger parser change
-- Budget / Issue comparison
+- interactive full-screen TUI
+- source migration
 - private source rehearsal
-- Account / Plan source topology
-- canonical cutover
+- canonical writer cutover
