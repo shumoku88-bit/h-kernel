@@ -22,6 +22,8 @@ main = do
         , ("Issue blank amount and details are preserved", testIssueBlankAmount)
         , ("Plan add requires explicit date", testPlanAddDateRequired)
         , ("Plan finish requires explicit actual date", testPlanFinishDateRequired)
+        , ("Plan finish rejects negative actual amount", testPlanFinishNegativeAmount)
+        , ("Plan finish rejects zero actual amount", testPlanFinishZeroAmount)
         , ("Plan add admits command-local commit", testPlanAddCommit)
         ]
   mapM_ print results
@@ -145,6 +147,36 @@ testPlanFinishDateRequired =
     , "--id"
     , "plan-2026-08-05-meal"
     ] == Left CliPlanFinishDateRequired
+
+testPlanFinishNegativeAmount :: Bool
+testPlanFinishNegativeAmount =
+  parseEditorCommand
+    [ "plan"
+    , "finish"
+    , "plan.journal"
+    , "actual.journal"
+    , "--id"
+    , "plan-2026-08-05-meal"
+    , "--actual-date"
+    , "2026-08-05"
+    , "--actual-amount"
+    , "-100"
+    ] == Left CliPlanFinishAmountMustBePositive
+
+testPlanFinishZeroAmount :: Bool
+testPlanFinishZeroAmount =
+  parseEditorCommand
+    [ "plan"
+    , "finish"
+    , "plan.journal"
+    , "actual.journal"
+    , "--id"
+    , "plan-2026-08-05-meal"
+    , "--actual-date"
+    , "2026-08-05"
+    , "--actual-amount"
+    , "0"
+    ] == Left CliPlanFinishAmountMustBePositive
 
 testPlanAddCommit :: Bool
 testPlanAddCommit = case parseEditorCommand

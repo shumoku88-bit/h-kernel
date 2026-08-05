@@ -17,8 +17,11 @@ import HKernel.Money (Commodity, Quantity, mkCommodity, parseQuantity)
 main :: IO ()
 main = do
   let results = [ ("testPlanAddSuccess", testPlanAddSuccess)
+                , ("testPlanAddInvalidSeries", testPlanAddInvalidSeries)
                 , ("testPlanFinishSuccess", testPlanFinishSuccess)
                 , ("testPlanFinishMissingAmount", testPlanFinishMissingAmount)
+                , ("testPlanFinishNegativeAmount", testPlanFinishNegativeAmount)
+                , ("testPlanFinishZeroAmount", testPlanFinishZeroAmount)
                 ]
   mapM_ print results
   if all snd results
@@ -63,6 +66,11 @@ accFood = either (error "bad account") id (mkAccount "expenses:food")
 qty :: Text -> Quantity
 qty = either (error "bad qty") id . parseQuantity
 
+positiveQty :: Text -> PositivePlanFinishAmount
+positiveQty value =
+  either (error "bad positive qty") id
+    (mkPositivePlanFinishAmount (qty value))
+
 comm :: Text -> Commodity
 comm = either (error "bad comm") id . mkCommodity
 
@@ -78,21 +86,35 @@ testPlanAddSuccess =
         }
       result = preparePlanAdd planFixture actualFixture intent
   in case result of
-       Right preview -> 
+       Right preview ->
          let block = addCandidateBlock preview
          in "plan-2023-01-03-test-dinner" `T.isInfixOf` block
        Left err -> error (show err)
+
+testPlanAddInvalidSeries :: Bool
+testPlanAddInvalidSeries =
+  let intent = PlanAddIntent
+        { addDate = fromGregorian 2023 1 3
+        , addDescription = "Test Dinner"
+        , addPostings = IntentPosting accBank (qty "-1500") (Just (comm "JPY"))
+                     :| [IntentPosting accFood (qty "1500") (Just (comm "JPY"))]
+        , addRequestedId = Nothing
+        , addSeries = Just "bad series"
+        }
+  in case preparePlanAdd planFixture actualFixture intent of
+       Left (AddGeneratedIdError _ :| []) -> True
+       _ -> False
 
 testPlanFinishSuccess :: Bool
 testPlanFinishSuccess =
   let intent = PlanFinishIntent
         { finishPlanId = "plan-2023-01-01-lunch"
         , finishActualDate = fromGregorian 2023 1 2
-        , finishActualAmount = Just (qty "600")
+        , finishActualAmount = Just (positiveQty "600")
         }
       result = preparePlanFinish planFixture actualFixture intent
   in case result of
-       Right preview -> 
+       Right preview ->
          let block = finishCandidateBlock preview
          in "plan-2023-01-01-lunch" `T.isInfixOf` block && "600 JPY" `T.isInfixOf` block && "-600 JPY" `T.isInfixOf` block
        Left err -> error (show err)
@@ -106,7 +128,17 @@ testPlanFinishMissingAmount =
         }
       result = preparePlanFinish planFixture actualFixture intent
   in case result of
-       Right preview -> 
+       Right preview ->
          let block = finishCandidateBlock preview
          in "plan-2023-01-01-lunch" `T.isInfixOf` block && "500 JPY" `T.isInfixOf` block && "-500 JPY" `T.isInfixOf` block
        Left err -> error (show err)
+
+testPlanFinishNegativeAmount :: Bool
+testPlanFinishNegativeAmount =
+  mkPositivePlanFinishAmount (qty "-1")
+    == Left (NonPositivePlanFinishAmount (qty "-1"))
+
+testPlanFinishZeroAmount :: Bool
+testPlanFinishZeroAmount =
+  mkPositivePlanFinishAmount (qty "0")
+    == Left (NonPositivePlanFinishAmount (qty "0"))
