@@ -95,7 +95,9 @@ library h-kernel-editor
                     , HKernel.Editor.CLI
                     , HKernel.Editor.IssueAppend
                     , HKernel.Editor.PlanLifecycle
+                    , HKernel.Editor.TransactionBlock
                     , HKernel.Editor.TUI.ActualAdd
+    other-modules:    HKernel.Editor.SourceAppend
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
                     , h-kernel
