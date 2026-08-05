@@ -25,7 +25,7 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 - open PR #14: `spike(editor): Brick Actual add preview TUIを追加する`
 - #14 head: `f8d2cbadcbea6975bbbd13c990b2afeaa3637070`
 - #14はE7完了ではなくActual add read-only preview spikeで、correctness recovery完了までDraft保留
-- T07実装PR #22はDraftで、reverse identity/provenance contractとfocused evidenceを検証中
+- T07実装PR #22はOpen / Readyで、全CI gate成功、merge待ち
 
 ## 3. 判定語彙
 
@@ -184,7 +184,7 @@ stale判定には内容の不一致だけが必要であり、actual bytesを診
   source-neutralなvalidated transaction block境界をActual appendから分離し、Plan addはPlan JournalのAccount registryでpostingを検証・描画する。Plan sourceをActual admissionへ流さず、PlanとしてvalidかつActualとしてinvalidなmetadata sourceのfocused evidenceをPR #21で固定し、mainへmergeした。対象: ER-013とER-002のPlan部分。
 
 - [ ] **T07: reversal identity/provenance decision**  
-  reverse自身の明示`event-id`、Actual ownerによるtyped `reverses` retention、unknown/self/duplicate rejection、direct reverse一回、reverse-of-reverse許可をPR #22で実装した。Actual parser、Editor preview、CLI admissionのfocused evidenceを追加し、全CI gate確認後にReady化する。対象: ER-006。
+  reverse自身の明示`event-id`、Actual ownerによるtyped `reverses` retention、unknown/self/duplicate rejection、direct reverse一回、reverse-of-reverse許可をPR #22で実装した。Actual parser、Editor preview、CLI admissionのfocused evidenceを追加し、全CI gate成功、Ready化済み、merge待ち。対象: ER-006。
 
 - [ ] **T08: E7 TUI recovery**  
   PR #14を修復後mainへrebaseし、pure input constructor、positive amount contract、state transition test、fixture placementを整える。対象: ER-007。
