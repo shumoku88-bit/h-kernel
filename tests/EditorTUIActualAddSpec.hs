@@ -53,17 +53,17 @@ testPositiveMagnitude = case buildActualAddIntent validInput of
 
 testNegativeMagnitude :: Bool
 testNegativeMagnitude =
-  buildActualAddIntent validInput { addAmountText = "-100 JPY" }
+  buildActualAddIntent (validInput { addAmountText = "-100 JPY" })
     == Left ActualAddAmountMustBePositive
 
 testZeroMagnitude :: Bool
 testZeroMagnitude =
-  buildActualAddIntent validInput { addAmountText = "0 JPY" }
+  buildActualAddIntent (validInput { addAmountText = "0 JPY" })
     == Left ActualAddAmountMustBePositive
 
 testAmountShape :: Bool
 testAmountShape =
-  buildActualAddIntent validInput { addAmountText = "100" }
+  buildActualAddIntent (validInput { addAmountText = "100" })
     == Left ActualAddInvalidAmountShape
 
 testFromSelection :: T.Text -> Bool
@@ -93,11 +93,13 @@ testPreviewTransition source =
       previewState =
         transitionActualAdd source RequestActualAddPreview initial
       stateRendering = T.pack (show previewState)
+      expectedBlock = T.unlines
+        [ "2026-08-05 Groceries"
+        , "  expenses:food  100 JPY"
+        , "  assets:cash  -100 JPY"
+        ]
   in case actualAddMode previewState of
       ShowingActualAddPreview (ActualAddCandidateReady block) ->
-        block ==
-          "2026-08-05 Groceries\n\
-          \  expenses:food  100 JPY\n\
-          \  assets:cash  -100 JPY\n"
+        block == expectedBlock
           && not ("Opening Balance" `T.isInfixOf` stateRendering)
       _ -> False
