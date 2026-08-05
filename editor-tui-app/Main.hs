@@ -172,13 +172,15 @@ drawUI (AppWrapper _ (ShowConfirmed block _)) =
   [ center
       (borderWithLabel (str "Confirmation Accepted")
         (padAll 1
-          (withAttr (attrName "success")
-            (str "Confirmation accepted. Source remains unmodified."))
-            <=> str "Writer orchestration is intentionally outside this finite slice."
-            <=> str " "
-            <=> txt block
-            <=> str " "
-            <=> str "[B] Back to input | [Q] Quit")))
+          (vBox
+            [ withAttr (attrName "success")
+                (str "Confirmation accepted. Source remains unmodified.")
+            , str "Writer orchestration is intentionally outside this finite slice."
+            , str " "
+            , txt block
+            , str " "
+            , str "[B] Back to input | [Q] Quit"
+            ])))
   ]
 
 selectionLabel :: AccountSelectionTarget -> String
