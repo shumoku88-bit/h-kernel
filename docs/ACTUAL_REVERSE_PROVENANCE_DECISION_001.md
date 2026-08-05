@@ -70,9 +70,11 @@ current BQN reverse pathはinverse postingsと`[reverse]` descriptionを追加�
 
 これはrendering差ではなく、readerとwriterの両方にあるcontract gapである。
 
-## Dual-editor consequence
+## Single-user cutover consequence
 
-Actual reverseは、current状態ではdual-editor pilot対象から除外する。
+このprojectのcanonical editorは一人のoperatorが順番に使う。複数processによる同時writeや、二つのeditorを並行してcommitする運用はcutover要件にしない。
+
+必要な運用規則は小さい。
 
 ```text
 before h-kernel writer cutover
@@ -81,11 +83,14 @@ before h-kernel writer cutover
 
 after h-kernel writer cutover
   canonical reverse writer = h-kernel
-  current BQN reverse must not target canonical source
-  current BQN reader must not be assumed to admit new reversal metadata
+  current BQN writer is not used against canonical source
 ```
 
-BQN editorをcanonical sourceへ再び向けるには、少なくとも次が必要である。
+同時writeを防ぐshared lockは要求しない。operatorがwriterを切り替えるときは、旧editorの操作を終えてから新editorで最新sourceを読み直す。current stale-source rejectionは、preview後にsourceが変わった場合の安全境界として維持する。
+
+ただしreader compatibilityは別問題である。h-kernel形式のreversalを追加した後もbqn-ledgerのreportやreaderをcanonical sourceへ向け続けるなら、BQN Journal admissionが`reverses`を読める必要がある。bqn-ledgerをcanonical readerとして使わないなら、その対応はcutover後の互換作業へ送れる。
+
+BQN reader/editorを新contractへ対応させる場合は、少なくとも次が必要である。
 
 1. BQN Journal admissionが`reverses`をrecognized metadataとしてadmitする。
 2. target identityの存在とuniquenessを検証する。
@@ -108,7 +113,6 @@ BQN editorをcanonical sourceへ再び向けるには、少なくとも次が必
 - Account source topology
 - Plan source topology
 - Budget、Issue、policy
-- shared source-root lock
 - source format migration
 - UI
 
@@ -120,10 +124,12 @@ BQN editorをcanonical sourceへ再び向けるには、少なくとも次が必
 
 残る条件:
 
-- current BQN reader/writerとのcompatible routeまたは明示的なoperation exclusion
-- shared source-root serialization
-- private non-canonical rehearsal
-- operational cutover rule
+- bqn-ledger readerをcutover後もcanonical sourceへ向けるか決める
+- readerを残す場合は`reverses` admissionを対応させる
+- private non-canonical copyでh-kernel reverseを一度確認する
+- canonical writerをBQNからh-kernelへ切り替える操作手順を決める
+
+cross-process shared lock、dual-editor alternating write rehearsal、lock contention testはsingle-user cutover gateから除外する。
 
 Gate 8のsemantic comparisonでは、Actual reverseのexpected resultを「現在の差を受容する」から「canonical contractへ収束させる」に更新する。
 
@@ -140,7 +146,6 @@ Gate 8のsemantic comparisonでは、Actual reverseのexpected resultを「現�
 - reverse implementation change
 - bqn-ledger parser change
 - Budget / Issue comparison
-- shared lock
 - private source rehearsal
 - Account / Plan source topology
 - canonical cutover
