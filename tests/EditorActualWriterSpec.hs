@@ -3,77 +3,155 @@
 
 module Main (main) where
 
-import Control.Exception (IOException, catch)
+import Control.Exception (IOException, catch, throwIO)
+import Data.IORef (atomicModifyIORef', newIORef)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
-import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (removeFile)
 import System.Exit (exitFailure, exitSuccess)
 
+import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.Editor.ActualWriter
+import HKernel.Plan.Journal (parsePlanJournal)
 
 main :: IO ()
 main = do
-  let results = [ ("testStaleReject", testStaleReject)
-                , ("testSuccessfulWrite", testSuccessfulWrite)
-                , ("testPostAdmissionFailure", testPostAdmissionFailure)
-                ]
-  rs <- sequence [ f | (_, f) <- results ]
+  let results =
+        [ ("testStaleReject", testStaleReject)
+        , ("testActualWrite", testActualWrite)
+        , ("testPlanWrite", testPlanWrite)
+        , ("testPostAdmissionFailure", testPostAdmissionFailure)
+        , ("testPostPublishReadFailureRestores", testPostPublishReadFailureRestores)
+        ]
+  rs <- sequence [action | (_, action) <- results]
   let namedResults = zip (map fst results) rs
   mapM_ print namedResults
   if all snd namedResults
     then exitSuccess
     else exitFailure
 
-testFilePath :: FilePath
-testFilePath = "tests/fixtures/test_actual_writer.journal"
+withFixture :: FilePath -> Text -> (FilePath -> IO Bool) -> IO Bool
+withFixture path initial action = do
+  cleanupFixture path
+  TIO.writeFile path initial
+  result <- action path `catch` (\(_ :: IOException) -> pure False)
+  cleanupFixture path
+  pure result
 
-withFixture :: Text -> (FilePath -> IO Bool) -> IO Bool
-withFixture initial action = do
-  TIO.writeFile testFilePath initial
-  res <- action testFilePath `catch` (\(_ :: IOException) -> pure False)
-  -- Cleanup
-  _ <- catch (removeFile testFilePath) (\(_ :: IOException) -> pure ())
-  _ <- catch (removeFile (testFilePath <> ".backup.tmp")) (\(_ :: IOException) -> pure ())
-  _ <- catch (removeFile (testFilePath <> ".new.tmp")) (\(_ :: IOException) -> pure ())
-  pure res
+cleanupFixture :: FilePath -> IO ()
+cleanupFixture path = do
+  removeIfPresent path
+  removeIfPresent (path <> ".backup.tmp")
+  removeIfPresent (path <> ".new.tmp")
+
+removeIfPresent :: FilePath -> IO ()
+removeIfPresent path =
+  catch (removeFile path) (\(_ :: IOException) -> pure ())
+
+expectPublished
+  :: Show sourceError
+  => FilePath
+  -> (Text -> Either (NonEmpty sourceError) admitted)
+  -> Text
+  -> Text
+  -> IO Bool
+expectPublished path admit oldBytes newBytes =
+  withFixture path oldBytes $ \fixturePath -> do
+    result <- publishWithAdmission admit
+      (WriteIntent fixturePath oldBytes newBytes)
+    case result of
+      Right () -> (== newBytes) <$> TIO.readFile fixturePath
+      Left err -> print err >> pure False
 
 testStaleReject :: IO Bool
-testStaleReject = withFixture "original" $ \path -> do
-  let intent = WriteIntent
-        { targetFilePath = path
-        , expectedOldBytes = "different"
-        , candidateNewBytes = "new"
-        }
-  res <- publishActualAppend intent
-  pure $ case res of
-    Left (StaleFile "original") -> True
-    _ -> False
+testStaleReject =
+  withFixture "tests/fixtures/test_writer_stale.journal" "original" $ \path -> do
+    let intent = WriteIntent
+          { targetFilePath = path
+          , expectedOldBytes = "different"
+          , candidateNewBytes = "new"
+          }
+    result <- publishActualAppend intent
+    pure $ case result of
+      Left StaleFile -> show result == "Left StaleFile"
+      _ -> False
 
-testSuccessfulWrite :: IO Bool
-testSuccessfulWrite = withFixture "account assets:bank\n  type: Asset\n  commodity: JPY\n" $ \path -> do
-  let oldBytes = "account assets:bank\n  type: Asset\n  commodity: JPY\n"
-      newBytes = oldBytes <> "\n2023-01-01 test\n  assets:bank  100 JPY\n  assets:bank  -100 JPY\n"
-      intent = WriteIntent path oldBytes newBytes
-  res <- publishActualAppend intent
-  case res of
-    Right () -> do
-      content <- TIO.readFile path
-      pure (content == newBytes)
-    Left err -> do
-      print err
-      pure False
+testActualWrite :: IO Bool
+testActualWrite =
+  expectPublished
+    "tests/fixtures/test_writer_actual.journal"
+    parseActualJournal
+    actualOld
+    actualNew
+
+testPlanWrite :: IO Bool
+testPlanWrite =
+  expectPublished
+    "tests/fixtures/test_writer_plan.journal"
+    parsePlanJournal
+    planOld
+    planNew
 
 testPostAdmissionFailure :: IO Bool
-testPostAdmissionFailure = withFixture "account assets:bank\n  type: Asset\n  commodity: JPY\n" $ \path -> do
-  let oldBytes = "account assets:bank\n  type: Asset\n  commodity: JPY\n"
-      -- Syntactically invalid transaction to trigger post-admission failure
-      newBytes = oldBytes <> "\n2023-01-01 invalid\n  assets:unknown  100 JPY\n"
-      intent = WriteIntent path oldBytes newBytes
-  res <- publishActualAppend intent
-  case res of
-    Left (PostAdmissionFailed _ restoreSuccess) -> do
-      content <- TIO.readFile path
-      -- Should be restored to oldBytes
-      pure (restoreSuccess && content == oldBytes)
-    _ -> pure False
+testPostAdmissionFailure =
+  withFixture "tests/fixtures/test_writer_reject.journal" actualOld $ \path -> do
+    let invalidBytes = actualOld
+          <> "\n2026-08-05 invalid\n"
+          <> "  assets:unknown  100 JPY\n"
+        intent = WriteIntent path actualOld invalidBytes
+    result <- publishWithAdmission parseActualJournal intent
+    case result of
+      Left (PostAdmissionFailed _ True) ->
+        (== actualOld) <$> TIO.readFile path
+      _ -> pure False
+
+testPostPublishReadFailureRestores :: IO Bool
+testPostPublishReadFailureRestores =
+  withFixture "tests/fixtures/test_writer_read_failure.journal" actualOld $ \path -> do
+    readCount <- newIORef (0 :: Int)
+    let normalFileSystem = defaultWriterFileSystem
+        failSecondRead filePath = do
+          previous <- atomicModifyIORef' readCount (\count -> (count + 1, count))
+          if previous == 0
+            then readTextFile normalFileSystem filePath
+            else throwIO (userError "simulated post-publish read failure")
+        faultingFileSystem = normalFileSystem
+          { readTextFile = failSecondRead }
+        intent = WriteIntent path actualOld actualNew
+    result <- publishWithAdmissionUsing
+      faultingFileSystem
+      parseActualJournal
+      intent
+    case result of
+      Left (PostPublishReadFailed _ True) ->
+        (== actualOld) <$> TIO.readFile path
+      _ -> pure False
+
+actualOld :: Text
+actualOld =
+  "account assets:bank\n"
+  <> "  type: Asset\n"
+  <> "  commodity: JPY\n"
+
+actualNew :: Text
+actualNew = actualOld
+  <> "\n2026-08-05 actual write\n"
+  <> "  assets:bank  100 JPY\n"
+  <> "  assets:bank  -100 JPY\n"
+
+planOld :: Text
+planOld =
+  "account assets:bank\n"
+  <> "  type: Asset\n"
+  <> "  commodity: JPY\n"
+  <> "account expenses:food\n"
+  <> "  type: Expense\n"
+  <> "  commodity: JPY\n"
+
+planNew :: Text
+planNew = planOld
+  <> "\n2026-08-06 planned meal\n"
+  <> "    ; plan-id: PLAN-1\n"
+  <> "  assets:bank  -500 JPY\n"
+  <> "  expenses:food  500 JPY\n"

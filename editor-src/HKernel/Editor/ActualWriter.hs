@@ -4,6 +4,10 @@
 module HKernel.Editor.ActualWriter
   ( WriteIntent(..)
   , WriteError(..)
+  , WriterFileSystem(..)
+  , defaultWriterFileSystem
+  , publishWithAdmission
+  , publishWithAdmissionUsing
   , publishActualAppend
   ) where
 
@@ -21,52 +25,113 @@ data WriteIntent = WriteIntent
   , candidateNewBytes :: Text
   } deriving (Eq, Show)
 
-data WriteError
-  = StaleFile { staleActualBytes :: Text }
+data WriteError sourceError
+  = StaleFile
   | PostAdmissionFailed
-      { failedJournalError :: NonEmpty ActualJournalError
+      { failedSourceError  :: NonEmpty sourceError
+      , restoredFromBackup :: Bool
+      }
+  | PostPublishReadFailed
+      { failedReadMessage  :: String
       , restoredFromBackup :: Bool
       }
   | FileIOError String
   deriving (Eq, Show)
 
-publishActualAppend :: WriteIntent -> IO (Either WriteError ())
-publishActualAppend intent = catch (checkStaleAndWrite intent) handleError
+-- | File effects used by the writer.
+--
+-- Keeping these operations explicit makes the recovery path testable without
+-- weakening the ordinary IO entry point.
+data WriterFileSystem = WriterFileSystem
+  { readTextFile   :: FilePath -> IO Text
+  , writeTextFile  :: FilePath -> Text -> IO ()
+  , renameTextFile :: FilePath -> FilePath -> IO ()
+  , removeTextFile :: FilePath -> IO ()
+  }
+
+defaultWriterFileSystem :: WriterFileSystem
+defaultWriterFileSystem = WriterFileSystem
+  { readTextFile = T.readFile
+  , writeTextFile = T.writeFile
+  , renameTextFile = renameFile
+  , removeTextFile = removeFile
+  }
+
+publishWithAdmission
+  :: (Text -> Either (NonEmpty sourceError) admitted)
+  -> WriteIntent
+  -> IO (Either (WriteError sourceError) ())
+publishWithAdmission = publishWithAdmissionUsing defaultWriterFileSystem
+
+publishWithAdmissionUsing
+  :: WriterFileSystem
+  -> (Text -> Either (NonEmpty sourceError) admitted)
+  -> WriteIntent
+  -> IO (Either (WriteError sourceError) ())
+publishWithAdmissionUsing fileSystem admit intent =
+  catch (checkStaleAndWrite fileSystem admit intent) handleError
   where
-    handleError :: IOException -> IO (Either WriteError ())
-    handleError e = pure (Left (FileIOError (show e)))
+    handleError :: IOException -> IO (Either (WriteError sourceError) ())
+    handleError err = pure (Left (FileIOError (show err)))
 
-checkStaleAndWrite :: WriteIntent -> IO (Either WriteError ())
-checkStaleAndWrite intent = do
-  currentBytes <- T.readFile (targetFilePath intent)
+publishActualAppend
+  :: WriteIntent
+  -> IO (Either (WriteError ActualJournalError) ())
+publishActualAppend = publishWithAdmission parseActualJournal
+
+checkStaleAndWrite
+  :: WriterFileSystem
+  -> (Text -> Either (NonEmpty sourceError) admitted)
+  -> WriteIntent
+  -> IO (Either (WriteError sourceError) ())
+checkStaleAndWrite fileSystem admit intent = do
+  currentBytes <- readTextFile fileSystem (targetFilePath intent)
   if currentBytes /= expectedOldBytes intent
-    then pure (Left (StaleFile currentBytes))
-    else withAtomicSwap intent
+    then pure (Left StaleFile)
+    else withAtomicSwap fileSystem admit intent
 
-withAtomicSwap :: WriteIntent -> IO (Either WriteError ())
-withAtomicSwap intent = do
+withAtomicSwap
+  :: WriterFileSystem
+  -> (Text -> Either (NonEmpty sourceError) admitted)
+  -> WriteIntent
+  -> IO (Either (WriteError sourceError) ())
+withAtomicSwap fileSystem admit intent = do
   let filePath = targetFilePath intent
       backupPath = filePath <> ".backup.tmp"
-      newPath    = filePath <> ".new.tmp"
-      
-  T.writeFile backupPath (expectedOldBytes intent)
-  T.writeFile newPath (candidateNewBytes intent)
-  renameFile newPath filePath
-  
-  verifyOrRollback filePath backupPath
+      newPath = filePath <> ".new.tmp"
 
-verifyOrRollback :: FilePath -> FilePath -> IO (Either WriteError ())
-verifyOrRollback filePath backupPath = do
-  postBytes <- T.readFile filePath
-  case parseActualJournal postBytes of
-    Left errs -> Left <$> rollback errs
-    Right _   -> Right <$> commit
-  where
-    rollback errs = do
-      restored <- catch (renameFile backupPath filePath >> pure True)
-                        (\(_ :: IOException) -> pure False)
-      pure (PostAdmissionFailed errs restored)
-      
-    commit = do
-      _ <- catch (removeFile backupPath) (\(_ :: IOException) -> pure ())
-      pure ()
+  writeTextFile fileSystem backupPath (expectedOldBytes intent)
+  writeTextFile fileSystem newPath (candidateNewBytes intent)
+  renameTextFile fileSystem newPath filePath
+
+  verifyOrRollback fileSystem admit filePath backupPath
+
+verifyOrRollback
+  :: WriterFileSystem
+  -> (Text -> Either (NonEmpty sourceError) admitted)
+  -> FilePath
+  -> FilePath
+  -> IO (Either (WriteError sourceError) ())
+verifyOrRollback fileSystem admit filePath backupPath = do
+  postRead <- catch
+    (Right <$> readTextFile fileSystem filePath)
+    (pure . Left)
+  case postRead of
+    Left (readError :: IOException) -> do
+      restored <- restoreBackup fileSystem backupPath filePath
+      pure (Left (PostPublishReadFailed (show readError) restored))
+    Right postBytes -> case admit postBytes of
+      Left errs -> do
+        restored <- restoreBackup fileSystem backupPath filePath
+        pure (Left (PostAdmissionFailed errs restored))
+      Right _ -> do
+        _ <- catch
+          (removeTextFile fileSystem backupPath)
+          (\(_ :: IOException) -> pure ())
+        pure (Right ())
+
+restoreBackup :: WriterFileSystem -> FilePath -> FilePath -> IO Bool
+restoreBackup fileSystem backupPath filePath =
+  catch
+    (renameTextFile fileSystem backupPath filePath >> pure True)
+    (\(_ :: IOException) -> pure False)
