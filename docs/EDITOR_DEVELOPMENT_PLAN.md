@@ -28,9 +28,9 @@ coding assistantは、作業開始時にこの文書を読み、次を同じ現�
 ```text
 canonical source     separate private data repository
 current writer       bqn-ledger editor
-current h-kernel role reader/report engine + explicit Actual editor CLI
+current h-kernel role reader/report engine + explicit Editor CLI + Actual add preview TUI
 h-kernel write path  h-kernel-editor-cli --commit for rehearsal only
-editor component     Actual + Account + Budget movement + Issue + Plan lifecycle previews, safe writer, independent CLI
+editor component     Actual + Account + Budget movement + Issue + Plan lifecycle previews, safe writer, CLI, read-only Actual add TUI
 ```
 
 - 外部private directoryは一つだけの正規世帯sourceである。
@@ -40,24 +40,31 @@ editor component     Actual + Account + Budget movement + Issue + Plan lifecycle
 - transaction reverseはoriginalを変更せず、identity/provenanceを持つ新しいtransactionとしてActual Journalへappendする。
 - Account declaration、Budget movement、Household Issueのappendは、それぞれのstable ownerとcomplete-source admissionを使う。
 - Plan lifecycle commandはPlan identityとtransaction全体を保ち、add、edit、finishのcandidateをPlan Journal admissionで検証する。
+- `h-kernel-editor-tui`は明示されたActual Journalをread-onlyでadmitし、Account選択とpositive magnitudeのActual add入力を既存`prepareActualAppend`へ渡してcandidate blockをpreviewする。
+- TUIのpure stateは入力、Account選択mode、candidate blockまたはtyped errorだけを保持し、complete private source本文を保持しない。
+- TUIはsource mutation、他commandのorchestration、writer authorityをまだ持たない。
 - focused testとrehearsalはsynthetic temporary sourceだけを変更する。
-- interactive UIはまだ実装していない。
 - writer authorityは、明示的なcutover PRがmergeされるまで移動しない。
 
 詳細なsource ownershipは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)が所有する。
 
 ### NEXT
 
-次の有限sliceは E7: Interactive Editor Orchestration & Presentation である。既存commandのtyped intent、preview、safe writerを再利用し、interaction layerへdomain ruleを複製しない。
+次の有限sliceは E7b: Actual add TUI confirmation and safe writer orchestration である。現在のpure input/state contractとread-only previewを維持したまま、明示confirmationの後だけ既存safe writerへ委譲する。
 
 ```text
 user interaction
-  -> existing typed command intent
-  -> existing preview and confirmation
-  -> existing safe writer
+  -> pure Actual add state and typed intent
+  -> existing candidate preview
+  -> explicit confirmation
+  -> existing source-specific safe writer
 ```
 
-新しいdomain mutation、source migration、writer authority cutoverを混ぜない。
+- 対象は明示されたrehearsal sourceだけとし、private canonical sourceをdefaultとして推測しない。
+- stale check、backup、atomic publish、post-admission、restoreは既存safe writerを再利用し、Brick event loopへ複製しない。
+- confirmation前のcancel、publish成功、stale拒否、recoverable failureをinteraction contractとして観察可能にする。
+- 他commandのTUI、source migration、writer authority cutoverを混ぜない。
+- このsliceはE8 writer cutoverではなく、h-kernel writer authorityを移動しない。
 
 ## 3. bqn-ledgerとの関係
 
@@ -109,26 +116,33 @@ h-kernel-household
 h-kernel-editor
   source: editor-src/
   depends on: h-kernel
-  later may depend on: h-kernel-household when a named Household source requires it
-  owns: edit intent, preview, source placement, safe write effect
+  may depend on: h-kernel-household when a named Household source requires it
+  owns: edit intent, preview, source placement, safe write effect, pure interaction contracts
 
-h-kernel-editor executable
+h-kernel-editor CLI executable
   source: editor-app/
   depends on: h-kernel-editor
   owns: CLI and process boundary
+
+h-kernel-editor TUI executable
+  source: editor-tui-app/
+  depends on: h-kernel-editor
+  owns: Brick delivery adapter for Actual add interaction
 ```
 
 依存方向は一方向にする。
 
 ```text
 h-kernel-editor -> h-kernel
-h-kernel-editor -> h-kernel-household   only when a later named slice requires it
+h-kernel-editor -> h-kernel-household   only when a named Household source requires it
+editor-app -> h-kernel-editor
+editor-tui-app -> h-kernel-editor
 h-kernel -> h-kernel-editor             forbidden
 h-kernel-household -> h-kernel-editor   forbidden
 Report -> h-kernel-editor               forbidden
 ```
 
-Editor固有のIO依存、filesystem操作、CLI parserをmain libraryへ漏らさない。別repositoryには分けず、同じ型、同じ正規source、同じrepository audit、同じCIの中で所有権を分ける。
+Editor固有のIO依存、filesystem操作、CLI parser、Brick依存をmain libraryへ漏らさない。別repositoryには分けず、同じ型、同じ正規source、同じrepository audit、同じCIの中で所有権を分ける。
 
 ### 4.2 coreから共有する部品
 
@@ -242,7 +256,11 @@ Editor初期段階では既存の`app/Main.hs`へcommandを足さず、独立し
 
 ### 5.5 Interactive orchestration
 
-fzf、gum、番号選択、prompt、候補表示はcommand surfaceの外側に置く。interaction layerはAccount分類、Plan完了、balance、source mutationの意味を所有しない。
+`HKernel.Editor.TUI.ActualAdd`は、Actual addの入力admissionとAccount選択、cancel、preview、returnをpure state transitionとして所有する。`editor-tui-app/`のBrick event loopはそのcontractを呼ぶdelivery adapterであり、Account、Money、balance、Journal admissionを再実装しない。
+
+interaction stateは入力Text、選択mode、candidate blockまたはtyped errorだけを保持する。complete source本文、backup、writer authorityをUI stateへ持ち込まない。
+
+fzf、gum、番号選択、prompt、候補表示を追加する場合もcommand surfaceの外側に置く。interaction layerはAccount分類、Plan完了、balance、source mutationの意味を所有しない。
 
 ## 6. 最初の有限slice: Actual append preview
 
@@ -324,13 +342,13 @@ prepareActualAppend
 
 | 段階 | 能力 | 開始条件 |
 |---|---|---|
-| E1 | 独立`h-kernel-editor` componentとActual appendのpure preview | この設計面と既存Actual/Account admission |
-| E2 | safe single-file writer | E1のcandidate complete sourceとerror contractがstable |
-| E3 | Actual add / multi-add command | E2のstale、backup、atomic publish、restore evidence |
-| E4 | transaction reverse | E3とtransaction identity/provenanceの合意 |
+| E1 | 独立`h-kernel-editor` componentとActual appendのpure preview | DONE |
+| E2 | safe single-file writer | DONE |
+| E3 | Actual add / multi-add command | DONE |
+| E4 | transaction reverse | DONE |
 | E5 | Account / Budget / Issue append | DONE |
 | E6 | Plan add / select / edit / finish | DONE |
-| E7 | interactive orchestration | CURRENT |
+| E7 | interactive orchestration | CURRENT: Actual add read-only preview merged、次は明示confirmationとsafe writer orchestration |
 | E8 | writer cutover | parity、運用試験、rollback、作者の明示承認 |
 
 段階番号は依存順を示す。複数能力を一つのPRへまとめる理由にはしない。E5内でもAccount、Budget、Issueは別sliceにできる。
@@ -342,7 +360,9 @@ prepareActualAppend
 ```text
 editor-src/HKernel/Editor/**
 editor-app/**
+editor-tui-app/**
 tests/Editor*
+tests/fixtures/editor/**
 docs/EDITOR_DEVELOPMENT_PLAN.md
 ```
 
