@@ -29,11 +29,15 @@ import HKernel.Actual.Journal (ActualJournalError, parseActualJournal, actualJou
 import HKernel.Editor.ActualAppend
   ( ActualEditIntent(..)
   , IntentPosting(..)
+  , TransactionBlockIntent(..)
+  , TransactionBlockError
   , ActualEditError(..)
   , ActualAppendPreview(..)
+  , prepareTransactionBlock
   , prepareActualAppend
   , appendBlock
   )
+import HKernel.Journal (journalAccountRegistry)
 import HKernel.Ledger (Posting, Transaction, transactionDescription, transactionPostings, postingAccount, postingAmount, mkPosting)
 import HKernel.Money
   ( Quantity
@@ -53,6 +57,7 @@ import HKernel.Plan
 import HKernel.Plan.Journal
   ( PlanJournalError
   , parsePlanJournal
+  , planJournalValue
   , planJournalTransactions
   , identifiedPlanId
   , identifiedPlanTransaction
@@ -78,7 +83,7 @@ data PlanAddPreview = PlanAddPreview
 data PlanAddError
   = AddPlanJournalSyntaxError (NonEmpty PlanJournalError)
   | AddActualJournalSyntaxError (NonEmpty ActualJournalError)
-  | AddActualEditError (NonEmpty ActualEditError)
+  | AddTransactionBlockError (NonEmpty TransactionBlockError)
   | AddCandidateParseError (NonEmpty PlanJournalError)
   | AddDuplicateId PlanId
   | AddInvalidId PlanIdError
@@ -145,22 +150,23 @@ preparePlanAdd planSource actualSource intent = do
         then Left (pure (AddDuplicateId pId))
         else Right pId
 
-  let actualIntent = ActualEditIntent
-        { intentDate = addDate intent
-        , intentDescription = addDescription intent
-        , intentPostings = addPostings intent
-        , intentMetadata = [("plan-id", planIdText newPlanId)]
+  let blockIntent = TransactionBlockIntent
+        { blockDate = addDate intent
+        , blockDescription = addDescription intent
+        , blockPostings = addPostings intent
+        , blockMetadata = [("plan-id", planIdText newPlanId)]
         }
 
-  -- We reuse prepareActualAppend, but pass planSource because it's generating text for plan.journal!
-  actualPreview <- first (pure . AddActualEditError) (prepareActualAppend planSource actualIntent)
+  block <- first (pure . AddTransactionBlockError)
+    (prepareTransactionBlock
+      (journalAccountRegistry (planJournalValue planJ))
+      blockIntent)
 
   let preview = PlanAddPreview
-        { addCandidateBlock = candidateBlock actualPreview
-        , addCandidateCompleteSource = candidateCompleteSource actualPreview
+        { addCandidateBlock = block
+        , addCandidateCompleteSource = appendBlock planSource block
         }
 
-  -- Verify with parsePlanJournal
   _ <- first (pure . AddCandidateParseError) (parsePlanJournal (addCandidateCompleteSource preview))
 
   pure preview

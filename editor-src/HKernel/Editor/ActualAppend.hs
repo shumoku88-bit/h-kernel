@@ -2,9 +2,12 @@
 
 module HKernel.Editor.ActualAppend
   ( ActualEditIntent(..)
+  , TransactionBlockIntent(..)
   , IntentPosting(..)
+  , TransactionBlockError(..)
   , ActualEditError(..)
   , ActualAppendPreview(..)
+  , prepareTransactionBlock
   , prepareActualAppend
   , appendBlock
   ) where
@@ -33,9 +36,7 @@ import HKernel.Actual.Journal
   , actualJournalValue
   , parseActualJournal
   )
-import HKernel.Journal
-  ( journalAccountRegistry
-  )
+import HKernel.Journal (journalAccountRegistry)
 import HKernel.Ledger
   ( Posting
   , Transaction
@@ -67,11 +68,30 @@ data ActualEditIntent = ActualEditIntent
   , intentMetadata    :: [(Text, Text)]
   } deriving (Eq, Show)
 
+-- | Source-neutral input for one validated Journal transaction block.
+--
+-- Actual and Plan append paths may share this validation and rendering step,
+-- while each source owner remains responsible for its own admission before and
+-- after the block is appended.
+data TransactionBlockIntent = TransactionBlockIntent
+  { blockDate        :: Day
+  , blockDescription :: Text
+  , blockPostings    :: NonEmpty IntentPosting
+  , blockMetadata    :: [(Text, Text)]
+  } deriving (Eq, Show)
+
 data IntentPosting = IntentPosting
   { intentAccount   :: Account
   , intentQuantity  :: Quantity
   , intentCommodity :: Maybe Commodity
   } deriving (Eq, Show)
+
+data TransactionBlockError
+  = BlockUndeclaredAccount Account
+  | BlockMissingCommodity Account
+  | BlockZeroAmount Account
+  | BlockValidationError TransactionError
+  deriving (Eq, Show)
 
 data ActualEditError
   = SourceParseError (NonEmpty ActualJournalError)
@@ -87,76 +107,115 @@ data ActualAppendPreview = ActualAppendPreview
   , candidateCompleteSource :: Text
   } deriving (Eq, Show)
 
+prepareTransactionBlock
+  :: AccountRegistry
+  -> TransactionBlockIntent
+  -> Either (NonEmpty TransactionBlockError) Text
+prepareTransactionBlock registry intent = do
+  postings <- resolvePostings registry (blockPostings intent)
+  transaction <- buildTransaction intent postings
+  pure (renderTransaction (blockMetadata intent) transaction)
+
 prepareActualAppend
   :: Text
   -> ActualEditIntent
   -> Either (NonEmpty ActualEditError) ActualAppendPreview
 prepareActualAppend existingSource intent = do
   journal <- parseSource existingSource
-  postings <- resolvePostings (journalAccountRegistry (actualJournalValue journal)) (intentPostings intent)
-  txn <- buildTransaction intent postings
-  
-  let preview = buildPreview (intentMetadata intent) existingSource txn
-  
-  _ <- first (pure . CandidateSourceParseError) (parseActualJournal (candidateCompleteSource preview))
+  block <- first (fmap toActualEditError)
+    (prepareTransactionBlock
+      (journalAccountRegistry (actualJournalValue journal))
+      (toTransactionBlockIntent intent))
+
+  let preview = ActualAppendPreview
+        { candidateBlock = block
+        , candidateCompleteSource = appendBlock existingSource block
+        }
+
+  _ <- first (pure . CandidateSourceParseError)
+    (parseActualJournal (candidateCompleteSource preview))
   pure preview
 
 parseSource :: Text -> Either (NonEmpty ActualEditError) ActualJournal
 parseSource = first (pure . SourceParseError) . parseActualJournal
 
-resolvePostings :: AccountRegistry -> NonEmpty IntentPosting -> Either (NonEmpty ActualEditError) (NonEmpty Posting)
+toTransactionBlockIntent :: ActualEditIntent -> TransactionBlockIntent
+toTransactionBlockIntent intent = TransactionBlockIntent
+  { blockDate = intentDate intent
+  , blockDescription = intentDescription intent
+  , blockPostings = intentPostings intent
+  , blockMetadata = intentMetadata intent
+  }
+
+toActualEditError :: TransactionBlockError -> ActualEditError
+toActualEditError blockError = case blockError of
+  BlockUndeclaredAccount account -> UndeclaredAccount account
+  BlockMissingCommodity account -> MissingCommodity account
+  BlockZeroAmount account -> ZeroAmount account
+  BlockValidationError transactionError -> ValidationError transactionError
+
+resolvePostings
+  :: AccountRegistry
+  -> NonEmpty IntentPosting
+  -> Either (NonEmpty TransactionBlockError) (NonEmpty Posting)
 resolvePostings registry intents =
-  case partitionEithers (NonEmpty.toList (fmap (resolvePosting registry) intents)) of
-    (err:errs, _) -> Left (err NonEmpty.:| errs)
-    ([], p:ps)    -> Right (p NonEmpty.:| ps)
-    ([], [])      -> error "unreachable: input was NonEmpty"
+  case partitionEithers
+    (NonEmpty.toList (fmap (resolvePosting registry) intents)) of
+    (err : errs, _) -> Left (err NonEmpty.:| errs)
+    ([], posting : postings) -> Right (posting NonEmpty.:| postings)
+    ([], []) -> error "unreachable: input was NonEmpty"
 
-buildTransaction :: ActualEditIntent -> NonEmpty Posting -> Either (NonEmpty ActualEditError) Transaction
+buildTransaction
+  :: TransactionBlockIntent
+  -> NonEmpty Posting
+  -> Either (NonEmpty TransactionBlockError) Transaction
 buildTransaction intent postings =
-  first (pure . ValidationError) $
-    mkTransaction (intentDate intent) (intentDescription intent) postings
-
-buildPreview :: [(Text, Text)] -> Text -> Transaction -> ActualAppendPreview
-buildPreview metadata existingSource txn =
-  ActualAppendPreview
-    { candidateBlock = block
-    , candidateCompleteSource = appendBlock existingSource block
-    }
-  where
-    block = renderTransaction metadata txn
+  first (pure . BlockValidationError)
+    (mkTransaction (blockDate intent) (blockDescription intent) postings)
 
 resolvePosting
   :: AccountRegistry
   -> IntentPosting
-  -> Either ActualEditError Posting
-resolvePosting registry (IntentPosting acc qty mComm) = do
-  when (isZeroQuantity qty) (Left (ZeroAmount acc))
+  -> Either TransactionBlockError Posting
+resolvePosting registry (IntentPosting account quantity maybeCommodity) = do
+  when (isZeroQuantity quantity) (Left (BlockZeroAmount account))
 
-  decl <- maybe (Left (UndeclaredAccount acc)) pure (lookupAccountDeclaration acc registry)
+  declaration <- maybe
+    (Left (BlockUndeclaredAccount account))
+    pure
+    (lookupAccountDeclaration account registry)
 
-  let effectiveComm = mComm <|> declaredAccountDefaultCommodity decl
-  commodity <- maybe (Left (MissingCommodity acc)) pure effectiveComm
+  let effectiveCommodity =
+        maybeCommodity <|> declaredAccountDefaultCommodity declaration
+  commodity <- maybe
+    (Left (BlockMissingCommodity account))
+    pure
+    effectiveCommodity
 
-  pure (mkPosting acc (mkAmount commodity qty))
+  pure (mkPosting account (mkAmount commodity quantity))
 
 renderTransaction :: [(Text, Text)] -> Transaction -> Text
-renderTransaction meta txn =
-  T.pack (formatTime defaultTimeLocale "%Y-%m-%d" (transactionDate txn))
-  <> " " <> transactionDescription txn <> "\n"
-  <> (if null meta then "" else T.intercalate "\n" (map renderMeta meta) <> "\n")
-  <> T.intercalate "\n" (map renderPosting (NonEmpty.toList (transactionPostings txn)))
+renderTransaction metadata transaction =
+  T.pack
+    (formatTime defaultTimeLocale "%Y-%m-%d" (transactionDate transaction))
+  <> " " <> transactionDescription transaction <> "\n"
+  <> (if null metadata
+        then ""
+        else T.intercalate "\n" (map renderMetadata metadata) <> "\n")
+  <> T.intercalate "\n"
+      (map renderPosting (NonEmpty.toList (transactionPostings transaction)))
   <> "\n"
 
-renderMeta :: (Text, Text) -> Text
-renderMeta (k, v) = "    ; " <> k <> ": " <> v
+renderMetadata :: (Text, Text) -> Text
+renderMetadata (key, value) = "    ; " <> key <> ": " <> value
 
 renderPosting :: Posting -> Text
-renderPosting p =
-  "  " <> accountName (postingAccount p)
+renderPosting posting =
+  "  " <> accountName (postingAccount posting)
   <> "  " <> renderQuantity (amountQuantity amount)
   <> " " <> commodityCode (amountCommodity amount)
   where
-    amount = postingAmount p
+    amount = postingAmount posting
 
 appendBlock :: Text -> Text -> Text
 appendBlock existing block
