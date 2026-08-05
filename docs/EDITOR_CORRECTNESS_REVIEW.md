@@ -1,10 +1,10 @@
 # h-kernel Editor correctness review
 
-ステータス: 再レビュー済み・T04検証完了  
+ステータス: 再レビュー済み・T05検証完了  
 Owner: h-kernel editor review  
 Canonical: yes  
 基準日: 2026-08-05  
-基準main: `f6f36c77f36b61e8c45ed4900fcf35b67e5d0f75`
+基準main: `12f6c3b3b51e131093730db848142959301c4385`
 
 ## 1. 役割
 
@@ -14,15 +14,16 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 
 ## 2. Remote baseline
 
-- main HEAD: `f6f36c77f36b61e8c45ed4900fcf35b67e5d0f75`
+- main HEAD: `12f6c3b3b51e131093730db848142959301c4385`
 - E4、E5、E6はmainへmerge済み
 - T01実装PR #16はmainへmerge済み
 - T02実装PR #17はmainへmerge済み
 - T03実装PR #18はmainへmerge済み
+- T04実装PR #19はmainへmerge済み
 - open PR #14: `spike(editor): Brick Actual add preview TUIを追加する`
 - #14 head: `f8d2cbadcbea6975bbbd13c990b2afeaa3637070`
 - #14はE7完了ではなくActual add read-only preview spikeで、correctness recovery完了までDraft保留
-- T04実装PR #19は全CI gate成功、merge待ち
+- T05実装PR #20は全CI gate成功、merge待ち
 
 ## 3. 判定語彙
 
@@ -161,11 +162,11 @@ stale判定には内容の不一致だけが必要であり、actual bytesを診
 - [x] **T03: Plan amount and identity safety**  
   finish amountをpositive magnitudeとしてadmitし、generated Plan ID失敗をtyped errorへした。negative、zero、invalid seriesをfocused testへ追加し、PR #18でmainへmergeした。対象: ER-005のpartial failure、ER-010。
 
-- [ ] **T04: Account declaration exact round-trip**  
-  Account Journal ownerへcanonical rendererとprivacy-preserving typed errorを置き、全AccountTypeのrender/parse-back exact parityを検証した。`;`を含むunrepresentable identityはsource公開前にrejectし、complete candidate registryでも追加対象declarationのexact equalityを再確認する。対象: ER-004。PR #19は全CI gate成功、merge待ち。
+- [x] **T04: Account declaration exact round-trip**  
+  Account Journal ownerへcanonical rendererとprivacy-preserving typed errorを置き、全AccountTypeのrender/parse-back exact parityを検証した。`;`を含むunrepresentable identityはsource公開前にrejectし、complete candidate registryでも追加対象declarationのexact equalityを再確認し、PR #19でmainへmergeした。対象: ER-004。
 
 - [ ] **T05: Issue source contract alignment**  
-  optional amountのblank pairをstable TSV admissionで表し、empty admitted sourceへの初回appendではheaderを生成する。parser、renderer、Editor testを同じsliceで揃える。対象: ER-003、ER-011。
+  amount・currencyの両方blankを`Nothing`としてstable TSV admissionし、片側blankはtyped errorとしてrejectする。blank・comment-only sourceへの初回appendではstable headerを生成し、parser、Editor preview、temporary-file commitをPR #20で固定した。対象: ER-003、ER-011。PR #20は全CI gate成功、merge待ち。
 
 - [ ] **T06: Plan rendering/admission ownership**  
   validated transactionのrenderingをActual source admissionから分離し、Plan addはPlan sourceだけをPlan ownerでadmitする。対象: ER-013とER-002のPlan部分。

@@ -7,6 +7,8 @@
 -- or accounting result by itself.
 module HKernel.Household.Issue.TSV
   ( HouseholdIssueTSVError(..)
+  , householdIssuesHeader
+  , householdIssueSourceHasHeader
   , parseHouseholdIssues
   ) where
 
@@ -32,15 +34,16 @@ parseHouseholdIssues
   -> Either (NonEmpty HouseholdIssueTSVError) [HouseholdIssue]
 parseHouseholdIssues input = case meaningfulLines input of
   [] -> Right []
-  (_, header) : rows
-    | header /= expectedHeader ->
-        Left (errorAt 1 "unexpected issues header" NonEmpty.:| [])
+  (headerLine, header) : rows
+    | header /= householdIssuesHeader ->
+        Left (errorAt headerLine "unexpected issues header" NonEmpty.:| [])
     | otherwise -> do
         issues <- mapLeft NonEmpty.singleton (traverse parseRow rows)
         ensureUniqueIssues issues
 
-expectedHeader :: Text
-expectedHeader = T.intercalate "\t"
+-- | The stable physical header for the retained Issue source.
+householdIssuesHeader :: Text
+householdIssuesHeader = T.intercalate "\t"
   [ "issue_id"
   , "status"
   , "date"
@@ -50,6 +53,16 @@ expectedHeader = T.intercalate "\t"
   , "currency"
   , "details"
   ]
+
+-- | Whether an admitted source already contains its stable header.
+--
+-- Callers use this only after 'parseHouseholdIssues' succeeds. Blank and
+-- comment-only sources are admitted but still need a header before the first
+-- row is appended.
+householdIssueSourceHasHeader :: Text -> Bool
+householdIssueSourceHasHeader input = case meaningfulLines input of
+  [] -> False
+  (_, header) : _ -> header == householdIssuesHeader
 
 parseRow :: (Int, Text) -> Either HouseholdIssueTSVError HouseholdIssue
 parseRow (lineNumber, line) = case T.splitOn "\t" line of
@@ -66,20 +79,36 @@ parseRow (lineNumber, line) = case T.splitOn "\t" line of
         (mkIssueId identifier)
       status <- parseStatus lineNumber statusText
       day <- parseDay lineNumber dateText
-      quantity <- mapLeft (errorAt lineNumber . tshow)
-        (parseQuantity quantityText)
-      commodity <- mapLeft (errorAt lineNumber . tshow)
-        (mkCommodity currencyText)
+      amount <- parseOptionalAmount lineNumber quantityText currencyText
       mapLeft (errorAt lineNumber . tshow)
         (mkHouseholdIssue
           identifier'
           day
           status
           DueUndetermined
-          (Just (mkAmount commodity quantity))
+          amount
           title
           ("[" <> category <> "] " <> details))
   _ -> Left (errorAt lineNumber "expected eight issue columns")
+
+parseOptionalAmount
+  :: Int
+  -> Text
+  -> Text
+  -> Either HouseholdIssueTSVError (Maybe Amount)
+parseOptionalAmount _ "" "" = Right Nothing
+parseOptionalAmount lineNumber "" _ =
+  Left (errorAt lineNumber
+    "amount and currency must both be blank or both be present")
+parseOptionalAmount lineNumber _ "" =
+  Left (errorAt lineNumber
+    "amount and currency must both be blank or both be present")
+parseOptionalAmount lineNumber quantityText currencyText = do
+  quantity <- mapLeft (errorAt lineNumber . tshow)
+    (parseQuantity quantityText)
+  commodity <- mapLeft (errorAt lineNumber . tshow)
+    (mkCommodity currencyText)
+  Right (Just (mkAmount commodity quantity))
 
 parseStatus :: Int -> Text -> Either HouseholdIssueTSVError IssueStatus
 parseStatus _ "open" = Right Open

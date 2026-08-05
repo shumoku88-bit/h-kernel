@@ -22,6 +22,8 @@ characterizeAcceptedIssues = do
         (filter ((== "issue-one") . issueIdText . householdIssueId) issues)
       secondIssue = exactlyOne
         (filter ((== "issue-resolved") . issueIdText . householdIssueId) issues)
+      issueWithoutAmount = exactlyOne
+        (mustRight (parseHouseholdIssues optionalAmountIssue))
       jpy = mustRight (mkCommodity "JPY")
 
   assertEqual "one physical row becomes one typed HouseholdIssue"
@@ -45,14 +47,17 @@ characterizeAcceptedIssues = do
   assertEqual "resolved remains distinct from open"
     Resolved
     (householdIssueStatus secondIssue)
+  assertEqual "blank amount and currency retain no invented Amount"
+    Nothing
+    (householdIssueAmount issueWithoutAmount)
   assertEqual "blank and comment-only input admits no issues"
     []
     (mustRight (parseHouseholdIssues "\n# no current matters\n"))
 
 characterizeSourceFailures :: IO ()
 characterizeSourceFailures = do
-  assertLeftAt "header is exact"
-    1
+  assertLeftAt "header is exact and retains its physical line"
+    2
     "unexpected issues header"
     (parseHouseholdIssues (T.replace "issue_id" "id" validIssues))
   assertLeftAt "status vocabulary is closed"
@@ -67,27 +72,44 @@ characterizeSourceFailures = do
     2
     "expected eight issue columns"
     (parseHouseholdIssues (header <> "\nissue-one\topen\n"))
+  assertLeftAt "blank amount cannot discard a present currency"
+    2
+    "amount and currency must both be blank or both be present"
+    (parseHouseholdIssues amountBlankOnly)
+  assertLeftAt "blank currency cannot discard a present amount"
+    2
+    "amount and currency must both be blank or both be present"
+    (parseHouseholdIssues currencyBlankOnly)
   assertLeftAt "IssueId is unique across the admitted collection"
     0
     "duplicate identity"
     (parseHouseholdIssues duplicateIssues)
 
 header :: T.Text
-header = T.intercalate "\t"
-  [ "issue_id"
-  , "status"
-  , "date"
-  , "category"
-  , "title"
-  , "amount"
-  , "currency"
-  , "details"
-  ]
+header = householdIssuesHeader
 
 oneIssue :: T.Text
 oneIssue = T.unlines
   [ header
   , "issue-one\topen\t2026-07-20\tplanning\twifi\t200\tJPY\tdecide funding"
+  ]
+
+optionalAmountIssue :: T.Text
+optionalAmountIssue = T.unlines
+  [ header
+  , "issue-unknown-cost\topen\t2026-07-22\thome\tboiler\t\t\tinspect first"
+  ]
+
+amountBlankOnly :: T.Text
+amountBlankOnly = T.unlines
+  [ header
+  , "issue-amount-blank\topen\t2026-07-22\thome\tboiler\t\tJPY\tinspect first"
+  ]
+
+currencyBlankOnly :: T.Text
+currencyBlankOnly = T.unlines
+  [ header
+  , "issue-currency-blank\topen\t2026-07-22\thome\tboiler\t200\t\tinspect first"
   ]
 
 validIssues :: T.Text
