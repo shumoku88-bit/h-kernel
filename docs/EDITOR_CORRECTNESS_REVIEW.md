@@ -1,10 +1,10 @@
 # h-kernel Editor correctness review
 
-ステータス: 再レビュー済み・T02検証完了  
+ステータス: 再レビュー済み・T03検証完了  
 Owner: h-kernel editor review  
 Canonical: yes  
 基準日: 2026-08-05  
-基準main: `89161c48e3cf747d08d8cc2e0da52c7205be4c8f`
+基準main: `3d358ce28ca70b7f895e456d31a8890da281b483`
 
 ## 1. 役割
 
@@ -14,13 +14,14 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 
 ## 2. Remote baseline
 
-- main HEAD: `89161c48e3cf747d08d8cc2e0da52c7205be4c8f`
+- main HEAD: `3d358ce28ca70b7f895e456d31a8890da281b483`
 - E4、E5、E6はmainへmerge済み
 - T01実装PR #16はmainへmerge済み
+- T02実装PR #17はmainへmerge済み
 - open PR #14: `spike(editor): Brick Actual add preview TUIを追加する`
 - #14 head: `f8d2cbadcbea6975bbbd13c990b2afeaa3637070`
 - #14はE7完了ではなくActual add read-only preview spikeで、correctness recovery完了までDraft保留
-- T02実装PR #17は全CI gate成功、merge待ち
+- T03実装PR #18は全CI gate成功、merge待ち
 
 ## 3. 判定語彙
 
@@ -153,11 +154,11 @@ stale判定には内容の不一致だけが必要であり、actual bytesを診
 - [x] **T01: safe writer contract recovery**  
   source-specific post-admission、Actual・Plan・Budget・Issueのtemporary-file commit evidence、publish後IOExceptionのrestore、content-hidden stale診断をPR #16で固定し、mainへmergeした。対象: ER-002、ER-012、ER-014。
 
-- [ ] **T02: pure CLI admission boundary**  
-  argv parsingをIO処理から分離し、Budget pattern、command-local `--commit`、Plan必須日付、Issue amount pairをtyped admissionで固定する。command-surface contract testを追加する。対象: ER-001、ER-003のCLI部分、ER-005の日付、ER-008、ER-009。PR #17は全CI gate成功、merge待ち。
+- [x] **T02: pure CLI admission boundary**  
+  argv parsingをIO処理から分離し、Budget pattern、command-local `--commit`、Plan必須日付、Issue amount pairをtyped admissionで固定した。command-surface contract testを追加し、PR #17でmainへmergeした。対象: ER-001、ER-003のCLI部分、ER-005の日付、ER-008、ER-009。
 
 - [ ] **T03: Plan amount and identity safety**  
-  finish amountをpositive magnitudeとしてadmitし、generated Plan ID失敗をtyped errorへする。negative、zero、invalid seriesをfocused testへ追加する。対象: ER-005のpartial failure、ER-010。
+  finish amountをpositive magnitudeとしてadmitし、generated Plan ID失敗をtyped errorへした。negative、zero、invalid seriesをfocused testへ追加した。対象: ER-005のpartial failure、ER-010。PR #18は全CI gate成功、merge待ち。
 
 - [ ] **T04: Account declaration exact round-trip**  
   Account shadow conversionで確立したrepresentability ruleを再利用または同じownerへ集約し、rendered declarationとparse-back declarationのexact parityを検証する。対象: ER-004。
