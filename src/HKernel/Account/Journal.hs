@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Strict admission for an account-declaration Journal source.
+-- | Strict admission and canonical rendering for an account-declaration
+-- Journal source.
 --
 -- The ordinary Journal parser remains the single owner of account names,
 -- accounting types, optional default commodities, duplicate declarations, and
@@ -10,7 +11,9 @@
 -- metadata.
 module HKernel.Account.Journal
   ( AccountJournalError(..)
+  , AccountDeclarationRenderError(..)
   , parseAccountJournal
+  , renderAccountDeclaration
   ) where
 
 import Data.Char (isSpace)
@@ -19,12 +22,22 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
-import HKernel.Account (AccountRegistry)
+import HKernel.Account
+  ( AccountDeclaration
+  , AccountRegistry
+  , AccountType(..)
+  , accountDeclarations
+  , accountName
+  , declaredAccount
+  , declaredAccountDefaultCommodity
+  , declaredAccountType
+  )
 import HKernel.Journal
   ( JournalError
   , journalAccountRegistry
   , parseJournal
   )
+import HKernel.Money (commodityCode)
 
 -- | Failure to admit one declaration-only Journal source.
 --
@@ -36,6 +49,14 @@ data AccountJournalError
   | UnsupportedAccountJournalBlock Int Text
   | UnknownAccountJournalMetadata Int Text
   | MalformedAccountJournalMetadata Int Text
+  deriving (Eq, Show)
+
+-- | Privacy-preserving failure to render one declaration with exact parse-back
+-- parity. No Account identity or rendered source bytes are retained.
+data AccountDeclarationRenderError
+  = AccountDeclarationUnrepresentable
+  | RenderedAccountDeclarationRejected Int
+  | AccountDeclarationRoundTripMismatch
   deriving (Eq, Show)
 
 -- | Parse one strict declaration source into its canonical account registry.
@@ -52,6 +73,46 @@ parseAccountJournal input =
     Nothing -> case parseJournal input of
       Left errors -> Left (fmap AccountJournalSyntaxError errors)
       Right journal -> Right (journalAccountRegistry journal)
+
+-- | Render one Account declaration and prove that the strict declaration
+-- parser returns the exact same semantic value.
+--
+-- Account identity currently permits the Journal comment delimiter. Because
+-- the parser treats @;@ as the start of a comment, such an identity cannot be
+-- represented without inventing an escaping syntax. It is therefore rejected
+-- before source text is published.
+renderAccountDeclaration
+  :: AccountDeclaration
+  -> Either AccountDeclarationRenderError Text
+renderAccountDeclaration declaration
+  | T.any (== ';') (accountName (declaredAccount declaration)) =
+      Left AccountDeclarationUnrepresentable
+  | otherwise =
+      case parseAccountJournal rendered of
+        Left errors ->
+          Left (RenderedAccountDeclarationRejected (NonEmpty.length errors))
+        Right registry ->
+          case accountDeclarations registry of
+            [parsed] | parsed == declaration -> Right rendered
+            _ -> Left AccountDeclarationRoundTripMismatch
+  where
+    rendered = T.unlines
+      ( [ "account " <> accountName (declaredAccount declaration)
+        , "  type: " <> renderAccountType (declaredAccountType declaration)
+        ]
+        ++ maybe []
+          (pure . ("  commodity: " <>) . commodityCode)
+          (declaredAccountDefaultCommodity declaration)
+      )
+
+renderAccountType :: AccountType -> Text
+renderAccountType accountType = case accountType of
+  Asset     -> "Asset"
+  Liability -> "Liability"
+  Equity    -> "Equity"
+  Income    -> "Income"
+  Expense   -> "Expense"
+  Budget    -> "Budget"
 
 data AccountBlockState
   = OutsideAccountBlock
