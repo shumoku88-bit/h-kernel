@@ -104,7 +104,7 @@ data ActualAddAction
 data ActualAddWriteFailure
   = ActualAddPostAdmissionFailure
   | ActualAddPostPublishReadFailure
-  | ActualAddFileIOFailure String
+  | ActualAddFileIOFailure
   deriving (Eq, Show)
 
 data ActualAddWriteOutcome
@@ -232,5 +232,5 @@ classifyActualAddWriteResult result = case result of
     ActualAddWriteRecovered ActualAddPostPublishReadFailure
   Left (PostPublishReadFailed { restoredFromBackup = False }) ->
     ActualAddWriteFailed ActualAddPostPublishReadFailure
-  Left (FileIOError message) ->
-    ActualAddWriteFailed (ActualAddFileIOFailure message)
+  Left (FileIOError _) ->
+    ActualAddWriteFailed ActualAddFileIOFailure

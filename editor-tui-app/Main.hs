@@ -230,11 +230,11 @@ renderWriteOutcome outcome = case outcome of
         [ str "Publication failed, and the backup was restored."
         , txt (writeFailureText failure)
         ])
-  ActualAddWriteFailed (ActualAddFileIOFailure message) ->
+  ActualAddWriteFailed ActualAddFileIOFailure ->
     withAttr (attrName "error")
       (vBox
         [ str "The writer could not complete because of a filesystem error."
-        , txt (writeFailureText (ActualAddFileIOFailure message))
+        , txt (writeFailureText ActualAddFileIOFailure)
         , str "Verify the rehearsal source before continuing."
         ])
   ActualAddWriteFailed failure ->
@@ -251,8 +251,8 @@ writeFailureText failure = case failure of
     "The published candidate failed complete-source admission."
   ActualAddPostPublishReadFailure ->
     "The published source could not be read for post-admission."
-  ActualAddFileIOFailure message ->
-    "Filesystem error: " <> T.pack message
+  ActualAddFileIOFailure ->
+    "A filesystem operation failed."
 
 appEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 appEvent event = do

@@ -198,4 +198,4 @@ testWriteFileIOFailure :: Bool
 testWriteFileIOFailure =
   classifyActualAddWriteResult
     (Left (FileIOError "synthetic") :: Either (WriteError ()) ())
-    == ActualAddWriteFailed (ActualAddFileIOFailure "synthetic")
+    == ActualAddWriteFailed ActualAddFileIOFailure
