@@ -9,18 +9,19 @@ module HKernel.Editor.ActualAccountAppend
 import Data.Bifunctor (first)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
-import qualified Data.Text as T
 
 import HKernel.Account
   ( Account
   , AccountDeclaration
-  , declaredAccount
-  , declaredAccountDefaultCommodity
-  , declaredAccountType
-  , accountName
   , AccountRegistry
   , AccountRegistryError(..)
+  , declaredAccount
+  , lookupAccountDeclaration
   , registerAccount
+  )
+import HKernel.Account.Journal
+  ( AccountDeclarationRenderError
+  , renderAccountDeclaration
   )
 import HKernel.Actual.Journal
   ( ActualJournalError
@@ -31,13 +32,14 @@ import HKernel.Actual.Journal
 import HKernel.Journal
   ( journalAccountRegistry
   )
-import HKernel.Money (commodityCode)
 import HKernel.Editor.ActualAppend (appendBlock)
 
 data ActualAccountAppendError
   = SourceParseError (NonEmpty ActualJournalError)
   | CandidateSourceParseError (NonEmpty ActualJournalError)
   | DuplicateDeclaration Account
+  | DeclarationRenderError AccountDeclarationRenderError
+  | CandidateDeclarationRoundTripMismatch
   deriving (Eq, Show)
 
 data ActualAccountAppendPreview = ActualAccountAppendPreview
@@ -49,13 +51,17 @@ prepareActualAccountAppend
   :: Text
   -> AccountDeclaration
   -> Either (NonEmpty ActualAccountAppendError) ActualAccountAppendPreview
-prepareActualAccountAppend existingSource decl = do
+prepareActualAccountAppend existingSource declaration = do
   journal <- parseSource existingSource
-  _ <- verifyNotDuplicate (journalAccountRegistry (actualJournalValue journal)) decl
-  
-  let preview = buildPreview existingSource decl
-  
-  _ <- first (pure . CandidateSourceParseError) (parseActualJournal (candidateCompleteSource preview))
+  _ <- verifyNotDuplicate
+    (journalAccountRegistry (actualJournalValue journal))
+    declaration
+  block <- first (pure . DeclarationRenderError)
+    (renderAccountDeclaration declaration)
+  let preview = buildPreview existingSource block
+  candidateJournal <- first (pure . CandidateSourceParseError)
+    (parseActualJournal (candidateCompleteSource preview))
+  verifyExactCandidateDeclaration candidateJournal declaration
   pure preview
 
 parseSource :: Text -> Either (NonEmpty ActualAccountAppendError) ActualJournal
@@ -65,22 +71,26 @@ verifyNotDuplicate
   :: AccountRegistry
   -> AccountDeclaration
   -> Either (NonEmpty ActualAccountAppendError) AccountRegistry
-verifyNotDuplicate registry decl =
-  case registerAccount decl registry of
-    Left (DuplicateAccountDeclaration acc) -> Left (pure (DuplicateDeclaration acc))
+verifyNotDuplicate registry declaration =
+  case registerAccount declaration registry of
+    Left (DuplicateAccountDeclaration account) ->
+      Left (pure (DuplicateDeclaration account))
     Right newRegistry -> Right newRegistry
 
-buildPreview :: Text -> AccountDeclaration -> ActualAccountAppendPreview
-buildPreview existingSource decl =
+verifyExactCandidateDeclaration
+  :: ActualJournal
+  -> AccountDeclaration
+  -> Either (NonEmpty ActualAccountAppendError) ()
+verifyExactCandidateDeclaration journal expected =
+  case lookupAccountDeclaration
+      (declaredAccount expected)
+      (journalAccountRegistry (actualJournalValue journal)) of
+    Just actual | actual == expected -> Right ()
+    _ -> Left (pure CandidateDeclarationRoundTripMismatch)
+
+buildPreview :: Text -> Text -> ActualAccountAppendPreview
+buildPreview existingSource block =
   ActualAccountAppendPreview
     { candidateBlock = block
     , candidateCompleteSource = appendBlock existingSource block
     }
-  where
-    block = renderAccountDeclaration decl
-
-renderAccountDeclaration :: AccountDeclaration -> Text
-renderAccountDeclaration decl = T.unlines $
-  [ "account " <> accountName (declaredAccount decl)
-  , "  type: " <> T.pack (show (declaredAccountType decl))
-  ] ++ [ "  commodity: " <> commodityCode c | Just c <- [declaredAccountDefaultCommodity decl] ]

@@ -1,10 +1,10 @@
 # h-kernel Editor correctness review
 
-ステータス: 再レビュー済み・T03検証完了  
+ステータス: 再レビュー済み・T04検証完了  
 Owner: h-kernel editor review  
 Canonical: yes  
 基準日: 2026-08-05  
-基準main: `3d358ce28ca70b7f895e456d31a8890da281b483`
+基準main: `f6f36c77f36b61e8c45ed4900fcf35b67e5d0f75`
 
 ## 1. 役割
 
@@ -14,14 +14,15 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 
 ## 2. Remote baseline
 
-- main HEAD: `3d358ce28ca70b7f895e456d31a8890da281b483`
+- main HEAD: `f6f36c77f36b61e8c45ed4900fcf35b67e5d0f75`
 - E4、E5、E6はmainへmerge済み
 - T01実装PR #16はmainへmerge済み
 - T02実装PR #17はmainへmerge済み
+- T03実装PR #18はmainへmerge済み
 - open PR #14: `spike(editor): Brick Actual add preview TUIを追加する`
 - #14 head: `f8d2cbadcbea6975bbbd13c990b2afeaa3637070`
 - #14はE7完了ではなくActual add read-only preview spikeで、correctness recovery完了までDraft保留
-- T03実装PR #18は全CI gate成功、merge待ち
+- T04実装PR #19は全CI gate成功、merge待ち
 
 ## 3. 判定語彙
 
@@ -157,11 +158,11 @@ stale判定には内容の不一致だけが必要であり、actual bytesを診
 - [x] **T02: pure CLI admission boundary**  
   argv parsingをIO処理から分離し、Budget pattern、command-local `--commit`、Plan必須日付、Issue amount pairをtyped admissionで固定した。command-surface contract testを追加し、PR #17でmainへmergeした。対象: ER-001、ER-003のCLI部分、ER-005の日付、ER-008、ER-009。
 
-- [ ] **T03: Plan amount and identity safety**  
-  finish amountをpositive magnitudeとしてadmitし、generated Plan ID失敗をtyped errorへした。negative、zero、invalid seriesをfocused testへ追加した。対象: ER-005のpartial failure、ER-010。PR #18は全CI gate成功、merge待ち。
+- [x] **T03: Plan amount and identity safety**  
+  finish amountをpositive magnitudeとしてadmitし、generated Plan ID失敗をtyped errorへした。negative、zero、invalid seriesをfocused testへ追加し、PR #18でmainへmergeした。対象: ER-005のpartial failure、ER-010。
 
 - [ ] **T04: Account declaration exact round-trip**  
-  Account shadow conversionで確立したrepresentability ruleを再利用または同じownerへ集約し、rendered declarationとparse-back declarationのexact parityを検証する。対象: ER-004。
+  Account Journal ownerへcanonical rendererとprivacy-preserving typed errorを置き、全AccountTypeのrender/parse-back exact parityを検証した。`;`を含むunrepresentable identityはsource公開前にrejectし、complete candidate registryでも追加対象declarationのexact equalityを再確認する。対象: ER-004。PR #19は全CI gate成功、merge待ち。
 
 - [ ] **T05: Issue source contract alignment**  
   optional amountのblank pairをstable TSV admissionで表し、empty admitted sourceへの初回appendではheaderを生成する。parser、renderer、Editor testを同じsliceで揃える。対象: ER-003、ER-011。
