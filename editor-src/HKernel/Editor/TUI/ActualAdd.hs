@@ -27,9 +27,9 @@ import HKernel.Editor.ActualAppend
   ( ActualAppendPreview(..)
   , ActualEditError
   , ActualEditIntent(..)
-  , IntentPosting(..)
   , prepareActualAppend
   )
+import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Money
   ( mkCommodity
   , negateQuantity
