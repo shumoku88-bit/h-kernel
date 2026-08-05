@@ -1,6 +1,6 @@
 # h-kernel Editor correctness review
 
-ステータス: 再レビュー済み・T08検証中  
+ステータス: 再レビュー済み・T08検証完了  
 Owner: h-kernel editor review  
 Canonical: yes  
 基準日: 2026-08-05  
@@ -24,7 +24,7 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 - T06実装PR #21はmainへmerge済み
 - T07実装PR #22はmainへmerge済み
 - open PR #14: `fix(editor): Actual add TUIの入力契約を回復する`
-- #14は最新mainから再構成したT08 Draftで、Actual add read-only previewだけを扱う
+- #14は最新mainから再構成したT08 Ready PRで、全CI gate成功、merge待ち
 - source mutation、他commandのTUI、writer authority、source migrationは含まない
 
 ## 3. 判定語彙
@@ -165,7 +165,7 @@ stale判定は内容不一致という事実だけをtyped errorへ保持する�
   reverse自身の明示`event-id`、Actual ownerによるtyped `reverses` retention、unknown/self/duplicate rejection、direct reverse一回、reverse-of-reverse許可をPR #22で固定し、mainへmergeした。対象: ER-006。
 
 - [ ] **T08: E7 TUI recovery**  
-  PR #14を最新mainから再構成し、pure input constructor、positive amount contract、state transition test、`tests/fixtures/editor/`へのfixture placementを実装した。Draftでfull CIと最終diffを検証中。対象: ER-007。
+  PR #14を最新mainから再構成し、pure input constructor、positive amount contract、state transition test、`tests/fixtures/editor/`へのfixture placementを実装した。3つのGHCでbuild/test成功、GHC 9.10.3のrepository auditとcomplete Report contracts成功、Ready化済み、merge待ち。対象: ER-007。
 
 - [ ] **T09: final verification and current-state docs**  
   GHC 9.10.3、9.12.4、9.14.1でbuild/test、repository audit、complete Report contractsを確認し、`EDITOR_DEVELOPMENT_PLAN.md`のCURRENT/NEXTを実能力に合わせる。
