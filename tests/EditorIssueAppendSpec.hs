@@ -26,13 +26,15 @@ import HKernel.Household.Issue.TSV
   , parseHouseholdIssues
   )
 import HKernel.HouseholdIssue
-  ( IssueStatus(..)
+  ( IssueId
+  , IssueStatus(..)
   , householdIssueAmount
   , householdIssueId
   , mkIssueId
   )
 import HKernel.Money
-  ( mkAmount
+  ( Commodity
+  , mkAmount
   , mkCommodity
   , quantityFromInteger
   )
@@ -100,7 +102,7 @@ testOptionalAmountAppend =
     Left err -> error (show err)
     Right preview ->
       candidateBlock preview
-        == "ISSUE-3\topen\t2026-08-05\thome\tCheck the boiler\t\tcost is not known yet"
+        == "ISSUE-3\topen\t2026-08-05\thome\tCheck the boiler\t\t\tcost is not known yet"
       && parsedOptionalIssueMatches preview
 
 testEmptySourceAddsHeader :: Bool
@@ -202,8 +204,8 @@ removeIfPresent path =
     (removeTextFile defaultWriterFileSystem path)
     (\(_ :: IOException) -> pure ())
 
-mustIssueId :: Text -> HKernel.HouseholdIssue.IssueId
+mustIssueId :: Text -> IssueId
 mustIssueId value = either (error "bad IssueId") id (mkIssueId value)
 
-mustCommodity :: Text -> HKernel.Money.Commodity
+mustCommodity :: Text -> Commodity
 mustCommodity value = either (error "bad Commodity") id (mkCommodity value)
