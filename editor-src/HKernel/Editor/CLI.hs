@@ -9,7 +9,6 @@ module HKernel.Editor.CLI
   , usageText
   ) where
 
-import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -17,7 +16,8 @@ import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 
 import HKernel.Account
-  ( AccountDeclaration
+  ( Account
+  , AccountDeclaration
   , AccountType(..)
   , declareAccount
   , declareAccountWithDefaultCommodity
@@ -35,7 +35,14 @@ import HKernel.Editor.PlanLifecycle
   )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.HouseholdIssue (IssueStatus(..), mkIssueId)
-import HKernel.Money (mkAmount, mkCommodity, parseQuantity)
+import HKernel.Money
+  ( Amount
+  , Commodity
+  , Quantity
+  , mkAmount
+  , mkCommodity
+  , parseQuantity
+  )
 import HKernel.Plan.Completion (mkActualTransactionId)
 
 data CommitMode
@@ -107,7 +114,8 @@ parseAppend :: [String] -> Either CliError EditorCommand
 parseAppend (journalFile:dateText:description:postingArgs) = do
   date <- parseDate dateText
   postings <- parsePostings postingArgs
-  nonEmptyPostings <- maybe (Left CliPostingRequired) Right (NonEmpty.nonEmpty postings)
+  nonEmptyPostings <- maybe (Left CliPostingRequired) Right
+    (NonEmpty.nonEmpty postings)
   pure
     (AppendCmd journalFile
       (ActualEditIntent date (T.pack description) nonEmptyPostings []))
@@ -171,10 +179,7 @@ parseIssue (tsvFile:idText:statusText:dateText:category:title:quantityText:commo
         (T.pack (unwords detailsWords))))
 parseIssue _ = Left CliInvalidIssueArguments
 
-parseIssueAmount
-  :: String
-  -> String
-  -> Either CliError (Maybe HKernel.Money.Amount)
+parseIssueAmount :: String -> String -> Either CliError (Maybe Amount)
 parseIssueAmount "-" "-" = Right Nothing
 parseIssueAmount "-" _ = Left CliIssueAmountPairRequired
 parseIssueAmount _ "-" = Left CliIssueAmountPairRequired
@@ -246,7 +251,7 @@ parsePlanAddOptions _ _ = Left CliPlanAddOptionInvalid
 data PlanFinishFields = PlanFinishFields
   { planFinishIdField     :: Maybe Text
   , planFinishDateField   :: Maybe Day
-  , planFinishAmountField :: Maybe HKernel.Money.Quantity
+  , planFinishAmountField :: Maybe Quantity
   }
 
 emptyPlanFinishFields :: PlanFinishFields
@@ -303,15 +308,15 @@ parseDate value = case parseTimeM True defaultTimeLocale "%Y-%m-%d" value of
   Just day -> Right day
   Nothing -> Left CliInvalidDate
 
-parseAccountValue :: String -> Either CliError HKernel.Account.Account
+parseAccountValue :: String -> Either CliError Account
 parseAccountValue value =
   mapDomainError CliInvalidAccount (mkAccount (T.pack value))
 
-parseQuantityValue :: String -> Either CliError HKernel.Money.Quantity
+parseQuantityValue :: String -> Either CliError Quantity
 parseQuantityValue value =
   mapDomainError CliInvalidQuantity (parseQuantity (T.pack value))
 
-parseCommodity :: String -> Either CliError HKernel.Money.Commodity
+parseCommodity :: String -> Either CliError Commodity
 parseCommodity value =
   mapDomainError CliInvalidCommodity (mkCommodity (T.pack value))
 
