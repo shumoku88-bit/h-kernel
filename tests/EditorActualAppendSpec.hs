@@ -10,6 +10,11 @@ import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (Account, mkAccount)
 import HKernel.Editor.ActualAppend
+  ( ActualEditError(..)
+  , ActualEditIntent(..)
+  , prepareActualAppend
+  )
+import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Money (Commodity, Quantity, mkCommodity, parseQuantity)
 
 main :: IO ()
@@ -17,6 +22,7 @@ main = do
   let results = [ ("testOrdinaryTwoPosting", testOrdinaryTwoPosting)
                 , ("testUndeclaredAccount", testUndeclaredAccount)
                 , ("testZeroAmount", testZeroAmount)
+                , ("testMultiplePostingErrors", testMultiplePostingErrors)
                 , ("testUnbalanced", testUnbalanced)
                 ]
   mapM_ print results
@@ -93,6 +99,21 @@ testZeroAmount =
       result = prepareActualAppend fixtureSource intent
   in case result of
        Left (ZeroAmount _ :| _) -> True
+       _ -> False
+
+testMultiplePostingErrors :: Bool
+testMultiplePostingErrors =
+  let intent = ActualEditIntent
+        { intentDate = fromGregorian 2023 1 2
+        , intentDescription = "test"
+        , intentPostings = IntentPosting accBank (qty "0") (Just (comm "JPY"))
+                        :| [IntentPosting accOpening (qty "0") (Just (comm "JPY"))]
+        , intentMetadata = []
+        }
+      result = prepareActualAppend fixtureSource intent
+  in case result of
+       Left (ZeroAmount first :| [ZeroAmount second]) ->
+         first == accBank && second == accOpening
        _ -> False
 
 testUnbalanced :: Bool
