@@ -9,6 +9,7 @@ module HKernel.Editor.ActualWriter
   , publishWithAdmission
   , publishWithAdmissionUsing
   , publishActualAppend
+  , publishActualBlock
   ) where
 
 import Control.Exception (IOException, catch)
@@ -18,6 +19,7 @@ import qualified Data.Text.IO as T
 import System.Directory (renameFile, removeFile)
 
 import HKernel.Actual.Journal (ActualJournalError, parseActualJournal)
+import HKernel.Editor.SourceAppend (appendSourceBlock)
 
 data WriteIntent = WriteIntent
   { targetFilePath    :: FilePath
@@ -78,6 +80,25 @@ publishActualAppend
   :: WriteIntent
   -> IO (Either (WriteError ActualJournalError) ())
 publishActualAppend = publishWithAdmission parseActualJournal
+
+-- | Place an already validated Actual transaction block and delegate all file
+-- safety behavior to the existing Actual writer.
+--
+-- The caller owns confirmation and must supply the exact source bytes used to
+-- produce the preview. This function owns only the bridge from confirmed block
+-- to source placement and safe publication.
+publishActualBlock
+  :: FilePath
+  -> Text
+  -> Text
+  -> IO (Either (WriteError ActualJournalError) ())
+publishActualBlock filePath expectedSource block =
+  publishActualAppend
+    (WriteIntent
+      { targetFilePath = filePath
+      , expectedOldBytes = expectedSource
+      , candidateNewBytes = appendSourceBlock expectedSource block
+      })
 
 checkStaleAndWrite
   :: WriterFileSystem

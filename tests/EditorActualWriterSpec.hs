@@ -23,6 +23,11 @@ main = do
         , ("testPlanWrite", testPlanWrite)
         , ("testPostAdmissionFailure", testPostAdmissionFailure)
         , ("testPostPublishReadFailureRestores", testPostPublishReadFailureRestores)
+        , ("testActualBlockWrite", testActualBlockWrite)
+        , ("testActualBlockStaleReject", testActualBlockStaleReject)
+        , ( "testActualBlockPostAdmissionFailureRestores"
+          , testActualBlockPostAdmissionFailureRestores
+          )
         ]
   rs <- sequence [action | (_, action) <- results]
   let namedResults = zip (map fst results) rs
@@ -128,17 +133,61 @@ testPostPublishReadFailureRestores =
         (== actualOld) <$> TIO.readFile path
       _ -> pure False
 
+testActualBlockWrite :: IO Bool
+testActualBlockWrite =
+  withFixture
+    "tests/fixtures/test_writer_actual_block.journal"
+    actualOld
+    (\path -> do
+      result <- publishActualBlock path actualOld actualBlock
+      case result of
+        Right () -> (== actualNew) <$> TIO.readFile path
+        Left err -> print err >> pure False)
+
+testActualBlockStaleReject :: IO Bool
+testActualBlockStaleReject =
+  withFixture
+    "tests/fixtures/test_writer_actual_block_stale.journal"
+    actualOld
+    (\path -> do
+      result <- publishActualBlock path (actualOld <> "\n") actualBlock
+      currentSource <- TIO.readFile path
+      pure $ case result of
+        Left StaleFile -> currentSource == actualOld
+        _ -> False)
+
+testActualBlockPostAdmissionFailureRestores :: IO Bool
+testActualBlockPostAdmissionFailureRestores =
+  withFixture
+    "tests/fixtures/test_writer_actual_block_reject.journal"
+    actualOld
+    (\path -> do
+      result <- publishActualBlock path actualOld invalidActualBlock
+      currentSource <- TIO.readFile path
+      pure $ case result of
+        Left (PostAdmissionFailed _ True) -> currentSource == actualOld
+        _ -> False)
+
 actualOld :: Text
 actualOld =
   "account assets:bank\n"
   <> "  type: Asset\n"
   <> "  commodity: JPY\n"
 
-actualNew :: Text
-actualNew = actualOld
-  <> "\n2026-08-05 actual write\n"
+actualBlock :: Text
+actualBlock =
+  "2026-08-05 actual write\n"
   <> "  assets:bank  100 JPY\n"
   <> "  assets:bank  -100 JPY\n"
+
+invalidActualBlock :: Text
+invalidActualBlock =
+  "2026-08-05 invalid actual write\n"
+  <> "  assets:unknown  100 JPY\n"
+  <> "  assets:bank  -100 JPY\n"
+
+actualNew :: Text
+actualNew = actualOld <> "\n" <> actualBlock
 
 planOld :: Text
 planOld =
