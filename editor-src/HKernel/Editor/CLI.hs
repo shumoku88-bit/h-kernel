@@ -125,13 +125,20 @@ parseAppend (journalFile:dateText:description:postingArgs) = do
 parseAppend _ = Left CliUsage
 
 parseReverse :: [String] -> Either CliError EditorCommand
-parseReverse (journalFile:targetIdText:dateText:descriptionWords) = do
+parseReverse
+  (journalFile:reversalIdText:targetIdText:dateText:descriptionWords) = do
+  reversalId <- mapDomainError CliInvalidActualTransactionId
+    (mkActualTransactionId (T.pack reversalIdText))
   targetId <- mapDomainError CliInvalidActualTransactionId
     (mkActualTransactionId (T.pack targetIdText))
   date <- parseDate dateText
   pure
     (ReverseCmd journalFile
-      (ActualReverseIntent targetId date (T.pack (unwords descriptionWords))))
+      (ActualReverseIntent
+        reversalId
+        targetId
+        date
+        (T.pack (unwords descriptionWords))))
 parseReverse _ = Left CliUsage
 
 parseAccount :: [String] -> Either CliError EditorCommand
@@ -375,7 +382,7 @@ usageText :: String
 usageText = unlines
   [ "Usage:"
   , "  h-kernel-editor-cli append [--commit] <journal.txt> <YYYY-MM-DD> <desc> [<acct> <qty> <comm> ...]"
-  , "  h-kernel-editor-cli reverse [--commit] <journal.txt> <event-id> <YYYY-MM-DD> <desc...>"
+  , "  h-kernel-editor-cli reverse [--commit] <journal.txt> <new-event-id> <target-event-id> <YYYY-MM-DD> <desc...>"
   , "  h-kernel-editor-cli account [--commit] <journal.txt> <account> <type> [<commodity>]"
   , "  h-kernel-editor-cli budget [--commit] <budget_alloc.tsv> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm>"
   , "  h-kernel-editor-cli issue [--commit] <issues.tsv> <id> <status> <YYYY-MM-DD> <category> <title> <qty|-> <comm|-> <details...>"

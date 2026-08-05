@@ -1,10 +1,10 @@
 # h-kernel Editor correctness review
 
-ステータス: 再レビュー済み・T06検証完了  
+ステータス: 再レビュー済み・T07検証完了  
 Owner: h-kernel editor review  
 Canonical: yes  
 基準日: 2026-08-05  
-基準main: `abcbe97056280fc2415ec52e29b88d757993b5d4`
+基準main: `8d33018d245f6bc620b45484076669099d7180a9`
 
 ## 1. 役割
 
@@ -14,17 +14,18 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 
 ## 2. Remote baseline
 
-- main HEAD: `abcbe97056280fc2415ec52e29b88d757993b5d4`
+- main HEAD: `8d33018d245f6bc620b45484076669099d7180a9`
 - E4、E5、E6はmainへmerge済み
 - T01実装PR #16はmainへmerge済み
 - T02実装PR #17はmainへmerge済み
 - T03実装PR #18はmainへmerge済み
 - T04実装PR #19はmainへmerge済み
 - T05実装PR #20はmainへmerge済み
+- T06実装PR #21はmainへmerge済み
 - open PR #14: `spike(editor): Brick Actual add preview TUIを追加する`
 - #14 head: `f8d2cbadcbea6975bbbd13c990b2afeaa3637070`
 - #14はE7完了ではなくActual add read-only preview spikeで、correctness recovery完了までDraft保留
-- T06実装PR #21は全CI gate成功、merge待ち
+- T07実装PR #22はOpen / Readyで、全CI gate成功、merge待ち
 
 ## 3. 判定語彙
 
@@ -48,7 +49,7 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 | ER-003 | confirmed | P2 | optional Issue amountをrendererは表せるがTSV admissionが受け取れない |
 | ER-004 | confirmed | P0 | Account名の`;`以後がcommentとして切られ、別identityをcommitし得る |
 | ER-005 | confirmed | P0/P2 | Plan必須日付の欠落が2000-01-01になり、series由来ID失敗がpartial failureになる |
-| ER-006 | open question | P2 | reverse transactionのidentityと`reverses` provenanceがtyped Actual evidenceにならない |
+| ER-006 | corrected | P2 | reverse自身へ明示`event-id`を要求し、`reverses`をActual typed provenanceとして保持する |
 | ER-007 | confirmed | P2/P3 | E7 TUIの負数入力は`--100`を作り、pure input contract testがない |
 | ER-008 | confirmed | P3 | executable argvからcommitまでのcontract testがない |
 | ER-009 | confirmed | P1 | globalな`--commit`除去がdescription/detailsなどのuser dataも消す |
@@ -96,9 +97,19 @@ CLIはPlan addとfinishの初期値に`2000-01-01`を入れ、日付flagの存�
 
 ### ER-006 reverse identity/provenance
 
-reverse rendererは`; reverses: <event-id>`を出すが、Actual metadata admissionが意味を与えるkeyは`event-id`と`plan-id`だけである。`reverses`はtyped projectionに残らず、reverse transaction自身にもdurable `event-id`がない。
+reverse transactionは元transactionを変更する操作ではなく、符号を反転したpostingsを持つ新しいActual transactionである。このためreverse自身にもexternally durableなidentityを要求し、CLIなどのadapterが明示`event-id`をtyped intentへ渡す。
 
-`EDITOR_DEVELOPMENT_PLAN.md`はreverseを「identity/provenanceを持つ新しいtransaction」と記述する。必要なidentity生成規則とprovenance ownerを先に合意する。
+`reverses`は表示専用commentではなくActual Journal metadata projectionが所有するtyped provenanceとする。parse-back後は、reverse自身の`event-id`とtargetのActual transaction identityを`ActualReversalDeclaration`として保持する。
+
+規則は次のとおりとする。
+
+- reverse自身の`event-id`は必須で、user/application adapterが明示する
+- targetはadmitted Actual transaction identityで参照する
+- unknown target、self reference、既存identityの再利用を拒否する
+- 同じtargetへの直接reverseは一度だけ許可する
+- reverse transaction自身をtargetにするreverse-of-reverseは、新しいidentityで許可する
+- candidate complete sourceをActual ownerへ戻し、typed provenanceが保持されることを確認する
+- diagnosticsへprivate source本文を含めない
 
 ### ER-007 E7 TUI input contract
 
@@ -169,11 +180,11 @@ stale判定には内容の不一致だけが必要であり、actual bytesを診
 - [x] **T05: Issue source contract alignment**  
   amount・currencyの両方blankを`Nothing`としてstable TSV admissionし、片側blankはtyped errorとしてrejectする。blank・comment-only sourceへの初回appendではstable headerを生成し、parser、Editor preview、temporary-file commitをPR #20で固定してmainへmergeした。対象: ER-003、ER-011。
 
-- [ ] **T06: Plan rendering/admission ownership**  
-  source-neutralなvalidated transaction block境界をActual appendから分離し、Plan addはPlan JournalのAccount registryでpostingを検証・描画する。Plan sourceをActual admissionへ流さず、PlanとしてvalidかつActualとしてinvalidなmetadata sourceのfocused evidenceをPR #21で固定した。対象: ER-013とER-002のPlan部分。PR #21は全CI gate成功、merge待ち。
+- [x] **T06: Plan rendering/admission ownership**  
+  source-neutralなvalidated transaction block境界をActual appendから分離し、Plan addはPlan JournalのAccount registryでpostingを検証・描画する。Plan sourceをActual admissionへ流さず、PlanとしてvalidかつActualとしてinvalidなmetadata sourceのfocused evidenceをPR #21で固定し、mainへmergeした。対象: ER-013とER-002のPlan部分。
 
 - [ ] **T07: reversal identity/provenance decision**  
-  reverse transaction自身のidentity、元transaction参照key、typed retention、duplicate ruleを合意してから実装する。対象: ER-006。
+  reverse自身の明示`event-id`、Actual ownerによるtyped `reverses` retention、unknown/self/duplicate rejection、direct reverse一回、reverse-of-reverse許可をPR #22で実装した。Actual parser、Editor preview、CLI admissionのfocused evidenceを追加し、全CI gate成功、Ready化済み、merge待ち。対象: ER-006。
 
 - [ ] **T08: E7 TUI recovery**  
   PR #14を修復後mainへrebaseし、pure input constructor、positive amount contract、state transition test、fixture placementを整える。対象: ER-007。

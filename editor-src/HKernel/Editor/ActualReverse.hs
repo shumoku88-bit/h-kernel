@@ -21,8 +21,12 @@ import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError
   , actualJournalIdentifiedTransactions
+  , actualJournalReversalDeclarations
   , parseActualJournal
+  , reversedTransactionId
+  , reversalTransactionId
   )
+import HKernel.Editor.ActualAppend (appendBlock)
 import HKernel.Ledger
   ( Posting
   , Transaction
@@ -36,11 +40,11 @@ import HKernel.Ledger
   , transactionPostings
   )
 import HKernel.Money
-  ( negateAmount
-  , renderQuantity
-  , commodityCode
+  ( amountCommodity
   , amountQuantity
-  , amountCommodity
+  , commodityCode
+  , negateAmount
+  , renderQuantity
   )
 import HKernel.Plan.Completion
   ( ActualTransactionId
@@ -48,19 +52,19 @@ import HKernel.Plan.Completion
   , identifiedActualId
   , identifiedActualTransaction
   )
-import HKernel.Editor.ActualAppend
-  ( appendBlock
-  )
 
--- | A request to append a reversing transaction.
+-- | A request to append one identified reversing transaction.
 data ActualReverseIntent = ActualReverseIntent
-  { reverseTargetId    :: ActualTransactionId
+  { reverseEventId     :: ActualTransactionId
+  , reverseTargetId    :: ActualTransactionId
   , reverseDate        :: Day
   , reverseDescription :: Text
   } deriving (Eq, Show)
 
 data ActualReverseError
   = TargetNotFound ActualTransactionId
+  | ReversalIdAlreadyExists ActualTransactionId
+  | TargetAlreadyReversed ActualTransactionId ActualTransactionId
   | SourceParseError (NonEmpty ActualJournalError)
   | CandidateSourceParseError (NonEmpty ActualJournalError)
   | ValidationError TransactionError
@@ -77,23 +81,62 @@ prepareActualReverse
   -> Either (NonEmpty ActualReverseError) ActualReversePreview
 prepareActualReverse existingSource intent = do
   journal <- parseSource existingSource
+  ensureNewIdentity (reverseEventId intent) journal
   targetTxn <- findTargetTransaction (reverseTargetId intent) journal
+  ensureTargetNotReversed (reverseTargetId intent) journal
   newTxn <- reverseTransaction intent targetTxn
-  
-  let preview = buildPreview existingSource newTxn (reverseTargetId intent)
-  
-  _ <- first (pure . CandidateSourceParseError) (parseActualJournal (candidateCompleteSource preview))
+
+  let preview = buildPreview existingSource newTxn intent
+
+  _ <- first (pure . CandidateSourceParseError)
+    (parseActualJournal (candidateCompleteSource preview))
   pure preview
 
 parseSource :: Text -> Either (NonEmpty ActualReverseError) ActualJournal
 parseSource = first (pure . SourceParseError) . parseActualJournal
 
-findTargetTransaction :: ActualTransactionId -> ActualJournal -> Either (NonEmpty ActualReverseError) Transaction
-findTargetTransaction targetId journal =
-  maybe (Left (TargetNotFound targetId NonEmpty.:| [])) (Right . identifiedActualTransaction) $
-    Foldable.find (\it -> identifiedActualId it == targetId) (actualJournalIdentifiedTransactions journal)
+ensureNewIdentity
+  :: ActualTransactionId
+  -> ActualJournal
+  -> Either (NonEmpty ActualReverseError) ()
+ensureNewIdentity newId journal =
+  case Foldable.find
+    ((== newId) . identifiedActualId)
+    (actualJournalIdentifiedTransactions journal) of
+      Nothing -> Right ()
+      Just _ -> Left (ReversalIdAlreadyExists newId NonEmpty.:| [])
 
-reverseTransaction :: ActualReverseIntent -> Transaction -> Either (NonEmpty ActualReverseError) Transaction
+findTargetTransaction
+  :: ActualTransactionId
+  -> ActualJournal
+  -> Either (NonEmpty ActualReverseError) Transaction
+findTargetTransaction targetId journal =
+  maybe
+    (Left (TargetNotFound targetId NonEmpty.:| []))
+    (Right . identifiedActualTransaction)
+    (Foldable.find
+      ((== targetId) . identifiedActualId)
+      (actualJournalIdentifiedTransactions journal))
+
+ensureTargetNotReversed
+  :: ActualTransactionId
+  -> ActualJournal
+  -> Either (NonEmpty ActualReverseError) ()
+ensureTargetNotReversed targetId journal =
+  case Foldable.find
+    ((== targetId) . reversedTransactionId)
+    (actualJournalReversalDeclarations journal) of
+      Nothing -> Right ()
+      Just declaration -> Left
+        (TargetAlreadyReversed
+          targetId
+          (reversalTransactionId declaration)
+          NonEmpty.:| [])
+
+reverseTransaction
+  :: ActualReverseIntent
+  -> Transaction
+  -> Either (NonEmpty ActualReverseError) Transaction
 reverseTransaction intent targetTxn =
   first (pure . ValidationError) $
     mkTransaction
@@ -101,30 +144,42 @@ reverseTransaction intent targetTxn =
       (reverseDescription intent)
       (reversePosting <$> transactionPostings targetTxn)
 
-buildPreview :: Text -> Transaction -> ActualTransactionId -> ActualReversePreview
-buildPreview existingSource newTxn targetId =
+buildPreview
+  :: Text
+  -> Transaction
+  -> ActualReverseIntent
+  -> ActualReversePreview
+buildPreview existingSource newTxn intent =
   ActualReversePreview
     { candidateBlock = block
     , candidateCompleteSource = appendBlock existingSource block
     }
   where
-    block = renderReverseTransaction newTxn targetId
+    block = renderReverseTransaction newTxn intent
 
 reversePosting :: Posting -> Posting
-reversePosting p = mkPosting (postingAccount p) (negateAmount (postingAmount p))
+reversePosting posting =
+  mkPosting (postingAccount posting) (negateAmount (postingAmount posting))
 
-renderReverseTransaction :: Transaction -> ActualTransactionId -> Text
-renderReverseTransaction txn targetId =
-  T.pack (formatTime defaultTimeLocale "%Y-%m-%d" (transactionDate txn))
-  <> " " <> transactionDescription txn <> "\n"
-  <> "  ; reverses: " <> actualTransactionIdText targetId <> "\n"
-  <> T.intercalate "\n" (map renderPosting (NonEmpty.toList (transactionPostings txn)))
+renderReverseTransaction :: Transaction -> ActualReverseIntent -> Text
+renderReverseTransaction transaction intent =
+  T.pack
+    (formatTime defaultTimeLocale "%Y-%m-%d" (transactionDate transaction))
+  <> " " <> transactionDescription transaction <> "\n"
+  <> "  ; event-id: "
+  <> actualTransactionIdText (reverseEventId intent)
+  <> "\n"
+  <> "  ; reverses: "
+  <> actualTransactionIdText (reverseTargetId intent)
+  <> "\n"
+  <> T.intercalate "\n"
+      (map renderPosting (NonEmpty.toList (transactionPostings transaction)))
   <> "\n"
 
 renderPosting :: Posting -> Text
-renderPosting p =
-  "  " <> accountName (postingAccount p)
+renderPosting posting =
+  "  " <> accountName (postingAccount posting)
   <> "  " <> renderQuantity (amountQuantity amount)
   <> " " <> commodityCode (amountCommodity amount)
   where
-    amount = postingAmount p
+    amount = postingAmount posting

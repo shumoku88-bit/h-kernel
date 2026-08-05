@@ -1,22 +1,31 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Explicit Plan-completion projection from an Actual Journal source.
+-- | Explicit Actual metadata projection from an Actual Journal source.
 --
 -- The canonical Journal parser remains the owner of accounting syntax,
 -- declarations, postings, exact amounts, and transaction validation. This
--- module projects the explicit coordinates needed by Plan completion:
--- @event-id@ identifies an externally durable Actual transaction, while
--- @plan-id@ names the Plan completed by the transaction carrying it.
+-- module projects the explicit coordinates needed by Plan completion and
+-- transaction reversal:
 --
--- Transactions without either key remain ordinary Actual facts. A transaction
+-- * @event-id@ identifies an externally durable Actual transaction;
+-- * @plan-id@ names the Plan completed by the transaction carrying it;
+-- * @reverses@ names the Actual transaction negated by a reversal transaction.
+--
+-- Transactions without these keys remain ordinary Actual facts. A transaction
 -- carrying @plan-id@ without @event-id@ receives a rebuildable runtime identity
 -- derived from the Plan ID. No generated identity is written back to Journal,
 -- and completion never depends on date, description, amount, or posting shape.
+-- A reversal declaration, in contrast, requires its own explicit @event-id@ so
+-- that every provenance edge has a durable source identity at both ends.
 module HKernel.Actual.Journal
   ( ActualJournal
   , actualJournalValue
   , actualJournalIdentifiedTransactions
   , actualJournalCompletionDeclarations
+  , actualJournalReversalDeclarations
+  , ActualReversalDeclaration
+  , reversalTransactionId
+  , reversedTransactionId
   , ActualJournalError(..)
   , parseActualJournal
   ) where
@@ -27,6 +36,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import HKernel.Journal
@@ -53,25 +63,42 @@ import HKernel.Plan.Completion
   , mkActualTransactionId
   )
 
--- | One validated Journal plus the explicit completion coordinates projected
--- from transaction metadata.
+-- | One validated Journal plus the explicit Actual metadata projections.
 data ActualJournal = ActualJournal
   { actualJournalValue                  :: Journal
   , actualJournalIdentifiedTransactions :: [IdentifiedActualTransaction]
   , actualJournalCompletionDeclarations :: [PlanCompletionDeclaration]
+  , actualJournalReversalDeclarations   :: [ActualReversalDeclaration]
   } deriving (Eq, Show)
 
--- | Failure to admit accounting syntax or explicit completion metadata.
+-- | One explicit provenance edge from a reversal transaction to its target.
+--
+-- The reversing transaction has its own durable identity. The target may use
+-- either an explicit event identity or the rebuildable identity derived from a
+-- Plan completion declaration. One target may be reversed directly at most
+-- once; reversing that reversal is represented by a new edge to the reversal's
+-- own identity.
+data ActualReversalDeclaration = ActualReversalDeclaration
+  { reversalTransactionId :: ActualTransactionId
+  , reversedTransactionId :: ActualTransactionId
+  } deriving (Eq, Show)
+
+-- | Failure to admit accounting syntax or explicit Actual metadata.
 data ActualJournalError
   = ActualJournalSyntaxError JournalError
   | InvalidActualEventId Int ActualTransactionIdError
   | InvalidActualPlanId Int PlanIdError
+  | InvalidActualReversesId Int ActualTransactionIdError
   | DuplicateActualMetadataKey Int Text
   | DuplicateActualEventIdDefinition ActualTransactionId (NonEmpty Int)
+  | ActualReversalMissingEventId Int ActualTransactionId
+  | ActualReversalSelfReference Int ActualTransactionId
+  | UnknownActualReversalTarget ActualTransactionId ActualTransactionId
+  | DuplicateActualReversalTarget ActualTransactionId (NonEmpty ActualTransactionId)
   | ActualTransactionMetadataAlignmentMismatch Int Int
   deriving (Eq, Show)
 
--- | Parse the accounting Journal, then project explicit completion coordinates.
+-- | Parse the accounting Journal, then project explicit Actual metadata.
 --
 -- Unrelated metadata is not assigned runtime meaning by this narrow projection.
 -- A later complete target-source schema must still preserve or diagnose every
@@ -89,9 +116,9 @@ parseActualJournal input = case parseJournal input of
         Just errors -> Left errors
         Nothing -> Right ActualJournal
           { actualJournalValue = journal
-          , actualJournalIdentifiedTransactions =
-              map locatedIdentifiedValue locatedIdentified
+          , actualJournalIdentifiedTransactions = identifiedTransactions
           , actualJournalCompletionDeclarations = declarations
+          , actualJournalReversalDeclarations = reversals
           }
     where
       transactions = journalTransactions journal
@@ -100,10 +127,14 @@ parseActualJournal input = case parseJournal input of
       metadataCount = length metadataBlocks
       admissions = zipWith admitTransactionMetadata transactions metadataBlocks
       locatedIdentified = mapMaybe admissionIdentified admissions
+      identifiedTransactions =
+        map locatedIdentifiedValue locatedIdentified
       declarations = mapMaybe admissionDeclaration admissions
+      reversals = mapMaybe admissionReversal admissions
       allErrors =
         concatMap admissionErrors admissions
           ++ duplicateActualIdErrors locatedIdentified
+          ++ reversalIntegrityErrors identifiedTransactions reversals
 
 type LocatedLine = (Int, Text)
 
@@ -122,10 +153,11 @@ data TransactionMetadataAdmission = TransactionMetadataAdmission
   { admissionErrors      :: [ActualJournalError]
   , admissionIdentified  :: Maybe LocatedIdentifiedActual
   , admissionDeclaration :: Maybe PlanCompletionDeclaration
+  , admissionReversal    :: Maybe ActualReversalDeclaration
   }
 
 -- | Recover transaction blocks using the same top-level shape as the Journal
--- syntax, then retain only completion-relevant metadata from each transaction.
+-- syntax, then retain only metadata owned by the Actual projection.
 transactionMetadataBlocks :: Text -> [[LocatedMetadata]]
 transactionMetadataBlocks input =
   [ mapMaybe relevantMetadata (drop 1 block)
@@ -167,7 +199,7 @@ relevantMetadata (lineNumber, line)
     key = T.toCaseFold (T.strip (fst (T.breakOn ":" cleanLine)))
 
 relevantMetadataKeys :: [Text]
-relevantMetadataKeys = ["event-id", "plan-id"]
+relevantMetadataKeys = ["event-id", "plan-id", "reverses"]
 
 isNonTransactionDirective :: Text -> Bool
 isNonTransactionDirective line =
@@ -194,17 +226,28 @@ admitTransactionMetadata
   -> TransactionMetadataAdmission
 admitTransactionMetadata transaction metadata = TransactionMetadataAdmission
   { admissionErrors =
-      eventErrors ++ planErrors ++ derivedEventErrors
+      eventErrors
+        ++ planErrors
+        ++ reversesErrors
+        ++ derivedEventErrors
+        ++ reversalErrors
   , admissionIdentified = locatedIdentified
   , admissionDeclaration = completionDeclaration
+  , admissionReversal = reversalDeclaration
   }
   where
     eventEntries = metadataEntries "event-id" metadata
     planEntries = metadataEntries "plan-id" metadata
+    reversesEntries = metadataEntries "reverses" metadata
     (eventErrors, maybeEvent) = admitMetadataValue
       "event-id" mkActualTransactionId InvalidActualEventId eventEntries
     (planErrors, maybePlan) = admitMetadataValue
       "plan-id" mkPlanId InvalidActualPlanId planEntries
+    (reversesErrors, maybeReverses) = admitMetadataValue
+      "reverses"
+      mkActualTransactionId
+      InvalidActualReversesId
+      reversesEntries
 
     (derivedEventErrors, maybeDerivedEvent) =
       case (maybeEvent, maybePlan) of
@@ -231,6 +274,23 @@ admitTransactionMetadata transaction metadata = TransactionMetadataAdmission
       declarePlanCompletion
         <$> fmap snd maybePlan
         <*> fmap snd effectiveEvent
+
+    (reversalErrors, reversalDeclaration) =
+      case maybeReverses of
+        Nothing -> ([], Nothing)
+        Just (lineNumber, targetId)
+          | null eventEntries ->
+              ([ActualReversalMissingEventId lineNumber targetId], Nothing)
+          | otherwise -> case maybeEvent of
+              Nothing -> ([], Nothing)
+              Just (_, reversalId)
+                | reversalId == targetId ->
+                    ([ActualReversalSelfReference lineNumber reversalId], Nothing)
+                | otherwise ->
+                    ([], Just ActualReversalDeclaration
+                      { reversalTransactionId = reversalId
+                      , reversedTransactionId = targetId
+                      })
 
 metadataEntries :: Text -> [LocatedMetadata] -> [LocatedMetadata]
 metadataEntries key = filter ((== key) . locatedMetadataKey)
@@ -273,4 +333,34 @@ duplicateActualIdErrors identified =
         , [locatedIdentifiedLine value]
         )
       | value <- identified
+      ]
+
+reversalIntegrityErrors
+  :: [IdentifiedActualTransaction]
+  -> [ActualReversalDeclaration]
+  -> [ActualJournalError]
+reversalIntegrityErrors identified reversals =
+  unknownTargetErrors ++ duplicateTargetErrors
+  where
+    identifiedIds = Set.fromList (map identifiedActualId identified)
+
+    unknownTargetErrors =
+      [ UnknownActualReversalTarget reversalId targetId
+      | declaration <- reversals
+      , let reversalId = reversalTransactionId declaration
+      , let targetId = reversedTransactionId declaration
+      , targetId `Set.notMember` identifiedIds
+      ]
+
+    reversalIdsByTarget = Map.fromListWith (++)
+      [ (reversedTransactionId declaration,
+          [reversalTransactionId declaration])
+      | declaration <- reversals
+      ]
+
+    duplicateTargetErrors =
+      [ DuplicateActualReversalTarget targetId reversalIds
+      | (targetId, ids) <- Map.toAscList reversalIdsByTarget
+      , Just reversalIds <- [NonEmpty.nonEmpty (sort ids)]
+      , NonEmpty.length reversalIds > 1
       ]
