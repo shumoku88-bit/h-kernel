@@ -53,7 +53,7 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 | ER-009 | confirmed | P1 | globalな`--commit`除去がdescription/detailsなどのuser dataも消す |
 | ER-010 | confirmed | P0 | Plan finishへ負のamountを渡すとposting directionが反転する |
 | ER-011 | confirmed | P2 | admitted empty Issue sourceへheaderを補わずappendするためcandidateが失敗する |
-| ER-012 | confirmed | P0 | publish後のread IOExceptionではbackup restoreを試みないでFileIOErrorだけを返す |
+| ER-012 | confirmed | P0 | publish後のread IOExceptionではbackup restoreを試さずFileIOErrorだけを返す |
 | ER-013 | confirmed | P2 | Plan addがPlan sourceを`prepareActualAppend`経由でActual admissionする |
 | ER-014 | confirmed | P0 | stale mismatch errorが実際のsource全文を保持し、CLI診断へ露出し得る |
 
