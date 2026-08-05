@@ -8,11 +8,14 @@ module HKernel.Editor.TUI.ActualAdd
   , ActualAddMode(..)
   , ActualAddState(..)
   , ActualAddAction(..)
+  , ActualAddWriteFailure(..)
+  , ActualAddWriteOutcome(..)
   , emptyActualAddInput
   , initialActualAddState
   , buildActualAddIntent
   , prepareActualAddPreview
   , transitionActualAdd
+  , classifyActualAddWriteResult
   ) where
 
 import Data.Bifunctor (first)
@@ -29,6 +32,7 @@ import HKernel.Editor.ActualAppend
   , ActualEditIntent(..)
   , prepareActualAppend
   )
+import HKernel.Editor.ActualWriter (WriteError(..))
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Money
   ( mkCommodity
@@ -91,6 +95,23 @@ data ActualAddAction
   | CancelActualAddConfirmation
   | ConfirmActualAdd
   | ReturnToActualAddInput
+  deriving (Eq, Show)
+
+-- | Delivery-level failure kind presented by the Actual-add TUI.
+--
+-- This keeps filesystem and admission details out of the Brick event loop
+-- while preserving whether automatic restoration completed.
+data ActualAddWriteFailure
+  = ActualAddPostAdmissionFailure
+  | ActualAddPostPublishReadFailure
+  | ActualAddFileIOFailure
+  deriving (Eq, Show)
+
+data ActualAddWriteOutcome
+  = ActualAddWriteSucceeded
+  | ActualAddWriteStale
+  | ActualAddWriteRecovered ActualAddWriteFailure
+  | ActualAddWriteFailed ActualAddWriteFailure
   deriving (Eq, Show)
 
 emptyActualAddInput :: ActualAddInput
@@ -193,3 +214,23 @@ transitionActualAdd source action state = case action of
       state { actualAddMode = ActualAddConfirmed block }
     _ -> state
   ReturnToActualAddInput -> state { actualAddMode = EditingActualAdd }
+
+-- | Collapse the safe writer result into the finite outcomes the interaction
+-- layer can present. The complete source and source-local admission errors are
+-- never retained in UI state.
+classifyActualAddWriteResult
+  :: Either (WriteError sourceError) ()
+  -> ActualAddWriteOutcome
+classifyActualAddWriteResult result = case result of
+  Right () -> ActualAddWriteSucceeded
+  Left StaleFile -> ActualAddWriteStale
+  Left (PostAdmissionFailed { restoredFromBackup = True }) ->
+    ActualAddWriteRecovered ActualAddPostAdmissionFailure
+  Left (PostAdmissionFailed { restoredFromBackup = False }) ->
+    ActualAddWriteFailed ActualAddPostAdmissionFailure
+  Left (PostPublishReadFailed { restoredFromBackup = True }) ->
+    ActualAddWriteRecovered ActualAddPostPublishReadFailure
+  Left (PostPublishReadFailed { restoredFromBackup = False }) ->
+    ActualAddWriteFailed ActualAddPostPublishReadFailure
+  Left (FileIOError _) ->
+    ActualAddWriteFailed ActualAddFileIOFailure

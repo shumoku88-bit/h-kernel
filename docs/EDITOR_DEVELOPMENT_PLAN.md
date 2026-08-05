@@ -28,21 +28,23 @@ coding assistantは、作業開始時にこの文書を読み、次を同じ現�
 ```text
 canonical source     separate private data repository
 current writer       bqn-ledger editor
-current h-kernel role reader/report engine + explicit Editor CLI + Actual add preview TUI
-h-kernel write path  h-kernel-editor-cli --commit for rehearsal only
-editor component     Actual + Account + Budget movement + Issue + Plan lifecycle previews, safe writer, CLI, read-only Actual add TUI
+current h-kernel role reader/report engine + explicit Editor CLI + Actual add rehearsal TUI
+h-kernel write path  h-kernel-editor-cli --commit and confirmed Actual add TUI for rehearsal only
+editor component     Actual + Account + Budget movement + Issue + Plan lifecycle previews, safe writer, CLI, confirmed Actual add TUI
 ```
 
 - 外部private directoryは一つだけの正規世帯sourceである。
 - bqn-ledger editorが現在のcanonical write effectを所有する。
 - `h-kernel-editor-cli`がargumentsからtyped intentを作り、previewを常に表示し、明示`--commit`の場合だけsafe writerへ委譲する。
-- commandは対象source pathを明示し、private sourceをdefaultとして推測しない。
+- commandとTUIは対象source pathを明示し、private sourceをdefaultとして推測しない。
 - transaction reverseはoriginalを変更せず、identity/provenanceを持つ新しいtransactionとしてActual Journalへappendする。
 - Account declaration、Budget movement、Household Issueのappendは、それぞれのstable ownerとcomplete-source admissionを使う。
 - Plan lifecycle commandはPlan identityとtransaction全体を保ち、add、edit、finishのcandidateをPlan Journal admissionで検証する。
-- `h-kernel-editor-tui`は明示されたActual Journalをread-onlyでadmitし、Account選択とpositive magnitudeのActual add入力を既存`prepareActualAppend`へ渡してcandidate blockをpreviewする。
+- `h-kernel-editor-tui`は明示されたActual Journalをadmitし、Account選択とpositive magnitudeのActual add入力を既存`prepareActualAppend`へ渡してcandidate blockをpreviewする。
+- TUIは明示confirmation後だけ、preview時のexact source bytesとconfirmed blockを既存`publishActualBlock`へ渡す。
+- TUIはpublish成功、stale拒否、backup復旧済み失敗、未復旧失敗、filesystem failureを有限なoutcomeとして表示し、古いsource snapshotで操作を継続しない。
 - TUIのpure stateは入力、Account選択mode、candidate blockまたはtyped errorだけを保持し、complete private source本文を保持しない。
-- TUIはsource mutation、他commandのorchestration、writer authorityをまだ持たない。
+- stale check、backup、atomic publish、post-admission、restoreは既存safe writerが所有し、Brick event loopは複製しない。
 - focused testとrehearsalはsynthetic temporary sourceだけを変更する。
 - writer authorityは、明示的なcutover PRがmergeされるまで移動しない。
 
@@ -50,21 +52,22 @@ editor component     Actual + Account + Budget movement + Issue + Plan lifecycle
 
 ### NEXT
 
-次の有限sliceは E7b: Actual add TUI confirmation and safe writer orchestration である。現在のpure input/state contractとread-only previewを維持したまま、明示confirmationの後だけ既存safe writerへ委譲する。
+次の有限sliceは E7 verification gate: Actual add TUI synthetic rehearsal evidence である。新しいwrite capabilityを追加せず、synthetic temporary sourceを使った実際のBrick操作で、confirmation、publish成功、stale拒否、failure表示、終了境界を観察する。
 
 ```text
-user interaction
-  -> pure Actual add state and typed intent
-  -> existing candidate preview
+synthetic rehearsal source
+  -> Actual add preview
   -> explicit confirmation
   -> existing source-specific safe writer
+  -> observable terminal outcome
+  -> source and recovery artifact verification
 ```
 
-- 対象は明示されたrehearsal sourceだけとし、private canonical sourceをdefaultとして推測しない。
-- stale check、backup、atomic publish、post-admission、restoreは既存safe writerを再利用し、Brick event loopへ複製しない。
-- confirmation前のcancel、publish成功、stale拒否、recoverable failureをinteraction contractとして観察可能にする。
-- 他commandのTUI、source migration、writer authority cutoverを混ぜない。
-- このsliceはE8 writer cutoverではなく、h-kernel writer authorityを移動しない。
+- private canonical sourceを使わず、copyまたはsynthetic sourceだけを対象にする。
+- success後のsource、stale時の無変更、recoverable failure後のrestoreを手動rehearsalで確認する。
+- TUIの新機能、他commandのTUI、source migration、writer authority cutoverを混ぜない。
+- E8へ進む判断はこのevidenceとは分け、作者の明示承認を必要とする。
+- このverification gateが完了しても、bqn-ledger editorがcurrent writerである。
 
 ## 3. bqn-ledgerとの関係
 
@@ -348,7 +351,7 @@ prepareActualAppend
 | E4 | transaction reverse | DONE |
 | E5 | Account / Budget / Issue append | DONE |
 | E6 | Plan add / select / edit / finish | DONE |
-| E7 | interactive orchestration | CURRENT: Actual add read-only preview merged、次は明示confirmationとsafe writer orchestration |
+| E7 | interactive orchestration | CURRENT: Actual add confirmationとsafe writer orchestration、次はsynthetic rehearsal evidence |
 | E8 | writer cutover | parity、運用試験、rollback、作者の明示承認 |
 
 段階番号は依存順を示す。複数能力を一つのPRへまとめる理由にはしない。E5内でもAccount、Budget、Issueは別sliceにできる。

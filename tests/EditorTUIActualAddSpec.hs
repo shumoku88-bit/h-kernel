@@ -9,6 +9,7 @@ import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (accountName)
 import HKernel.Editor.ActualAppend (ActualEditIntent(..))
+import HKernel.Editor.ActualWriter (WriteError(..))
 import HKernel.Editor.TUI.ActualAdd
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Money (renderQuantity)
@@ -27,7 +28,12 @@ main = do
         , ("rejected preview cannot enter confirmation", testRejectedPreviewCannotConfirm source)
         , ("ready preview enters confirmation", testReadyPreviewEntersConfirmation source)
         , ("confirmation cancellation returns to ready preview", testConfirmationCancellation source)
-        , ("accepted confirmation remains source-free and unwritten", testConfirmationAccepted source)
+        , ("accepted confirmation remains source-free until delivery", testConfirmationAccepted source)
+        , ("successful write result is observable", testWriteSuccess)
+        , ("stale write result is observable", testWriteStale)
+        , ("restored admission failure is recoverable", testWriteRecovered)
+        , ("failed restoration requires verification", testWriteRecoveryFailure)
+        , ("filesystem failure is observable", testWriteFileIOFailure)
         ]
   mapM_ print results
   if all snd results then exitSuccess else exitFailure
@@ -155,3 +161,41 @@ readyPreviewState source =
     source
     RequestActualAddPreview
     (ActualAddState validInput EditingActualAdd)
+
+testWriteSuccess :: Bool
+testWriteSuccess =
+  classifyActualAddWriteResult
+    (Right () :: Either (WriteError ()) ())
+    == ActualAddWriteSucceeded
+
+testWriteStale :: Bool
+testWriteStale =
+  classifyActualAddWriteResult
+    (Left StaleFile :: Either (WriteError ()) ())
+    == ActualAddWriteStale
+
+testWriteRecovered :: Bool
+testWriteRecovered =
+  classifyActualAddWriteResult
+    (Left
+      (PostAdmissionFailed
+        { failedSourceError = "synthetic" NonEmpty.:| []
+        , restoredFromBackup = True
+        }) :: Either (WriteError String) ())
+    == ActualAddWriteRecovered ActualAddPostAdmissionFailure
+
+testWriteRecoveryFailure :: Bool
+testWriteRecoveryFailure =
+  classifyActualAddWriteResult
+    (Left
+      (PostPublishReadFailed
+        { failedReadMessage = "synthetic"
+        , restoredFromBackup = False
+        }) :: Either (WriteError ()) ())
+    == ActualAddWriteFailed ActualAddPostPublishReadFailure
+
+testWriteFileIOFailure :: Bool
+testWriteFileIOFailure =
+  classifyActualAddWriteResult
+    (Left (FileIOError "synthetic") :: Either (WriteError ()) ())
+    == ActualAddWriteFailed ActualAddFileIOFailure
