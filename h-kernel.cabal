@@ -9,6 +9,7 @@ category:           Finance
 build-type:         Simple
 extra-source-files: docs/*.md
                   , docs/INDEX.toml
+                  , tests/fixtures/editor/*.journal
 
 library
     exposed-modules:  HKernel.Account
@@ -94,6 +95,7 @@ library h-kernel-editor
                     , HKernel.Editor.CLI
                     , HKernel.Editor.IssueAppend
                     , HKernel.Editor.PlanLifecycle
+                    , HKernel.Editor.TUI.ActualAdd
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
                     , h-kernel
@@ -623,6 +625,22 @@ executable h-kernel-editor-cli
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
 
+executable h-kernel-editor-tui
+    main-is:          Main.hs
+    build-depends:    base >= 4.14 && < 5
+                    , text >= 1.2 && < 2.2
+                    , brick >= 1.0
+                    , vty >= 6.0
+                    , vty-crossplatform
+                    , microlens
+                    , microlens-mtl
+                    , vector
+                    , h-kernel
+                    , h-kernel-editor
+    hs-source-dirs:   editor-tui-app
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns -threaded
+
 test-suite h-kernel-editor-actual-account-append-test
     type:             exitcode-stdio-1.0
     main-is:          EditorActualAccountAppendSpec.hs
@@ -683,5 +701,16 @@ test-suite h-kernel-editor-cli-contract-test
                     , h-kernel-editor
                     , text
                     , time
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-editor-tui-actual-add-test
+    type:             exitcode-stdio-1.0
+    main-is:          EditorTUIActualAddSpec.hs
+    hs-source-dirs:   tests
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-editor
+                    , text
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns

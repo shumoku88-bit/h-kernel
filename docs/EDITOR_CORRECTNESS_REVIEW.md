@@ -1,10 +1,10 @@
 # h-kernel Editor correctness review
 
-ステータス: 再レビュー済み・T07検証完了  
+ステータス: 再レビュー済み・T08検証完了  
 Owner: h-kernel editor review  
 Canonical: yes  
 基準日: 2026-08-05  
-基準main: `8d33018d245f6bc620b45484076669099d7180a9`
+基準main: `0a87f9e26fad038e28e3e371c2eafa7e1975f11b`
 
 ## 1. 役割
 
@@ -14,7 +14,7 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 
 ## 2. Remote baseline
 
-- main HEAD: `8d33018d245f6bc620b45484076669099d7180a9`
+- main HEAD: `0a87f9e26fad038e28e3e371c2eafa7e1975f11b`
 - E4、E5、E6はmainへmerge済み
 - T01実装PR #16はmainへmerge済み
 - T02実装PR #17はmainへmerge済み
@@ -22,10 +22,10 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 - T04実装PR #19はmainへmerge済み
 - T05実装PR #20はmainへmerge済み
 - T06実装PR #21はmainへmerge済み
-- open PR #14: `spike(editor): Brick Actual add preview TUIを追加する`
-- #14 head: `f8d2cbadcbea6975bbbd13c990b2afeaa3637070`
-- #14はE7完了ではなくActual add read-only preview spikeで、correctness recovery完了までDraft保留
-- T07実装PR #22はOpen / Readyで、全CI gate成功、merge待ち
+- T07実装PR #22はmainへmerge済み
+- open PR #14: `fix(editor): Actual add TUIの入力契約を回復する`
+- #14は最新mainから再構成したT08 Ready PRで、全CI gate成功、merge待ち
+- source mutation、他commandのTUI、writer authority、source migrationは含まない
 
 ## 3. 判定語彙
 
@@ -44,56 +44,42 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 
 | ID | 判定 | 重大度 | 結果 |
 |---|---|---:|---|
-| ER-001 | confirmed | P1 | Budget commandはusageどおりのargvではpatternに一致しない |
-| ER-002 | corrected | P1/P2 | Budget・Issue commitはActual post-admissionでrollbackする。Planは必ず失敗するわけではないがownerが誤る |
-| ER-003 | confirmed | P2 | optional Issue amountをrendererは表せるがTSV admissionが受け取れない |
-| ER-004 | confirmed | P0 | Account名の`;`以後がcommentとして切られ、別identityをcommitし得る |
-| ER-005 | confirmed | P0/P2 | Plan必須日付の欠落が2000-01-01になり、series由来ID失敗がpartial failureになる |
+| ER-001 | corrected | P1 | Budget commandはpure CLI admissionでusageどおりに解釈される |
+| ER-002 | corrected | P1/P2 | source-specific post-admissionをsafe writerへ渡す |
+| ER-003 | corrected | P2 | optional Issue amountと片側欠落をstable TSV admissionで区別する |
+| ER-004 | corrected | P0 | Account declarationをcanonical render後にexact round-trip確認する |
+| ER-005 | corrected | P0/P2 | Plan必須日付とgenerated identity失敗をtyped errorにする |
 | ER-006 | corrected | P2 | reverse自身へ明示`event-id`を要求し、`reverses`をActual typed provenanceとして保持する |
-| ER-007 | confirmed | P2/P3 | E7 TUIの負数入力は`--100`を作り、pure input contract testがない |
-| ER-008 | confirmed | P3 | executable argvからcommitまでのcontract testがない |
-| ER-009 | confirmed | P1 | globalな`--commit`除去がdescription/detailsなどのuser dataも消す |
-| ER-010 | confirmed | P0 | Plan finishへ負のamountを渡すとposting directionが反転する |
-| ER-011 | confirmed | P2 | admitted empty Issue sourceへheaderを補わずappendするためcandidateが失敗する |
-| ER-012 | confirmed | P0 | publish後のread IOExceptionではbackup restoreを試さずFileIOErrorだけを返す |
-| ER-013 | confirmed | P2 | Plan addがPlan sourceを`prepareActualAppend`経由でActual admissionする |
-| ER-014 | confirmed | P0 | stale mismatch errorが実際のsource全文を保持し、CLI診断へ露出し得る |
+| ER-007 | corrected | P2/P3 | TUI Amountをpositive magnitudeとしてpure admissionし、typed state transition testを持つ |
+| ER-008 | corrected | P3 | pure CLI、commit integration、TUI contractの各層をfocused testする |
+| ER-009 | corrected | P1 | `--commit`をleaf commandの先頭だけでadmitする |
+| ER-010 | corrected | P0 | Plan finish amountをpositive magnitudeへ制限する |
+| ER-011 | corrected | P2 | empty Issue sourceへの初回appendでstable headerを生成する |
+| ER-012 | corrected | P0 | publish後read failureでもrestoreを試みる |
+| ER-013 | corrected | P2 | Plan block renderingとPlan owner admissionを分離する |
+| ER-014 | corrected | P0 | stale mismatch診断へactual source本文を保持しない |
 
 ## 5. Finding details
 
 ### ER-001 Budget argv mismatch
 
-`editor-app/Main.hs`のBudget patternはcommodityの後に`:_`を要求する。一方、`main`は先にすべての`--commit`を除去する。そのためusageに示された引数だけでは一致せず、無関係な余分の引数を付けた場合だけ起動する。
-
-既存のBudget testは`prepareBudgetMovementAppend`だけを直接呼び、CLI parserを通らない。
+旧`editor-app/Main.hs`のBudget patternはcommodityの後に余分な引数を要求していた。pure CLI admissionへ分離し、usage shape、余分な引数、command-local `--commit`をfocused testで固定した。
 
 ### ER-002 source-specific post-admission
 
-`executePreview`はすべてのsource kindを`publishActualAppend`へ渡す。writerはpublish後に常に`parseActualJournal`を使う。
-
-- Actual append、reverse、Account appendはActual Journalなのでownerが一致する
-- Budget TSVとIssue TSVはcandidate作成時には各stable parserを使うが、publish後にActual parserへ渡されるためrollbackする
-- Plan add candidateは事前にPlan admissionされるため、通常形ではwriterが必ず失敗するとは限らない。ただしpost-admission ownerはPlanではない
-
-一次レビューの「Planも必ずrollback」は撤回し、owner mismatchへ修正する。
+Actual、Plan、Budget、Issueのcandidateは、それぞれのstable ownerをsafe writerのpost-admissionとして渡す。temporary sourceを使うcommit evidenceで、publish、post-admission、rollbackの連続した境界を確認する。
 
 ### ER-003 optional Issue amount
 
-`HouseholdIssue`と`IssueAppendIntent`は`Maybe Amount`を持ち、rendererは`Nothing`をamount/currencyの空欄として出力する。`parseHouseholdIssues`は空欄でも`parseQuantity`と`mkCommodity`を必須実行するため、candidate parseが失敗する。
-
-CLIはqtyまたはcommodityの片方だけが`-`でもamount全体を`Nothing`にする。片方の入力を黙って捨てず、「両方`-`」または「両方明示」を要求する必要がある。
+Issue amountはquantityとcommodityの両方blankを`Nothing`としてadmitし、片側だけの欠落はtyped errorとして拒否する。rendererとstable TSV parserが同じoptional contractを共有する。
 
 ### ER-004 Account identity round-trip
 
-`mkAccount`は`;`を許すが、Journal account headerは`;`以後をcommentとして除く。`ActualAccountAppend`は元のdeclarationとparse-back declarationのexact equalityを確認しない。
-
-例として`expenses:food;legacy`を追加すると、candidate sourceにはそのTextが出るが、parse後は`expenses:food`として受理され得る。これはparse可能性ではなくidentity parityで拒否すべきである。
+Account Journal ownerがcanonical declaration rendererを持ち、追加対象のdeclarationがcandidate parse-back後もexact equalityを保つことを確認する。`;`を含みsource上で別identityへ変わる名前はpublish前に拒否する。
 
 ### ER-005 Plan date and generated identity
 
-CLIはPlan addとfinishの初期値に`2000-01-01`を入れ、日付flagの存在を確認しない。missing dateはtyped errorにならず、利用者が指定していない日付でcandidateを生成する。
-
-`generatePlanId`はseries textをslugifyせず、`mkPlanId`失敗を`error "invalid generated id"`へ変える。whitespaceを含むseriesなどでprocess crashになり得る。
+Plan add、finishの必須日付はflagの存在をtyped admissionで確認する。generated Plan IDの失敗をpartial `error`へ変換せず、invalid seriesを含めてtyped errorとして返す。
 
 ### ER-006 reverse identity/provenance
 
@@ -113,13 +99,11 @@ reverse transactionは元transactionを変更する操作ではなく、符号�
 
 ### ER-007 E7 TUI input contract
 
-PR #14の`buildIntent`は入力Quantityをそのままdestinationへ使い、source側を文字列`"-" <> qty`で作る。`-100 JPY`はsource側で`--100`となる。
+TUIはAmountを`<positive quantity> <commodity>`というsurfaceとしてadmitする。negativeとzeroは`ActualAddAmountMustBePositive`として拒否し、balancing source postingは入力Textへ`-`を連結せず、admitted `Quantity`へ`negateQuantity`を適用して作る。
 
-TUIをpositive magnitudeだけのsurfaceとする場合は、その制限をpure constructorで明示し、負数をtyped validation errorとして扱う。event loopへ埋めたままにせずfocused test可能な境界へ出す。
+入力から`ActualEditIntent`を作る境界と、Account選択、cancel、preview、returnの状態遷移をBrick event loopの外へ出す。focused testはpositive、negative、zero、invalid shape、Account選択、preview block、private complete-source非保持を固定する。
 
 ### ER-008 executable coverage
-
-CabalにはEditor module単位のtest suiteがあるが、`editor-app/Main.hs`をargvから実行するcontract testがない。このためER-001、ER-002、ER-005、ER-009が`cabal test all`を通過した。
 
 coverageを次の四層に分ける。
 
@@ -128,35 +112,29 @@ coverageを次の四層に分ける。
 3. temporary sourceを使うcommit integration test
 4. TUI input/state transition test
 
-### ER-009 global commit flag removal
+### ER-009 command-local commit flag
 
-`cleanArgs = filter (/= "--commit") args`はflag位置を解釈せず、同じTextをdescriptionやdetailsとして記録したい場合も削除する。commit指定は各commandの構造内で一度だけadmitし、user-authored valueと混同しない。
+commit指定は各leaf commandの先頭位置だけで一度admitする。description、memo、detailsなどに現れる`--commit`はuser-authored valueとして保持する。
 
-### ER-010 Plan finish negative amount
+### ER-010 Plan finish amount direction
 
-binary Planの更新は、元postingの符号に応じて`newQty`または`negateQuantity newQty`を使う。`newQty`が負の場合、両postingの符号が逆転して支払方向が反転する。
-
-`--actual-amount`はpositive magnitudeとしてadmitするか、signed replacementとして別の明示contractを定める必要がある。現在のCLI語彙ではpositive magnitudeが自然である。
+`--actual-amount`はpositive magnitudeとしてadmitする。negativeとzeroをtyped errorへし、posting directionを入力符号で反転させない。
 
 ### ER-011 empty Issue source
 
-`parseHouseholdIssues`はblank/comment-only sourceをempty collectionとしてadmitする。一方、Issue rendererはrowだけをappendし、headerを生成しない。admitted empty sourceから作ったcandidateの先頭rowがheaderとして解釈され、拒否される。
+blankまたはcomment-only sourceはempty Issue collectionとしてadmitする。初回appendはstable headerとrowを生成し、そのcomplete candidateをIssue ownerへ戻す。
 
 ### ER-012 post-publish IOException
 
-writerはtarget rename後にsourceを再読込する。そのreadがIOExceptionになると、外側のcatchが`FileIOError`を返すだけでrollbackを試みない。sourceは変更済みなのに失敗だけが返る可能性があり、safe writer contractに反する。
+writerはtarget publish後のreadまたはpost-admissionが失敗した場合もbackup restoreを試み、sourceが変更済みのままfailureだけを返さない。
 
-### ER-013 Plan source admitted as Actual
+### ER-013 Plan source ownership
 
-`preparePlanAdd`は最初に`parsePlanJournal`するが、block生成のため`prepareActualAppend planSource actualIntent`を呼び、同じPlan sourceを再びActual Journalとしてadmitする。
-
-Plan parserが無関係metadataとして許す`event-id`をActual parserは意味のあるidentityとして解釈する。したがってPlan ownerではvalidなsourceがEditor経路で拒否され得る。transaction rendererとsource-specific admissionを分ける必要がある。
+source-neutralなvalidated transaction block rendererをActual appendから分ける。Plan addはPlan JournalのAccount registryでpostingを検証し、complete candidateをPlan ownerへ戻す。
 
 ### ER-014 stale source content exposure
 
-writerの`StaleFile`は、比較に使った実際のsource全体を`staleActualBytes`としてerrorへ保持する。CLIはwrite errorを`show`しているため、private canonical sourceの全内容をterminalやlogへ出す可能性がある。
-
-stale判定には内容の不一致だけが必要であり、actual bytesを診断へ含めない。内容非表示のtyped mismatchとして返し、testでも`Show`結果にsource内容が含まれないことを固定する。
+stale判定は内容不一致という事実だけをtyped errorへ保持する。actual source bytesをerrorや`Show`結果へ含めず、private canonical source本文をterminalやlogへ出さない。
 
 ## 6. Ordered TODO
 
@@ -183,11 +161,11 @@ stale判定には内容の不一致だけが必要であり、actual bytesを診
 - [x] **T06: Plan rendering/admission ownership**  
   source-neutralなvalidated transaction block境界をActual appendから分離し、Plan addはPlan JournalのAccount registryでpostingを検証・描画する。Plan sourceをActual admissionへ流さず、PlanとしてvalidかつActualとしてinvalidなmetadata sourceのfocused evidenceをPR #21で固定し、mainへmergeした。対象: ER-013とER-002のPlan部分。
 
-- [ ] **T07: reversal identity/provenance decision**  
-  reverse自身の明示`event-id`、Actual ownerによるtyped `reverses` retention、unknown/self/duplicate rejection、direct reverse一回、reverse-of-reverse許可をPR #22で実装した。Actual parser、Editor preview、CLI admissionのfocused evidenceを追加し、全CI gate成功、Ready化済み、merge待ち。対象: ER-006。
+- [x] **T07: reversal identity/provenance decision**  
+  reverse自身の明示`event-id`、Actual ownerによるtyped `reverses` retention、unknown/self/duplicate rejection、direct reverse一回、reverse-of-reverse許可をPR #22で固定し、mainへmergeした。対象: ER-006。
 
 - [ ] **T08: E7 TUI recovery**  
-  PR #14を修復後mainへrebaseし、pure input constructor、positive amount contract、state transition test、fixture placementを整える。対象: ER-007。
+  PR #14を最新mainから再構成し、pure input constructor、positive amount contract、state transition test、`tests/fixtures/editor/`へのfixture placementを実装した。3つのGHCでbuild/test成功、GHC 9.10.3のrepository auditとcomplete Report contracts成功、Ready化済み、merge待ち。対象: ER-007。
 
 - [ ] **T09: final verification and current-state docs**  
   GHC 9.10.3、9.12.4、9.14.1でbuild/test、repository audit、complete Report contractsを確認し、`EDITOR_DEVELOPMENT_PLAN.md`のCURRENT/NEXTを実能力に合わせる。
