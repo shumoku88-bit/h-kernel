@@ -32,6 +32,8 @@ import HKernel.Editor.IssueAppend (IssueAppendIntent(..))
 import HKernel.Editor.PlanLifecycle
   ( PlanAddIntent(..)
   , PlanFinishIntent(..)
+  , PositivePlanFinishAmount
+  , mkPositivePlanFinishAmount
   )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.HouseholdIssue (IssueStatus(..), mkIssueId)
@@ -82,6 +84,7 @@ data CliError
   | CliPlanAddOptionInvalid
   | CliPlanFinishIdRequired
   | CliPlanFinishDateRequired
+  | CliPlanFinishAmountMustBePositive
   | CliPlanFinishOptionInvalid
   deriving (Eq, Show)
 
@@ -251,7 +254,7 @@ parsePlanAddOptions _ _ = Left CliPlanAddOptionInvalid
 data PlanFinishFields = PlanFinishFields
   { planFinishIdField     :: Maybe Text
   , planFinishDateField   :: Maybe Day
-  , planFinishAmountField :: Maybe Quantity
+  , planFinishAmountField :: Maybe PositivePlanFinishAmount
   }
 
 emptyPlanFinishFields :: PlanFinishFields
@@ -286,8 +289,10 @@ parsePlanFinishOptions fields ("--actual-date":dateText:rest) = do
     rest
 parsePlanFinishOptions fields ("--actual-amount":quantityText:rest) = do
   quantity <- parseQuantityValue quantityText
+  positiveAmount <- mapDomainError CliPlanFinishAmountMustBePositive
+    (mkPositivePlanFinishAmount quantity)
   parsePlanFinishOptions fields
-    { planFinishAmountField = Just quantity }
+    { planFinishAmountField = Just positiveAmount }
     rest
 parsePlanFinishOptions _ _ = Left CliPlanFinishOptionInvalid
 
@@ -363,6 +368,7 @@ renderCliError errorValue = case errorValue of
   CliPlanAddOptionInvalid -> "invalid or incomplete plan add option"
   CliPlanFinishIdRequired -> "--id is required for plan finish"
   CliPlanFinishDateRequired -> "--actual-date is required for plan finish"
+  CliPlanFinishAmountMustBePositive -> "--actual-amount must be a positive magnitude"
   CliPlanFinishOptionInvalid -> "invalid or incomplete plan finish option"
 
 usageText :: String
@@ -374,5 +380,5 @@ usageText = unlines
   , "  h-kernel-editor-cli budget [--commit] <budget_alloc.tsv> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm>"
   , "  h-kernel-editor-cli issue [--commit] <issues.tsv> <id> <status> <YYYY-MM-DD> <category> <title> <qty|-> <comm|-> <details...>"
   , "  h-kernel-editor-cli plan add [--commit] <plan.journal> <actual.journal> --date YYYY-MM-DD --description DESC --posting ACCT QTY COMM ... [--id ID] [--series SERIES]"
-  , "  h-kernel-editor-cli plan finish [--commit] <plan.journal> <actual.journal> --id ID --actual-date YYYY-MM-DD [--actual-amount QTY]"
+  , "  h-kernel-editor-cli plan finish [--commit] <plan.journal> <actual.journal> --id ID --actual-date YYYY-MM-DD [--actual-amount POSITIVE_QTY]"
   ]
