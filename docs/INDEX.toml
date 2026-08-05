@@ -52,6 +52,10 @@ path = "docs/EDITOR_CUTOVER_READINESS_AUDIT_001.md"
 role = "observation"
 
 [[documents]]
+path = "docs/EDITOR_OPERATION_PARITY_INVENTORY_001.md"
+role = "observation"
+
+[[documents]]
 path = "docs/HASKELL_NATIVE_CODE_POLICY.md"
 role = "policy"
 
