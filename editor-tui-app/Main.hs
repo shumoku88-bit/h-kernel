@@ -30,6 +30,7 @@ import HKernel.Actual.Journal
   ( actualJournalValue
   , parseActualJournal
   )
+import HKernel.Editor.ActualWriter (publishActualBlock)
 import HKernel.Editor.TUI.ActualAdd
   ( AccountSelectionTarget(..)
   , ActualAddAction(..)
@@ -37,6 +38,9 @@ import HKernel.Editor.TUI.ActualAdd
   , ActualAddMode(..)
   , ActualAddPreview(..)
   , ActualAddState(..)
+  , ActualAddWriteFailure(..)
+  , ActualAddWriteOutcome(..)
+  , classifyActualAddWriteResult
   , emptyActualAddInput
   , transitionActualAdd
   )
@@ -87,13 +91,14 @@ data UIState event
   | ShowConfirmation
       Text
       (Form ActualAddInput event Name)
-  | ShowConfirmed
-      Text
+  | ShowWriteOutcome
+      ActualAddWriteOutcome
       (Form ActualAddInput event Name)
 
 data AppContext = AppContext
-  { contextAccounts :: [Text]
-  , contextSource   :: Text
+  { contextAccounts   :: [Text]
+  , contextSourcePath :: FilePath
+  , contextSource     :: Text
   }
 
 data AppWrapper = AppWrapper AppContext (UIState AppEvent)
@@ -168,19 +173,13 @@ drawUI (AppWrapper _ (ShowConfirmation block _)) =
             <=> str " "
             <=> str "[Y] Confirm | [N/Esc] Cancel | [Q] Quit")))
   ]
-drawUI (AppWrapper _ (ShowConfirmed block _)) =
+drawUI (AppWrapper _ (ShowWriteOutcome outcome _)) =
   [ center
-      (borderWithLabel (str "Confirmation Accepted")
+      (borderWithLabel (str "Actual Add Result")
         (padAll 1
-          (vBox
-            [ withAttr (attrName "success")
-                (str "Confirmation accepted. Source remains unmodified.")
-            , str "Writer orchestration is intentionally outside this finite slice."
-            , str " "
-            , txt block
-            , str " "
-            , str "[B] Back to input | [Q] Quit"
-            ])))
+          (renderWriteOutcome outcome
+            <=> str " "
+            <=> str "[Esc/Q] Quit")))
   ]
 
 selectionLabel :: AccountSelectionTarget -> String
@@ -214,6 +213,40 @@ previewControls preview = case preview of
     "[Esc/B] Back | [C] Continue to confirmation | [Q] Quit"
   _ -> "[Esc/B] Back | [Q] Quit"
 
+renderWriteOutcome :: ActualAddWriteOutcome -> Widget Name
+renderWriteOutcome outcome = case outcome of
+  ActualAddWriteSucceeded ->
+    withAttr (attrName "success")
+      (str "Published and post-admitted successfully.")
+  ActualAddWriteStale ->
+    withAttr (attrName "error")
+      (vBox
+        [ str "Source changed after preview. Nothing was written."
+        , str "Restart the TUI and preview the current source before retrying."
+        ])
+  ActualAddWriteRecovered failure ->
+    withAttr (attrName "warning")
+      (vBox
+        [ str "Publication failed, and the backup was restored."
+        , txt (writeFailureText failure)
+        ])
+  ActualAddWriteFailed failure ->
+    withAttr (attrName "error")
+      (vBox
+        [ str "Publication failed and automatic recovery did not complete."
+        , txt (writeFailureText failure)
+        , str "Verify the rehearsal source before continuing."
+        ])
+
+writeFailureText :: ActualAddWriteFailure -> Text
+writeFailureText failure = case failure of
+  ActualAddPostAdmissionFailure ->
+    "The published candidate failed complete-source admission."
+  ActualAddPostPublishReadFailure ->
+    "The published source could not be read for post-admission."
+  ActualAddFileIOFailure message ->
+    "Filesystem error: " <> T.pack message
+
 appEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 appEvent event = do
   AppWrapper context state <- get
@@ -225,8 +258,8 @@ appEvent event = do
       handlePreviewEvent context preview form event
     ShowConfirmation block form ->
       handleConfirmationEvent context block form event
-    ShowConfirmed block form ->
-      handleConfirmedEvent context block form event
+    ShowWriteOutcome outcome form ->
+      handleWriteOutcomeEvent outcome form event
 
 handleInputEvent
   :: AppContext
@@ -379,32 +412,30 @@ acceptConfirmation context block form = do
           ConfirmActualAdd
           (ActualAddState (formState form) (ConfirmingActualAdd block))
   case actualAddMode state of
-    ActualAddConfirmed confirmedBlock ->
-      put (AppWrapper context (ShowConfirmed confirmedBlock form))
+    ActualAddConfirmed confirmedBlock -> do
+      writeResult <-
+        suspendAndResume'
+          (publishActualBlock
+            (contextSourcePath context)
+            (contextSource context)
+            confirmedBlock)
+      put
+        (AppWrapper context
+          (ShowWriteOutcome
+            (classifyActualAddWriteResult writeResult)
+            form))
     _ -> put (AppWrapper context (ShowConfirmation block form))
 
-handleConfirmedEvent
-  :: AppContext
-  -> Text
+handleWriteOutcomeEvent
+  :: ActualAddWriteOutcome
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleConfirmedEvent context block form event = case event of
-  VtyEvent (V.EvKey (V.KChar 'b') []) -> returnToInput
-  VtyEvent (V.EvKey (V.KChar 'B') []) -> returnToInput
+handleWriteOutcomeEvent _ _ event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> halt
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
   _ -> pure ()
-  where
-    returnToInput = do
-      let state =
-            transitionActualAdd
-              (contextSource context)
-              ReturnToActualAddInput
-              (ActualAddState (formState form) (ActualAddConfirmed block))
-      case actualAddMode state of
-        EditingActualAdd -> put (AppWrapper context (InputForm form))
-        _ -> put (AppWrapper context (ShowConfirmed block form))
 
 app :: App AppWrapper AppEvent Name
 app = App
@@ -417,6 +448,7 @@ app = App
         [ (L.listSelectedAttr, V.black `on` V.white)
         , (attrName "error", fg V.red)
         , (attrName "success", fg V.green)
+        , (attrName "warning", fg V.yellow)
         ])
   }
 
@@ -436,7 +468,7 @@ main = do
             accountDeclarations
               (journalAccountRegistry (actualJournalValue journal))
           accounts = map (accountName . declaredAccount) declarations
-          context = AppContext accounts source
+          context = AppContext accounts journalFile source
           initialState =
             AppWrapper context (InputForm (mkForm emptyActualAddInput))
           buildVty = mkVty V.defaultConfig
