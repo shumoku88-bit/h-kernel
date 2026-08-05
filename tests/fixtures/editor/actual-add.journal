@@ -1,0 +1,15 @@
+account assets:cash
+    type: asset
+    commodity: JPY
+
+account expenses:food
+    type: expense
+    commodity: JPY
+
+account equity:opening-balances
+    type: equity
+    commodity: JPY
+
+2024-01-01 Opening Balance
+  assets:cash  1000 JPY
+  equity:opening-balances  -1000 JPY
