@@ -230,6 +230,13 @@ renderWriteOutcome outcome = case outcome of
         [ str "Publication failed, and the backup was restored."
         , txt (writeFailureText failure)
         ])
+  ActualAddWriteFailed (ActualAddFileIOFailure message) ->
+    withAttr (attrName "error")
+      (vBox
+        [ str "The writer could not complete because of a filesystem error."
+        , txt (writeFailureText (ActualAddFileIOFailure message))
+        , str "Verify the rehearsal source before continuing."
+        ])
   ActualAddWriteFailed failure ->
     withAttr (attrName "error")
       (vBox
