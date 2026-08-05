@@ -24,6 +24,10 @@ main = do
         , ("from Account selection updates input", testFromSelection source)
         , ("cancelled selection preserves input", testCancelSelection source)
         , ("preview transition retains candidate block only", testPreviewTransition source)
+        , ("rejected preview cannot enter confirmation", testRejectedPreviewCannotConfirm source)
+        , ("ready preview enters confirmation", testReadyPreviewEntersConfirmation source)
+        , ("confirmation cancellation returns to ready preview", testConfirmationCancellation source)
+        , ("accepted confirmation remains source-free and unwritten", testConfirmationAccepted source)
         ]
   mapM_ print results
   if all snd results then exitSuccess else exitFailure
@@ -36,6 +40,13 @@ validInput = ActualAddInput
   , addToAccountText = "expenses:food"
   , addAmountText = "100 JPY"
   }
+
+expectedBlock :: T.Text
+expectedBlock = T.unlines
+  [ "2026-08-05 Groceries"
+  , "  expenses:food  100 JPY"
+  , "  assets:cash  -100 JPY"
+  ]
 
 testPositiveMagnitude :: Bool
 testPositiveMagnitude = case buildActualAddIntent validInput of
@@ -87,17 +98,60 @@ testCancelSelection source =
 
 testPreviewTransition :: T.Text -> Bool
 testPreviewTransition source =
-  let initial = ActualAddState validInput EditingActualAdd
-      previewState =
-        transitionActualAdd source RequestActualAddPreview initial
+  let previewState = readyPreviewState source
       stateRendering = T.pack (show previewState)
-      expectedBlock = T.unlines
-        [ "2026-08-05 Groceries"
-        , "  expenses:food  100 JPY"
-        , "  assets:cash  -100 JPY"
-        ]
   in case actualAddMode previewState of
       ShowingActualAddPreview (ActualAddCandidateReady block) ->
         block == expectedBlock
           && not ("Opening Balance" `T.isInfixOf` stateRendering)
       _ -> False
+
+testRejectedPreviewCannotConfirm :: T.Text -> Bool
+testRejectedPreviewCannotConfirm source =
+  let initial = ActualAddState
+        (validInput { addAmountText = "0 JPY" })
+        EditingActualAdd
+      rejected = transitionActualAdd source RequestActualAddPreview initial
+      confirmation =
+        transitionActualAdd source RequestActualAddConfirmation rejected
+  in confirmation == rejected
+
+testReadyPreviewEntersConfirmation :: T.Text -> Bool
+testReadyPreviewEntersConfirmation source =
+  let confirmation =
+        transitionActualAdd
+          source
+          RequestActualAddConfirmation
+          (readyPreviewState source)
+  in actualAddMode confirmation == ConfirmingActualAdd expectedBlock
+
+testConfirmationCancellation :: T.Text -> Bool
+testConfirmationCancellation source =
+  let confirmation =
+        transitionActualAdd
+          source
+          RequestActualAddConfirmation
+          (readyPreviewState source)
+      cancelled =
+        transitionActualAdd source CancelActualAddConfirmation confirmation
+  in actualAddMode cancelled
+      == ShowingActualAddPreview (ActualAddCandidateReady expectedBlock)
+
+testConfirmationAccepted :: T.Text -> Bool
+testConfirmationAccepted source =
+  let confirmation =
+        transitionActualAdd
+          source
+          RequestActualAddConfirmation
+          (readyPreviewState source)
+      accepted = transitionActualAdd source ConfirmActualAdd confirmation
+      stateRendering = T.pack (show accepted)
+  in actualAddMode accepted == ActualAddConfirmed expectedBlock
+      && not ("Opening Balance" `T.isInfixOf` stateRendering)
+
+readyPreviewState :: T.Text -> ActualAddState
+readyPreviewState source =
+  transitionActualAdd
+    source
+    RequestActualAddPreview
+    (ActualAddState validInput EditingActualAdd)

@@ -73,6 +73,8 @@ data ActualAddMode
   = EditingActualAdd
   | SelectingActualAccount AccountSelectionTarget
   | ShowingActualAddPreview ActualAddPreview
+  | ConfirmingActualAdd Text
+  | ActualAddConfirmed Text
   deriving (Eq, Show)
 
 data ActualAddState = ActualAddState
@@ -85,6 +87,9 @@ data ActualAddAction
   | ChooseAccount Text
   | CancelAccountSelection
   | RequestActualAddPreview
+  | RequestActualAddConfirmation
+  | CancelActualAddConfirmation
+  | ConfirmActualAdd
   | ReturnToActualAddInput
   deriving (Eq, Show)
 
@@ -139,7 +144,8 @@ prepareActualAddPreview source input =
 
 -- | Pure interaction contract used by the Brick adapter and focused tests.
 -- The admitted source is supplied to the transition and is not retained in UI
--- state or diagnostics.
+-- state or diagnostics. Confirmation records only the user's decision; source
+-- writing remains a separate effect owned by the delivery adapter and writer.
 transitionActualAdd
   :: Text
   -> ActualAddAction
@@ -171,4 +177,19 @@ transitionActualAdd source action state = case action of
           ShowingActualAddPreview
             (prepareActualAddPreview source (actualAddInput state))
       }
+  RequestActualAddConfirmation -> case actualAddMode state of
+    ShowingActualAddPreview (ActualAddCandidateReady block) ->
+      state { actualAddMode = ConfirmingActualAdd block }
+    _ -> state
+  CancelActualAddConfirmation -> case actualAddMode state of
+    ConfirmingActualAdd block ->
+      state
+        { actualAddMode =
+            ShowingActualAddPreview (ActualAddCandidateReady block)
+        }
+    _ -> state
+  ConfirmActualAdd -> case actualAddMode state of
+    ConfirmingActualAdd block ->
+      state { actualAddMode = ActualAddConfirmed block }
+    _ -> state
   ReturnToActualAddInput -> state { actualAddMode = EditingActualAdd }

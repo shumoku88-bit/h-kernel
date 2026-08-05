@@ -84,6 +84,12 @@ data UIState event
   | ShowPreview
       ActualAddPreview
       (Form ActualAddInput event Name)
+  | ShowConfirmation
+      Text
+      (Form ActualAddInput event Name)
+  | ShowConfirmed
+      Text
+      (Form ActualAddInput event Name)
 
 data AppContext = AppContext
   { contextAccounts :: [Text]
@@ -149,7 +155,30 @@ drawUI (AppWrapper _ (ShowPreview preview _)) =
         (padAll 1
           (renderPreview preview
             <=> str " "
-            <=> str "[Esc/B] Back | [Q] Quit")))
+            <=> str (previewControls preview))))
+  ]
+drawUI (AppWrapper _ (ShowConfirmation block _)) =
+  [ center
+      (borderWithLabel (str "Confirm Actual Add")
+        (padAll 1
+          (str "Confirm this validated transaction?"
+            <=> str "No source write has occurred."
+            <=> str " "
+            <=> withAttr (attrName "success") (txt block)
+            <=> str " "
+            <=> str "[Y] Confirm | [N/Esc] Cancel | [Q] Quit")))
+  ]
+drawUI (AppWrapper _ (ShowConfirmed block _)) =
+  [ center
+      (borderWithLabel (str "Confirmation Accepted")
+        (padAll 1
+          (withAttr (attrName "success")
+            (str "Confirmation accepted. Source remains unmodified."))
+            <=> str "Writer orchestration is intentionally outside this finite slice."
+            <=> str " "
+            <=> txt block
+            <=> str " "
+            <=> str "[B] Back to input | [Q] Quit")))
   ]
 
 selectionLabel :: AccountSelectionTarget -> String
@@ -177,6 +206,12 @@ renderPreview preview = case preview of
       <=> str " "
       <=> txt block
 
+previewControls :: ActualAddPreview -> String
+previewControls preview = case preview of
+  ActualAddCandidateReady _ ->
+    "[Esc/B] Back | [C] Continue to confirmation | [Q] Quit"
+  _ -> "[Esc/B] Back | [Q] Quit"
+
 appEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 appEvent event = do
   AppWrapper context state <- get
@@ -184,7 +219,12 @@ appEvent event = do
     InputForm form -> handleInputEvent context form event
     SelectAccount target accountList form ->
       handleAccountSelection context target accountList form event
-    ShowPreview _ form -> handlePreviewEvent context form event
+    ShowPreview preview form ->
+      handlePreviewEvent context preview form event
+    ShowConfirmation block form ->
+      handleConfirmationEvent context block form event
+    ShowConfirmed block form ->
+      handleConfirmedEvent context block form event
 
 handleInputEvent
   :: AppContext
@@ -256,19 +296,113 @@ handleAccountSelection context target accountList form event = case event of
 
 handlePreviewEvent
   :: AppContext
+  -> ActualAddPreview
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handlePreviewEvent context form event = case event of
+handlePreviewEvent context preview form event = case event of
   VtyEvent (V.EvKey V.KEsc []) ->
     put (AppWrapper context (InputForm form))
   VtyEvent (V.EvKey (V.KChar 'b') []) ->
     put (AppWrapper context (InputForm form))
   VtyEvent (V.EvKey (V.KChar 'B') []) ->
     put (AppWrapper context (InputForm form))
+  VtyEvent (V.EvKey (V.KChar 'c') []) ->
+    requestConfirmation context preview form
+  VtyEvent (V.EvKey (V.KChar 'C') []) ->
+    requestConfirmation context preview form
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
   _ -> pure ()
+
+requestConfirmation
+  :: AppContext
+  -> ActualAddPreview
+  -> Form ActualAddInput AppEvent Name
+  -> EventM Name AppWrapper ()
+requestConfirmation context preview form = do
+  let state =
+        transitionActualAdd
+          (contextSource context)
+          RequestActualAddConfirmation
+          (ActualAddState
+            (formState form)
+            (ShowingActualAddPreview preview))
+  case actualAddMode state of
+    ConfirmingActualAdd block ->
+      put (AppWrapper context (ShowConfirmation block form))
+    _ -> put (AppWrapper context (ShowPreview preview form))
+
+handleConfirmationEvent
+  :: AppContext
+  -> Text
+  -> Form ActualAddInput AppEvent Name
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleConfirmationEvent context block form event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> cancelConfirmation context block form
+  VtyEvent (V.EvKey (V.KChar 'n') []) -> cancelConfirmation context block form
+  VtyEvent (V.EvKey (V.KChar 'N') []) -> cancelConfirmation context block form
+  VtyEvent (V.EvKey (V.KChar 'y') []) -> acceptConfirmation context block form
+  VtyEvent (V.EvKey (V.KChar 'Y') []) -> acceptConfirmation context block form
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
+  _ -> pure ()
+
+cancelConfirmation
+  :: AppContext
+  -> Text
+  -> Form ActualAddInput AppEvent Name
+  -> EventM Name AppWrapper ()
+cancelConfirmation context block form = do
+  let state =
+        transitionActualAdd
+          (contextSource context)
+          CancelActualAddConfirmation
+          (ActualAddState (formState form) (ConfirmingActualAdd block))
+  case actualAddMode state of
+    ShowingActualAddPreview preview ->
+      put (AppWrapper context (ShowPreview preview form))
+    _ -> put (AppWrapper context (ShowConfirmation block form))
+
+acceptConfirmation
+  :: AppContext
+  -> Text
+  -> Form ActualAddInput AppEvent Name
+  -> EventM Name AppWrapper ()
+acceptConfirmation context block form = do
+  let state =
+        transitionActualAdd
+          (contextSource context)
+          ConfirmActualAdd
+          (ActualAddState (formState form) (ConfirmingActualAdd block))
+  case actualAddMode state of
+    ActualAddConfirmed confirmedBlock ->
+      put (AppWrapper context (ShowConfirmed confirmedBlock form))
+    _ -> put (AppWrapper context (ShowConfirmation block form))
+
+handleConfirmedEvent
+  :: AppContext
+  -> Text
+  -> Form ActualAddInput AppEvent Name
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleConfirmedEvent context block form event = case event of
+  VtyEvent (V.EvKey (V.KChar 'b') []) -> returnToInput
+  VtyEvent (V.EvKey (V.KChar 'B') []) -> returnToInput
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
+  _ -> pure ()
+  where
+    returnToInput = do
+      let state =
+            transitionActualAdd
+              (contextSource context)
+              ReturnToActualAddInput
+              (ActualAddState (formState form) (ActualAddConfirmed block))
+      case actualAddMode state of
+        EditingActualAdd -> put (AppWrapper context (InputForm form))
+        _ -> put (AppWrapper context (ShowConfirmed block form))
 
 app :: App AppWrapper AppEvent Name
 app = App
