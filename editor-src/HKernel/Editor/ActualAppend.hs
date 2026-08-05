@@ -12,6 +12,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import Data.Time.Calendar (Day)
 
+import HKernel.Account (Account)
 import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError
@@ -26,6 +27,7 @@ import HKernel.Editor.TransactionBlock
   , prepareTransactionBlock
   )
 import HKernel.Journal (journalAccountRegistry)
+import HKernel.Ledger (TransactionError)
 
 -- | A request to append a new transaction to the Actual journal.
 data ActualEditIntent = ActualEditIntent
@@ -38,10 +40,10 @@ data ActualEditIntent = ActualEditIntent
 data ActualEditError
   = SourceParseError (NonEmpty ActualJournalError)
   | CandidateSourceParseError (NonEmpty ActualJournalError)
-  | UndeclaredAccount HKernel.Account.Account
-  | MissingCommodity HKernel.Account.Account
-  | ZeroAmount HKernel.Account.Account
-  | ValidationError HKernel.Ledger.TransactionError
+  | UndeclaredAccount Account
+  | MissingCommodity Account
+  | ZeroAmount Account
+  | ValidationError TransactionError
   deriving (Eq, Show)
 
 data ActualAppendPreview = ActualAppendPreview
