@@ -1,10 +1,10 @@
 # h-kernel Editor correctness review
 
-ステータス: 再レビュー済み・T08検証完了  
+ステータス: correctness recovery完了・T09最終検証完了  
 Owner: h-kernel editor review  
 Canonical: yes  
 基準日: 2026-08-05  
-基準main: `0a87f9e26fad038e28e3e371c2eafa7e1975f11b`
+基準main: `a92cad8bbd9f06a1b4227bbc41b716bfcc62c758`
 
 ## 1. 役割
 
@@ -12,10 +12,11 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 
 この文書はcorrectness reviewと修復順序を所有する。実装のCURRENT/NEXTは引き続き`EDITOR_DEVELOPMENT_PLAN.md`が所有する。
 
+T00からT09までのcorrectness recoveryは完了した。今後のEditor実装はこの文書の未修復項目ではなく、`EDITOR_DEVELOPMENT_PLAN.md`のCURRENT/NEXTから開始する。
+
 ## 2. Remote baseline
 
-- main HEAD: `0a87f9e26fad038e28e3e371c2eafa7e1975f11b`
-- E4、E5、E6はmainへmerge済み
+- main HEAD: `a92cad8bbd9f06a1b4227bbc41b716bfcc62c758`
 - T01実装PR #16はmainへmerge済み
 - T02実装PR #17はmainへmerge済み
 - T03実装PR #18はmainへmerge済み
@@ -23,9 +24,10 @@ E4からE7までのEditorを、build成功だけでなく、CLI invocation、typ
 - T05実装PR #20はmainへmerge済み
 - T06実装PR #21はmainへmerge済み
 - T07実装PR #22はmainへmerge済み
-- open PR #14: `fix(editor): Actual add TUIの入力契約を回復する`
-- #14は最新mainから再構成したT08 Ready PRで、全CI gate成功、merge待ち
-- source mutation、他commandのTUI、writer authority、source migrationは含まない
+- T08実装PR #14は最新mainから再構成し、mainへmerge済み
+- T08 merge後main CI run #83はGHC 9.10.3、9.12.4、9.14.1のbuild/testに成功
+- GHC 9.10.3のrepository auditとcomplete Report contractsに成功
+- correctness recovery開始時からwriter authority、source migration、private canonical sourceは変更していない
 
 ## 3. 判定語彙
 
@@ -164,15 +166,23 @@ stale判定は内容不一致という事実だけをtyped errorへ保持する�
 - [x] **T07: reversal identity/provenance decision**  
   reverse自身の明示`event-id`、Actual ownerによるtyped `reverses` retention、unknown/self/duplicate rejection、direct reverse一回、reverse-of-reverse許可をPR #22で固定し、mainへmergeした。対象: ER-006。
 
-- [ ] **T08: E7 TUI recovery**  
-  PR #14を最新mainから再構成し、pure input constructor、positive amount contract、state transition test、`tests/fixtures/editor/`へのfixture placementを実装した。3つのGHCでbuild/test成功、GHC 9.10.3のrepository auditとcomplete Report contracts成功、Ready化済み、merge待ち。対象: ER-007。
+- [x] **T08: E7 TUI recovery**  
+  PR #14を最新mainから再構成し、pure input constructor、positive amount contract、state transition test、`tests/fixtures/editor/`へのfixture placementを固定してmainへmergeした。対象: ER-007。
 
-- [ ] **T09: final verification and current-state docs**  
-  GHC 9.10.3、9.12.4、9.14.1でbuild/test、repository audit、complete Report contractsを確認し、`EDITOR_DEVELOPMENT_PLAN.md`のCURRENT/NEXTを実能力に合わせる。
+- [x] **T09: final verification and current-state docs**  
+  T08 merge後main `a92cad8bbd9f06a1b4227bbc41b716bfcc62c758`について、CI run #83でGHC 9.10.3、9.12.4、9.14.1のbuild/test、repository audit、complete Report contractsを確認した。`EDITOR_DEVELOPMENT_PLAN.md`のCURRENT/NEXTを、CLI、safe writer、read-only Actual add TUI、次のE7b sliceへ同期した。
 
-## 7. 進行規則
+## 7. 終了状態と次の入口
 
-- TODOは上から一つずつ扱う。
+- ER-001からER-014まで、すべてcorrected evidenceを持つ。
+- T00からT09まで完了した。
+- correctness recoveryを理由に保留するopen PRはない。
+- current writerは引き続きbqn-ledger editorである。
+- h-kernel editorの`--commit`はrehearsal用であり、writer authorityは移動していない。
+- 次の有限sliceは`EDITOR_DEVELOPMENT_PLAN.md`のE7bを正本とする。
+
+## 8. 進行規則
+
 - 各実装sliceは最新mainからDraft PRを作る。
 - correctness、ownership、UI、source migration、writer cutoverを混ぜない。
 - focused evidenceとfull CIを確認してからReady化する。
