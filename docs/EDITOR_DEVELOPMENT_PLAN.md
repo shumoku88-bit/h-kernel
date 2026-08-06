@@ -8,18 +8,19 @@ Canonical: yes
 
 ## 1. この文書の役割
 
-この文書は、`h-kernel` editorの現在能力、component境界、write effect、writer cutoverまでの次の一歩を所有する。
+この文書は、`h-kernel` editorの現在能力、component境界、write effect、writer cutover後の次の一歩を所有する。
 
 過去のE番号、branch、commit、完了PRの履歴はGitが所有する。この文書には、現在mainで使えるもの、まだ使えないもの、次に検証する一つの有限sliceだけを置く。
 
 ## 2. CURRENT
 
 ```text
-canonical source     separate private data repository
-current writer       bqn-ledger editor
-current readers      bqn-ledger and h-kernel
-h-kernel role        report engine + explicit editor + daily command hub
-writer cutover       not performed
+canonical source                 separate private data repository
+actual.journal canonical writer  h-kernel editor
+actual.journal readers           bqn-ledger and h-kernel
+other source writer authority    unchanged by Actual cutover
+h-kernel role                    report engine + explicit editor + daily command hub
+Actual writer cutover            approved 2026-08-06
 ```
 
 `h-kernel`には現在、次のcomponentとentrypointがある。
@@ -39,7 +40,7 @@ h-kernel-editor-tui
   owns: Actual add interaction and explicit confirmation
 
 tools/hk
-  owns: report / edit / check / help routing only
+  owns: report / actual-add / edit / check / help routing only
 ```
 
 ### 2.1 Current editor operations
@@ -56,6 +57,8 @@ CLIは現在、次のnamed operationを公開する。
 - Plan finish
 
 Plan editはcurrent CLI operationではない。BQN editorに存在する全operationを移植済みとは扱わない。
+
+`actual.journal`へwriteするoperationは、cutover後の唯一writerとして`h-kernel` editorを使う。Budget movement、Issue、Plan sourceそのもののwriter authorityはこのcutoverから推測して移さない。
 
 ### 2.2 Preview and admission
 
@@ -120,13 +123,20 @@ TUIはActual addだけを扱うdelivery adapterである。
 
 TUIはcomplete private source、backup、会計計算、writer authorityを所有しない。
 
+ordinary canonical Actual addの日常入口は次である。
+
+```sh
+./tools/hk actual-add /absolute/path/to/actual.journal
+```
+
 ### 2.6 Daily command hub
 
-`tools/hk`は日常入口としてmainへmerge済みである。
+`tools/hk`は日常入口としてmainへmergeされている。
 
 ```text
 tools/hk
   -> report
+  -> actual-add
   -> edit
   -> check
   -> help
@@ -134,6 +144,7 @@ tools/hk
 
 - 引数なしは既存report launcherへ委譲する
 - `report`は既存report entrypointへ引数を渡す
+- `actual-add`は一つのexplicit Journal pathを既存Actual add TUIへ渡す
 - `edit`は`h-kernel-editor-cli`へ引数を渡す
 - `check`はrepository標準build、test、ownership auditを呼ぶ
 - command hub自身はsourceを読まず、書かず、会計計算をしない
@@ -142,21 +153,21 @@ tools/hk
 
 このprojectのcanonical editorは一人のoperatorが順番に使う。
 
-cross-process shared lock、二つのeditorによるalternating canonical write、lock contention testはcutover要件にしない。
+cross-process shared lock、二つのeditorによるalternating canonical write、lock contention testは要件にしない。
 
 ```text
-before cutover
-  canonical writer = bqn-ledger
-  h-kernel write = synthetic or explicit non-canonical rehearsal only
-
-after explicit cutover
-  canonical writer = h-kernel
-  bqn-ledger writer is not used against canonical source
+canonical actual.journal writer = h-kernel editor
+bqn-ledger actual write          = prohibited by operation
+other source writer authority    = unchanged by this cutover
 ```
 
-writerを切り替えるときは旧editorの操作を終え、新しいeditorで最新sourceを読み直す。preview後の変更はcurrent stale-source rejectionで拒否する。
+`bqn-ledger`をreaderまたはReport engineとしてcanonical sourceへ向け続けることはできる。ただし、canonical `actual.journal`を変更するcommandへは使わない。
 
-reader compatibilityは別の問いである。h-kernel形式の`reverses`を含むsourceへcutover後もBQN readerを向ける場合、BQN側のJournal admission adaptationが必要になる。writer切替とreader維持を一つの暗黙条件へ混ぜない。
+writerを切り替えた後は、旧editorのoperationを終了し、新しいeditorで最新sourceを読み直す。preview後の変更はcurrent stale-source rejectionで拒否する。
+
+reader compatibilityは別の問いである。h-kernel形式の`reverses`を含むsourceへBQN readerを向ける場合、BQN側のJournal admission adaptationが必要になる。writer切替とreader維持を一つの暗黙条件へ混ぜない。
+
+Actual-specific activation、stop、rollbackは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
 
 ## 4. Component boundary
 
@@ -189,67 +200,74 @@ Editor固有の責任は次である。
 - stale checkとsafe publication
 - confirmationとoperator-facing outcome
 
-## 5. Daily-use cutover target
+## 5. Actual cutover evidence
 
-日常利用を`bqn-ledger`から`h-kernel`へ切り替える条件は、BQN editorの全機能を移植することではない。
+cutover判断は、BQN editorの全機能移植ではなく、`actual.journal`の必要operationとsingle-writer boundaryに基づく。
 
-必要な二本柱は現在mainに存在する。
+現在のevidenceは次である。
 
-1. 日常的に必要なwrite operationをpreview、strict admission、stale rejection付きで実行するHaskell editor
-2. report、edit、check、helpを既存ownerへ委譲する一つのcommand hub
+- Actual ordinary append、multi-posting、reverse、Account declaration、Plan finishのnamed operation
+- mutation前previewとstrict complete-source admission
+- stale rejection
+- backup、atomic publication、post-admission、restore-capable failure
+- synthetic sourceでのsuccess、stale、restore test
+- BQN/Haskell Actual candidateのsemantic comparison
+- private canonical sourceの明示的non-canonical copyでのpreview、commit、post-admission rehearsal
+- canonical source、repository file、writer authorityがrehearsal中に不変であったというsanitized operator evidence
+- 作者による2026-08-06の明示承認
 
-ただし、存在することとcanonical operationで安全に使えることは別である。writer authorityはまだ移動していない。
+cutover contractは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
 
-## 6. NEXT: daily-use non-canonical rehearsal gate
+## 6. NEXT: Actual daily-use observation period
 
-次の有限sliceは、明示したprivate non-canonical copyを使うdaily-use rehearsal contractとevidenceである。
+次の有限sliceは、新しい機能の追加ではなく、Actual-only cutover後の日常運用を観察することである。
 
 有限な問い:
 
-> `tools/hk`から日常的に必要なreportとeditor operationを一続きに使い、canonical sourceへ触れずに、preview、strict admission、stale rejection、backup、publication、post-admission、failure outcomeを確認できるか。
+> canonical `actual.journal`のordinary addを`tools/hk actual-add`から行い、single-writer law、preview、confirmation、publication、post-admission、Report readbackを日常の小さなoperationとして維持できるか。
 
 ### Scope
 
-- operatorがcanonical directoryとrehearsal copyを明示する
-- 両directoryが別物であり、public checkout外であることを確認する
-- write targetにはrehearsal copyだけを渡す
-- source本文、Account、date、Quantity、Commodity、identity、path、hashをpublic outputへ出さない
-- daily operation setを、現在本当に必要なoperationへ限定して記録する
-- command hubのreport / edit / help経路を確認する
-- safe writerのsuccessと少なくとも一つのstaleまたはrecoverable failureを確認する
-- rehearsal前後でcanonical sourceがuntouchedであることをlocalに確認する
+- ordinary Actual addを最初の日常operationとする
+- write前にlatest sourceを読み、TUIでpreviewする
+- confirmation後だけpublicationする
+- write success後にReportまたはstrict admissionでreadbackする
+- `bqn-ledger` writerをcanonical `actual.journal`へ向けない
+- failure時は次のwriteを止め、cutover contractのstop procedureへ戻る
+- private valueをpublic Issue、PR、CI、fixtureへ出さない
+- operation outcomeだけをsanitizedに記録する
 
 ### Non-goals
 
-- canonical writer cutover
-- private sourceのpublic upload
-- source migration
-- BQN reader adaptation
+- source format migration
+- Budget、Issue、Plan source writer cutover
+- bqn-ledger reader removal
 - Plan editの新規実装
-- full-screen command hub
 - shared lock
 - dual-editor alternating write
 - historical reversal cleanup
+- UIの大型化
 
-rehearsal evidenceが閉じた後、作者の明示承認を受ける別PRでwriter authorityと日常入口を切り替える。
+観察期間でActual addの不足が見つかった場合も、他sourceのcutoverや無関係なeditor featureを同じsliceへ混ぜない。
 
-## 7. Remaining cutover decisions
+## 7. Remaining decisions after Actual cutover
 
-canonical cutover前に、少なくとも次を明示する。
+Actual-only cutover後にも、次は別の明示sliceとして残る。
 
-- 日常operation setと、cutover後にBQNへ戻る場合の扱い
-- h-kernelが読むsource directoryの固定方法
-- BQN reader/reportをcanonical sourceへ向け続けるか
-- rollback時の唯一writer
-- restore失敗時のoperator stop procedure
-- cutover開始時に未完了operationがないこと
-- 作者による明示承認
+- Plan source writer authority
+- Budget movement source writer authority
+- Issue source writer authority
+- Account declarationを将来`accounts.journal`へ分離する時期
+- BQN readerがHaskell-native reversal provenanceを読む必要があるか
+- rollback時にreader compatibilityをどこまで維持するか
+- private source topology migration
 
-source topologyと10 gateの正規ownerは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)である。
+source topologyとsource別authorityの正規ownerは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)である。
 
 ## 8. 関連文書
 
-- [`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md): private sourceとwriter authority
+- [`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md): private sourceとsource別writer authority
+- [`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md): Actual writer cutover、activation、stop、rollback
 - [`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md): reversal contract
 - [`EDITOR_CUTOVER_READINESS_AUDIT_001.md`](EDITOR_CUTOVER_READINESS_AUDIT_001.md): earlier readiness evidence snapshot
 - [`EDITOR_OPERATION_PARITY_INVENTORY_001.md`](EDITOR_OPERATION_PARITY_INVENTORY_001.md): operation inventory evidence
