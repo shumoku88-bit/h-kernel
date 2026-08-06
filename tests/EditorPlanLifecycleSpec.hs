@@ -45,6 +45,11 @@ main = do
         , ("testPlanFinishAlreadyClosed", testPlanFinishAlreadyClosed)
         , ("testPlanFinishNotFound", testPlanFinishNotFound)
         , ("testPlanFinishHistoricalPlanIdOnlyCompletionValid", testPlanFinishHistoricalPlanIdOnlyCompletionValid)
+        , ("testPlanFinishInvalidPlanIdPrecedesInvalidEventId", testPlanFinishInvalidPlanIdPrecedesInvalidEventId)
+        , ("testPlanFinishAlreadyClosedPrecedesEventIdCollision", testPlanFinishAlreadyClosedPrecedesEventIdCollision)
+        , ("testPlanFinishNotFoundPrecedesInvalidEventId", testPlanFinishNotFoundPrecedesInvalidEventId)
+        , ("testPlanFinishNotFoundPrecedesEventIdCollision", testPlanFinishNotFoundPrecedesEventIdCollision)
+        , ("testPlanFinishAmountApplicabilityPrecedesInvalidEventId", testPlanFinishAmountApplicabilityPrecedesInvalidEventId)
         ]
   mapM_ print results
   if all snd results
@@ -231,12 +236,12 @@ testPlanFinishMetadataAndRelation =
               Right admittedJ ->
                 let decls = actualJournalCompletionDeclarations admittedJ
                     records = actualJournalRecords admittedJ
-                    isExplicitOrigin rec = case actualRecordIdentity rec of
-                      ActualWithExplicitEventIdentity _ -> True
-                      _ -> False
+                    expectedPlanId = either (error "bad plan id") id (mkPlanId "plan-2023-01-01-lunch")
                 in T.length (fst eventIdPos) < T.length (fst planIdPos)
-                     && map declaredCompletionPlanId decls == [either (error "bad plan id") id (mkPlanId "plan-2023-01-01-lunch")]
-                     && any isExplicitOrigin records
+                     && map declaredCompletionPlanId decls == [expectedPlanId]
+                     && case reverse records of
+                          (lastRec:_) -> actualRecordIdentity lastRec == ActualWithExplicitEventIdentity sampleEventId
+                          [] -> False
               Left _ -> False
        Left err -> error (show err)
 
@@ -329,3 +334,96 @@ testPlanFinishHistoricalPlanIdOnlyCompletionValid =
       in length decls == 1
            && any isDerivedOrigin records
     Left _ -> False
+
+planFixtureWithThreePostings :: Text
+planFixtureWithThreePostings = T.unlines
+  [ "account assets:bank"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , "account expenses:tax"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , ""
+  , "2023-01-01 multi posting plan"
+  , "  ; plan-id: plan-2023-01-01-multi"
+  , "  assets:bank  -1100 JPY"
+  , "  expenses:food  1000 JPY"
+  , "  expenses:tax  100 JPY"
+  ]
+
+testPlanFinishInvalidPlanIdPrecedesInvalidEventId :: Bool
+testPlanFinishInvalidPlanIdPrecedesInvalidEventId =
+  let legacyId = either (error "bad id") id (mkActualTransactionId "legacy-plan-finish-event")
+      intent = PlanFinishIntent
+        { finishPlanId = "invalid plan id format!!"
+        , finishActualEventId = legacyId
+        , finishActualDate = fromGregorian 2023 1 2
+        , finishActualAmount = Nothing
+        }
+  in case preparePlanFinish planFixture actualFixture intent of
+       Left (FinishInvalidId _ :| []) -> True
+       _ -> False
+
+testPlanFinishAlreadyClosedPrecedesEventIdCollision :: Bool
+testPlanFinishAlreadyClosedPrecedesEventIdCollision =
+  let intent = PlanFinishIntent
+        { finishPlanId = "plan-2023-01-01-lunch"
+        , finishActualEventId = sampleEventId
+        , finishActualDate = fromGregorian 2023 1 2
+        , finishActualAmount = Nothing
+        }
+      fixtureWithClosedAndCollision = T.unlines
+        [ actualFixtureWithHistoricalCompletion
+        , ""
+        , "2023-01-02 existing actual with explicit id"
+        , "  ; event-id: evt-550e8400-e29b-41d4-a716-446655440100"
+        , "  assets:bank  1000 JPY"
+        , "  expenses:food  -1000 JPY"
+        ]
+  in case preparePlanFinish planFixture fixtureWithClosedAndCollision intent of
+       Left (FinishPlanAlreadyClosed pId :| []) ->
+         pId == either (error "bad plan id") id (mkPlanId "plan-2023-01-01-lunch")
+       _ -> False
+
+testPlanFinishNotFoundPrecedesInvalidEventId :: Bool
+testPlanFinishNotFoundPrecedesInvalidEventId =
+  let legacyId = either (error "bad id") id (mkActualTransactionId "legacy-plan-finish-event")
+      intent = PlanFinishIntent
+        { finishPlanId = "plan-2023-01-99-nonexistent"
+        , finishActualEventId = legacyId
+        , finishActualDate = fromGregorian 2023 1 2
+        , finishActualAmount = Nothing
+        }
+  in case preparePlanFinish planFixture actualFixture intent of
+       Left (FinishPlanNotFound pId :| []) ->
+         pId == either (error "bad plan id") id (mkPlanId "plan-2023-01-99-nonexistent")
+       _ -> False
+
+testPlanFinishNotFoundPrecedesEventIdCollision :: Bool
+testPlanFinishNotFoundPrecedesEventIdCollision =
+  let intent = PlanFinishIntent
+        { finishPlanId = "plan-2023-01-99-nonexistent"
+        , finishActualEventId = sampleEventId
+        , finishActualDate = fromGregorian 2023 1 2
+        , finishActualAmount = Nothing
+        }
+  in case preparePlanFinish planFixture actualFixtureWithExistingEventId intent of
+       Left (FinishPlanNotFound pId :| []) ->
+         pId == either (error "bad plan id") id (mkPlanId "plan-2023-01-99-nonexistent")
+       _ -> False
+
+testPlanFinishAmountApplicabilityPrecedesInvalidEventId :: Bool
+testPlanFinishAmountApplicabilityPrecedesInvalidEventId =
+  let legacyId = either (error "bad id") id (mkActualTransactionId "legacy-plan-finish-event")
+      intent = PlanFinishIntent
+        { finishPlanId = "plan-2023-01-01-multi"
+        , finishActualEventId = legacyId
+        , finishActualDate = fromGregorian 2023 1 2
+        , finishActualAmount = Just (positiveQty "600")
+        }
+  in case preparePlanFinish planFixtureWithThreePostings actualFixture intent of
+       Left (FinishActualAmountOnlyForBinaryPlan :| []) -> True
+       _ -> False

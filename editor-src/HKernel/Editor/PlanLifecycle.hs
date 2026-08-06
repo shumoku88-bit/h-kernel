@@ -234,13 +234,6 @@ preparePlanFinish planSource actualSource intent = do
   planJ <- first (pure . FinishPlanJournalSyntaxError) (parsePlanJournal planSource)
   actualJ <- first (pure . FinishActualJournalSyntaxError) (parseActualJournal actualSource)
 
-  canonicalEventId <- first (const (pure FinishInvalidActualEventIdentity))
-    (admitActualEventIdentityText (actualTransactionIdText (finishActualEventId intent)))
-
-  if actualIdentityIsAlreadyUsed actualJ canonicalEventId
-    then Left (pure FinishActualEventIdentityAlreadyExists)
-    else Right ()
-
   pId <- first (pure . FinishInvalidId) (mkPlanId (finishPlanId intent))
 
   let existingCompletions = map declaredCompletionPlanId (actualJournalCompletionDeclarations actualJ)
@@ -269,6 +262,13 @@ preparePlanFinish planSource actualSource intent = do
                   qty = if quantityToRational oldQty < 0 then negateQuantity newQty else newQty
               in mkPosting (postingAccount p) (mkAmount (amountCommodity (postingAmount p)) qty)
           in Right (fmap modifyPosting originalPostings)
+
+  canonicalEventId <- first (const (pure FinishInvalidActualEventIdentity))
+    (admitActualEventIdentityText (actualTransactionIdText (finishActualEventId intent)))
+
+  if actualIdentityIsAlreadyUsed actualJ canonicalEventId
+    then Left (pure FinishActualEventIdentityAlreadyExists)
+    else Right ()
 
   let finishIntentPostings = fmap (\p -> IntentPosting (postingAccount p) (amountQuantity (postingAmount p)) (Just (amountCommodity (postingAmount p)))) updatedPostings
 
