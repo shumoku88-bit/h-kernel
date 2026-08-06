@@ -5,70 +5,128 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CABAL=${HKERNEL_CABAL:-cabal}
 REPORT=${HKERNEL_REPORT_COMMAND:-"$ROOT/report"}
 
+BASE_DIR=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --base) [ "$#" -ge 2 ] || { printf 'error: --base requires a directory path argument\n' >&2; exit 2; }; BASE_DIR=$2; shift 2 ;;
+    --base=*) BASE_DIR=${1#--base=}; shift 1 ;;
+    *) break ;;
+  esac
+done
+
+get_data_dir() {
+  if [ -n "$BASE_DIR" ]; then echo "$BASE_DIR"; return 0; fi
+  if [ -n "${HKERNEL_LEDGER_DATA_DIR:-}" ]; then echo "$HKERNEL_LEDGER_DATA_DIR"; return 0; fi
+  if [ -f "$ROOT/ledger-data.local" ]; then awk 'NF { print; exit }' "$ROOT/ledger-data.local"; return 0; fi
+  return 1
+}
+
+require_data_dir() {
+  dir=$(get_data_dir || true)
+  [ -n "$dir" ] || { printf 'error: ledger data directory not configured. Specify --base DIR, set HKERNEL_LEDGER_DATA_DIR, or create ledger-data.local\n' >&2; exit 2; }
+  echo "$dir"
+}
+
 usage() {
   cat <<'EOF'
 Usage:
-  tools/hk
-  tools/hk report [REPORT_ARGS...]
-  tools/hk actual-add <ACTUAL_JOURNAL>
-  tools/hk actual-reverse [--commit] <ACTUAL_JOURNAL> <NEW_EVENT_ID> <TARGET_EVENT_ID> <YYYY-MM-DD> <DESCRIPTION...>
-  tools/hk edit EDITOR_COMMAND [EDITOR_ARGS...]
-  tools/hk check
-  tools/hk help
+  tools/hk [--base DIR]
+  tools/hk [--base DIR] report [REPORT_ARGS...]
+  tools/hk [--base DIR] actual-add [ACTUAL_JOURNAL]
+  tools/hk [--base DIR] actual-multi [ARGS...]
+  tools/hk [--base DIR] actual-reverse [ARGS...]
+  tools/hk [--base DIR] account [ARGS...]
+  tools/hk [--base DIR] plan [ARGS...]
+  tools/hk [--base DIR] budget [ARGS...]
+  tools/hk [--base DIR] issue [ARGS...]
+  tools/hk [--base DIR] edit [ARGS...]
+  tools/hk [--base DIR] check
+  tools/hk [--base DIR] help
 
 Commands:
-  report          Run the existing Haskell report entrypoint. This is the default.
-  actual-add      Run the existing Actual add TUI for one explicit Journal path.
-  actual-reverse  Route an explicit Actual reversal intent to the existing Editor CLI.
-  edit            Pass all remaining arguments to h-kernel-editor-cli.
+  report          Run the existing Haskell report entrypoint.
+  actual-add      Run the existing Actual add TUI (supports 2-posting add and fund transfer).
+  actual-multi    Route multi-posting Actual transaction append directly to h-kernel-editor-cli.
+  actual-reverse  Route an explicit Actual reversal intent directly to h-kernel-editor-cli.
+  account         Route Account declaration directly to h-kernel-editor-cli.
+  plan            Route Plan operations (add / finish) directly to h-kernel-editor-cli.
+  budget          Route Household budget movement directly to h-kernel-editor-cli.
+  issue           Route Issue operations directly to h-kernel-editor-cli.
+  edit            Pass arguments directly to h-kernel-editor-cli.
   check           Run the repository's standard build, test, and ownership audit.
   help            Show this help.
 EOF
 }
 
+prompt_choice() {
+  header=$1; shift
+  if command -v gum >/dev/null 2>&1; then printf '%s\n' "$@" | gum choose --header "$header"
+  elif command -v fzf >/dev/null 2>&1; then printf '%s\n' "$@" | fzf --header="$header" --height=15 --reverse
+  else
+    printf '%s\n' "$header" >&2
+    i=1; for opt in "$@"; do printf '  %d) %s\n' "$i" "$opt" >&2; i=$((i + 1)); done
+    while true; do
+      printf 'Select option [1-%d]: ' "$#" >&2
+      read -r choice || return 1
+      case "$choice" in ''|*[!0-9]*) continue ;; esac
+      if [ "$choice" -ge 1 ] && [ "$choice" -le "$#" ]; then eval "echo \"\${$choice}\""; return 0; fi
+    done
+  fi
+}
+
+run_interactive_menu() {
+  dir=$(get_data_dir || true)
+  if [ -n "$dir" ]; then printf 'Ledger Data Directory: %s\n\n' "$dir" >&2
+  else printf 'Ledger Data Directory: (not set)\n\n' >&2; fi
+
+  choice=$(prompt_choice "Select Operation:" \
+    "Report" "Actual add / transfer" "Actual multi-posting" "Actual reverse" \
+    "Account declaration" "Plan operations" "Budget movement" "Issue operations" "Check" "Exit")
+
+  case "$choice" in
+    "Report") [ -n "$dir" ] && export HKERNEL_LEDGER_DATA_DIR="$dir"; exec "$REPORT" ;;
+    "Actual add / transfer") data_dir=$(require_data_dir); cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-tui -- "$data_dir/actual.journal" ;;
+    "Actual multi-posting") printf 'Usage: tools/hk actual-multi ARGS...\n' >&2 ;;
+    "Actual reverse") printf 'Usage: tools/hk actual-reverse ARGS...\n' >&2 ;;
+    "Account declaration") printf 'Usage: tools/hk account ARGS...\n' >&2 ;;
+    "Plan operations") printf 'Usage: tools/hk plan ARGS...\n' >&2 ;;
+    "Budget movement") printf 'Usage: tools/hk budget ARGS...\n' >&2 ;;
+    "Issue operations") printf 'Usage: tools/hk issue ARGS...\n' >&2 ;;
+    "Check") cd "$ROOT"; "$CABAL" build all; "$CABAL" test all; exec "$CABAL" run exe:repository-audit ;;
+    "Exit"|*) exit 0 ;;
+  esac
+}
+
 if [ "$#" -eq 0 ]; then
-  exec "$REPORT"
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    printf 'tools/hk interactive menu requires a TTY. Use subcommands in non-interactive environments.\n' >&2
+    usage >&2
+    exit 2
+  fi
+  run_interactive_menu
+  exit 0
 fi
 
 command=$1
 shift
 
 case "$command" in
-  report)
-    exec "$REPORT" "$@"
-    ;;
+  report) dir=$(get_data_dir || true); [ -n "$dir" ] && export HKERNEL_LEDGER_DATA_DIR="$dir"; exec "$REPORT" "$@" ;;
   actual-add)
-    if [ "$#" -ne 1 ]; then
-      printf 'tools/hk actual-add requires exactly one ACTUAL_JOURNAL path\n' >&2
-      exit 2
-    fi
-    cd "$ROOT"
-    exec "$CABAL" run exe:h-kernel-editor-tui -- "$1"
-    ;;
-  actual-reverse)
-    cd "$ROOT"
-    exec "$CABAL" run exe:h-kernel-editor-cli -- reverse "$@"
-    ;;
-  edit)
-    cd "$ROOT"
-    exec "$CABAL" run exe:h-kernel-editor-cli -- "$@"
-    ;;
+    if [ "$#" -eq 1 ]; then journal=$1
+    elif [ "$#" -eq 0 ]; then journal=$(require_data_dir)/actual.journal
+    else printf 'tools/hk actual-add accepts at most one ACTUAL_JOURNAL path\n' >&2; exit 2; fi
+    cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-tui -- "$journal" ;;
+  actual-multi) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- append "$@" ;;
+  actual-reverse) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- reverse "$@" ;;
+  account) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- account "$@" ;;
+  plan) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- plan "$@" ;;
+  budget) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- budget "$@" ;;
+  issue) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- issue "$@" ;;
+  edit) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- "$@" ;;
   check)
-    if [ "$#" -ne 0 ]; then
-      printf 'tools/hk check does not accept arguments\n' >&2
-      exit 2
-    fi
-    cd "$ROOT"
-    "$CABAL" build all
-    "$CABAL" test all
-    exec "$CABAL" run exe:repository-audit
-    ;;
-  help|-h|--help)
-    usage
-    ;;
-  *)
-    printf 'unknown tools/hk command: %s\n\n' "$command" >&2
-    usage >&2
-    exit 2
-    ;;
+    [ "$#" -eq 0 ] || { printf 'tools/hk check does not accept arguments\n' >&2; exit 2; }
+    cd "$ROOT"; "$CABAL" build all; "$CABAL" test all; exec "$CABAL" run exe:repository-audit ;;
+  help|-h|--help) usage ;;
+  *) printf 'unknown tools/hk command: %s\n\n' "$command" >&2; usage >&2; exit 2 ;;
 esac

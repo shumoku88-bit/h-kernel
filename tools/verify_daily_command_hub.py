@@ -42,6 +42,12 @@ def read_log(path: Path) -> list[str]:
 
 
 def main() -> None:
+    # Verify that shell script does not perform field inputs for Plan/Budget/Issue
+    hk_content = HUB.read_text(encoding="utf-8")
+    for forbidden in ["prompt_input", "pargs", "optargs", "run_editor_cli"]:
+        if forbidden in hk_content:
+            raise AssertionError(f"tools/hk contains removed prompt/field helper: {forbidden}")
+
     with tempfile.TemporaryDirectory() as temporary_directory:
         temporary = Path(temporary_directory)
         log = temporary / "delegation.log"
@@ -65,8 +71,9 @@ def main() -> None:
             "#!/bin/sh\nset -- cabal \"$@\"\n" + logger,
         )
 
-        env = os.environ.copy()
-        env.update(
+        base_env = os.environ.copy()
+        base_env.pop("HKERNEL_LEDGER_DATA_DIR", None)
+        base_env.update(
             {
                 "HKERNEL_REPORT_COMMAND": str(report_stub),
                 "HKERNEL_CABAL": str(cabal_stub),
@@ -74,112 +81,126 @@ def main() -> None:
             }
         )
 
-        result = invoke([], env)
-        assert_success(result, "default report")
-        if read_log(log) != ["report"]:
-            raise AssertionError(f"default report delegation differed: {read_log(log)!r}")
+        # 1. Non-interactive no-arg execution must reject immediately
+        result = invoke([], base_env)
+        if result.returncode != 2 or "requires a TTY" not in result.stderr:
+            raise AssertionError(
+                "Non-TTY no-arg execution did not fail with TTY requirement\n"
+                f"returncode={result.returncode}\nstderr:\n{result.stderr}"
+            )
 
+        # 2. Report routing & argument preservation
         log.write_text("", encoding="utf-8")
-        result = invoke(["report", "all", "2026-08-06"], env)
+        result = invoke(["report", "all", "2026-08-06"], base_env)
         assert_success(result, "explicit report")
         if read_log(log) != ["report <all> <2026-08-06>"]:
             raise AssertionError(f"report arguments differed: {read_log(log)!r}")
 
+        # 3. Data directory resolution order: --base > HKERNEL_LEDGER_DATA_DIR > ledger-data.local
+        data_dir_1 = temporary / "dir1 with space"
+        data_dir_2 = temporary / "dir2 with space"
+        data_dir_1.mkdir()
+        data_dir_2.mkdir()
+        (data_dir_1 / "actual.journal").write_text("2026-08-01 header\n", encoding="utf-8")
+        (data_dir_2 / "actual.journal").write_text("2026-08-02 header\n", encoding="utf-8")
+
+        env_with_data = base_env.copy()
+        env_with_data["HKERNEL_LEDGER_DATA_DIR"] = str(data_dir_2)
+
+        # 3a. Fallback to HKERNEL_LEDGER_DATA_DIR for actual-add without explicit file arg
         log.write_text("", encoding="utf-8")
-        result = invoke(["actual-add", "private actual.journal"], env)
-        assert_success(result, "Actual add TUI delegation")
-        expected_actual_add = [
-            "cabal <run> <exe:h-kernel-editor-tui> <--> <private actual.journal>"
-        ]
-        if read_log(log) != expected_actual_add:
-            raise AssertionError(
-                f"Actual add arguments differed: {read_log(log)!r}"
-            )
+        result = invoke(["actual-add"], env_with_data)
+        assert_success(result, "Actual add with env data dir")
+        if read_log(log) != [f"cabal <run> <exe:h-kernel-editor-tui> <--> <{data_dir_2 / 'actual.journal'}>"]:
+            raise AssertionError(f"Actual add fallback to env dir failed: {read_log(log)!r}")
+
+        # 3b. --base takes precedence over HKERNEL_LEDGER_DATA_DIR (testing path with space)
+        log.write_text("", encoding="utf-8")
+        result = invoke(["--base", str(data_dir_1), "actual-add"], env_with_data)
+        assert_success(result, "Actual add with --base override")
+        if read_log(log) != [f"cabal <run> <exe:h-kernel-editor-tui> <--> <{data_dir_1 / 'actual.journal'}>"]:
+            raise AssertionError(f"Actual add --base precedence failed: {read_log(log)!r}")
+
+        # 4. Routing for all direct subcommands (preserving argument boundaries and space)
+        log.write_text("", encoding="utf-8")
+        result = invoke(["actual-multi", "actual.journal", "2026-08-06", "transfer", "Assets:Bank:A", "-1000", "JPY", "Assets:Bank:B", "1000", "JPY"], base_env)
+        assert_success(result, "actual-multi delegation")
+        if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <append> <actual.journal> <2026-08-06> <transfer> <Assets:Bank:A> <-1000> <JPY> <Assets:Bank:B> <1000> <JPY>"]:
+            raise AssertionError(f"actual-multi delegation differed: {read_log(log)!r}")
 
         log.write_text("", encoding="utf-8")
-        result = invoke(
-            [
-                "actual-reverse",
-                "--commit",
-                "private actual.journal",
-                "reverse-new-id",
-                "target-old-id",
-                "2026-08-06",
-                "correct",
-                "entry",
-            ],
-            env,
-        )
-        assert_success(result, "Actual reverse CLI delegation")
-        expected_actual_reverse = [
-            "cabal <run> <exe:h-kernel-editor-cli> <--> <reverse> <--commit> "
-            "<private actual.journal> <reverse-new-id> <target-old-id> "
-            "<2026-08-06> <correct> <entry>"
-        ]
-        if read_log(log) != expected_actual_reverse:
-            raise AssertionError(
-                f"Actual reverse arguments differed: {read_log(log)!r}"
-            )
+        result = invoke(["actual-reverse", "--commit", "actual.journal", "rev-id", "tgt-id", "2026-08-06", "reversal"], base_env)
+        assert_success(result, "actual-reverse delegation")
+        if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <reverse> <--commit> <actual.journal> <rev-id> <tgt-id> <2026-08-06> <reversal>"]:
+            raise AssertionError(f"actual-reverse delegation differed: {read_log(log)!r}")
 
         log.write_text("", encoding="utf-8")
-        result = invoke(["edit", "append", "actual.journal", "coffee shop"], env)
-        assert_success(result, "editor delegation")
-        expected_editor = [
-            "cabal <run> <exe:h-kernel-editor-cli> <--> <append> "
-            "<actual.journal> <coffee shop>"
-        ]
-        if read_log(log) != expected_editor:
-            raise AssertionError(f"editor arguments differed: {read_log(log)!r}")
+        result = invoke(["account", "actual.journal", "Assets:Saving", "asset", "JPY"], base_env)
+        assert_success(result, "account delegation")
+        if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <account> <actual.journal> <Assets:Saving> <asset> <JPY>"]:
+            raise AssertionError(f"account delegation differed: {read_log(log)!r}")
+
+        # 4a. Plan direct command preserving "plan" and "add" as separate arguments
+        log.write_text("", encoding="utf-8")
+        result = invoke(["plan", "add", "plan.journal", "actual.journal", "--date", "2026-08-06", "--description", "desc", "--posting", "Assets:Cash", "500", "JPY"], base_env)
+        assert_success(result, "plan delegation")
+        if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <plan> <add> <plan.journal> <actual.journal> <--date> <2026-08-06> <--description> <desc> <--posting> <Assets:Cash> <500> <JPY>"]:
+            raise AssertionError(f"plan delegation differed: {read_log(log)!r}")
 
         log.write_text("", encoding="utf-8")
-        result = invoke(["check"], env)
+        result = invoke(["budget", "budget_alloc.tsv", "2026-08-06", "memo", "Expenses:Food", "Expenses:Dining", "1000", "JPY"], base_env)
+        assert_success(result, "budget delegation")
+        if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <budget> <budget_alloc.tsv> <2026-08-06> <memo> <Expenses:Food> <Expenses:Dining> <1000> <JPY>"]:
+            raise AssertionError(f"budget delegation differed: {read_log(log)!r}")
+
+        log.write_text("", encoding="utf-8")
+        result = invoke(["issue", "issues.tsv", "ISS-1", "open", "2026-08-06", "cat", "title", "-", "-", "details"], base_env)
+        assert_success(result, "issue delegation")
+        if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <issue> <issues.tsv> <ISS-1> <open> <2026-08-06> <cat> <title> <-> <-> <details>"]:
+            raise AssertionError(f"issue delegation differed: {read_log(log)!r}")
+
+        log.write_text("", encoding="utf-8")
+        result = invoke(["edit", "append", "actual.journal", "coffee shop"], base_env)
+        assert_success(result, "edit delegation")
+        if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <append> <actual.journal> <coffee shop>"]:
+            raise AssertionError(f"edit delegation differed: {read_log(log)!r}")
+
+        log.write_text("", encoding="utf-8")
+        result = invoke(["check"], base_env)
         assert_success(result, "repository check")
-        expected_check = [
-            "cabal <build> <all>",
-            "cabal <test> <all>",
-            "cabal <run> <exe:repository-audit>",
-        ]
-        if read_log(log) != expected_check:
+        if read_log(log) != ["cabal <build> <all>", "cabal <test> <all>", "cabal <run> <exe:repository-audit>"]:
             raise AssertionError(f"check delegation differed: {read_log(log)!r}")
 
-        result = invoke(["help"], env)
+        # 5. Help surface check
+        result = invoke(["help"], base_env)
         assert_success(result, "help")
         expected_help_entries = (
-            "tools/hk report",
-            "tools/hk actual-add",
-            "tools/hk actual-reverse",
-            "tools/hk edit",
+            "tools/hk [--base DIR] report",
+            "tools/hk [--base DIR] actual-add",
+            "tools/hk [--base DIR] actual-multi",
+            "tools/hk [--base DIR] actual-reverse",
+            "tools/hk [--base DIR] account",
+            "tools/hk [--base DIR] plan",
+            "tools/hk [--base DIR] budget",
+            "tools/hk [--base DIR] issue",
+            "tools/hk [--base DIR] edit",
+            "tools/hk [--base DIR] check",
         )
         if not all(entry in result.stdout for entry in expected_help_entries):
             raise AssertionError(f"help surface incomplete:\n{result.stdout}")
 
-        result = invoke(["unknown"], env)
+        # 6. Error handling checks
+        result = invoke(["unknown"], base_env)
         if result.returncode != 2 or "unknown tools/hk command" not in result.stderr:
-            raise AssertionError(
-                "unknown command did not fail with the documented boundary\n"
-                f"returncode={result.returncode}\nstderr:\n{result.stderr}"
-            )
+            raise AssertionError("unknown command did not fail as expected")
 
-        result = invoke(["actual-add"], env)
-        if result.returncode != 2 or "requires exactly one" not in result.stderr:
-            raise AssertionError(
-                "Actual add missing-path rejection differed\n"
-                f"returncode={result.returncode}\nstderr:\n{result.stderr}"
-            )
+        result = invoke(["actual-add", "one", "two"], base_env)
+        if result.returncode != 2 or "accepts at most one" not in result.stderr:
+            raise AssertionError("actual-add extra path argument rejection failed")
 
-        result = invoke(["actual-add", "one", "two"], env)
-        if result.returncode != 2 or "requires exactly one" not in result.stderr:
-            raise AssertionError(
-                "Actual add extra-path rejection differed\n"
-                f"returncode={result.returncode}\nstderr:\n{result.stderr}"
-            )
-
-        result = invoke(["check", "extra"], env)
+        result = invoke(["check", "extra"], base_env)
         if result.returncode != 2 or "does not accept arguments" not in result.stderr:
-            raise AssertionError(
-                "check argument rejection differed\n"
-                f"returncode={result.returncode}\nstderr:\n{result.stderr}"
-            )
+            raise AssertionError("check argument rejection failed")
 
     print("daily command hub verification passed")
 
