@@ -85,8 +85,8 @@ All other operations, including `OperationActualReverse`, remain typed `Operatio
 
 1. Top-level operation hub & existing Actual add connection (**PR #38**)
 2. Read-only Actual transaction list / selector (**PR #39**)
-3. TUI operation source snapshot lifecycle (**Next recommended slice**)
-4. Durable identity creation / adoption decision
+3. TUI operation source snapshot lifecycle (**Current slice**)
+4. Durable identity creation / adoption decision (**Next recommended slice**)
 5. Actual reverse TUI (connecting existing Actual reverse pure engine)
 6. Actual multi-posting TUI
 7. Account declaration TUI
@@ -96,13 +96,38 @@ All other operations, including `OperationActualReverse`, remain typed `Operatio
 11. Budget movement TUI after writer cutover decision
 12. Issue lifecycle TUI after capability/authority decision
 
-## Remaining Correctness Boundary: Source Snapshot Lifecycle
+## Slice Scope: TUI Operation Source Snapshot Lifecycle
 
-The Actual transaction browser performs a fresh file read when opened. However, `OperationActualAdd` uses `AppContext.contextSource` (the startup in-memory text snapshot) for previewing and publishing.
+In the TUI source snapshot recovery slice (`fix/tui-actual-source-snapshot-001`), we introduced `HKernel.Editor.TUI.ActualSourceSnapshot` to govern the admission, immutability, and fresh-read lifecycle of source snapshots across TUI operations:
 
-After a successful publication, `contextSource` remains at its startup snapshot value. Executing a second Actual add within the same TUI session may lead to a stale source rejection during post-admission publication.
+1. **Target Operation Lifecycle**:
+   ```text
+   Operation Hub
+     -> fresh source read
+     -> strict admission
+     -> immutable operation snapshot
+     -> preview/confirmation/publication
+     -> safe stale detection
+     -> Hub
+     -> next operation performs another fresh read
+   ```
 
-This is not a writer safety failure: the safe writer rejects publication when the expected source hash or content has changed (fail-closed behavior). It remains isolated as a TUI operation source snapshot lifecycle issue to be addressed in a subsequent finite slice.
+2. **Atomic Snapshot & Registry Coupling**:
+   - `ActualSourceSnapshot` guarantees that source text, admitted `ActualJournal`, and account declarations/registry originate from a single atomic admission pass (`admitActualSourceSnapshot`).
+   - `AppContext` retains `contextActualSnapshot :: ActualSourceSnapshot` and automatically derives `contextSource`, `contextJournal`, and `contextAccounts`.
+   - Prevents inconsistent states where source text and account declarations reflect different points in time or out-of-sync snapshots.
+
+3. **Operation-Entry Refresh Boundary**:
+   - Entering any Actual operation (`OperationActualAdd` or `OperationActualBrowse`) from the hub triggers a fresh file read and admission (`loadActualSourceSnapshot`).
+   - Operation snapshots are immutable for the duration of an operation (e.g. across form input, account selection, preview, confirmation, and publication).
+   - Successful candidate text is **never** manually concatenated or guessed in-memory to update `AppContext` after publication.
+   - Returning to the Hub and selecting the next operation is the canonical refresh boundary where a fresh snapshot is loaded from disk.
+
+4. **Shared Admission Boundary & Fail-Closed Stale Protection**:
+   - Both `OperationActualAdd` and `OperationActualBrowse` utilize the same `ActualSourceSnapshot` load and admission boundary.
+   - If an external source modification occurs during an operation, the safe writer detects expected vs current source mismatch and rejects publication as `StaleFile` without mutating the file.
+   - Load failures (`ActualSourceFileReadFailed` and `ActualSourceAdmissionFailed`) are sanitized into `ShowActualSourceLoadFailure` without exposing raw source text, IOException details, or filesystem paths.
+   - Safe writer semantics, backup/rollback, and writer authority remain unchanged.
 
 ## Private / Public Boundary & Source Protection
 
@@ -114,10 +139,12 @@ This is not a writer safety failure: the safe writer rejects publication when th
 
 - Pure `HKernel.Editor.TUI.OperationHub` module implemented and exposed in Cabal.
 - `HKernel.Editor.TUI.ActualBrowse` pure module implemented and exposed in Cabal.
-- `OperationActualAdd` and `OperationActualBrowse` are enabled in the hub; disabled operations cannot trigger input or write flows.
-- Source-aligned transaction records project three distinct identity provenance states (explicit event identity, plan-derived runtime identity, and no identity).
-- Transaction browser performs fresh file reads upon entry and sanitizes load failure kinds.
-- Browser is strictly read-only, generates no write intent, and performs no source mutation.
-- Focused test suites (`EditorTUIOperationHubSpec` and `EditorTUIActualBrowseSpec`) pass cleanly.
+- `HKernel.Editor.TUI.ActualSourceSnapshot` pure module implemented and exposed in Cabal.
+- `OperationActualAdd` and `OperationActualBrowse` perform fresh source reads on operation entry and use immutable atomic snapshots.
+- Source text and account registry are atomically coupled within `ActualSourceSnapshot`.
+- Consecutive Actual add operations within the same TUI session start from current admitted source without startup text re-use.
+- Safe writer stale rejection remains active and fail-closed against external changes.
+- Load failures are sanitized and allow safe return to Hub for retry.
+- Focused test suites (`EditorTUIOperationHubSpec`, `EditorTUIActualBrowseSpec`, `EditorTUIActualSourceSnapshotSpec`) pass cleanly.
 - `cabal build all`, `cabal test all`, `cabal run repository-audit`, and `./report-build && ./report-verify --fixture` pass cleanly.
-- PR #39 updated for review on `feat/tui-actual-browser-001` (stacked on PR #38 `feat/tui-operation-hub-001`).
+- PR updated for review on `fix/tui-actual-source-snapshot-001` (stacked on PR #39 `feat/tui-actual-browser-001`).

@@ -8,6 +8,7 @@ module HKernel.Editor.TUI.ActualBrowse
   , ActualBrowseLoadFailure(..)
   , buildActualBrowseRows
   , initialActualBrowseState
+  , initialActualBrowseStateFromSnapshot
   , selectedBrowseRow
   , transitionActualBrowse
   , classifyActualBrowseLoad
@@ -20,6 +21,10 @@ import HKernel.Actual.Journal
   , ActualTransactionIdentity(..)
   , ActualTransactionRecord(..)
   , actualJournalRecords
+  )
+import HKernel.Editor.TUI.ActualSourceSnapshot
+  ( ActualSourceSnapshot
+  , actualSnapshotJournal
   )
 import HKernel.Ledger (Transaction)
 import HKernel.Plan (PlanId)
@@ -79,6 +84,10 @@ initialActualBrowseState journal = ActualBrowseState
   { browseRows = buildActualBrowseRows journal
   , browseSelectedIndex = 0
   }
+
+initialActualBrowseStateFromSnapshot :: ActualSourceSnapshot -> ActualBrowseState
+initialActualBrowseStateFromSnapshot snapshot =
+  initialActualBrowseState (actualSnapshotJournal snapshot)
 
 selectedBrowseRow :: ActualBrowseState -> Maybe ActualBrowseRow
 selectedBrowseRow state

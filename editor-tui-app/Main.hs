@@ -3,7 +3,6 @@
 
 module Main (main) where
 
-import Control.Exception (IOException, try)
 import Control.Monad.IO.Class (liftIO)
 
 import Brick
@@ -19,21 +18,12 @@ import Lens.Micro.Mtl ()
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import qualified Data.Vector as Vec
 import System.Environment (getArgs)
 import System.Exit (die)
 
-import HKernel.Account
-  ( accountDeclarations
-  , accountName
-  , declaredAccount
-  )
-import HKernel.Actual.Journal
-  ( actualJournalValue
-  , parseActualJournal
-  )
+import HKernel.Actual.Journal (ActualJournal)
 import HKernel.Editor.ActualWriter (publishActualBlock)
 import HKernel.Editor.TUI.ActualAdd
   ( AccountSelectionTarget(..)
@@ -50,14 +40,22 @@ import HKernel.Editor.TUI.ActualAdd
   )
 import HKernel.Editor.TUI.ActualBrowse
   ( ActualBrowseAction(..)
-  , ActualBrowseLoadFailure(..)
   , ActualBrowseRow(..)
   , ActualBrowseState(..)
   , ActualIdentityStatus(..)
   , browseRows
   , browseSelectedIndex
-  , classifyActualBrowseLoad
+  , initialActualBrowseStateFromSnapshot
   , transitionActualBrowse
+  )
+import HKernel.Editor.TUI.ActualSourceSnapshot
+  ( ActualSourceLoadFailure(..)
+  , ActualSourceOperation(..)
+  , ActualSourceSnapshot
+  , actualSnapshotAccountNames
+  , actualSnapshotJournal
+  , actualSnapshotSource
+  , loadActualSourceSnapshot
   )
 import HKernel.Editor.TUI.OperationHub
   ( DailyOperation(..)
@@ -71,7 +69,6 @@ import HKernel.Editor.TUI.OperationHub
   , operationTitle
   , transitionOperationHub
   )
-import HKernel.Journal (journalAccountRegistry)
 import HKernel.Ledger
   ( transactionDate
   , transactionDescription
@@ -122,8 +119,9 @@ data UIState event
   | ShowActualBrowse
       ActualBrowseState
       (L.List Name ActualBrowseRow)
-  | ShowActualBrowseLoadFailure
-      ActualBrowseLoadFailure
+  | ShowActualSourceLoadFailure
+      ActualSourceOperation
+      ActualSourceLoadFailure
   | InputForm (Form ActualAddInput event Name)
   | SelectAccount
       AccountSelectionTarget
@@ -140,10 +138,18 @@ data UIState event
       (Form ActualAddInput event Name)
 
 data AppContext = AppContext
-  { contextAccounts   :: [Text]
-  , contextSourcePath :: FilePath
-  , contextSource     :: Text
+  { contextSourcePath     :: FilePath
+  , contextActualSnapshot :: ActualSourceSnapshot
   }
+
+contextAccounts :: AppContext -> [Text]
+contextAccounts = actualSnapshotAccountNames . contextActualSnapshot
+
+contextSource :: AppContext -> Text
+contextSource = actualSnapshotSource . contextActualSnapshot
+
+contextJournal :: AppContext -> ActualJournal
+contextJournal = actualSnapshotJournal . contextActualSnapshot
 
 data AppWrapper = AppWrapper AppContext (UIState AppEvent)
 
@@ -209,11 +215,11 @@ drawUI (AppWrapper _ (ShowActualBrowse _ browseList)) =
               <=> str " "
               <=> str "[Esc/Q] Back to Hub | [Up/Down] Navigate | [Enter] Select"))))
   ]
-drawUI (AppWrapper _ (ShowActualBrowseLoadFailure failure)) =
+drawUI (AppWrapper _ (ShowActualSourceLoadFailure op failure)) =
   [ center
-      (borderWithLabel (str "Actual Browse Failure")
+      (borderWithLabel (str (loadFailureTitle op))
         (padAll 1
-          (renderBrowseLoadFailure failure
+          (renderSourceLoadFailure op failure
             <=> str " "
             <=> str "[Esc/Q] Back to Hub")))
   ]
@@ -303,12 +309,22 @@ renderBrowseRow selected row =
        then withAttr L.listSelectedAttr content
        else content
 
-renderBrowseLoadFailure :: ActualBrowseLoadFailure -> Widget Name
-renderBrowseLoadFailure failure = case failure of
-  ActualBrowseFileReadFailed ->
+loadFailureTitle :: ActualSourceOperation -> String
+loadFailureTitle LoadForActualAdd = "Actual Add Load Failure"
+loadFailureTitle LoadForActualBrowse = "Actual Browse Failure"
+
+renderSourceLoadFailure :: ActualSourceOperation -> ActualSourceLoadFailure -> Widget Name
+renderSourceLoadFailure op failure = case (op, failure) of
+  (LoadForActualAdd, ActualSourceFileReadFailed) ->
+    withAttr (attrName "error")
+      (str "The current Actual Journal could not be read for Actual Add.")
+  (LoadForActualAdd, ActualSourceAdmissionFailed) ->
+    withAttr (attrName "error")
+      (str "The current Actual Journal failed admission for Actual Add.")
+  (LoadForActualBrowse, ActualSourceFileReadFailed) ->
     withAttr (attrName "error")
       (str "The current Actual Journal could not be read.")
-  ActualBrowseAdmissionFailed ->
+  (LoadForActualBrowse, ActualSourceAdmissionFailed) ->
     withAttr (attrName "error")
       (str "The current Actual Journal failed admission.")
 
@@ -352,7 +368,7 @@ renderWriteOutcome outcome = case outcome of
     withAttr (attrName "error")
       (vBox
         [ str "Source changed after preview. Nothing was written."
-        , str "Restart the TUI and preview the current source before retrying."
+        , str "Return to the operation hub and reopen Actual Add to load the current source."
         ])
   ActualAddWriteRecovered failure ->
     withAttr (attrName "warning")
@@ -390,8 +406,8 @@ appEvent event = do
       handleHubEvent context hubState hubList event
     ShowActualBrowse browseState browseList ->
       handleBrowseEvent context browseState browseList event
-    ShowActualBrowseLoadFailure failure ->
-      handleBrowseLoadFailureEvent context failure event
+    ShowActualSourceLoadFailure op failure ->
+      handleSourceLoadFailureEvent context op failure event
     InputForm form -> handleInputEvent context form event
     SelectAccount target accountList form ->
       handleAccountSelection context target accountList form event
@@ -419,17 +435,24 @@ handleHubEvent context hubState hubList event = case event of
         case operationAvailability selectedOp of
           OperationEnabled ->
             case selectedOp of
-              OperationActualAdd ->
-                put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
-              OperationActualBrowse -> do
-                readResult <- liftIO (try (TIO.readFile (contextSourcePath context)) :: IO (Either IOException Text))
-                let outcome = classifyActualBrowseLoad readResult parseActualJournal
-                case outcome of
+              OperationActualAdd -> do
+                loadResult <- liftIO (loadActualSourceSnapshot (contextSourcePath context))
+                case loadResult of
                   Left failure ->
-                    put (AppWrapper context (ShowActualBrowseLoadFailure failure))
-                  Right browseState ->
-                    let browseList = L.list BrowseRowList (Vec.fromList (browseRows browseState)) 1
-                    in put (AppWrapper context (ShowActualBrowse browseState browseList))
+                    put (AppWrapper context (ShowActualSourceLoadFailure LoadForActualAdd failure))
+                  Right freshSnapshot -> do
+                    let freshContext = context { contextActualSnapshot = freshSnapshot }
+                    put (AppWrapper freshContext (InputForm (mkForm emptyActualAddInput)))
+              OperationActualBrowse -> do
+                loadResult <- liftIO (loadActualSourceSnapshot (contextSourcePath context))
+                case loadResult of
+                  Left failure ->
+                    put (AppWrapper context (ShowActualSourceLoadFailure LoadForActualBrowse failure))
+                  Right freshSnapshot -> do
+                    let freshContext = context { contextActualSnapshot = freshSnapshot }
+                        browseState = initialActualBrowseStateFromSnapshot freshSnapshot
+                        browseList = L.list BrowseRowList (Vec.fromList (browseRows browseState)) 1
+                    put (AppWrapper freshContext (ShowActualBrowse browseState browseList))
               _ -> pure ()
           OperationDisabled _ -> pure ()
   VtyEvent (V.EvKey V.KUp []) -> moveHub HubMoveUp
@@ -471,12 +494,13 @@ handleBrowseEvent context browseState browseList event = case event of
           nextList = L.listMoveTo (browseSelectedIndex nextState) browseList
       put (AppWrapper context (ShowActualBrowse nextState nextList))
 
-handleBrowseLoadFailureEvent
+handleSourceLoadFailureEvent
   :: AppContext
-  -> ActualBrowseLoadFailure
+  -> ActualSourceOperation
+  -> ActualSourceLoadFailure
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleBrowseLoadFailureEvent context _ event = case event of
+handleSourceLoadFailureEvent context _ _ event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> returnToHub context
   VtyEvent (V.EvKey (V.KChar 'q') []) -> returnToHub context
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> returnToHub context
@@ -690,18 +714,14 @@ main = do
   arguments <- getArgs
   case arguments of
     [journalFile] -> do
-      source <- TIO.readFile journalFile
-      journal <- case parseActualJournal source of
-        Left sourceErrors ->
-          die
-            ("Failed to parse journal:\n"
-              <> unlines (map show (NonEmpty.toList sourceErrors)))
-        Right admittedJournal -> pure admittedJournal
-      let declarations =
-            accountDeclarations
-              (journalAccountRegistry (actualJournalValue journal))
-          accounts = map (accountName . declaredAccount) declarations
-          context = AppContext accounts journalFile source
+      snapshotResult <- loadActualSourceSnapshot journalFile
+      snapshot <- case snapshotResult of
+        Left ActualSourceFileReadFailed ->
+          die ("Failed to read journal file: " <> journalFile)
+        Left ActualSourceAdmissionFailed ->
+          die ("Failed to parse and admit journal file: " <> journalFile)
+        Right snap -> pure snap
+      let context = AppContext journalFile snapshot
           initialState = AppWrapper context mkInitialHubUIState
           buildVty = mkVty V.defaultConfig
       initialVty <- buildVty
