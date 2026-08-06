@@ -183,29 +183,20 @@ Generator owner は今回 `HKernel.Editor.ActualIdentity` に一意に確定す�
   * ユーザーが operation をキャンセル、あるいは完了して Hub へ戻り、新しく Actual add を開始した場合は、新しい identity リクエストとする。
   * キャンセル等により未出版となった identity が欠番になることは完全に許容する。identity を連番の会計証憑として扱わない。
 
-## 8. Identity format requirements (Decision F)
+## 8. Identity format requirements and format gate decision (Decision F)
 
-Identity のフォーマットが満たすべき定量的・構造的要件を以下の通り定める。
+Identity のフォーマットおよび生成仕様を以下のように確定した。
 
-* **基本要件**:
-  * offline single-user operation で生成可能であること。
-  * source の内容（Account, date, description, amount, posting 構成）から導出しないこと。
-  * private 情報を含まないこと。
-  * source index や line number を含まないこと。
-  * hash を semantic identity にしないこと。
-  * wall-clock timestamp のみに uniqueness を依存しないこと。
-  * コピペ可能な Text であること。
-  * `mkActualTransactionId` のスマートコンストラクタによる検証を通過すること。
-  * 既に認可されている既存 ID 列との衝突（collision）をチェックできること。
-  * 衝突発生時は typed failure または有限回の retry を行い、無限ループ（infinite retry）を禁止すること。
-  * テストにおいては generator を外部から注入可能であり、決定論的な test double を利用できること。
-* **フォーマット候補の評価**:
-  * `date/description slug`、`source hash`、`source position` のみによる方式は明確に**拒否（reject）**する。
-  * 候補: UUID v4, UUID v7, ULID, cryptographically random opaque token, timestamp + random suffix.
-* **依存関係と有限ゲート**:
-  * 本sliceでは外部ライブラリ等の依存関係（dependency）を追加しない。
-  * Generator owner は `HKernel.Editor.ActualIdentity` に確定済みである。具体的かつ最終的なフォーマットの選択（外部dependency導入の有無等）は、次実装sliceの最初のgateとして有限に残す。
-  * ただし、「内容や位置から導出しない」という semantic decision は本決定をもって確定とする。
+* **Selected format**: `evt-` + UUID v4 canonical lowercase text (例: `evt-550e8400-e29b-41d4-a716-446655440000`)
+* **Generator owner**: `HKernel.Editor.ActualIdentity`
+* **Production source**: `Data.UUID.V4.nextRandom` (h-kernel-editor library build-depends: `uuid >= 1.3.16 && < 1.4`)
+* **Domain admission**: `HKernel.Plan.Completion.mkActualTransactionId`
+* **Collision set**: fresh admitted `ActualJournal` が持つすべての effective Actual identities (`actualJournalIdentifiedTransactions` / `identifiedActualId`)（explicit event identity と plan-derived runtime identity の両方）
+* **Retry policy**: 有限リトライ (`actualIdentityAttemptLimit = 8`)
+* **Sanitized failure**: candidate, existing IDs, source text, path, IOException をログや UI State に保持しない
+* **TUI lifecycle**: `OperationActualAdd` 開始時に 1 回のみ生成し、同一 operation 内（preview, back, confirmation, publication）で固定
+* **CLI contract**: CLI `append` では自動生成を行わず、オペレータが明示的に `<EVENT_ID>` を指定する契約（`h-kernel-editor-cli append [--commit] <journal.txt> <event-id> <YYYY-MM-DD> <desc> ...`）
+
 
 ## 9. Plan completion compatibility (Decision B)
 

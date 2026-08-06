@@ -86,53 +86,41 @@ All other operations, including `OperationActualReverse`, remain typed `Operatio
 1. Top-level operation hub & existing Actual add connection (**PR #38**)
 2. Read-only Actual transaction list / selector (**PR #39**)
 3. TUI operation source snapshot lifecycle (**PR #40**)
-4. Durable identity creation / adoption decision (**Current slice**)
-5. Ordinary Actual add durable identity creation (**Next recommended slice**)
-6. No-identity adoption engine and UI
-7. Actual reverse TUI
-8. Actual multi-posting TUI
-9. Account declaration TUI
-10. Report selection & read-only rendering
-11. Plan operations
-12. Budget and Issue operations after authority decisions
+4. Durable identity creation / adoption decision (**PR #41**)
+5. Ordinary Actual add durable identity creation (**Current slice**)
+6. Shared identity generator adoption by other future Actual creators (**Next recommended slice**)
+7. Source-aligned no-identity adoption engine
+8. Read-only browser identity adoption entrypoint
+9. Actual reverse TUI
+10. Actual multi-posting TUI
+11. Account declaration TUI
+12. Report selection & read-only rendering
+13. Plan operations
+14. Budget and Issue operations after authority decisions
 
-## Slice Scope: TUI Operation Source Snapshot Lifecycle
+## Slice Scope: Ordinary Actual Add Durable Identity Creation
 
-In the TUI source snapshot recovery slice (`fix/tui-actual-source-snapshot-001`), we introduced `HKernel.Editor.TUI.ActualSourceSnapshot` to govern the admission, immutability, and fresh-read lifecycle of source snapshots across TUI operations:
+In this slice (`feat/ordinary-actual-add-durable-identity-001`), we introduce `HKernel.Editor.ActualIdentity` and attach durable `evt-<UUID-v4>` event identities to ordinary Actual additions across both TUI and CLI entrypoints:
 
-1. **Target Operation Lifecycle**:
-   ```text
-   Operation Hub
-     -> fresh source read
-     -> strict admission
-     -> immutable operation snapshot
-     -> preview/confirmation/publication
-     -> safe stale detection
-     -> Hub
-     -> next operation performs another fresh read
-   ```
+1. **Dedicated Identity Module & Production UUID v4 Generator**:
+   - `HKernel.Editor.ActualIdentity` is the sole owner of candidate generation, collision checking, and finite retry logic.
+   - Reuses `HKernel.Plan.Completion.ActualTransactionId` and `mkActualTransactionId` without defining redundant identity domain types.
+   - Production candidate generator uses `Data.UUID.V4.nextRandom` and `Data.UUID.toText` with `evt-` prefix (e.g. `evt-550e8400-e29b-41d4-a716-446655440000`).
+   - Checks candidates against all effective identities in the admitted `ActualJournal` (both explicit event identities and plan-derived runtime identities) up to `actualIdentityAttemptLimit = 8`.
 
-2. **Atomic Snapshot & Registry Coupling**:
-   - `ActualSourceSnapshot` guarantees that source text, admitted `ActualJournal`, and account declarations/registry originate from a single atomic admission pass (`admitActualSourceSnapshot`).
-   - `AppContext` retains `contextActualSnapshot :: ActualSourceSnapshot` and automatically derives `contextSource`, `contextJournal`, and `contextAccounts`.
-   - Prevents inconsistent states where source text and account declarations reflect different points in time or out-of-sync snapshots.
+2. **TUI Identity Lifecycle & Stability**:
+   - Identity is generated ONCE upon selecting `OperationActualAdd` from the Hub following snapshot load.
+   - If snapshot load or identity generation fails, the TUI presents a sanitized failure screen (`ShowActualIdentityGenerationFailure`) without creating write intents.
+   - Generated identity is stored in `ActualAddState` (`actualAddIdentity`) and is strictly preserved across all mode transitions within the operation session (Input, Account selection, invalid preview, valid preview, Back, re-preview, Confirmation, publication).
+   - Hub re-entry starts a fresh operation session with a newly generated identity.
 
-3. **Operation-Entry Refresh Boundary**:
-   - Entering any Actual operation (`OperationActualAdd` or `OperationActualBrowse`) from the hub triggers a fresh file read and admission (`loadActualSourceSnapshot`).
-   - Operation snapshots are immutable for the duration of an operation (e.g. across form input, account selection, preview, confirmation, and publication).
-   - Successful candidate text is **never** manually concatenated or guessed in-memory to update `AppContext` after publication.
-   - Returning to the Hub and selecting the next operation is the canonical refresh boundary where a fresh snapshot is loaded from disk.
+3. **CLI Explicit Event-ID Contract**:
+   - CLI `append` requires an explicit `<EVENT_ID>` argument (`h-kernel-editor-cli append [--commit] <journal.txt> <event-id> <YYYY-MM-DD> <desc> ...`).
+   - Rejects the legacy identity-free append grammar.
 
-4. **Shared Admission Boundary & Fail-Closed Stale Protection**:
-   - Both `OperationActualAdd` and `OperationActualBrowse` utilize the same `ActualSourceSnapshot` load and admission boundary.
-   - If an external source modification occurs during an operation, the safe writer detects expected vs current source mismatch and rejects publication as `StaleFile` without mutating the file.
-   - Load failures (`ActualSourceFileReadFailed` and `ActualSourceAdmissionFailed`) are sanitized into `ShowActualSourceLoadFailure` without exposing raw source text, IOException details, or filesystem paths.
-   - Safe writer semantics, backup/rollback, and writer authority remain unchanged.
-
-5. **Sole Ownership of Load & Admission Responsibility**:
-   - `HKernel.Editor.TUI.ActualSourceSnapshot` is the sole owner of source file reading, journal admission, sanitized load failure classification, and immutable snapshot construction.
-   - `HKernel.Editor.TUI.ActualBrowse` consumes admitted snapshots/journals to project row states (`buildActualBrowseRows`, `initialActualBrowseStateFromSnapshot`) and no longer maintains a parallel `ActualBrowseLoadFailure` or `classifyActualBrowseLoad` helper.
-   - Startup load failures in the executable (`Main.hs`) are sanitized (`actualSourceStartupFailureText`) and never disclose the supplied filesystem path, IOException details, or source text in stderr or diagnostic output.
+4. **Sanitized Failure Diagnostics & Backward Compatibility**:
+   - Generator failure taxonomy (`ActualIdentityGenerationFailure`) contains no candidate strings, source text, filesystem paths, or raw `IOException` details.
+   - Historical no-identity transactions in Journal sources remain valid accounting facts.
 
 ## Private / Public Boundary & Source Protection
 
@@ -145,11 +133,15 @@ In the TUI source snapshot recovery slice (`fix/tui-actual-source-snapshot-001`)
 - Pure `HKernel.Editor.TUI.OperationHub` module implemented and exposed in Cabal.
 - `HKernel.Editor.TUI.ActualBrowse` pure module implemented and exposed in Cabal.
 - `HKernel.Editor.TUI.ActualSourceSnapshot` pure module implemented and exposed in Cabal.
+- `HKernel.Editor.ActualIdentity` pure module implemented and exposed in Cabal.
 - `OperationActualAdd` and `OperationActualBrowse` perform fresh source reads on operation entry and use immutable atomic snapshots.
 - Source text and account registry are atomically coupled within `ActualSourceSnapshot`.
-- Consecutive Actual add operations within the same TUI session start from current admitted source without startup text re-use.
+- TUI `OperationActualAdd` attaches a durable `evt-<UUID-v4>` event-id metadata to every added transaction block.
+- CLI `append` requires explicit `<EVENT_ID>` and rejects old identity-free grammar.
+- Consecutive Actual add operations within the same TUI session start from current admitted source with distinct durable identities.
 - Safe writer stale rejection remains active and fail-closed against external changes.
-- Load failures are sanitized and allow safe return to Hub for retry.
-- Focused test suites (`EditorTUIOperationHubSpec`, `EditorTUIActualBrowseSpec`, `EditorTUIActualSourceSnapshotSpec`) pass cleanly.
+- Load and identity generation failures are sanitized and allow safe return to Hub for retry.
+- Focused test suites (`EditorActualIdentitySpec`, `EditorTUIActualAddSpec`, `EditorCLIContractSpec`, `EditorTUIActualSourceSnapshotSpec`) pass cleanly.
 - `cabal build all`, `cabal test all`, `cabal run repository-audit`, and `./report-build && ./report-verify --fixture` pass cleanly.
-- PR updated for review on `fix/tui-actual-source-snapshot-001` (stacked on PR #39 `feat/tui-actual-browser-001`).
+- PR updated for review on `feat/ordinary-actual-add-durable-identity-001` (stacked on PR #41 `docs/actual-identity-creation-adoption-001`).
+

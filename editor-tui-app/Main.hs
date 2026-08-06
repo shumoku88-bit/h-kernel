@@ -24,6 +24,11 @@ import System.Environment (getArgs)
 import System.Exit (die)
 
 import HKernel.Actual.Journal (ActualJournal)
+import HKernel.Editor.ActualIdentity
+  ( ActualIdentityGenerationFailure(..)
+  , actualIdentityGenerationFailureText
+  , generateActualTransactionId
+  )
 import HKernel.Editor.ActualWriter (publishActualBlock)
 import HKernel.Editor.TUI.ActualAdd
   ( AccountSelectionTarget(..)
@@ -76,7 +81,7 @@ import HKernel.Ledger
   , transactionPostings
   )
 import HKernel.Plan (planIdText)
-import HKernel.Plan.Completion (actualTransactionIdText)
+import HKernel.Plan.Completion (ActualTransactionId, actualTransactionIdText)
 
 
 data Name
@@ -123,18 +128,26 @@ data UIState event
   | ShowActualSourceLoadFailure
       ActualSourceOperation
       ActualSourceLoadFailure
-  | InputForm (Form ActualAddInput event Name)
+  | ShowActualIdentityGenerationFailure
+      ActualIdentityGenerationFailure
+  | InputForm
+      ActualTransactionId
+      (Form ActualAddInput event Name)
   | SelectAccount
+      ActualTransactionId
       AccountSelectionTarget
       (L.List Name Text)
       (Form ActualAddInput event Name)
   | ShowPreview
+      ActualTransactionId
       ActualAddPreview
       (Form ActualAddInput event Name)
   | ShowConfirmation
+      ActualTransactionId
       Text
       (Form ActualAddInput event Name)
   | ShowWriteOutcome
+      ActualTransactionId
       ActualAddWriteOutcome
       (Form ActualAddInput event Name)
 
@@ -175,13 +188,13 @@ mkForm =
       ]
 
 zoomForm :: Traversal' AppWrapper (Form ActualAddInput AppEvent Name)
-zoomForm f (AppWrapper context (InputForm form)) =
-  (\updated -> AppWrapper context (InputForm updated)) <$> f form
+zoomForm f (AppWrapper context (InputForm actualId form)) =
+  (\updated -> AppWrapper context (InputForm actualId updated)) <$> f form
 zoomForm _ wrapper = pure wrapper
 
 zoomList :: Traversal' AppWrapper (L.List Name Text)
-zoomList f (AppWrapper context (SelectAccount target accountList form)) =
-  (\updated -> AppWrapper context (SelectAccount target updated form))
+zoomList f (AppWrapper context (SelectAccount actualId target accountList form)) =
+  (\updated -> AppWrapper context (SelectAccount actualId target updated form))
     <$> f accountList
 zoomList _ wrapper = pure wrapper
 
@@ -224,7 +237,18 @@ drawUI (AppWrapper _ (ShowActualSourceLoadFailure op failure)) =
             <=> str " "
             <=> str "[Esc/Q] Back to Hub")))
   ]
-drawUI (AppWrapper _ (InputForm form)) =
+drawUI (AppWrapper _ (ShowActualIdentityGenerationFailure failure)) =
+  [ center
+      (borderWithLabel (str "Actual Identity Generation Failure")
+        (padAll 1
+          (withAttr (attrName "error") (txt (actualIdentityGenerationFailureText failure))
+            <=> str " "
+            <=> str "A durable Actual identity could not be generated."
+            <=> str "Return to the operation hub and retry."
+            <=> str " "
+            <=> str "[Esc/Q] Back to Hub")))
+  ]
+drawUI (AppWrapper _ (InputForm _ form)) =
   [ center
       (borderWithLabel (str "Actual Add Preview")
         (padAll 1
@@ -234,7 +258,7 @@ drawUI (AppWrapper _ (InputForm form)) =
             , str "[Esc] Back to Hub | [Enter] Preview | [Ctrl-F] From | [Ctrl-T] To"
             ])))
   ]
-drawUI (AppWrapper _ (SelectAccount target accountList _)) =
+drawUI (AppWrapper _ (SelectAccount _ target accountList _)) =
   [ center
       (borderWithLabel (str (selectionLabel target))
         (hLimit 48
@@ -243,7 +267,7 @@ drawUI (AppWrapper _ (SelectAccount target accountList _)) =
               <=> str " "
               <=> str "[Enter] Select | [Esc] Cancel"))))
   ]
-drawUI (AppWrapper _ (ShowPreview preview _)) =
+drawUI (AppWrapper _ (ShowPreview _ preview _)) =
   [ center
       (borderWithLabel (str "Preview")
         (padAll 1
@@ -251,7 +275,7 @@ drawUI (AppWrapper _ (ShowPreview preview _)) =
             <=> str " "
             <=> str (previewControls preview))))
   ]
-drawUI (AppWrapper _ (ShowConfirmation block _)) =
+drawUI (AppWrapper _ (ShowConfirmation _ block _)) =
   [ center
       (borderWithLabel (str "Confirm Actual Add")
         (padAll 1
@@ -262,7 +286,7 @@ drawUI (AppWrapper _ (ShowConfirmation block _)) =
             <=> str " "
             <=> str "[Y] Confirm | [N/Esc] Cancel | [Q] Quit")))
   ]
-drawUI (AppWrapper _ (ShowWriteOutcome outcome _)) =
+drawUI (AppWrapper _ (ShowWriteOutcome _ outcome _)) =
   [ center
       (borderWithLabel (str "Actual Add Result")
         (padAll 1
@@ -409,15 +433,17 @@ appEvent event = do
       handleBrowseEvent context browseState browseList event
     ShowActualSourceLoadFailure op failure ->
       handleSourceLoadFailureEvent context op failure event
-    InputForm form -> handleInputEvent context form event
-    SelectAccount target accountList form ->
-      handleAccountSelection context target accountList form event
-    ShowPreview preview form ->
-      handlePreviewEvent context preview form event
-    ShowConfirmation block form ->
-      handleConfirmationEvent context block form event
-    ShowWriteOutcome outcome form ->
-      handleWriteOutcomeEvent context outcome form event
+    ShowActualIdentityGenerationFailure failure ->
+      handleIdentityGenerationFailureEvent context failure event
+    InputForm actualId form -> handleInputEvent context actualId form event
+    SelectAccount actualId target accountList form ->
+      handleAccountSelection context actualId target accountList form event
+    ShowPreview actualId preview form ->
+      handlePreviewEvent context actualId preview form event
+    ShowConfirmation actualId block form ->
+      handleConfirmationEvent context actualId block form event
+    ShowWriteOutcome actualId outcome form ->
+      handleWriteOutcomeEvent context actualId outcome form event
 
 handleHubEvent
   :: AppContext
@@ -442,8 +468,13 @@ handleHubEvent context hubState hubList event = case event of
                   Left failure ->
                     put (AppWrapper context (ShowActualSourceLoadFailure LoadForActualAdd failure))
                   Right freshSnapshot -> do
-                    let freshContext = context { contextActualSnapshot = freshSnapshot }
-                    put (AppWrapper freshContext (InputForm (mkForm emptyActualAddInput)))
+                    genResult <- liftIO (generateActualTransactionId (actualSnapshotJournal freshSnapshot))
+                    case genResult of
+                      Left genFailure ->
+                        put (AppWrapper context (ShowActualIdentityGenerationFailure genFailure))
+                      Right actualId -> do
+                        let freshContext = context { contextActualSnapshot = freshSnapshot }
+                        put (AppWrapper freshContext (InputForm actualId (mkForm emptyActualAddInput)))
               OperationActualBrowse -> do
                 loadResult <- liftIO (loadActualSourceSnapshot (contextSourcePath context))
                 case loadResult of
@@ -507,6 +538,17 @@ handleSourceLoadFailureEvent context _ _ event = case event of
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> returnToHub context
   _ -> pure ()
 
+handleIdentityGenerationFailureEvent
+  :: AppContext
+  -> ActualIdentityGenerationFailure
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleIdentityGenerationFailureEvent context _ event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> returnToHub context
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> returnToHub context
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> returnToHub context
+  _ -> pure ()
+
 returnToHub :: AppContext -> EventM Name AppWrapper ()
 returnToHub context =
   put (AppWrapper context mkInitialHubUIState)
@@ -519,154 +561,165 @@ mkInitialHubUIState =
 
 handleInputEvent
   :: AppContext
+  -> ActualTransactionId
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleInputEvent context form event = case event of
+handleInputEvent context actualId form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> returnToHub context
   VtyEvent (V.EvKey V.KEnter []) -> do
     let pureState =
           transitionActualAdd
             (contextSource context)
             RequestActualAddPreview
-            (ActualAddState (formState form) EditingActualAdd)
+            (ActualAddState actualId (formState form) EditingActualAdd)
     case actualAddMode pureState of
       ShowingActualAddPreview preview ->
-        put (AppWrapper context (ShowPreview preview form))
-      _ -> put (AppWrapper context (InputForm form))
+        put (AppWrapper context (ShowPreview actualId preview form))
+      _ -> put (AppWrapper context (InputForm actualId form))
   VtyEvent (V.EvKey (V.KFun 2) []) ->
-    openAccountSelection context SelectFromAccount form
+    openAccountSelection context actualId SelectFromAccount form
   VtyEvent (V.EvKey (V.KChar 'f') [V.MCtrl]) ->
-    openAccountSelection context SelectFromAccount form
+    openAccountSelection context actualId SelectFromAccount form
   VtyEvent (V.EvKey (V.KFun 3) []) ->
-    openAccountSelection context SelectToAccount form
+    openAccountSelection context actualId SelectToAccount form
   VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl]) ->
-    openAccountSelection context SelectToAccount form
+    openAccountSelection context actualId SelectToAccount form
   _ -> zoom zoomForm (handleFormEvent event)
 
 openAccountSelection
   :: AppContext
+  -> ActualTransactionId
   -> AccountSelectionTarget
   -> Form ActualAddInput AppEvent Name
   -> EventM Name AppWrapper ()
-openAccountSelection context target form =
+openAccountSelection context actualId target form =
   put
     (AppWrapper context
       (SelectAccount
+        actualId
         target
         (L.list AccountList (Vec.fromList (contextAccounts context)) 1)
         form))
 
 handleAccountSelection
   :: AppContext
+  -> ActualTransactionId
   -> AccountSelectionTarget
   -> L.List Name Text
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleAccountSelection context target accountList form event = case event of
+handleAccountSelection context actualId target accountList form event = case event of
   VtyEvent (V.EvKey V.KEsc []) ->
-    put (AppWrapper context (InputForm form))
+    put (AppWrapper context (InputForm actualId form))
   VtyEvent (V.EvKey V.KEnter []) ->
     case L.listSelectedElement accountList of
-      Nothing -> put (AppWrapper context (InputForm form))
+      Nothing -> put (AppWrapper context (InputForm actualId form))
       Just (_, accountText) -> do
         let state =
               transitionActualAdd
                 (contextSource context)
                 (ChooseAccount accountText)
                 (ActualAddState
+                  actualId
                   (formState form)
                   (SelectingActualAccount target))
         put
           (AppWrapper context
-            (InputForm (updateFormState (actualAddInput state) form)))
+            (InputForm actualId (updateFormState (actualAddInput state) form)))
   VtyEvent vtyEvent ->
     zoom zoomList (L.handleListEventVi L.handleListEvent vtyEvent)
   _ -> pure ()
 
 handlePreviewEvent
   :: AppContext
+  -> ActualTransactionId
   -> ActualAddPreview
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handlePreviewEvent context preview form event = case event of
+handlePreviewEvent context actualId preview form event = case event of
   VtyEvent (V.EvKey V.KEsc []) ->
-    put (AppWrapper context (InputForm form))
+    put (AppWrapper context (InputForm actualId form))
   VtyEvent (V.EvKey (V.KChar 'b') []) ->
-    put (AppWrapper context (InputForm form))
+    put (AppWrapper context (InputForm actualId form))
   VtyEvent (V.EvKey (V.KChar 'B') []) ->
-    put (AppWrapper context (InputForm form))
+    put (AppWrapper context (InputForm actualId form))
   VtyEvent (V.EvKey (V.KChar 'c') []) ->
-    requestConfirmation context preview form
+    requestConfirmation context actualId preview form
   VtyEvent (V.EvKey (V.KChar 'C') []) ->
-    requestConfirmation context preview form
+    requestConfirmation context actualId preview form
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
   _ -> pure ()
 
 requestConfirmation
   :: AppContext
+  -> ActualTransactionId
   -> ActualAddPreview
   -> Form ActualAddInput AppEvent Name
   -> EventM Name AppWrapper ()
-requestConfirmation context preview form = do
+requestConfirmation context actualId preview form = do
   let state =
         transitionActualAdd
           (contextSource context)
           RequestActualAddConfirmation
           (ActualAddState
+            actualId
             (formState form)
             (ShowingActualAddPreview preview))
   case actualAddMode state of
     ConfirmingActualAdd block ->
-      put (AppWrapper context (ShowConfirmation block form))
-    _ -> put (AppWrapper context (ShowPreview preview form))
+      put (AppWrapper context (ShowConfirmation actualId block form))
+    _ -> put (AppWrapper context (ShowPreview actualId preview form))
 
 handleConfirmationEvent
   :: AppContext
+  -> ActualTransactionId
   -> Text
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleConfirmationEvent context block form event = case event of
-  VtyEvent (V.EvKey V.KEsc []) -> cancelConfirmation context block form
-  VtyEvent (V.EvKey (V.KChar 'n') []) -> cancelConfirmation context block form
-  VtyEvent (V.EvKey (V.KChar 'N') []) -> cancelConfirmation context block form
-  VtyEvent (V.EvKey (V.KChar 'y') []) -> acceptConfirmation context block form
-  VtyEvent (V.EvKey (V.KChar 'Y') []) -> acceptConfirmation context block form
+handleConfirmationEvent context actualId block form event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> cancelConfirmation context actualId block form
+  VtyEvent (V.EvKey (V.KChar 'n') []) -> cancelConfirmation context actualId block form
+  VtyEvent (V.EvKey (V.KChar 'N') []) -> cancelConfirmation context actualId block form
+  VtyEvent (V.EvKey (V.KChar 'y') []) -> acceptConfirmation context actualId block form
+  VtyEvent (V.EvKey (V.KChar 'Y') []) -> acceptConfirmation context actualId block form
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
   _ -> pure ()
 
 cancelConfirmation
   :: AppContext
+  -> ActualTransactionId
   -> Text
   -> Form ActualAddInput AppEvent Name
   -> EventM Name AppWrapper ()
-cancelConfirmation context block form = do
+cancelConfirmation context actualId block form = do
   let state =
         transitionActualAdd
           (contextSource context)
           CancelActualAddConfirmation
-          (ActualAddState (formState form) (ConfirmingActualAdd block))
+          (ActualAddState actualId (formState form) (ConfirmingActualAdd block))
   case actualAddMode state of
     ShowingActualAddPreview preview ->
-      put (AppWrapper context (ShowPreview preview form))
-    _ -> put (AppWrapper context (ShowConfirmation block form))
+      put (AppWrapper context (ShowPreview actualId preview form))
+    _ -> put (AppWrapper context (ShowConfirmation actualId block form))
 
 acceptConfirmation
   :: AppContext
+  -> ActualTransactionId
   -> Text
   -> Form ActualAddInput AppEvent Name
   -> EventM Name AppWrapper ()
-acceptConfirmation context block form = do
+acceptConfirmation context actualId block form = do
   let state =
         transitionActualAdd
           (contextSource context)
           ConfirmActualAdd
-          (ActualAddState (formState form) (ConfirmingActualAdd block))
+          (ActualAddState actualId (formState form) (ConfirmingActualAdd block))
   case actualAddMode state of
     ActualAddConfirmed confirmedBlock -> do
       writeResult <-
@@ -678,17 +731,19 @@ acceptConfirmation context block form = do
       put
         (AppWrapper context
           (ShowWriteOutcome
+            actualId
             (classifyActualAddWriteResult writeResult)
             form))
-    _ -> put (AppWrapper context (ShowConfirmation block form))
+    _ -> put (AppWrapper context (ShowConfirmation actualId block form))
 
 handleWriteOutcomeEvent
   :: AppContext
+  -> ActualTransactionId
   -> ActualAddWriteOutcome
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleWriteOutcomeEvent context _ _ event = case event of
+handleWriteOutcomeEvent context _ _ _ event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> returnToHub context
   VtyEvent (V.EvKey (V.KChar 'q') []) -> returnToHub context
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> returnToHub context

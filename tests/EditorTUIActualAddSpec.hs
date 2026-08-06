@@ -13,22 +13,24 @@ import HKernel.Editor.ActualWriter (WriteError(..))
 import HKernel.Editor.TUI.ActualAdd
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Money (renderQuantity)
+import HKernel.Plan.Completion (ActualTransactionId, mkActualTransactionId)
 
 main :: IO ()
 main = do
   source <- TIO.readFile "tests/fixtures/editor/actual-add.journal"
   let results =
-        [ ("positive magnitude builds balanced typed intent", testPositiveMagnitude)
+        [ ("positive magnitude builds balanced typed intent with event-id", testPositiveMagnitude)
         , ("negative magnitude is rejected", testNegativeMagnitude)
         , ("zero magnitude is rejected", testZeroMagnitude)
         , ("amount shape is explicit", testAmountShape)
-        , ("from Account selection updates input", testFromSelection source)
-        , ("cancelled selection preserves input", testCancelSelection source)
-        , ("preview transition retains candidate block only", testPreviewTransition source)
+        , ("from Account selection updates input and preserves identity", testFromSelection source)
+        , ("cancelled selection preserves input and identity", testCancelSelection source)
+        , ("preview transition retains candidate block only and includes event-id", testPreviewTransition source)
         , ("rejected preview cannot enter confirmation", testRejectedPreviewCannotConfirm source)
         , ("ready preview enters confirmation", testReadyPreviewEntersConfirmation source)
-        , ("confirmation cancellation returns to ready preview", testConfirmationCancellation source)
+        , ("confirmation cancellation returns to ready preview with same identity", testConfirmationCancellation source)
         , ("accepted confirmation remains source-free until delivery", testConfirmationAccepted source)
+        , ("identity remains stable across input edit and re-preview", testIdentityStabilityOnRePreview source)
         , ("successful write result is observable", testWriteSuccess)
         , ("stale write result is observable", testWriteStale)
         , ("restored admission failure is recoverable", testWriteRecovered)
@@ -37,6 +39,11 @@ main = do
         ]
   mapM_ print results
   if all snd results then exitSuccess else exitFailure
+
+syntheticId :: ActualTransactionId
+syntheticId = case mkActualTransactionId "evt-synthetic-ordinary-001" of
+  Right actualId -> actualId
+  Left _ -> error "Invalid synthetic ID"
 
 validInput :: ActualAddInput
 validInput = ActualAddInput
@@ -50,35 +57,36 @@ validInput = ActualAddInput
 expectedBlock :: T.Text
 expectedBlock = T.unlines
   [ "2026-08-05 Groceries"
+  , "    ; event-id: evt-synthetic-ordinary-001"
   , "  expenses:food  100 JPY"
   , "  assets:cash  -100 JPY"
   ]
 
 testPositiveMagnitude :: Bool
-testPositiveMagnitude = case buildActualAddIntent validInput of
+testPositiveMagnitude = case buildActualAddIntent syntheticId validInput of
   Right intent -> case NonEmpty.toList (intentPostings intent) of
     [destination, source] ->
       accountName (intentAccount destination) == "expenses:food"
         && renderQuantity (intentQuantity destination) == "100"
         && accountName (intentAccount source) == "assets:cash"
         && renderQuantity (intentQuantity source) == "-100"
-        && intentMetadata intent == []
+        && intentMetadata intent == [("event-id", "evt-synthetic-ordinary-001")]
     _ -> False
   Left _ -> False
 
 testNegativeMagnitude :: Bool
 testNegativeMagnitude =
-  buildActualAddIntent (validInput { addAmountText = "-100 JPY" })
+  buildActualAddIntent syntheticId (validInput { addAmountText = "-100 JPY" })
     == Left ActualAddAmountMustBePositive
 
 testZeroMagnitude :: Bool
 testZeroMagnitude =
-  buildActualAddIntent (validInput { addAmountText = "0 JPY" })
+  buildActualAddIntent syntheticId (validInput { addAmountText = "0 JPY" })
     == Left ActualAddAmountMustBePositive
 
 testAmountShape :: Bool
 testAmountShape =
-  buildActualAddIntent (validInput { addAmountText = "100" })
+  buildActualAddIntent syntheticId (validInput { addAmountText = "100" })
     == Left ActualAddInvalidAmountShape
 
 testFromSelection :: T.Text -> Bool
@@ -86,14 +94,15 @@ testFromSelection source =
   let selecting = transitionActualAdd
         source
         (BeginAccountSelection SelectFromAccount)
-        initialActualAddState
+        (initialActualAddState syntheticId)
       selected = transitionActualAdd source (ChooseAccount "assets:cash") selecting
   in addFromAccountText (actualAddInput selected) == "assets:cash"
       && actualAddMode selected == EditingActualAdd
+      && actualAddIdentity selected == syntheticId
 
 testCancelSelection :: T.Text -> Bool
 testCancelSelection source =
-  let initial = ActualAddState validInput EditingActualAdd
+  let initial = ActualAddState syntheticId validInput EditingActualAdd
       selecting = transitionActualAdd
         source
         (BeginAccountSelection SelectToAccount)
@@ -101,6 +110,7 @@ testCancelSelection source =
       cancelled = transitionActualAdd source CancelAccountSelection selecting
   in actualAddInput cancelled == validInput
       && actualAddMode cancelled == EditingActualAdd
+      && actualAddIdentity cancelled == syntheticId
 
 testPreviewTransition :: T.Text -> Bool
 testPreviewTransition source =
@@ -110,11 +120,13 @@ testPreviewTransition source =
       ShowingActualAddPreview (ActualAddCandidateReady block) ->
         block == expectedBlock
           && not ("Opening Balance" `T.isInfixOf` stateRendering)
+          && actualAddIdentity previewState == syntheticId
       _ -> False
 
 testRejectedPreviewCannotConfirm :: T.Text -> Bool
 testRejectedPreviewCannotConfirm source =
   let initial = ActualAddState
+        syntheticId
         (validInput { addAmountText = "0 JPY" })
         EditingActualAdd
       rejected = transitionActualAdd source RequestActualAddPreview initial
@@ -130,6 +142,7 @@ testReadyPreviewEntersConfirmation source =
           RequestActualAddConfirmation
           (readyPreviewState source)
   in actualAddMode confirmation == ConfirmingActualAdd expectedBlock
+      && actualAddIdentity confirmation == syntheticId
 
 testConfirmationCancellation :: T.Text -> Bool
 testConfirmationCancellation source =
@@ -142,6 +155,7 @@ testConfirmationCancellation source =
         transitionActualAdd source CancelActualAddConfirmation confirmation
   in actualAddMode cancelled
       == ShowingActualAddPreview (ActualAddCandidateReady expectedBlock)
+      && actualAddIdentity cancelled == syntheticId
 
 testConfirmationAccepted :: T.Text -> Bool
 testConfirmationAccepted source =
@@ -154,13 +168,27 @@ testConfirmationAccepted source =
       stateRendering = T.pack (show accepted)
   in actualAddMode accepted == ActualAddConfirmed expectedBlock
       && not ("Opening Balance" `T.isInfixOf` stateRendering)
+      && actualAddIdentity accepted == syntheticId
+
+testIdentityStabilityOnRePreview :: T.Text -> Bool
+testIdentityStabilityOnRePreview source =
+  let s1 = readyPreviewState source
+      s2 = transitionActualAdd source ReturnToActualAddInput s1
+      s3 = s2 { actualAddInput = (actualAddInput s2) { addDescriptionText = "Updated Groceries" } }
+      s4 = transitionActualAdd source RequestActualAddPreview s3
+  in case actualAddMode s4 of
+    ShowingActualAddPreview (ActualAddCandidateReady block) ->
+      "evt-synthetic-ordinary-001" `T.isInfixOf` block
+        && "Updated Groceries" `T.isInfixOf` block
+        && actualAddIdentity s4 == syntheticId
+    _ -> False
 
 readyPreviewState :: T.Text -> ActualAddState
 readyPreviewState source =
   transitionActualAdd
     source
     RequestActualAddPreview
-    (ActualAddState validInput EditingActualAdd)
+    (ActualAddState syntheticId validInput EditingActualAdd)
 
 testWriteSuccess :: Bool
 testWriteSuccess =

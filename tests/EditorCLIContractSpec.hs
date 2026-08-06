@@ -5,6 +5,7 @@ module Main (main) where
 import Data.Time.Calendar (fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
+import HKernel.Editor.ActualAppend (intentDescription, intentMetadata)
 import HKernel.Editor.ActualReverse
   ( reverseDescription
   , reverseEventId
@@ -19,7 +20,10 @@ import HKernel.Plan.Completion (actualTransactionIdText)
 main :: IO ()
 main = do
   let results =
-        [ ("budget usage shape is admitted", testBudgetUsageShape)
+        [ ("append command accepts explicit event-id parameter", testAppendExplicitEventId)
+        , ("append command without explicit event-id is rejected", testAppendOldGrammarRejected)
+        , ("append command rejects invalid event-id", testAppendInvalidEventId)
+        , ("budget usage shape is admitted", testBudgetUsageShape)
         , ("budget extra argument is rejected", testBudgetExtraArgument)
         , ("budget memo named --commit remains data", testBudgetCommitTextIsData)
         , ("commit is admitted after the leaf command", testCommandLocalCommit)
@@ -36,6 +40,52 @@ main = do
   if all snd results
     then exitSuccess
     else exitFailure
+
+testAppendExplicitEventId :: Bool
+testAppendExplicitEventId = case parseEditorCommand
+  [ "append"
+  , "--commit"
+  , "actual.journal"
+  , "evt-synthetic-cli-001"
+  , "2026-08-05"
+  , "Groceries"
+  , "expenses:food"
+  , "100"
+  , "JPY"
+  ] of
+    Right (CommitRequested, AppendCmd "actual.journal" intent) ->
+      intentDescription intent == "Groceries"
+        && intentMetadata intent == [("event-id", "evt-synthetic-cli-001")]
+    _ -> False
+
+testAppendOldGrammarRejected :: Bool
+testAppendOldGrammarRejected = case parseEditorCommand
+  [ "append"
+  , "actual.journal"
+  , "2026-08-05"
+  , "Groceries"
+  , "expenses:food"
+  , "100"
+  , "JPY"
+  ] of
+    Left CliInvalidActualTransactionId -> True
+    Left CliInvalidDate -> True
+    Left CliUsage -> True
+    _ -> False
+
+testAppendInvalidEventId :: Bool
+testAppendInvalidEventId = case parseEditorCommand
+  [ "append"
+  , "actual.journal"
+  , "invalid event id with spaces"
+  , "2026-08-05"
+  , "Groceries"
+  , "expenses:food"
+  , "100"
+  , "JPY"
+  ] of
+    Left CliInvalidActualTransactionId -> True
+    _ -> False
 
 testBudgetUsageShape :: Bool
 testBudgetUsageShape = case parseEditorCommand

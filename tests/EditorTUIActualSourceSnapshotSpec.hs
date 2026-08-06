@@ -29,6 +29,7 @@ import HKernel.Editor.TUI.ActualSourceSnapshot
   , admitActualSourceSnapshot
   , loadActualSourceSnapshotUsing
   )
+import HKernel.Plan.Completion (ActualTransactionId, mkActualTransactionId)
 
 main :: IO ()
 main = do
@@ -40,6 +41,16 @@ main = do
   testConsecutiveActualAddEvidence
   testStableOperationSnapshot
   putStrLn "EditorTUIActualSourceSnapshotSpec: ALL PASSED"
+
+id1 :: ActualTransactionId
+id1 = case mkActualTransactionId "evt-synthetic-add-001" of
+  Right i -> i
+  Left _ -> error "Invalid id1"
+
+id2 :: ActualTransactionId
+id2 = case mkActualTransactionId "evt-synthetic-add-002" of
+  Right i -> i
+  Left _ -> error "Invalid id2"
 
 testSnapshotAdmission :: IO ()
 testSnapshotAdmission = do
@@ -179,7 +190,7 @@ testConsecutiveActualAddEvidence = withSystemTempDirectory "consecutive-add-test
         , addToAccountText = "expenses:food"
         , addAmountText = "15 JPY"
         }
-      state1 = transitionActualAdd (actualSnapshotSource snapA) RequestActualAddPreview (ActualAddState input1 EditingActualAdd)
+      state1 = transitionActualAdd (actualSnapshotSource snapA) RequestActualAddPreview (ActualAddState id1 input1 EditingActualAdd)
   block1 <- case actualAddMode state1 of
     ShowingActualAddPreview (ActualAddCandidateReady b) -> pure b
     other -> error ("Candidate 1 rejected: " <> show other)
@@ -200,7 +211,7 @@ testConsecutiveActualAddEvidence = withSystemTempDirectory "consecutive-add-test
         }
 
   -- Prepare 2nd candidate using snapshot B source (expectedOldSource is snapB source)
-  let state2 = transitionActualAdd (actualSnapshotSource snapB) RequestActualAddPreview (ActualAddState input2 EditingActualAdd)
+  let state2 = transitionActualAdd (actualSnapshotSource snapB) RequestActualAddPreview (ActualAddState id2 input2 EditingActualAdd)
   block2 <- case actualAddMode state2 of
     ShowingActualAddPreview (ActualAddCandidateReady b) -> pure b
     other -> error ("Candidate 2 rejected: " <> show other)
@@ -214,7 +225,12 @@ testConsecutiveActualAddEvidence = withSystemTempDirectory "consecutive-add-test
 
   assertBool "final file contains 1st transaction (Dinner)" ("Dinner" `T.isInfixOf` finalContent)
   assertBool "final file contains 2nd transaction (Coffee)" ("Coffee" `T.isInfixOf` finalContent)
+  assertBool "final file contains 1st event-id" ("evt-synthetic-add-001" `T.isInfixOf` finalContent)
+  assertBool "final file contains 2nd event-id" ("evt-synthetic-add-002" `T.isInfixOf` finalContent)
   assertBool "final file did not revert to initial source" (finalContent /= initialSource)
+  case parseActualJournal finalContent of
+    Left err -> assertFailure ("Final journal failed admission: " <> show err)
+    Right _ -> pure ()
 
 testStableOperationSnapshot :: IO ()
 testStableOperationSnapshot = withSystemTempDirectory "tui-snapshot-test" $ \tmpDir -> do
@@ -244,7 +260,7 @@ testStableOperationSnapshot = withSystemTempDirectory "tui-snapshot-test" $ \tmp
         , addToAccountText = "expenses:food"
         , addAmountText = "3 JPY"
         }
-      state = transitionActualAdd (actualSnapshotSource snap) RequestActualAddPreview (ActualAddState input EditingActualAdd)
+      state = transitionActualAdd (actualSnapshotSource snap) RequestActualAddPreview (ActualAddState id1 input EditingActualAdd)
   block <- case actualAddMode state of
     ShowingActualAddPreview (ActualAddCandidateReady b) -> pure b
     other -> error ("Preview failed: " <> show other)

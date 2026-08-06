@@ -26,6 +26,7 @@ import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 
 import HKernel.Account (mkAccount)
+import HKernel.Editor.ActualIdentity (actualEventIdentityMetadata)
 import HKernel.Editor.ActualAppend
   ( ActualAppendPreview(..)
   , ActualEditError
@@ -40,6 +41,7 @@ import HKernel.Money
   , parseQuantity
   , quantityToRational
   )
+import HKernel.Plan.Completion (ActualTransactionId)
 
 -- | Text entered by the Actual-add TUI before domain admission.
 data ActualAddInput = ActualAddInput
@@ -82,8 +84,9 @@ data ActualAddMode
   deriving (Eq, Show)
 
 data ActualAddState = ActualAddState
-  { actualAddInput :: ActualAddInput
-  , actualAddMode  :: ActualAddMode
+  { actualAddIdentity :: ActualTransactionId
+  , actualAddInput    :: ActualAddInput
+  , actualAddMode     :: ActualAddMode
   } deriving (Eq, Show)
 
 data ActualAddAction
@@ -117,15 +120,18 @@ data ActualAddWriteOutcome
 emptyActualAddInput :: ActualAddInput
 emptyActualAddInput = ActualAddInput "" "" "" "" ""
 
-initialActualAddState :: ActualAddState
-initialActualAddState = ActualAddState emptyActualAddInput EditingActualAdd
+initialActualAddState :: ActualTransactionId -> ActualAddState
+initialActualAddState actualId = ActualAddState actualId emptyActualAddInput EditingActualAdd
 
 -- | Admit a positive magnitude and derive the balancing source posting by
 -- negating the parsed Quantity value, never by manipulating its input text.
+--
+-- Attaches the durable 'ActualTransactionId' as explicit event identity metadata.
 buildActualAddIntent
-  :: ActualAddInput
+  :: ActualTransactionId
+  -> ActualAddInput
   -> Either ActualAddInputError ActualEditIntent
-buildActualAddIntent input = do
+buildActualAddIntent actualId input = do
   date <- maybe (Left ActualAddInvalidDate) Right
     (parseTimeM
       True
@@ -153,11 +159,11 @@ buildActualAddIntent input = do
       ( IntentPosting toAccount quantity (Just commodity)
         :| [IntentPosting fromAccount (negateQuantity quantity) (Just commodity)]
       )
-      [])
+      [actualEventIdentityMetadata actualId])
 
-prepareActualAddPreview :: Text -> ActualAddInput -> ActualAddPreview
-prepareActualAddPreview source input =
-  case buildActualAddIntent input of
+prepareActualAddPreview :: ActualTransactionId -> Text -> ActualAddInput -> ActualAddPreview
+prepareActualAddPreview actualId source input =
+  case buildActualAddIntent actualId input of
     Left inputError -> ActualAddInputRejected inputError
     Right intent -> case prepareActualAppend source intent of
       Left sourceErrors -> ActualAddCandidateRejected sourceErrors
@@ -196,7 +202,7 @@ transitionActualAdd source action state = case action of
     state
       { actualAddMode =
           ShowingActualAddPreview
-            (prepareActualAddPreview source (actualAddInput state))
+            (prepareActualAddPreview (actualAddIdentity state) source (actualAddInput state))
       }
   RequestActualAddConfirmation -> case actualAddMode state of
     ShowingActualAddPreview (ActualAddCandidateReady block) ->
