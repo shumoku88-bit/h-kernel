@@ -86,6 +86,17 @@ def main() -> None:
             raise AssertionError(f"report arguments differed: {read_log(log)!r}")
 
         log.write_text("", encoding="utf-8")
+        result = invoke(["actual-add", "private actual.journal"], env)
+        assert_success(result, "Actual add TUI delegation")
+        expected_actual_add = [
+            "cabal <run> <exe:h-kernel-editor-tui> <--> <private actual.journal>"
+        ]
+        if read_log(log) != expected_actual_add:
+            raise AssertionError(
+                f"Actual add arguments differed: {read_log(log)!r}"
+            )
+
+        log.write_text("", encoding="utf-8")
         result = invoke(["edit", "append", "actual.journal", "coffee shop"], env)
         assert_success(result, "editor delegation")
         expected_editor = [
@@ -108,13 +119,32 @@ def main() -> None:
 
         result = invoke(["help"], env)
         assert_success(result, "help")
-        if "tools/hk report" not in result.stdout or "tools/hk edit" not in result.stdout:
+        expected_help_entries = (
+            "tools/hk report",
+            "tools/hk actual-add",
+            "tools/hk edit",
+        )
+        if not all(entry in result.stdout for entry in expected_help_entries):
             raise AssertionError(f"help surface incomplete:\n{result.stdout}")
 
         result = invoke(["unknown"], env)
         if result.returncode != 2 or "unknown tools/hk command" not in result.stderr:
             raise AssertionError(
                 "unknown command did not fail with the documented boundary\n"
+                f"returncode={result.returncode}\nstderr:\n{result.stderr}"
+            )
+
+        result = invoke(["actual-add"], env)
+        if result.returncode != 2 or "requires exactly one" not in result.stderr:
+            raise AssertionError(
+                "Actual add missing-path rejection differed\n"
+                f"returncode={result.returncode}\nstderr:\n{result.stderr}"
+            )
+
+        result = invoke(["actual-add", "one", "two"], env)
+        if result.returncode != 2 or "requires exactly one" not in result.stderr:
+            raise AssertionError(
+                "Actual add extra-path rejection differed\n"
                 f"returncode={result.returncode}\nstderr:\n{result.stderr}"
             )
 
