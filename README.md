@@ -47,7 +47,7 @@ edit intent
 - raw textとstyled textを分けるCJK-aware terminal rendering
 - Actual、Account、Budget movement、Issue、Plan lifecycleのtyped editor operations
 - preview、strict complete-source admission、stale rejection、backup、atomic publication、post-admission、restore-capable failure
-- report、actual-add、edit、check、helpをまとめるthin `tools/hk`
+- report、actual-add、actual-reverse、edit、check、helpをまとめるthin `tools/hk`
 
 ## Daily command hub
 
@@ -64,6 +64,15 @@ edit intent
 # explicit Actual Journal pathを既存Actual add TUIへ渡す
 ./tools/hk actual-add /absolute/path/to/actual.journal
 
+# explicit Actual reversal intentを既存Editor CLIへ渡す
+# defaultはpreview。publication時だけ--commitを付ける
+./tools/hk actual-reverse \
+  /absolute/path/to/actual.journal \
+  NEW-EVENT-ID \
+  TARGET-EVENT-ID \
+  2026-08-06 \
+  correction-description
+
 # editor CLIへ残りの引数をそのまま委譲
 ./tools/hk edit ...
 
@@ -74,7 +83,7 @@ edit intent
 ./tools/hk help
 ```
 
-`tools/hk`は会計計算、Report rendering、editor admission、source mutation、audit ruleを再実装しません。既存ownerへroutingし、そのexit statusを保つ小さなdoorwayです。
+`tools/hk`は会計計算、Report rendering、editor admission、source mutation、audit ruleを再実装しません。既存ownerへroutingし、そのexit statusを保つ小さなdoorwayです。`actual-reverse`もtargetを選択したりidentityを生成したりせず、`h-kernel-editor-cli reverse`へ引数をそのまま渡します。
 
 ## Build and verification
 
@@ -206,7 +215,7 @@ YYYY-MM-DD reversal description
   account:b  INVERSE-AMOUNT COMMODITY
 ```
 
-new durable identityとexplicit target relationを要求し、unknown target、self-reference、duplicate direct reversalを拒否します。詳細は[`docs/ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](docs/ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)にあります。
+new durable identityとexplicit target relationを要求し、unknown target、self-reference、duplicate direct reversalを拒否します。日常入口は`tools/hk actual-reverse [--commit] <ACTUAL_JOURNAL> <NEW_EVENT_ID> <TARGET_EVENT_ID> <YYYY-MM-DD> <DESCRIPTION...>`です。専用selectorまたはTUIはまだなく、target identityは明示的に渡します。詳細は[`docs/ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](docs/ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)にあります。
 
 ## Budget and Household observations
 
@@ -259,6 +268,8 @@ current CLI operation:
 Plan editはcurrent CLI operationではありません。
 
 Actual add TUIはexisting candidate preparationとsafe writerを使うdelivery adapterです。complete private sourceやwriter authorityをUI stateへ持ち込みません。cutover後のordinary canonical Actual addは、このTUIを`tools/hk actual-add <ACTUAL_JOURNAL>`から起動します。
+
+Actual reverseのdaily routeは既存CLIへ`reverse` leafと残りの引数を委譲するだけです。candidate preparation、admission、publication、provenanceは既存のnamed ownerから動かしません。
 
 ## Architecture map
 
