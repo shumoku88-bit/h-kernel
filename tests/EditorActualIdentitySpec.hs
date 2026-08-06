@@ -22,7 +22,10 @@ import HKernel.Editor.ActualIdentity
   , generateActualTransactionId
   , generateActualTransactionIdUsing
   )
-import HKernel.Plan.Completion (actualTransactionIdText)
+import HKernel.Plan.Completion
+  ( actualTransactionIdText
+  , mkActualTransactionId
+  )
 
 main :: IO ()
 main = do
@@ -180,10 +183,16 @@ testEffectiveIdentityMembership = do
   case journalResult of
     Left err -> assert ("Failed to parse synthetic journal: " <> err) False
     Right journal -> do
-      case (admitActualEventIdentityText "evt-550e8400-e29b-41d4-a716-446655440010", admitActualEventIdentityText "evt-550e8400-e29b-41d4-a716-446655440099") of
-        (Right explicitId, Right unknownId) -> do
+      case
+        ( admitActualEventIdentityText "evt-550e8400-e29b-41d4-a716-446655440010"
+        , mkActualTransactionId "plan-completion-plan-alpha"
+        , admitActualEventIdentityText "evt-550e8400-e29b-41d4-a716-446655440099"
+        ) of
+        (Right explicitId, Right planDerivedId, Right unknownId) -> do
           assert "Explicit event identity is already used"
             (actualIdentityIsAlreadyUsed journal explicitId)
+          assert "Plan-derived runtime identity is already used"
+            (actualIdentityIsAlreadyUsed journal planDerivedId)
           assert "Unknown identity is not used"
             (not (actualIdentityIsAlreadyUsed journal unknownId))
         _ -> assert "Failed to construct test IDs" False
