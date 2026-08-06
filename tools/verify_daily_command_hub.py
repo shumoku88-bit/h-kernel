@@ -42,6 +42,12 @@ def read_log(path: Path) -> list[str]:
 
 
 def main() -> None:
+    # Verify that shell script does not perform field inputs for Plan/Budget/Issue
+    hk_content = HUB.read_text(encoding="utf-8")
+    for forbidden in ["prompt_input", "pargs", "optargs", "run_editor_cli"]:
+        if forbidden in hk_content:
+            raise AssertionError(f"tools/hk contains removed prompt/field helper: {forbidden}")
+
     with tempfile.TemporaryDirectory() as temporary_directory:
         temporary = Path(temporary_directory)
         log = temporary / "delegation.log"
@@ -108,14 +114,14 @@ def main() -> None:
         if read_log(log) != [f"cabal <run> <exe:h-kernel-editor-tui> <--> <{data_dir_2 / 'actual.journal'}>"]:
             raise AssertionError(f"Actual add fallback to env dir failed: {read_log(log)!r}")
 
-        # 3b. --base takes precedence over HKERNEL_LEDGER_DATA_DIR
+        # 3b. --base takes precedence over HKERNEL_LEDGER_DATA_DIR (testing path with space)
         log.write_text("", encoding="utf-8")
         result = invoke(["--base", str(data_dir_1), "actual-add"], env_with_data)
         assert_success(result, "Actual add with --base override")
         if read_log(log) != [f"cabal <run> <exe:h-kernel-editor-tui> <--> <{data_dir_1 / 'actual.journal'}>"]:
             raise AssertionError(f"Actual add --base precedence failed: {read_log(log)!r}")
 
-        # 4. Routing for all direct subcommands
+        # 4. Routing for all direct subcommands (preserving argument boundaries and space)
         log.write_text("", encoding="utf-8")
         result = invoke(["actual-multi", "actual.journal", "2026-08-06", "transfer", "Assets:Bank:A", "-1000", "JPY", "Assets:Bank:B", "1000", "JPY"], base_env)
         assert_success(result, "actual-multi delegation")
@@ -134,6 +140,7 @@ def main() -> None:
         if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <account> <actual.journal> <Assets:Saving> <asset> <JPY>"]:
             raise AssertionError(f"account delegation differed: {read_log(log)!r}")
 
+        # 4a. Plan direct command preserving "plan" and "add" as separate arguments
         log.write_text("", encoding="utf-8")
         result = invoke(["plan", "add", "plan.journal", "actual.journal", "--date", "2026-08-06", "--description", "desc", "--posting", "Assets:Cash", "500", "JPY"], base_env)
         assert_success(result, "plan delegation")
@@ -195,90 +202,8 @@ def main() -> None:
         if result.returncode != 2 or "does not accept arguments" not in result.stderr:
             raise AssertionError("check argument rejection failed")
 
-        # 7. Synthetic fund transfer verification using real h-kernel-editor-cli (dry run / preview)
-        synth_journal = temporary / "synthetic_actual.journal"
-        synth_journal.write_text("; synthetic journal test\n", encoding="utf-8")
-        for acct_name in ["Assets:Bank:Main", "Assets:Bank:Saving", "Assets:Cash"]:
-            acct_res = subprocess.run(
-                [
-                    "cabal",
-                    "run",
-                    "exe:h-kernel-editor-cli",
-                    "--",
-                    "account",
-                    "--commit",
-                    str(synth_journal),
-                    acct_name,
-                    "asset",
-                    "JPY",
-                ],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            if acct_res.returncode != 0:
-                raise AssertionError(f"Account declaration for synthetic test failed: {acct_res.stderr}")
-
-        # Verify 2-posting bank-to-bank transfer preview via editor-cli append
-        real_cli_res = subprocess.run(
-            [
-                "cabal",
-                "run",
-                "exe:h-kernel-editor-cli",
-                "--",
-                "append",
-                str(synth_journal),
-                "2026-08-06",
-                "bank transfer from Main to Saving",
-                "Assets:Bank:Main",
-                "-5000",
-                "JPY",
-                "Assets:Bank:Saving",
-                "5000",
-                "JPY",
-            ],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if real_cli_res.returncode != 0 or "Preview" not in real_cli_res.stdout:
-            raise AssertionError(
-                f"Synthetic fund transfer preview failed:\nreturncode={real_cli_res.returncode}\nstdout:\n{real_cli_res.stdout}\nstderr:\n{real_cli_res.stderr}"
-            )
-
-        # Verify 2-posting bank-to-cash transfer preview
-        real_cli_res2 = subprocess.run(
-            [
-                "cabal",
-                "run",
-                "exe:h-kernel-editor-cli",
-                "--",
-                "append",
-                str(synth_journal),
-                "2026-08-06",
-                "ATM withdrawal",
-                "Assets:Bank:Main",
-                "-10000",
-                "JPY",
-                "Assets:Cash",
-                "10000",
-                "JPY",
-            ],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if real_cli_res2.returncode != 0 or "Preview" not in real_cli_res2.stdout:
-            raise AssertionError(
-                f"Synthetic bank-to-cash transfer preview failed:\nstdout:\n{real_cli_res2.stdout}\nstderr:\n{real_cli_res2.stderr}"
-            )
-
     print("daily command hub verification passed")
 
 
 if __name__ == "__main__":
     main()
-

@@ -8,46 +8,22 @@ REPORT=${HKERNEL_REPORT_COMMAND:-"$ROOT/report"}
 BASE_DIR=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --base)
-      if [ "$#" -lt 2 ]; then
-        printf 'error: --base requires a directory path argument\n' >&2
-        exit 2
-      fi
-      BASE_DIR=$2
-      shift 2
-      ;;
-    --base=*)
-      BASE_DIR=${1#--base=}
-      shift 1
-      ;;
-    *)
-      break
-      ;;
+    --base) [ "$#" -ge 2 ] || { printf 'error: --base requires a directory path argument\n' >&2; exit 2; }; BASE_DIR=$2; shift 2 ;;
+    --base=*) BASE_DIR=${1#--base=}; shift 1 ;;
+    *) break ;;
   esac
 done
 
 get_data_dir() {
-  if [ -n "$BASE_DIR" ]; then
-    echo "$BASE_DIR"
-    return 0
-  fi
-  if [ -n "${HKERNEL_LEDGER_DATA_DIR:-}" ]; then
-    echo "$HKERNEL_LEDGER_DATA_DIR"
-    return 0
-  fi
-  if [ -f "$ROOT/ledger-data.local" ]; then
-    awk 'NF { print; exit }' "$ROOT/ledger-data.local"
-    return 0
-  fi
+  if [ -n "$BASE_DIR" ]; then echo "$BASE_DIR"; return 0; fi
+  if [ -n "${HKERNEL_LEDGER_DATA_DIR:-}" ]; then echo "$HKERNEL_LEDGER_DATA_DIR"; return 0; fi
+  if [ -f "$ROOT/ledger-data.local" ]; then awk 'NF { print; exit }' "$ROOT/ledger-data.local"; return 0; fi
   return 1
 }
 
 require_data_dir() {
   dir=$(get_data_dir || true)
-  if [ -z "$dir" ]; then
-    printf 'error: ledger data directory not configured. Specify --base DIR, set HKERNEL_LEDGER_DATA_DIR, or create ledger-data.local\n' >&2
-    exit 2
-  fi
+  [ -n "$dir" ] || { printf 'error: ledger data directory not configured. Specify --base DIR, set HKERNEL_LEDGER_DATA_DIR, or create ledger-data.local\n' >&2; exit 2; }
   echo "$dir"
 }
 
@@ -58,255 +34,66 @@ Usage:
   tools/hk [--base DIR] report [REPORT_ARGS...]
   tools/hk [--base DIR] actual-add [ACTUAL_JOURNAL]
   tools/hk [--base DIR] actual-multi [ARGS...]
-  tools/hk [--base DIR] actual-reverse [--commit] [ACTUAL_JOURNAL] <NEW_EVENT_ID> <TARGET_EVENT_ID> <YYYY-MM-DD> <DESCRIPTION...>
+  tools/hk [--base DIR] actual-reverse [ARGS...]
   tools/hk [--base DIR] account [ARGS...]
   tools/hk [--base DIR] plan [ARGS...]
   tools/hk [--base DIR] budget [ARGS...]
   tools/hk [--base DIR] issue [ARGS...]
-  tools/hk [--base DIR] edit [FILE]
+  tools/hk [--base DIR] edit [ARGS...]
   tools/hk [--base DIR] check
   tools/hk [--base DIR] help
 
 Commands:
   report          Run the existing Haskell report entrypoint. This is the default in non-interactive mode.
   actual-add      Run the existing Actual add TUI (supports 2-posting add and fund transfer).
-  actual-multi    Route multi-posting Actual transaction append to existing Editor CLI.
-  actual-reverse  Route an explicit Actual reversal intent to the existing Editor CLI.
-  account         Route Account declaration to the existing Editor CLI.
-  plan            Route Plan lifecycle operations (add / finish) to the existing Editor CLI.
-  budget          Route Household budget movement to the existing Editor CLI.
-  issue           Route Issue operations to the existing Editor CLI.
-  edit            Open a household source file or pass arguments to h-kernel-editor-cli.
+  actual-multi    Route multi-posting Actual transaction append directly to h-kernel-editor-cli.
+  actual-reverse  Route an explicit Actual reversal intent directly to h-kernel-editor-cli.
+  account         Route Account declaration directly to h-kernel-editor-cli.
+  plan            Route Plan operations (add / finish) directly to h-kernel-editor-cli.
+  budget          Route Household budget movement directly to h-kernel-editor-cli.
+  issue           Route Issue operations directly to h-kernel-editor-cli.
+  edit            Pass arguments directly to h-kernel-editor-cli.
   check           Run the repository's standard build, test, and ownership audit.
   help            Show this help.
 EOF
 }
 
 prompt_choice() {
-  header=$1
-  shift
-  if command -v gum >/dev/null 2>&1; then
-    printf '%s\n' "$@" | gum choose --header "$header"
-  elif command -v fzf >/dev/null 2>&1; then
-    printf '%s\n' "$@" | fzf --header="$header" --height=15 --reverse
+  header=$1; shift
+  if command -v gum >/dev/null 2>&1; then printf '%s\n' "$@" | gum choose --header "$header"
+  elif command -v fzf >/dev/null 2>&1; then printf '%s\n' "$@" | fzf --header="$header" --height=15 --reverse
   else
     printf '%s\n' "$header" >&2
-    i=1
-    for opt in "$@"; do
-      printf '  %d) %s\n' "$i" "$opt" >&2
-      i=$((i + 1))
-    done
+    i=1; for opt in "$@"; do printf '  %d) %s\n' "$i" "$opt" >&2; i=$((i + 1)); done
     while true; do
       printf 'Select option [1-%d]: ' "$#" >&2
       read -r choice || return 1
-      case "$choice" in
-        ''|*[!0-9]*) continue ;;
-      esac
-      if [ "$choice" -ge 1 ] && [ "$choice" -le "$#" ]; then
-        eval "echo \"\${$choice}\""
-        return 0
-      fi
+      case "$choice" in ''|*[!0-9]*) continue ;; esac
+      if [ "$choice" -ge 1 ] && [ "$choice" -le "$#" ]; then eval "echo \"\${$choice}\""; return 0; fi
     done
-  fi
-}
-
-prompt_input() {
-  prompt_text=$1
-  default_val=${2:-}
-  if command -v gum >/dev/null 2>&1; then
-    if [ -n "$default_val" ]; then
-      gum input --prompt "$prompt_text: " --value "$default_val"
-    else
-      gum input --prompt "$prompt_text: "
-    fi
-  else
-    if [ -n "$default_val" ]; then
-      printf '%s [%s]: ' "$prompt_text" "$default_val" >&2
-    else
-      printf '%s: ' "$prompt_text" >&2
-    fi
-    read -r val || true
-    if [ -z "$val" ]; then
-      echo "$default_val"
-    else
-      echo "$val"
-    fi
-  fi
-}
-
-prompt_confirm() {
-  prompt_text=$1
-  if command -v gum >/dev/null 2>&1; then
-    gum confirm "$prompt_text"
-  else
-    printf '%s [y/N]: ' "$prompt_text" >&2
-    read -r ans || true
-    case "$ans" in
-      [yY]|[yY][eE][sS]) return 0 ;;
-      *) return 1 ;;
-    esac
-  fi
-}
-
-run_editor_cli() {
-  subcmd=$1
-  shift
-  commit_flag=""
-  if prompt_confirm "Commit to source file?"; then
-    commit_flag="--commit"
-  fi
-  cd "$ROOT"
-  if [ -n "$commit_flag" ]; then
-    exec "$CABAL" run exe:h-kernel-editor-cli -- "$subcmd" --commit "$@"
-  else
-    exec "$CABAL" run exe:h-kernel-editor-cli -- "$subcmd" "$@"
   fi
 }
 
 run_interactive_menu() {
   dir=$(get_data_dir || true)
-  if [ -n "$dir" ]; then
-    printf 'Ledger Data Directory: %s\n\n' "$dir" >&2
-  else
-    printf 'Ledger Data Directory: (not set)\n\n' >&2
-  fi
+  if [ -n "$dir" ]; then printf 'Ledger Data Directory: %s\n\n' "$dir" >&2
+  else printf 'Ledger Data Directory: (not set)\n\n' >&2; fi
 
   choice=$(prompt_choice "Select Operation:" \
-    "Report" \
-    "Actual add / transfer" \
-    "Actual multi-posting" \
-    "Actual reverse" \
-    "Account declaration" \
-    "Plan operations" \
-    "Budget movement" \
-    "Issue operations" \
-    "Edit source" \
-    "Check" \
-    "Exit")
+    "Report" "Actual add / transfer" "Actual multi-posting" "Actual reverse" \
+    "Account declaration" "Plan operations" "Budget movement" "Issue operations" "Check" "Exit")
 
   case "$choice" in
-    "Report")
-      [ -n "$dir" ] && export HKERNEL_LEDGER_DATA_DIR="$dir"
-      exec "$REPORT"
-      ;;
-    "Actual add / transfer")
-      data_dir=$(require_data_dir)
-      cd "$ROOT"
-      exec "$CABAL" run exe:h-kernel-editor-tui -- "$data_dir/actual.journal"
-      ;;
-    "Actual multi-posting")
-      data_dir=$(require_data_dir)
-      date=$(prompt_input "Date (YYYY-MM-DD)" "$(date +%Y-%m-%d)")
-      desc=$(prompt_input "Description")
-      printf 'Enter postings as triplets (Account Quantity Commodity), e.g. "Expenses:Food 1000 JPY". Enter empty line when done.\n' >&2
-      postings=""
-      while true; do
-        p=$(prompt_input "Posting (Account Quantity Commodity)")
-        [ -z "$p" ] && break
-        postings="$postings $p"
-      done
-      # shellcheck disable=SC2086
-      run_editor_cli append "$data_dir/actual.journal" "$date" "$desc" $postings
-      ;;
-    "Actual reverse")
-      data_dir=$(require_data_dir)
-      rev_id=$(prompt_input "New Reversal Event ID")
-      tgt_id=$(prompt_input "Target Event ID to reverse")
-      date=$(prompt_input "Date (YYYY-MM-DD)" "$(date +%Y-%m-%d)")
-      desc=$(prompt_input "Description")
-      run_editor_cli reverse "$data_dir/actual.journal" "$rev_id" "$tgt_id" "$date" "$desc"
-      ;;
-    "Account declaration")
-      data_dir=$(require_data_dir)
-      acct=$(prompt_input "Account Name (e.g. Assets:Bank)")
-      type=$(prompt_input "Account Type (asset/liability/equity/income/expense/budget)")
-      comm=$(prompt_input "Default Commodity (optional, press Enter to skip)")
-      if [ -n "$comm" ]; then
-        run_editor_cli account "$data_dir/actual.journal" "$acct" "$type" "$comm"
-      else
-        run_editor_cli account "$data_dir/actual.journal" "$acct" "$type"
-      fi
-      ;;
-    "Plan operations")
-      data_dir=$(require_data_dir)
-      sub=$(prompt_choice "Select Plan Operation:" "plan add" "plan finish" "Cancel")
-      case "$sub" in
-        "plan add")
-          date=$(prompt_input "Date (YYYY-MM-DD)" "$(date +%Y-%m-%d)")
-          desc=$(prompt_input "Description")
-          plan_id=$(prompt_input "Plan ID (optional)")
-          series=$(prompt_input "Series (optional)")
-          printf 'Enter postings as triplets (Account Quantity Commodity), e.g. "Expenses:Food 1000 JPY". Enter empty line when done.\n' >&2
-          pargs=""
-          while true; do
-            p=$(prompt_input "Posting (Account Quantity Commodity)")
-            [ -z "$p" ] && break
-            pargs="$pargs --posting $p"
-          done
-          optargs="--date $date --description $desc $pargs"
-          [ -n "$plan_id" ] && optargs="$optargs --id $plan_id"
-          [ -n "$series" ] && optargs="$optargs --series $series"
-          # shellcheck disable=SC2086
-          run_editor_cli "plan add" "$data_dir/plan.journal" "$data_dir/actual.journal" $optargs
-          ;;
-        "plan finish")
-          pid=$(prompt_input "Plan ID")
-          date=$(prompt_input "Actual Date (YYYY-MM-DD)" "$(date +%Y-%m-%d)")
-          amt=$(prompt_input "Actual Amount (optional)")
-          optargs="--id $pid --actual-date $date"
-          [ -n "$amt" ] && optargs="$optargs --actual-amount $amt"
-          # shellcheck disable=SC2086
-          run_editor_cli "plan finish" "$data_dir/plan.journal" "$data_dir/actual.journal" $optargs
-          ;;
-        *)
-          exit 0
-          ;;
-      esac
-      ;;
-    "Budget movement")
-      data_dir=$(require_data_dir)
-      date=$(prompt_input "Date (YYYY-MM-DD)" "$(date +%Y-%m-%d)")
-      memo=$(prompt_input "Memo")
-      from=$(prompt_input "From Account")
-      to=$(prompt_input "To Account")
-      qty=$(prompt_input "Quantity")
-      comm=$(prompt_input "Commodity")
-      run_editor_cli budget "$data_dir/budget_alloc.tsv" "$date" "$memo" "$from" "$to" "$qty" "$comm"
-      ;;
-    "Issue operations")
-      data_dir=$(require_data_dir)
-      iid=$(prompt_input "Issue ID")
-      st=$(prompt_input "Status (open/resolved)")
-      date=$(prompt_input "Date (YYYY-MM-DD)" "$(date +%Y-%m-%d)")
-      cat=$(prompt_input "Category")
-      title=$(prompt_input "Title")
-      qty=$(prompt_input "Quantity (- if none)" "-")
-      comm=$(prompt_input "Commodity (- if none)" "-")
-      det=$(prompt_input "Details")
-      run_editor_cli issue "$data_dir/issues.tsv" "$iid" "$st" "$date" "$cat" "$title" "$qty" "$comm" "$det"
-      ;;
-    "Edit source")
-      data_dir=$(require_data_dir)
-      file=$(prompt_choice "Select file to edit:" \
-        "$data_dir/actual.journal" \
-        "$data_dir/plan.journal" \
-        "$data_dir/budget_alloc.tsv" \
-        "$data_dir/issues.tsv" \
-        "$data_dir/accounts.tsv" \
-        "Cancel")
-      if [ -n "$file" ] && [ "$file" != "Cancel" ]; then
-        ${EDITOR:-vi} "$file"
-      fi
-      ;;
-    "Check")
-      cd "$ROOT"
-      "$CABAL" build all
-      "$CABAL" test all
-      exec "$CABAL" run exe:repository-audit
-      ;;
-    "Exit"|*)
-      exit 0
-      ;;
+    "Report") [ -n "$dir" ] && export HKERNEL_LEDGER_DATA_DIR="$dir"; exec "$REPORT" ;;
+    "Actual add / transfer") data_dir=$(require_data_dir); cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-tui -- "$data_dir/actual.journal" ;;
+    "Actual multi-posting") printf 'Usage: tools/hk actual-multi ARGS...\n' >&2 ;;
+    "Actual reverse") printf 'Usage: tools/hk actual-reverse ARGS...\n' >&2 ;;
+    "Account declaration") printf 'Usage: tools/hk account ARGS...\n' >&2 ;;
+    "Plan operations") printf 'Usage: tools/hk plan ARGS...\n' >&2 ;;
+    "Budget movement") printf 'Usage: tools/hk budget ARGS...\n' >&2 ;;
+    "Issue operations") printf 'Usage: tools/hk issue ARGS...\n' >&2 ;;
+    "Check") cd "$ROOT"; "$CABAL" build all; "$CABAL" test all; exec "$CABAL" run exe:repository-audit ;;
+    "Exit"|*) exit 0 ;;
   esac
 }
 
@@ -324,69 +111,22 @@ command=$1
 shift
 
 case "$command" in
-  report)
-    dir=$(get_data_dir || true)
-    [ -n "$dir" ] && export HKERNEL_LEDGER_DATA_DIR="$dir"
-    exec "$REPORT" "$@"
-    ;;
+  report) dir=$(get_data_dir || true); [ -n "$dir" ] && export HKERNEL_LEDGER_DATA_DIR="$dir"; exec "$REPORT" "$@" ;;
   actual-add)
-    if [ "$#" -eq 1 ]; then
-      journal=$1
-    elif [ "$#" -eq 0 ]; then
-      journal=$(require_data_dir)/actual.journal
-    else
-      printf 'tools/hk actual-add accepts at most one ACTUAL_JOURNAL path\n' >&2
-      exit 2
-    fi
-    cd "$ROOT"
-    exec "$CABAL" run exe:h-kernel-editor-tui -- "$journal"
-    ;;
-  actual-multi)
-    cd "$ROOT"
-    exec "$CABAL" run exe:h-kernel-editor-cli -- append "$@"
-    ;;
-  actual-reverse)
-    cd "$ROOT"
-    exec "$CABAL" run exe:h-kernel-editor-cli -- reverse "$@"
-    ;;
-  account)
-    cd "$ROOT"
-    exec "$CABAL" run exe:h-kernel-editor-cli -- account "$@"
-    ;;
-  plan)
-    cd "$ROOT"
-    exec "$CABAL" run exe:h-kernel-editor-cli -- plan "$@"
-    ;;
-  budget)
-    cd "$ROOT"
-    exec "$CABAL" run exe:h-kernel-editor-cli -- budget "$@"
-    ;;
-  issue)
-    cd "$ROOT"
-    exec "$CABAL" run exe:h-kernel-editor-cli -- issue "$@"
-    ;;
-  edit)
-    cd "$ROOT"
-    exec "$CABAL" run exe:h-kernel-editor-cli -- "$@"
-    ;;
+    if [ "$#" -eq 1 ]; then journal=$1
+    elif [ "$#" -eq 0 ]; then journal=$(require_data_dir)/actual.journal
+    else printf 'tools/hk actual-add accepts at most one ACTUAL_JOURNAL path\n' >&2; exit 2; fi
+    cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-tui -- "$journal" ;;
+  actual-multi) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- append "$@" ;;
+  actual-reverse) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- reverse "$@" ;;
+  account) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- account "$@" ;;
+  plan) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- plan "$@" ;;
+  budget) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- budget "$@" ;;
+  issue) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- issue "$@" ;;
+  edit) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- "$@" ;;
   check)
-    if [ "$#" -ne 0 ]; then
-      printf 'tools/hk check does not accept arguments\n' >&2
-      exit 2
-    fi
-    cd "$ROOT"
-    "$CABAL" build all
-    "$CABAL" test all
-    exec "$CABAL" run exe:repository-audit
-    ;;
-  help|-h|--help)
-    usage
-    ;;
-  *)
-    printf 'unknown tools/hk command: %s\n\n' "$command" >&2
-    usage >&2
-    exit 2
-    ;;
+    [ "$#" -eq 0 ] || { printf 'tools/hk check does not accept arguments\n' >&2; exit 2; }
+    cd "$ROOT"; "$CABAL" build all; "$CABAL" test all; exec "$CABAL" run exe:repository-audit ;;
+  help|-h|--help) usage ;;
+  *) printf 'unknown tools/hk command: %s\n\n' "$command" >&2; usage >&2; exit 2 ;;
 esac
-
-
