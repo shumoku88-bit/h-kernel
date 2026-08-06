@@ -27,7 +27,10 @@ main = do
         , ("budget extra argument is rejected", testBudgetExtraArgument)
         , ("budget memo named --commit remains data", testBudgetCommitTextIsData)
         , ("commit is admitted after the leaf command", testCommandLocalCommit)
-        , ("reverse admits new and target identities", testReverseIdentityAdmission)
+        , ("reverse admits canonical new ID + legacy target ID", testReverseCanonicalNewAndLegacyTarget)
+        , ("reverse admits canonical new ID + plan-derived target ID", testReverseCanonicalNewAndPlanDerivedTarget)
+        , ("reverse rejects non-canonical new IDs", testReverseInvalidNewIds)
+        , ("reverse rejects malformed target IDs", testReverseMalformedTargetId)
         , ("Issue amount pair rejects one-sided omission", testIssueAmountPair)
         , ("Issue blank amount and details are preserved", testIssueBlankAmount)
         , ("Plan add requires explicit date", testPlanAddDateRequired)
@@ -40,6 +43,7 @@ main = do
         , ("Plan finish rejects zero actual amount", testPlanFinishZeroAmount)
         , ("Plan add admits command-local commit", testPlanAddCommit)
         , ("usage text contains --event-id with canonical format", testUsageTextContainsEventId)
+        , ("usage text for reverse command contains <evt-uuid-v4> and <target-actual-id>", testUsageTextReverseCommand)
         ]
   mapM_ print results
   if all snd results
@@ -149,29 +153,82 @@ testCommandLocalCommit = case parseEditorCommand
   [ "reverse"
   , "--commit"
   , "actual.journal"
-  , "event-124"
+  , "evt-550e8400-e29b-41d4-a716-446655440200"
   , "event-123"
   , "2026-08-05"
   , "refund"
   , "--commit"
   ] of
     Right (CommitRequested, ReverseCmd _ intent) ->
-      reverseDescription intent == "refund --commit"
+      actualTransactionIdText (reverseEventId intent) == "evt-550e8400-e29b-41d4-a716-446655440200"
+        && actualTransactionIdText (reverseTargetId intent) == "event-123"
+        && reverseDescription intent == "refund --commit"
     _ -> False
 
-testReverseIdentityAdmission :: Bool
-testReverseIdentityAdmission = case parseEditorCommand
+testReverseCanonicalNewAndLegacyTarget :: Bool
+testReverseCanonicalNewAndLegacyTarget = case parseEditorCommand
   [ "reverse"
   , "actual.journal"
-  , "event-124"
+  , "evt-550e8400-e29b-41d4-a716-446655440200"
   , "event-123"
   , "2026-08-05"
   , "refund"
   ] of
     Right (PreviewOnly, ReverseCmd "actual.journal" intent) ->
-      actualTransactionIdText (reverseEventId intent) == "event-124"
+      actualTransactionIdText (reverseEventId intent) == "evt-550e8400-e29b-41d4-a716-446655440200"
         && actualTransactionIdText (reverseTargetId intent) == "event-123"
     _ -> False
+
+testReverseCanonicalNewAndPlanDerivedTarget :: Bool
+testReverseCanonicalNewAndPlanDerivedTarget = case parseEditorCommand
+  [ "reverse"
+  , "actual.journal"
+  , "evt-550e8400-e29b-41d4-a716-446655440200"
+  , "plan-completion-plan-alpha"
+  , "2026-08-05"
+  , "reverse plan completion"
+  ] of
+    Right (PreviewOnly, ReverseCmd "actual.journal" intent) ->
+      actualTransactionIdText (reverseEventId intent) == "evt-550e8400-e29b-41d4-a716-446655440200"
+        && actualTransactionIdText (reverseTargetId intent) == "plan-completion-plan-alpha"
+    _ -> False
+
+testReverseInvalidNewIds :: Bool
+testReverseInvalidNewIds =
+  all isRejected
+    [ "banana"
+    , "event-124"
+    , "evt-synthetic-reversal"
+    , "missing-prefix"
+    , "evt-550E8400-E29B-41D4-A716-446655440200"
+    , "evt-550e8400-e29b-11d4-a716-446655440200"
+    , "evt-550e8400-e29b-31d4-a716-446655440200"
+    , "evt-550e8400-e29b-51d4-a716-446655440200"
+    , "evt-00000000-0000-0000-0000-000000000000"
+    , "evt-550e8400-e29b-41d4-c716-446655440200"
+    , "evt-550e8400-e29b-41d4-a716-446655440200 extra"
+    , " evt-550e8400-e29b-41d4-a716-446655440200"
+    ]
+  where
+    isRejected newIdText = parseEditorCommand
+      [ "reverse"
+      , "actual.journal"
+      , newIdText
+      , "event-123"
+      , "2026-08-05"
+      , "refund"
+      ] == Left CliInvalidActualTransactionId
+
+testReverseMalformedTargetId :: Bool
+testReverseMalformedTargetId =
+  parseEditorCommand
+    [ "reverse"
+    , "actual.journal"
+    , "evt-550e8400-e29b-41d4-a716-446655440200"
+    , "target with spaces"
+    , "2026-08-05"
+    , "refund"
+    ] == Left CliInvalidActualTransactionId
 
 testIssueAmountPair :: Bool
 testIssueAmountPair =
@@ -368,3 +425,7 @@ testUsageTextContainsEventId :: Bool
 testUsageTextContainsEventId =
   "--event-id EVT-UUID-V4" `elem` lines usageText
     || any (\l -> "--event-id" `elem` words l && "EVT-UUID-V4" `elem` words l) (lines usageText)
+
+testUsageTextReverseCommand :: Bool
+testUsageTextReverseCommand =
+  any (\l -> "reverse" `elem` words l && "<evt-uuid-v4>" `elem` words l && "<target-actual-id>" `elem` words l) (lines usageText)

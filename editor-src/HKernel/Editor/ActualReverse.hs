@@ -26,6 +26,10 @@ import HKernel.Actual.Journal
   , reversedTransactionId
   , reversalTransactionId
   )
+import HKernel.Editor.ActualIdentity
+  ( actualIdentityIsAlreadyUsed
+  , admitActualEventIdentityText
+  )
 import HKernel.Editor.SourceAppend (appendSourceBlock)
 import HKernel.Ledger
   ( Posting
@@ -65,6 +69,7 @@ data ActualReverseError
   = TargetNotFound ActualTransactionId
   | ReversalIdAlreadyExists ActualTransactionId
   | TargetAlreadyReversed ActualTransactionId ActualTransactionId
+  | InvalidReversalEventIdentity
   | SourceParseError (NonEmpty ActualJournalError)
   | CandidateSourceParseError (NonEmpty ActualJournalError)
   | ValidationError TransactionError
@@ -81,12 +86,21 @@ prepareActualReverse
   -> Either (NonEmpty ActualReverseError) ActualReversePreview
 prepareActualReverse existingSource intent = do
   journal <- parseSource existingSource
-  ensureNewIdentity (reverseEventId intent) journal
+  canonicalReversalId <-
+    first
+      (const (pure InvalidReversalEventIdentity))
+      (admitActualEventIdentityText
+        (actualTransactionIdText (reverseEventId intent)))
+  ensureNewIdentity canonicalReversalId journal
   targetTxn <- findTargetTransaction (reverseTargetId intent) journal
   ensureTargetNotReversed (reverseTargetId intent) journal
   newTxn <- reverseTransaction intent targetTxn
 
-  let preview = buildPreview existingSource newTxn intent
+  let canonicalIntent =
+        intent
+          { reverseEventId = canonicalReversalId
+          }
+      preview = buildPreview existingSource newTxn canonicalIntent
 
   _ <- first (pure . CandidateSourceParseError)
     (parseActualJournal (candidateCompleteSource preview))
@@ -99,12 +113,11 @@ ensureNewIdentity
   :: ActualTransactionId
   -> ActualJournal
   -> Either (NonEmpty ActualReverseError) ()
-ensureNewIdentity newId journal =
-  case Foldable.find
-    ((== newId) . identifiedActualId)
-    (actualJournalIdentifiedTransactions journal) of
-      Nothing -> Right ()
-      Just _ -> Left (ReversalIdAlreadyExists newId NonEmpty.:| [])
+ensureNewIdentity newId journal
+  | actualIdentityIsAlreadyUsed journal newId =
+      Left (ReversalIdAlreadyExists newId NonEmpty.:| [])
+  | otherwise =
+      Right ()
 
 findTargetTransaction
   :: ActualTransactionId

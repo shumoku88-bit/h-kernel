@@ -355,14 +355,14 @@ Transaction browser における各行の Reverse 操作に対する適格性（
 
 本決定後の実装順序を以下の通り確定する。
 
-1. **I1. ordinary Actual add durable identity creation** (完了: PR #42)
-2. **I2a. Plan finish durable event identity adoption** (現在の有限slice)
-3. **I2b. Actual reverse canonical new-event identity admission** (次の一つの有限slice)
-4. **I3. source-aligned no-identity adoption engine**
+1. **I1. ordinary Actual add durable identity creation** (PR #42)
+2. **I2a. Plan finish durable event identity adoption** (PR #43)
+3. **I2b. Actual reverse canonical new-event identity admission** (現在の有限slice)
+4. **I3. source-aligned no-identity adoption engine** (次の一つの有限slice)
 5. **I4. read-only browser adoption entrypoint**
 6. **I5. Actual reverse TUI**
 
-次の一つの有限sliceは、**Actual reverse canonical new-event identity admission** (I2b) とする。
+現在の有限sliceは、**Actual reverse canonical new-event identity admission** (I2b) とする。
 Adoption のエンジン実装や Reverse TUI を無関係に混在させてはならない。
 
 ## 19. Completion condition

@@ -9,9 +9,9 @@ Owner: Actual reversal identity and provenance
 Actual reverseのcanonical source contractは、元Transactionを変更または削除せず、Actual Journalへ一つの新しいTransactionを追加する形とする。
 
 1. 元Transactionの全Postingを、順序とCommodityを保ったままexactに反転する。
-2. reversal Transactionは新しいdurable `event-id`を持つ。
-3. reversal Transactionは`reverses` metadataでtargetのdurable Actual identityを明示する。
-4. unknown target、self-reference、duplicate reversal identityを拒否する。
+2. reversal Transactionは新しいdurable `event-id` (canonical `evt-UUID-v4` 形式) を持つ。
+3. reversal Transactionは`reverses` metadataでtargetのActual identity (legacy explicit, canonical explicit, または plan-derived runtime) を明示する。
+4. non-canonical new identity、unknown target、self-reference、duplicate reversal identityを拒否する。
 5. 同じtargetを直接二回reverseしない。
 6. reversal Transaction自身を、別の新しいTransactionでreverseすることは許可する。
 7. description、amount、date、Account shapeからtarget relationを推測しない。
@@ -20,7 +20,7 @@ Actual reverseのcanonical source contractは、元Transactionを変更または
 
 ```journal
 YYYY-MM-DD description
-  ; event-id: NEW-REVERSAL-ID
+  ; event-id: evt-550e8400-e29b-41d4-a716-446655440200
   ; reverses: TARGET-ACTUAL-ID
   account:a  INVERSE-AMOUNT COMMODITY
   account:b  INVERSE-AMOUNT COMMODITY
@@ -35,7 +35,7 @@ reversalは「反対符号の似た取引」ではなく、「どのActual fact�
 このrelationにより、source admissionは次を検証できる。
 
 - target identityが存在する
-- reversal identityが一意である
+- reversal identityが一意かつcanonical `evt-UUID-v4` 形式である
 - targetとreversalが同一identityではない
 - direct duplicate reversalがない
 - reverse-of-reverseが別のexplicit edgeとして表現される
@@ -47,11 +47,12 @@ reversalは「反対符号の似た取引」ではなく、「どのActual fact�
 
 `HKernel.Editor.ActualReverse`はこのcontractを実装している。
 
-- explicit new Actual identityを要求する
-- explicit target Actual identityを要求する
-- target not foundを拒否する
-- duplicate reversal identityを拒否する
-- direct duplicate reversalを拒否する
+- canonical new Actual event identity (`evt-UUID-v4`) を要求・検証する
+- explicit target Actual identity (legacy explicit, canonical explicit, または plan-derived runtime) を要求する
+- non-canonical new identityを拒否する (`InvalidReversalEventIdentity`)
+- target not foundを拒否する (`TargetNotFound`)
+- duplicate reversal identityを拒否する (`ReversalIdAlreadyExists`)
+- direct duplicate reversalを拒否する (`TargetAlreadyReversed`)
 - inverse postingsを生成する
 - candidate complete sourceをstrict parse-backする
 

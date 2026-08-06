@@ -88,9 +88,9 @@ All other operations, including `OperationActualReverse`, remain typed `Operatio
 3. TUI operation source snapshot lifecycle (**PR #40**)
 4. Durable identity creation / adoption decision (**PR #41**)
 5. Ordinary Actual add durable identity creation (**PR #42**)
-6. Plan finish durable event identity adoption (**Current slice**)
-7. Actual reverse canonical new-event identity admission (**Next slice**)
-8. Source-aligned no-identity adoption engine
+6. Plan finish durable event identity adoption (**PR #43**)
+7. Actual reverse canonical new-event identity admission (**Current slice**)
+8. Source-aligned no-identity adoption engine (**Next slice**)
 9. Read-only browser identity adoption entrypoint
 10. Actual reverse TUI
 11. Actual multi-posting TUI
