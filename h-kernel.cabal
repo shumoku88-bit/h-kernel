@@ -97,6 +97,7 @@ library h-kernel-editor
                     , HKernel.Editor.PlanLifecycle
                     , HKernel.Editor.TransactionBlock
                     , HKernel.Editor.TUI.ActualAdd
+                    , HKernel.Editor.TUI.OperationHub
     other-modules:    HKernel.Editor.SourceAppend
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
@@ -716,3 +717,15 @@ test-suite h-kernel-editor-tui-actual-add-test
                     , text
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-editor-tui-operation-hub-test
+    type:             exitcode-stdio-1.0
+    main-is:          EditorTUIOperationHubSpec.hs
+    hs-source-dirs:   tests
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-editor
+                    , text
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+

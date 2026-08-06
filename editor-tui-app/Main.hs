@@ -44,6 +44,18 @@ import HKernel.Editor.TUI.ActualAdd
   , emptyActualAddInput
   , transitionActualAdd
   )
+import HKernel.Editor.TUI.OperationHub
+  ( DailyOperation(..)
+  , OperationAvailability(..)
+  , OperationHubAction(..)
+  , OperationHubState(..)
+  , allDailyOperations
+  , disabledReasonText
+  , initialOperationHubState
+  , operationAvailability
+  , operationTitle
+  , transitionOperationHub
+  )
 import HKernel.Journal (journalAccountRegistry)
 
 
@@ -54,6 +66,7 @@ data Name
   | ToAccountField
   | AmountField
   | AccountList
+  | HubOperationList
   deriving (Eq, Ord, Show)
 
 addDateTextL :: Lens' ActualAddInput Text
@@ -80,7 +93,10 @@ addAmountTextL f input =
   (\value -> input { addAmountText = value }) <$> f (addAmountText input)
 
 data UIState event
-  = InputForm (Form ActualAddInput event Name)
+  = ShowOperationHub
+      OperationHubState
+      (L.List Name DailyOperation)
+  | InputForm (Form ActualAddInput event Name)
   | SelectAccount
       AccountSelectionTarget
       (L.List Name Text)
@@ -134,7 +150,22 @@ zoomList f (AppWrapper context (SelectAccount target accountList form)) =
     <$> f accountList
 zoomList _ wrapper = pure wrapper
 
+zoomHubList :: Traversal' AppWrapper (L.List Name DailyOperation)
+zoomHubList f (AppWrapper context (ShowOperationHub hubState hubList)) =
+  (\updated -> AppWrapper context (ShowOperationHub hubState updated))
+    <$> f hubList
+zoomHubList _ wrapper = pure wrapper
+
 drawUI :: AppWrapper -> [Widget Name]
+drawUI (AppWrapper _ (ShowOperationHub _ hubList)) =
+  [ center
+      (borderWithLabel (str "h-kernel Daily Operations")
+        (hLimit 64
+          (vLimit 18
+            (L.renderList renderOperation True hubList
+              <=> str " "
+              <=> str "[Enter] Select | [Up/Down] Navigate | [Esc/Q] Quit"))))
+  ]
 drawUI (AppWrapper _ (InputForm form)) =
   [ center
       (borderWithLabel (str "Actual Add Preview")
@@ -142,7 +173,7 @@ drawUI (AppWrapper _ (InputForm form)) =
           (vBox
             [ renderForm form
             , str " "
-            , str "[Esc] Quit | [Enter] Preview | [Ctrl-F] From | [Ctrl-T] To"
+            , str "[Esc] Back to Hub | [Enter] Preview | [Ctrl-F] From | [Ctrl-T] To"
             ])))
   ]
 drawUI (AppWrapper _ (SelectAccount target accountList _)) =
@@ -179,8 +210,21 @@ drawUI (AppWrapper _ (ShowWriteOutcome outcome _)) =
         (padAll 1
           (renderWriteOutcome outcome
             <=> str " "
-            <=> str "[Esc/Q] Quit")))
+            <=> str "[Esc/Q] Back to Hub")))
   ]
+
+renderOperation :: Bool -> DailyOperation -> Widget Name
+renderOperation selected op =
+  let title = operationTitle op
+      avail = operationAvailability op
+      badge = case avail of
+        OperationEnabled -> withAttr (attrName "success") (txt "[Enabled]")
+        OperationDisabled reason ->
+          withAttr (attrName "disabled") (txt ("[" <> disabledReasonText reason <> "]"))
+      content = badge <+> txt " " <+> txt title
+  in if selected
+       then withAttr L.listSelectedAttr content
+       else content
 
 selectionLabel :: AccountSelectionTarget -> String
 selectionLabel SelectFromAccount = "Select From Account"
@@ -256,6 +300,8 @@ appEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 appEvent event = do
   AppWrapper context state <- get
   case state of
+    ShowOperationHub hubState hubList ->
+      handleHubEvent context hubState hubList event
     InputForm form -> handleInputEvent context form event
     SelectAccount target accountList form ->
       handleAccountSelection context target accountList form event
@@ -264,7 +310,52 @@ appEvent event = do
     ShowConfirmation block form ->
       handleConfirmationEvent context block form event
     ShowWriteOutcome outcome form ->
-      handleWriteOutcomeEvent outcome form event
+      handleWriteOutcomeEvent context outcome form event
+
+handleHubEvent
+  :: AppContext
+  -> OperationHubState
+  -> L.List Name DailyOperation
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleHubEvent context hubState hubList event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
+  VtyEvent (V.EvKey V.KEnter []) ->
+    case L.listSelectedElement hubList of
+      Nothing -> pure ()
+      Just (_, selectedOp) ->
+        case operationAvailability selectedOp of
+          OperationEnabled ->
+            case selectedOp of
+              OperationActualAdd ->
+                put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
+              _ -> pure ()
+          OperationDisabled _ -> pure ()
+  VtyEvent (V.EvKey V.KUp []) -> moveHub HubMoveUp
+  VtyEvent (V.EvKey (V.KChar 'k') []) -> moveHub HubMoveUp
+  VtyEvent (V.EvKey V.KDown []) -> moveHub HubMoveDown
+  VtyEvent (V.EvKey (V.KChar 'j') []) -> moveHub HubMoveDown
+  VtyEvent vtyEvent ->
+    zoom zoomHubList (L.handleListEventVi L.handleListEvent vtyEvent)
+  _ -> pure ()
+  where
+    moveHub :: OperationHubAction -> EventM Name AppWrapper ()
+    moveHub action = do
+      let nextState = transitionOperationHub action hubState
+          nextList = L.listMoveTo (hubSelectedIndex nextState) hubList
+      put (AppWrapper context (ShowOperationHub nextState nextList))
+
+returnToHub :: AppContext -> EventM Name AppWrapper ()
+returnToHub context =
+  put (AppWrapper context mkInitialHubUIState)
+
+mkInitialHubUIState :: UIState AppEvent
+mkInitialHubUIState =
+  ShowOperationHub
+    initialOperationHubState
+    (L.list HubOperationList (Vec.fromList allDailyOperations) 1)
 
 handleInputEvent
   :: AppContext
@@ -272,7 +363,7 @@ handleInputEvent
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
 handleInputEvent context form event = case event of
-  VtyEvent (V.EvKey V.KEsc []) -> halt
+  VtyEvent (V.EvKey V.KEsc []) -> returnToHub context
   VtyEvent (V.EvKey V.KEnter []) -> do
     let pureState =
           transitionActualAdd
@@ -432,14 +523,15 @@ acceptConfirmation context block form = do
     _ -> put (AppWrapper context (ShowConfirmation block form))
 
 handleWriteOutcomeEvent
-  :: ActualAddWriteOutcome
+  :: AppContext
+  -> ActualAddWriteOutcome
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleWriteOutcomeEvent _ _ event = case event of
-  VtyEvent (V.EvKey V.KEsc []) -> halt
-  VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
-  VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
+handleWriteOutcomeEvent context _ _ event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> returnToHub context
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> returnToHub context
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> returnToHub context
   _ -> pure ()
 
 app :: App AppWrapper AppEvent Name
@@ -454,6 +546,7 @@ app = App
         , (attrName "error", fg V.red)
         , (attrName "success", fg V.green)
         , (attrName "warning", fg V.yellow)
+        , (attrName "disabled", fg V.yellow)
         ])
   }
 
@@ -474,8 +567,7 @@ main = do
               (journalAccountRegistry (actualJournalValue journal))
           accounts = map (accountName . declaredAccount) declarations
           context = AppContext accounts journalFile source
-          initialState =
-            AppWrapper context (InputForm (mkForm emptyActualAddInput))
+          initialState = AppWrapper context mkInitialHubUIState
           buildVty = mkVty V.defaultConfig
       initialVty <- buildVty
       _ <- customMain initialVty buildVty Nothing app initialState

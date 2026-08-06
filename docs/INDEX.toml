@@ -126,3 +126,8 @@ role = "observation"
 [[documents]]
 path = "docs/SOURCE_DATA_MIGRATION_PLAN.md"
 role = "architecture"
+
+[[documents]]
+path = "docs/TUI_OPERATION_HUB_PLAN_001.md"
+role = "architecture"
+
