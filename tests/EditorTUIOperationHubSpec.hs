@@ -14,7 +14,7 @@ main = do
         , ("initial selection is Actual add", testInitialSelection)
         , ("navigation moves selection", testNavigation)
         , ("navigation respects boundaries", testNavigationBoundaries)
-        , ("Actual add is enabled", testActualAddEnabled)
+        , ("Actual add and Actual browse are enabled", testEnabledOperations)
         , ("disabled operations have explicit typed reasons", testDisabledOperations)
         , ("hub state contains no private source or path", testNoPrivateDataInHubState)
         ]
@@ -25,6 +25,7 @@ testDeterministicOrder :: Bool
 testDeterministicOrder =
   allDailyOperations ==
     [ OperationActualAdd
+    , OperationActualBrowse
     , OperationActualMultiPosting
     , OperationActualReverse
     , OperationReports
@@ -45,9 +46,9 @@ testNavigation =
       state1 = transitionOperationHub HubMoveDown state0
       state2 = transitionOperationHub HubMoveDown state1
       back1  = transitionOperationHub HubMoveUp state2
-  in selectedOperation state1 == OperationActualMultiPosting
-      && selectedOperation state2 == OperationActualReverse
-      && selectedOperation back1 == OperationActualMultiPosting
+  in selectedOperation state1 == OperationActualBrowse
+      && selectedOperation state2 == OperationActualMultiPosting
+      && selectedOperation back1 == OperationActualBrowse
 
 testNavigationBoundaries :: Bool
 testNavigationBoundaries =
@@ -58,9 +59,10 @@ testNavigationBoundaries =
       && selectedOperation maxMove == OperationIssue
       && atBottomPlus == maxMove
 
-testActualAddEnabled :: Bool
-testActualAddEnabled =
+testEnabledOperations :: Bool
+testEnabledOperations =
   operationAvailability OperationActualAdd == OperationEnabled
+    && operationAvailability OperationActualBrowse == OperationEnabled
 
 testDisabledOperations :: Bool
 testDisabledOperations =

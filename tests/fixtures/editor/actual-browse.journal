@@ -1,0 +1,43 @@
+account assets:cash
+    type: asset
+    commodity: JPY
+
+account expenses:food
+    type: expense
+    commodity: JPY
+
+account expenses:rent
+    type: expense
+    commodity: JPY
+
+account income:salary
+    type: income
+    commodity: JPY
+
+2026-08-01 Salary
+  assets:cash  300000 JPY
+  income:salary  -300000 JPY
+
+2026-08-02 Rent
+  ; event-id: evt-20260802-rent
+  expenses:rent  100000 JPY
+  assets:cash  -100000 JPY
+
+2026-08-03 Groceries
+  expenses:food  2000 JPY
+  assets:cash  -2000 JPY
+
+2026-08-03 Groceries
+  expenses:food  2000 JPY
+  assets:cash  -2000 JPY
+
+2026-08-04 Planned Lunch
+  ; plan-id: plan-lunch-001
+  expenses:food  1500 JPY
+  assets:cash  -1500 JPY
+
+2026-08-05 Reverse Rent
+  ; event-id: evt-20260805-reversal
+  ; reverses: evt-20260802-rent
+  assets:cash  100000 JPY
+  expenses:rent  -100000 JPY

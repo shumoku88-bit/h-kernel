@@ -23,6 +23,8 @@ module HKernel.Actual.Journal
   , actualJournalIdentifiedTransactions
   , actualJournalCompletionDeclarations
   , actualJournalReversalDeclarations
+  , actualJournalRecords
+  , ActualTransactionRecord(..)
   , ActualReversalDeclaration
   , reversalTransactionId
   , reversedTransactionId
@@ -69,6 +71,14 @@ data ActualJournal = ActualJournal
   , actualJournalIdentifiedTransactions :: [IdentifiedActualTransaction]
   , actualJournalCompletionDeclarations :: [PlanCompletionDeclaration]
   , actualJournalReversalDeclarations   :: [ActualReversalDeclaration]
+  , actualJournalRecords                :: [ActualTransactionRecord]
+  } deriving (Eq, Show)
+
+-- | One source-aligned transaction record with optional durable identity and reversal target.
+data ActualTransactionRecord = ActualTransactionRecord
+  { actualRecordTransaction :: Transaction
+  , actualRecordIdentity    :: Maybe ActualTransactionId
+  , actualRecordReverses    :: Maybe ActualTransactionId
   } deriving (Eq, Show)
 
 -- | One explicit provenance edge from a reversal transaction to its target.
@@ -119,6 +129,7 @@ parseActualJournal input = case parseJournal input of
           , actualJournalIdentifiedTransactions = identifiedTransactions
           , actualJournalCompletionDeclarations = declarations
           , actualJournalReversalDeclarations = reversals
+          , actualJournalRecords = records
           }
     where
       transactions = journalTransactions journal
@@ -131,6 +142,7 @@ parseActualJournal input = case parseJournal input of
         map locatedIdentifiedValue locatedIdentified
       declarations = mapMaybe admissionDeclaration admissions
       reversals = mapMaybe admissionReversal admissions
+      records = map admissionRecord admissions
       allErrors =
         concatMap admissionErrors admissions
           ++ duplicateActualIdErrors locatedIdentified
@@ -154,6 +166,7 @@ data TransactionMetadataAdmission = TransactionMetadataAdmission
   , admissionIdentified  :: Maybe LocatedIdentifiedActual
   , admissionDeclaration :: Maybe PlanCompletionDeclaration
   , admissionReversal    :: Maybe ActualReversalDeclaration
+  , admissionRecord      :: ActualTransactionRecord
   }
 
 -- | Recover transaction blocks using the same top-level shape as the Journal
@@ -234,6 +247,7 @@ admitTransactionMetadata transaction metadata = TransactionMetadataAdmission
   , admissionIdentified = locatedIdentified
   , admissionDeclaration = completionDeclaration
   , admissionReversal = reversalDeclaration
+  , admissionRecord = record
   }
   where
     eventEntries = metadataEntries "event-id" metadata
@@ -291,6 +305,12 @@ admitTransactionMetadata transaction metadata = TransactionMetadataAdmission
                       { reversalTransactionId = reversalId
                       , reversedTransactionId = targetId
                       })
+
+    record = ActualTransactionRecord
+      { actualRecordTransaction = transaction
+      , actualRecordIdentity = fmap snd effectiveEvent
+      , actualRecordReverses = fmap reversedTransactionId reversalDeclaration
+      }
 
 metadataEntries :: Text -> [LocatedMetadata] -> [LocatedMetadata]
 metadataEntries key = filter ((== key) . locatedMetadataKey)

@@ -17,6 +17,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import Data.Time.Format (defaultTimeLocale, formatTime)
 import qualified Data.Vector as Vec
 import System.Environment (getArgs)
 import System.Exit (die)
@@ -44,6 +45,16 @@ import HKernel.Editor.TUI.ActualAdd
   , emptyActualAddInput
   , transitionActualAdd
   )
+import HKernel.Editor.TUI.ActualBrowse
+  ( ActualBrowseAction(..)
+  , ActualBrowseRow(..)
+  , ActualBrowseState(..)
+  , ActualIdentityStatus(..)
+  , browseRows
+  , browseSelectedIndex
+  , initialActualBrowseState
+  , transitionActualBrowse
+  )
 import HKernel.Editor.TUI.OperationHub
   ( DailyOperation(..)
   , OperationAvailability(..)
@@ -57,6 +68,12 @@ import HKernel.Editor.TUI.OperationHub
   , transitionOperationHub
   )
 import HKernel.Journal (journalAccountRegistry)
+import HKernel.Ledger
+  ( transactionDate
+  , transactionDescription
+  , transactionPostings
+  )
+import HKernel.Plan.Completion (actualTransactionIdText)
 
 
 data Name
@@ -67,6 +84,7 @@ data Name
   | AmountField
   | AccountList
   | HubOperationList
+  | BrowseRowList
   deriving (Eq, Ord, Show)
 
 addDateTextL :: Lens' ActualAddInput Text
@@ -96,6 +114,9 @@ data UIState event
   = ShowOperationHub
       OperationHubState
       (L.List Name DailyOperation)
+  | ShowActualBrowse
+      ActualBrowseState
+      (L.List Name ActualBrowseRow)
   | InputForm (Form ActualAddInput event Name)
   | SelectAccount
       AccountSelectionTarget
@@ -156,6 +177,12 @@ zoomHubList f (AppWrapper context (ShowOperationHub hubState hubList)) =
     <$> f hubList
 zoomHubList _ wrapper = pure wrapper
 
+zoomBrowseList :: Traversal' AppWrapper (L.List Name ActualBrowseRow)
+zoomBrowseList f (AppWrapper context (ShowActualBrowse browseState browseList)) =
+  (\updated -> AppWrapper context (ShowActualBrowse browseState updated))
+    <$> f browseList
+zoomBrowseList _ wrapper = pure wrapper
+
 drawUI :: AppWrapper -> [Widget Name]
 drawUI (AppWrapper _ (ShowOperationHub _ hubList)) =
   [ center
@@ -165,6 +192,15 @@ drawUI (AppWrapper _ (ShowOperationHub _ hubList)) =
             (L.renderList renderOperation True hubList
               <=> str " "
               <=> str "[Enter] Select | [Up/Down] Navigate | [Esc/Q] Quit"))))
+  ]
+drawUI (AppWrapper _ (ShowActualBrowse _ browseList)) =
+  [ center
+      (borderWithLabel (str "Actual Transactions (Read-Only)")
+        (hLimit 78
+          (vLimit 20
+            (L.renderList renderBrowseRow True browseList
+              <=> str " "
+              <=> str "[Esc/Q] Back to Hub | [Up/Down] Navigate | [Enter] Select"))))
   ]
 drawUI (AppWrapper _ (InputForm form)) =
   [ center
@@ -222,6 +258,30 @@ renderOperation selected op =
         OperationDisabled reason ->
           withAttr (attrName "disabled") (txt ("[" <> disabledReasonText reason <> "]"))
       content = badge <+> txt " " <+> txt title
+  in if selected
+       then withAttr L.listSelectedAttr content
+       else content
+
+renderBrowseRow :: Bool -> ActualBrowseRow -> Widget Name
+renderBrowseRow selected row =
+  let tx = rowTransaction row
+      dateStr = formatTime defaultTimeLocale "%Y-%m-%d" (transactionDate tx)
+      desc = transactionDescription tx
+      postingsCount = T.pack (show (length (transactionPostings tx))) <> " p."
+      idWidget = case rowIdentityStatus row of
+        ActualHasDurableIdentity actualId ->
+          withAttr (attrName "success") (txt ("[" <> actualTransactionIdText actualId <> "]"))
+        ActualHasNoDurableIdentity ->
+          withAttr (attrName "disabled") (txt "[No ID]")
+      revWidget = case rowReverses row of
+        Just targetId ->
+          withAttr (attrName "warning") (txt (" (reverses: " <> actualTransactionIdText targetId <> ")"))
+        Nothing -> emptyWidget
+      content = txt (T.pack dateStr <> "  ")
+        <+> padRight (Pad 1) (hLimit 22 (txt desc <+> fill ' '))
+        <+> padRight (Pad 1) (txt postingsCount)
+        <+> idWidget
+        <+> revWidget
   in if selected
        then withAttr L.listSelectedAttr content
        else content
@@ -302,6 +362,8 @@ appEvent event = do
   case state of
     ShowOperationHub hubState hubList ->
       handleHubEvent context hubState hubList event
+    ShowActualBrowse browseState browseList ->
+      handleBrowseEvent context browseState browseList event
     InputForm form -> handleInputEvent context form event
     SelectAccount target accountList form ->
       handleAccountSelection context target accountList form event
@@ -331,6 +393,13 @@ handleHubEvent context hubState hubList event = case event of
             case selectedOp of
               OperationActualAdd ->
                 put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
+              OperationActualBrowse ->
+                case parseActualJournal (contextSource context) of
+                  Left _ -> pure ()
+                  Right journal ->
+                    let browseState = initialActualBrowseState journal
+                        browseList = L.list BrowseRowList (Vec.fromList (browseRows browseState)) 1
+                    in put (AppWrapper context (ShowActualBrowse browseState browseList))
               _ -> pure ()
           OperationDisabled _ -> pure ()
   VtyEvent (V.EvKey V.KUp []) -> moveHub HubMoveUp
@@ -346,6 +415,31 @@ handleHubEvent context hubState hubList event = case event of
       let nextState = transitionOperationHub action hubState
           nextList = L.listMoveTo (hubSelectedIndex nextState) hubList
       put (AppWrapper context (ShowOperationHub nextState nextList))
+
+handleBrowseEvent
+  :: AppContext
+  -> ActualBrowseState
+  -> L.List Name ActualBrowseRow
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleBrowseEvent context browseState browseList event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> returnToHub context
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> returnToHub context
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> returnToHub context
+  VtyEvent (V.EvKey V.KEnter []) -> pure ()
+  VtyEvent (V.EvKey V.KUp []) -> moveBrowse BrowseMoveUp
+  VtyEvent (V.EvKey (V.KChar 'k') []) -> moveBrowse BrowseMoveUp
+  VtyEvent (V.EvKey V.KDown []) -> moveBrowse BrowseMoveDown
+  VtyEvent (V.EvKey (V.KChar 'j') []) -> moveBrowse BrowseMoveDown
+  VtyEvent vtyEvent ->
+    zoom zoomBrowseList (L.handleListEventVi L.handleListEvent vtyEvent)
+  _ -> pure ()
+  where
+    moveBrowse :: ActualBrowseAction -> EventM Name AppWrapper ()
+    moveBrowse action = do
+      let nextState = transitionActualBrowse action browseState
+          nextList = L.listMoveTo (browseSelectedIndex nextState) browseList
+      put (AppWrapper context (ShowActualBrowse nextState nextList))
 
 returnToHub :: AppContext -> EventM Name AppWrapper ()
 returnToHub context =

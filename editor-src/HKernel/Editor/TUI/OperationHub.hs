@@ -20,6 +20,7 @@ import Data.Text (Text)
 -- | Top-level operation vocabulary for daily h-kernel interactions.
 data DailyOperation
   = OperationActualAdd
+  | OperationActualBrowse
   | OperationActualMultiPosting
   | OperationActualReverse
   | OperationReports
@@ -62,6 +63,7 @@ allDailyOperations = [minBound .. maxBound]
 operationTitle :: DailyOperation -> Text
 operationTitle op = case op of
   OperationActualAdd          -> "Actual: Add Ordinary Transaction"
+  OperationActualBrowse       -> "Actual: Browse Transactions"
   OperationActualMultiPosting -> "Actual: Add Multi-posting Transaction"
   OperationActualReverse      -> "Actual: Reverse Transaction"
   OperationReports            -> "Reports: Read-only Surfaces"
@@ -71,10 +73,11 @@ operationTitle op = case op of
   OperationIssue              -> "Issue: Operations"
 
 -- | Availability classification for daily operations in this slice.
--- Only ordinary Actual add is enabled; all others are typed disabled states.
+-- Ordinary Actual add and Actual browse are enabled; all others are typed disabled states.
 operationAvailability :: DailyOperation -> OperationAvailability
 operationAvailability op = case op of
   OperationActualAdd          -> OperationEnabled
+  OperationActualBrowse       -> OperationEnabled
   OperationActualMultiPosting -> OperationDisabled OperationNotConnected
   OperationActualReverse      -> OperationDisabled OperationNotConnected
   OperationReports            -> OperationDisabled OperationNotConnected

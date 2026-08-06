@@ -53,10 +53,24 @@ In this slice (`feat/tui-operation-hub-001`), we introduce `HKernel.Editor.TUI.O
 3. **Unconnected / Disabled Operations**:
    - All other operations are typed `OperationDisabled` and cannot enter active input or write flows.
 
+## Slice Scope: Read-only Actual Transaction Browser Connection
+
+In this slice (`feat/tui-actual-browser-001`), we introduce `HKernel.Editor.TUI.ActualBrowse` and project source-aligned records:
+
+1. **Source-Aligned Record Projection**:
+   - `HKernel.Actual.Journal` exposes `ActualTransactionRecord` for each admitted transaction in source order.
+   - Preserves source alignment and exact transaction instances without deduplication or synthetic composite keys.
+   - Explicitly distinguishes transactions with durable identity (`ActualHasDurableIdentity ActualTransactionId`) from ordinary transactions (`ActualHasNoDurableIdentity`).
+
+2. **Connected Operation**:
+   - `OperationActualBrowse` is `OperationEnabled` and opens the read-only transaction browser.
+   - Esc / q returns to the `OperationHub` main menu.
+   - Enter maintains row selection without triggering write intents or reversal side effects.
+
 ## Roadmap for Subsequent Finite Slices
 
-1. Top-level operation hub & existing Actual add connection (**Current slice**)
-2. Read-only Actual transaction list / selector
+1. Top-level operation hub & existing Actual add connection (**PR #38**)
+2. Read-only Actual transaction list / selector (**Current slice: PR #38 stacked**)
 3. Actual reverse TUI (connecting existing Actual reverse pure engine)
 4. Actual multi-posting TUI
 5. Account declaration TUI
