@@ -1,13 +1,13 @@
 # h-kernel コードスコア
 
 ステータス: アクティブな全体設計面  
-更新日: 2026-08-04
+更新日: 2026-08-06
 
 ## 1. この文書の役割
 
 この文書は、`h-kernel`というリポジトリ全体を一度に眺めるためのスコアである。
 
-現在どの声部が存在し、事実、policy、計算、Report、表示、運用がどのように受け渡されているかを示す。同時に、各場所をどのようなコードへ育てたいか、まだ確定していない構成や短いコード案を鉛筆書きできる面でもある。
+現在どの声部が存在し、事実、policy、計算、Report、editor、表示、運用がどのように受け渡されているかを示す。同時に、各場所をどのようなコードへ育てたいか、まだ確定していない構成や短いコード案を鉛筆書きできる面でもある。
 
 この文書が所有するのは次である。
 
@@ -19,15 +19,15 @@
 この文書は、個別の厳密な契約を置き換えない。
 
 - 会計上の不変条件と依存方向は[`ARCHITECTURE.md`](ARCHITECTURE.md)
+- Haskellの書法は[`HASKELL_NATIVE_CODE_POLICY.md`](HASKELL_NATIVE_CODE_POLICY.md)
+- editorの現在能力と次のsliceは[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)
+- source topologyとwriter authorityは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)
 - リポジトリ運用と文書寿命は[`REPOSITORY_POLICY.md`](REPOSITORY_POLICY.md)
-- source、policy、Report、writer authorityの詳細は、それぞれの正規owner文書
 - 公開データ境界は[`../SECURITY.md`](../SECURITY.md)
 
 コードスコアは全体の関係を所有し、各partの契約はそのpartのownerが所有する。
 
 ## 2. 譜面上の記号
-
-この文書では、現在と下書きを混同しないために四つの状態を使う。
 
 | 記号 | 意味 |
 |---|---|
@@ -38,121 +38,110 @@
 
 `SKETCH`は、コードへmergeされた時点で初めて`CURRENT`になり得る。採用しない案や役目を終えた案は通常文書へ堆積させず、削除してGit履歴へ戻す。
 
-## 3. 現在の編成
+## 3. CURRENT: 現在の編成
 
-### Top-level score
+### 3.1 Top-level score
 
-| 場所 | CURRENTの役割 | 現在の状態 |
+| 場所 | CURRENTの役割 | 状態 |
 |---|---|---|
-| `src/` | 正確な会計核、Journal、Plan、Budget、Report、application config admission、表示primitiveを所有するmain library | stable |
-| `household-src/` | Household policy、Daily Target、Household Backing、source-independentな家計factと名前付きadmission | stable component |
-| `spike-src/` | typed sourceと残るcurrent-format sourceを合成してHousehold Reportを作るread-only adapter | active spike |
-| `app/` | ファイル、環境、標準入出力、終了状態を扱い、pureな値を接続する実行境界 | IO shell |
-| external private source | 正規の世帯fact、policy、移行中の互換source | canonical + transitional, not tracked |
-| `tests/` | module、component、Report surface、repository ownershipの観察可能な契約 | verification |
-| `tools/` | repository audit、公開ledger検証など、リポジトリを外側から点検する装置 | operations |
-| `docs/` | policy、architecture、contract、observationと、この全体スコア | documentation |
-| repository root | build metadata、共通作業入口、Report実行script、公開境界の入口 | coordination surface |
+| `src/` | exact accounting、Journal、Actual、Plan、Budget、Report、application config、rendering primitive | stable library |
+| `household-src/` | Account profile admission、Household policy、Daily Target、Backing、Budget movement、Issue admission | stable library |
+| `editor-src/` | typed edit intent、candidate preparation、source placement、safe writer | stable editor library |
+| `spike-src/` | stable typed ownerを合成するHousehold Report compositionとrendering | active spike |
+| `app/` | report CLIのfile、environment、stdout、exit boundary | delivery adapter |
+| `editor-app/` | editor CLIのargument、preview、explicit commit、exit boundary | delivery adapter |
+| `editor-tui-app/` | Actual addのBrick event loopとterminal interaction | delivery adapter |
+| `tools/hk` | report、edit、check、helpへのrouting | daily doorway |
+| `tools/` | repository audit、focused verifier、report verification | operations |
+| `tests/` | module、component、effect、Report surface、repository ownershipのobservable contract | verification |
+| `docs/` | policy、architecture、contract、observation、この全体スコア | documentation |
+| external private source | canonical household fact、policy、retained compatibility source | not tracked |
 
-### Cabal components
+### 3.2 Cabal components
 
 ```text
 h-kernel
   source: src/
-  owns: accounting, Journal, Plan, Budget, Report,
-        application source selection, rendering primitives
+  owns: Account, Money, Ledger, Journal, Actual, Plan, Budget,
+        Engine, Report, application config, rendering primitives
 
 h-kernel-household
   source: household-src/
   depends on: h-kernel
-  owns: HouseholdPolicy, DailyTarget, HouseholdBacking,
-        HouseholdBudgetMovement, and their admissions
+  owns: AccountProfile, HouseholdPolicy, DailyTarget,
+        HouseholdBacking, BudgetMovement, Issue admission
+
+h-kernel-editor
+  source: editor-src/
+  depends on: h-kernel + h-kernel-household
+  owns: edit intent, candidate preparation, source placement,
+        complete-source admission, safe writer result
 
 h-kernel-spike-household-report
   source: spike-src/
   depends on: h-kernel + h-kernel-household
   owns: provisional Household Report composition
 
-h-kernel executable
-  source: app/
-  owns: IO shell and command entry
+executables
+  app/             -> h-kernel report CLI
+  editor-app/      -> h-kernel-editor-cli
+  editor-tui-app/  -> h-kernel-editor-tui
 ```
 
-## 4. CURRENT: 全体のデータと計算の流れ
+## 4. CURRENT: 全体のデータ、計算、編集の流れ
 
 ```mermaid
 graph TD
-    ActualSource["private source/actual.journal"]
-    PlanSource["private source/plan.journal"]
-    ConfigSource["private source/config.tsv"]
-    BudgetSource["private source/budget.toml"]
-    HouseholdSource["private source/household.toml"]
-    DailyTargetSource["private source/daily_target_scope.tsv"]
-    AllocationSource["private source/budget_alloc.tsv"]
-    RetainedSources["remaining retained compatibility source"]
+    Hub["tools/hk"]
+    ReportApp["report launcher / app"]
+    EditorApp["editor CLI / TUI"]
+    Checks["build / test / repository audit"]
 
-    ActualAdmission["HKernel.Actual.Journal / Account.Journal"]
-    PlanAdmission["HKernel.Plan.Journal"]
-    ConfigAdmission["HKernel.Application.Config"]
-    BudgetAdmission["HKernel.Budget.Config"]
-    HouseholdAdmission["HKernel.Household.Config"]
-    DailyTargetAdmission["HKernel.Household.DailyTarget.TSV"]
-    MovementAdmission["HKernel.Household.BudgetMovement.TSV"]
+    CanonicalActual["private canonical actual.journal"]
+    CanonicalPlan["private canonical plan.journal"]
+    AccountProfileSource["retained accounts.tsv"]
+    BudgetMovementSource["retained budget_alloc.tsv"]
+    ConfigSources["budget.toml / household.toml / config.tsv / daily_target_scope.tsv"]
+    ExplicitWriteTarget["explicit synthetic / non-canonical target"]
 
+    CoreAdmission["Journal / Actual / Plan admission"]
+    AccountProfileAdmission["Household.AccountProfile.TSV"]
+    HouseholdAdmission["Household policy / Daily Target / Budget movement admission"]
     Accounting["Money / Account / Ledger / Engine"]
-    ApplicationConfig["ApplicationConfig"]
-    BudgetPolicy["BudgetPolicy"]
-    HouseholdPolicy["HouseholdPolicy\nAccountValidatedHouseholdPolicy"]
-    DailyTargetScope["DailyTargetPolicy\nDailyTargetObligationScope"]
-    BudgetMovement["HouseholdBudgetMovement"]
-    BudgetResults["Consumption / Entitlement / Remaining"]
-    DailyTarget["DailyTarget projection"]
-    Backing["HKernel.Household.Backing"]
-    HouseholdComposition["HKernel.Spike.HouseholdReport"]
-    Surface["HouseholdReportSurface"]
+    Household["Budget results / Daily Target / Backing"]
+    Composition["Spike Household Report composition"]
     Reports["Report projections"]
     Render["Render / TerminalStyle"]
-    Main["app/Main.hs"]
 
-    ActualSource --> ActualAdmission --> Accounting
-    PlanSource --> PlanAdmission
-    ConfigSource --> ConfigAdmission --> ApplicationConfig --> HouseholdComposition
-    BudgetSource --> BudgetAdmission --> BudgetPolicy
-    HouseholdSource --> HouseholdAdmission
-    BudgetPolicy --> HouseholdAdmission --> HouseholdPolicy
-    DailyTargetSource --> DailyTargetAdmission --> DailyTargetScope
-    PlanAdmission --> DailyTargetAdmission
-    AllocationSource --> MovementAdmission --> BudgetMovement --> HouseholdComposition
+    Intent["typed edit intent"]
+    Candidate["pure candidate preparation"]
+    CompleteAdmission["candidate complete-source admission"]
+    Writer["stale / backup / atomic publish / post-admission / restore"]
 
-    Accounting --> HouseholdComposition
-    PlanAdmission --> HouseholdComposition
-    HouseholdPolicy --> HouseholdComposition
-    DailyTargetScope --> HouseholdComposition
-    RetainedSources --> HouseholdComposition
+    Hub --> ReportApp
+    Hub --> EditorApp
+    Hub --> Checks
 
-    HouseholdComposition --> BudgetResults
-    HouseholdComposition --> Backing
-    HouseholdComposition --> DailyTarget
-    Accounting --> Backing
-    HouseholdPolicy --> Backing
-    BudgetMovement --> Backing
-    BudgetResults --> Backing
-    Accounting --> DailyTarget
-    PlanAdmission --> DailyTarget
-    BudgetResults --> Surface
-    Backing --> Surface
-    DailyTarget --> Surface
-    Accounting --> Reports
-    Surface --> Render
-    Reports --> Render
-    Main --> ActualSource
-    Main --> PlanSource
-    Main --> ConfigSource
-    Main --> HouseholdComposition
-    Main --> Render
+    CanonicalActual --> CoreAdmission --> Accounting
+    CanonicalPlan --> CoreAdmission
+    AccountProfileSource --> AccountProfileAdmission
+    BudgetMovementSource --> HouseholdAdmission
+    ConfigSources --> HouseholdAdmission
+
+    Accounting --> Reports --> Render --> ReportApp
+    Accounting --> Household
+    CoreAdmission --> Household
+    AccountProfileAdmission --> Composition
+    HouseholdAdmission --> Household --> Composition --> Render
+
+    EditorApp --> Intent --> Candidate --> CompleteAdmission --> Writer
+    CoreAdmission --> Candidate
+    AccountProfileAdmission --> Candidate
+    HouseholdAdmission --> Candidate
+    Writer --> ExplicitWriteTarget
 ```
 
-この図は全体の受け渡しを示すスコアであり、各parserやReportの完全なcall graphではない。詳細な現在契約は、それぞれのowner文書と型signatureを読む。
+この図は主要な受け渡しを示す。各parser、Report、editor commandの完全なcall graphではない。safe writerは明示されたpathへwriteできるが、current writer authorityではsynthetic sourceまたはnon-canonical copyだけを対象にする。
 
 ## 5. CURRENTとDIRECTION: 各声部
 
@@ -160,147 +149,143 @@ graph TD
 
 **CURRENT**
 
-- `HKernel.Money`がCommodityごとの正確なQuantityとBalanceを所有する
-- `Balance`は結合律、単位元、可換性、加法逆元、zero normalizationを持つ組合せとして`Semigroup` / `Monoid`を公開する
-- `HKernel.Account`がAccount identityとRegistryを所有する
-- `HKernel.Ledger`がPostingと均衡したTransactionを所有する
-- `HKernel.Engine`と`HKernel.Engine.Facts`がReportへ渡す集計factを構築する
+- `HKernel.Money`がCommodityごとのexact Quantityとcanonical `Balance`を所有する
+- `Balance`はzero normalizationを維持し、lawfulな`Semigroup` / `Monoid`を公開する
+- `HKernel.Account`がAccount identity、`AccountType`、Registryを所有する
+- `HKernel.Ledger`がPostingとbalanced Transactionを所有する
+- `HKernel.Engine`とinternal factsがReportへ渡す集計basisを作る
 
 **DIRECTION**
 
-正確さだけを孤立した硬さにしない。小さな型、名前のある変換、組み合わせ可能な値が互いを支え、入力からReportまで意味を失わず流れる核にする。
+正確さを孤立した硬さにしない。小さな型、名前のある変換、lawfulな組合せが互いを支え、sourceからReportまで意味を失わず流れる核にする。
 
 ### 5.2 Source admission
 
 **CURRENT**
 
 - Actual、Account、Planには名前付きJournal admissionがある
-- `HKernel.Application.Config`がretained `config.tsv`から検証済みのapplication source selectionを作る
 - BudgetとHousehold policyにはTOML admissionがある
-- retained `daily_target_scope.tsv`には、物理rowをpolicy、obligation selection、reservation declarationへ分ける名前付きadmissionがある
-- `HKernel.Household.BudgetMovement`が日付、memo、from／to Account、Amountをsource形状から独立したfactとして所有する
-- `HKernel.Household.BudgetMovement.TSV`がretained `budget_alloc.tsv`をそのfactへadmitする
-- parserは生text、行位置、診断を保持し、invalidな値を後段へ黙って流さない
-- `accounts.tsv`のcurrent-format admissionだけがHousehold Report Spikeに残る
+- `HKernel.Household.AccountProfile.TSV`がretained `accounts.tsv`をstable typed profileへadmitする
+- `HKernel.Household.BudgetMovement.TSV`がretained movement sourceをsource-independent factへadmitする
+- Daily Target sourceはpolicy、obligation selection、reservation declarationへ分かれる
+- parserはraw text、source coordinate、typed diagnosticを保持し、invalid valueを後段へ黙って流さない
+- SpikeはAccount profile parserを再実装せず、stable admission resultを合成する
 
 **DIRECTION**
 
-人間が書くtextの揺れ、移行中のfile形状、厳密なdomain admissionは、同じ質感へ均さない。それぞれの難しさを適切な境界で受け止め、後段には検証済みの意味を渡す。
+人間が書くtextの揺れ、移行中のphysical shape、厳密なdomain admissionを同じ質感へ均さない。それぞれの難しさを適切な境界で受け止め、後段にはvalidated meaningを渡す。
 
 ### 5.3 BudgetとHousehold policy
 
 **CURRENT**
 
-- `HKernel.Budget.Config`が`budget.toml`から一般`BudgetPolicy`を作る
-- `HKernel.Household.Config`が`household.toml`の家計固有座標を重ねる
-- `HKernel.Household.Policy`がCycle、公開順、allocation Account、追加Plan destination、未割当範囲を所有する
-- Consumption、Entitlement、Remainingはmain libraryの名前付きownerにある
+- `HKernel.Budget.Config`が一般`BudgetPolicy`を作る
+- `HKernel.Household.Config`と`HKernel.Household.Policy`がhousehold-specific coordinatesを所有する
+- Consumption、Entitlement、Remainingはmain libraryのnamed ownerにある
+- `HKernel.Household.DailyTarget`がeligible Asset、open obligation、reservation evidence、time coordinateを所有する
+- `HKernel.Household.Backing`がEnvelope claim、funding、unassigned Budget、open Plan reserveを別座標として観察する
 
 **DIRECTION**
 
-事実、選択されたpolicy、検証済みpolicy、導出結果を別の声部として保ち、暗黙の推測や同じsourceの再解釈を計算の途中へ持ち込まない。
+fact、selected policy、validated policy、derived resultを別の声部として保ち、Account名やbalanceから意味を推測しない。
 
-### 5.4 Daily Target
+### 5.4 Household Report composition
 
 **CURRENT**
 
-- `HKernel.Household.DailyTarget`がeligible Asset policy、current-cycle obligation scope、reservation evidence、Daily Target projectionを所有する
-- eligible Asset Accountはcanonical `AccountRegistry`でAssetとして検証される
-- outgoing Plan selectionはPlan identityで解決され、reservation relationは`HKernel.Plan.Reservation`へ委譲される
-- eligible assets、open obligations、already excluded amountはそれぞれ`Balance`へ`foldMap`される
-- `DailyTarget`は最終rateだけでなく、観察日、cycle終端、三つの集計証拠を保持する
-- 詳細は[`DAILY_TARGET_POLICY.md`](DAILY_TARGET_POLICY.md)が所有する
+- application config、Account profile admission、Household policy、Daily Target、Backing、Budget movement admissionはstable componentにある
+- `HKernel.Spike.HouseholdReport`はstable ownerの値を一つのsurfaceへ合成する
+- Spike-local Account parserとmetadata classifierは削除済みである
+- writer authorityは移行しておらず、Report pathはread-onlyである
 
 **DIRECTION**
 
-「今日使える額」を一つのmagic numberにせず、長寿命policy、cycleごとの選択、関係証拠、時間座標、導出結果を別々に読める判断面として育てる。
+残るcomposition responsibilityを、必要なinput contractが揃った時点でstable componentへ移す。Spikeという名前を消すだけの移動はしない。
 
-### 5.5 Household Backing
+### 5.5 Reportと表示
 
 **CURRENT**
 
-- `HKernel.Household.Backing`がEnvelope claim、policy指定Asset funding、unassigned Budget evidence、open Plan reserveを一つの観察として所有する
-- `HKernel.Household.BudgetMovement.TSV`がretained sourceをsource-independent movementへadmitする
-- `HouseholdBudgetMovement`により、Backing計算は`budget_alloc.tsv`の列形状を知らない
-- Signed Totalはoverspent Envelopeを負のまま保持する
-- Backing Requiredは正のEnvelope claimだけをCommodityごとに`foldMap`する
-- Backing SurplusとReconciliation Deltaはfunding、required、unassigned Budgetを別の座標として計算する
-- 詳細は[`HOUSEHOLD_BACKING.md`](HOUSEHOLD_BACKING.md)が所有する
+- `HKernel.Report`とnamed Report moduleがpure projectionを所有する
+- `HKernel.Render`とdomain render moduleがText surfaceを構築する
+- `HKernel.Render.TerminalStyle`がANSIとcharacter widthなどterminal physical detailを扱う
 
 **DIRECTION**
 
-Backingを単一の可否判定や資金移動命令にせず、何がclaimで、何がfundingで、何が未割当で、何が将来Plan reserveかを説明できる家計観察として育てる。
+calculation result、Report semantics、section composition、terminal physicsを分けながら、最終surfaceを断片の寄せ集めにしない。
 
-### 5.6 Household Report composition
+### 5.6 Editorとwrite effect
 
 **CURRENT**
 
-- `HKernel.Spike.HouseholdReport`がstable ownerとcurrent-format sourceを合成する
-- application configはmain library、Household policy、Daily Target、Household Backing、Budget movement admissionはstable Household componentにある
-- `accounts.tsv`のsource-specific admissionだけがSpikeに残る
-- writer authorityは移行しておらず、Report経路はread-onlyである
+- Actual append、multi-posting append、reverse、Account append、Budget movement、Issue、Plan add、Plan finishにnamed ownerがある
+- candidateはpureに準備され、complete sourceへ戻してstrict admissionされる
+- CLIはpreviewを常に表示し、explicit commitだけをsafe writerへ渡す
+- safe writerはstale rejection、backup、atomic publication、post-admission、restore-capable failureを所有する
+- Actual reverseはnew durable `event-id`とexplicit `reverses` relationを要求する
+- Actual add TUIはexisting candidate preparationとwriterを再利用する
 
 **DIRECTION**
 
-暫定境界に残る責任を一つずつ名前付きownerへ移し、必要な意味が揃った時点でstable Household componentへReport compositionを移す。Spikeという名前だけを消すための移動はしない。
+Editorを一つのprocedureへしない。intent、candidate、admission、publication、interactionを別の声部として保ち、会計意味をcore ownerへ返す。
 
-### 5.7 Reportと表示
+### 5.7 Daily command hub
 
 **CURRENT**
 
-- `HKernel.Report`と`HKernel.Report.*`が会計Report projectionを所有する
-- `HKernel.Render`と各domain render moduleがtext surfaceを構築する
-- `HKernel.Render.TerminalStyle`がANSIと文字幅などterminal固有の物理を扱う
+```text
+tools/hk
+  -> report
+  -> edit
+  -> check
+  -> help
+```
+
+`tools/hk`は引数とexit statusを既存ownerへ渡す。domain calculation、source selection semantics、mutation、audit ruleを所有しない。
 
 **DIRECTION**
 
-計算結果、Reportの意味、sectionの構成、terminalの物理を分けながら、最終的な表示を断片の寄せ集めにしない。表、見出し、注記、状態が一つの読みやすい構成として響く形を探る。
+日常入口は小さく保つ。full-screen orchestration、search UI、interactive selectionが必要になっても、command hubへ会計ruleを移さない。
 
 ### 5.8 Testと運用装置
 
 **CURRENT**
 
-- focused testとfull testが型付きownerの振る舞いを観察する
-- `h-kernel-application-config-test`がsource selection、line coordinate、未知key、last-write-wins互換を観察する
-- `h-kernel-balance-law-test`がBalanceの代数法則をmulti-commodityな生成値で観察する
-- `h-kernel-daily-target-test`がpolicy、obligation selection、reservation、時間付きprojectionを別々に観察する
-- `h-kernel-household-backing-test`がsigned claim、positive required、funding surplus、unassigned reconciliation、Plan reserveを別々に観察する
-- `h-kernel-household-budget-movement-tsv-test`がrow順、source座標、Account、Quantity、Commodity admissionを観察する
-- repository auditがtracked Haskell sourceのCabal ownershipと`docs/`文書indexを検査する
-- CIとrepository auditがpublic checkoutに正規世帯sourceを要求しない構成を検査する
-- Report contractとsnapshotが実データ上の表示を検証する
+- focused testとfull testがtyped ownerのobservable contractを検証する
+- property testがBalance lawをmulti-commodity generated valueで観察する
+- editor testがcandidate、stale、publication、restoreをsynthetic sourceで観察する
+- repository auditがCabal source ownershipと`docs/INDEX.toml`を検査する
+- command hub verifierがrouting、argument preservation、error statusをsynthetic stubで観察する
+- CIはpublic checkoutにprivate canonical sourceを要求しない
+- Report contractとsnapshotがsurface compatibilityを検証する
 
 **DIRECTION**
 
-検証を単なる門番にせず、各声部が何を約束し、何を約束していないかを観察できる証拠にする。リポジトリ全体の存在理由も、コードと同じように点検可能に育てる。
+検証を門番だけにせず、各声部が何を約束し、何を約束していないかを読めるevidenceにする。
 
 ## 6. 全体に求めるコードの豊かさ
 
 良いコードを一つの音色へ均さない。
 
-- 境界の具体性、核の厳密さ、policyの明示性、集計の流れ、表示の物理は、それぞれ異なる形を取ってよい
-- 抽象は具体的なdomain構造と対応し、具体的な処理は全体の流れを塞がない
-- 型だけ、関数だけ、短さだけ、機械的な統一だけを美しさの基準にしない
-- 同じ意味を複数のownerが再構成しない
+- boundaryの具体性、coreの厳密さ、policyの明示性、reductionの流れ、interactionの物理は異なる形を取ってよい
+- abstract structureは具体的なdomain structureと対応させる
+- 型だけ、短さだけ、point-freeの量だけを美しさの基準にしない
+- 同じ意味を複数ownerが再構成しない
 - 値がどこから来て、何へ変わり、どこで失敗し得るかを受け渡しから読めるようにする
-- localな巧さより、隣り合うpartが互いの意味を保てる構成を優先する
-- 読むことで学びが生まれることは歓迎するが、教材らしい形へコードを歪めない
+- localな巧さより、隣り合うpartが互いの意味を保つ構成を優先する
+- 読むことで学びが生まれることを歓迎するが、教材らしい見せ場のためにdomainを歪めない
 
-豊かさは要素の多さではなく、異なる要素が互いを消さず、必要な関係を結んでいることに置く。
+豊かさは要素数ではなく、異なる要素が互いを消さず、必要な関係を結んでいることに置く。
 
 ## 7. 作曲机: 現在の設計スケッチ
 
 以下は全体を考えるための鉛筆書きであり、採用済みの作業計画ではない。
 
-### 7.1 リポジトリ全体の可視性
+### 7.1 Repository inventory
 
 **CURRENT**
 
-repository auditはtracked pathを読み込むが、意味を検査するのは主にCabal source ownershipと`docs/INDEX.toml`である。root entry、script、設定、snapshot、top-level directoryの存在理由を一つのinventoryとしては所有していない。
-
-**DIRECTION**
-
-AI、人間、auditが、ファイル名だけでなく「なぜこの場所にあるか」を同じ座標から読めるようにする。
+repository auditはCabal source ownershipとdocument indexを検査するが、root script、launcher、snapshot、top-level directoryのroleを一つのinventoryとして所有していない。
 
 **SKETCH**
 
@@ -311,71 +296,57 @@ role = "stable-domain-source"
 owner = "h-kernel"
 
 [[entries]]
-path = "AGENTS.md"
-role = "thin-work-entrypoint"
-owner = "repository-policy"
+path = "tools/hk"
+role = "daily-command-router"
+owner = "repository-operations"
 ```
-
-root全体を説明するinventoryを導入し、repository auditの入力へ加える案。ただしroleの語彙、directoryとfileの粒度、Cabal inventoryとの重複は未決定である。
 
 **QUESTION**
 
-- root inventoryは全tracked fileを列挙するのか、top-level ownerだけを列挙するのか
-- generated snapshotやscriptのlifecycleをどこまで機械的に表すか
+- inventoryは全tracked fileを列挙するのか、top-level ownerだけを列挙するのか
+- Cabal inventory、document index、root operations inventoryの重複をどう避けるか
 
-### 7.2 外部private sourceの内部構成
+### 7.2 External private source
 
 **CURRENT**
 
-再生成できないfact、declaration、policy、note、compatibility source、Report実行設定は、public Git履歴の外にある一つのprivate canonical directoryへ置く。`bqn-ledger`がwriter、両engineがreaderであり、`h-kernel`は明示設定されたpathだけをHousehold sourceとして扱う。
+fact、declaration、policy、note、compatibility source、execution configはpublic Gitの外にある一つのprivate canonical directoryへ置く。current writerは`bqn-ledger`であり、`h-kernel`はreaderとnon-canonical rehearsal editorである。
 
 **DIRECTION**
 
-一つのwriter authorityとprivate境界を壊さず、fact、policy、compatibility surface、運用設定を人間と機械の両方が見分けられる構成にする。
+一つのwriter authorityとprivate boundaryを壊さず、fact、policy、compatibility surface、operation configを人間と機械が見分けられる構成にする。
 
 **QUESTION**
 
 - private source内のinventoryをどのrepositoryが所有するか
-- policyとfactを同じcanonical directoryに残すか、物理的にも分けるか
+- cutover後もBQN readerをcanonical sourceへ向け続けるか
 
-### 7.3 Household Reportの安定したcomposition
+### 7.3 Stable Household composition
 
 **CURRENT**
 
-application config、Household policy、Daily Target、Household Backing、Budget movement admissionはstable ownerへ移った。`accounts.tsv`のcurrent-format admissionとReport compositionだけがSpikeに残る。
-
-**DIRECTION**
-
-source-specificな形をtyped inputへ変換する声部と、それらをReportへ合成する声部を明確にし、必要なpolicyが揃ったところでstable Household componentへ移す。
+source-specific admissionはstable ownerへ移った。SpikeにはHousehold Report compositionとrenderingが残る。
 
 **SKETCH**
 
 ```text
-current household files
-  -> named admission owners
+named admitted values
   -> HouseholdReportInputs
   -> stable composition
   -> HouseholdReportSurface
 ```
 
-`HouseholdReportInputs`という名前や粒度は未決定である。次に残る`accounts.tsv`の正規Account declarationと互換metadataの境界を決め、物理rowの移動より先にCommodity evidenceのownerを合意する。
-
 **QUESTION**
 
-- AccountごとのCommodity evidenceをどのadmission ownerが照合するか
-- reservation funding location、fixed obligation、saving、investmentをどのpolicyが所有するか
+- `HouseholdReportInputs`という一つのrecordがdomain grainを保つか
+- stable compositionはmain `h-kernel`と`h-kernel-household`のどちらに属するか
 - Backing pool別の不足と余剰を別surfaceとして公開する必要があるか
-- stable compositionがmain `h-kernel`と`h-kernel-household`のどちらに属するか
 
-### 7.4 表示の構成語彙
+### 7.4 Display composition vocabulary
 
 **CURRENT**
 
-Reportごとのrender functionとterminal primitiveが最終surfaceを構築する。
-
-**DIRECTION**
-
-表示を一つの巨大procedureにも、意味の薄いgeneric helper群にもせず、Reportのsection構造が読める小さな構成語彙を探る。
+Reportごとのrender functionとterminal primitiveがfinal surfaceを構築する。
 
 **SKETCH**
 
@@ -389,40 +360,106 @@ renderSection
   ]
 ```
 
-これは構成の形を観察するための下書きであり、DSL導入や上記の名前を決定するものではない。既存render codeの重複とdomain差を先に観察する。
+これはDSL導入を決めるものではない。既存render codeのdomain差とrepetitionを先に観察する。
 
 **QUESTION**
 
 - 共通化すべきものはterminal primitiveか、Report sectionか、presentation policyか
-- compact surfaceとhuman surfaceが共有する最小の語彙は何か
+- compact surfaceとhuman surfaceが共有する最小語彙は何か
 
 ### 7.5 会計値の組合せ
 
 **CURRENT**
 
-- `Balance`はCommodityごとのQuantityを独立に保持するcanonicalな値である
-- `Balance`は`Semigroup` / `Monoid`を持ち、`(<>)`、`mempty`、`negateBalance`によって可換な加法群として振る舞う
+- `Balance`はCommodityごとのcanonical valueである
+- `Balance`は`Semigroup` / `Monoid`と`negateBalance`を持つ
 - `balanceFromAmounts`は`foldMap singletonBalance`、`sumBalances`は`fold`である
-- Transaction balanceとJournal balanceは、Posting grainの順序をsource側に残したまま、Balanceへの可換projectionを`foldMap`で作る
-- `BalanceMatrix`はcellのBalance結合とrow／column totalに同じlawfulな組合せを使う
-- Daily Targetはeligible assets、open obligations、already excluded reservationを独立したBalance projectionとして組み合わせる
-- Household Backingはsigned remaining、positive required、funding、unassigned Budgetを独立したBalance projectionとして組み合わせる
-- `Amount`、Transaction、Journal／History、Budget結果、AccountBalancesには同じinstanceを機械的に広げない
-- 詳細なlawと非対象境界は[`BALANCE_ALGEBRA.md`](BALANCE_ALGEBRA.md)が所有する
-
-**DIRECTION**
-
-同種の値を組み合わせる規則がdomain上で実在する場合、その規則を明示し、手続き的な中間状態と重複した集計を減らす。結合できそうに見えることと、文脈なしに結合してよいことを区別する。
+- TransactionとJournalは順序とidentityを保持し、必要なprojectionだけをBalanceへ落とす
+- Matrix、Daily Target、Backingはnamed contributionをBalanceとして組み合わせる
+- `Amount`、Transaction、Journal、Plan lifecycleへ同じinstanceを機械的に広げない
 
 **QUESTION**
 
-- Report factやBudget resultのうち、どの結合が本当に同じ観察文脈を保つか
-- `AccountBalances`の組合せは公開代数なのか、query owner内部のreductionに留めるべきか
-- 可換projectionへ落とす前に保持すべき順序、identity、provenanceを型からどう読めるようにするか
+- Report factやBudget resultのどの結合が同じ観察文脈を保つか
+- 可換projectionへ落とす前に保持すべき順序、identity、provenanceを型からどう読ませるか
+
+### 7.6 Haskell機能の現在地
+
+**CURRENT**
+
+現在のmainでは、機能を網羅するためではなくdomain structureをコードから読めるようにするため、次のHaskell featureが使われている。
+
+| Haskellの声部 | 現在対応しているdomain構造 |
+|---|---|
+| ADTとpattern matching | Account種別、command、period、load・validation・editor failureなど実在するcase |
+| `newtype`、constructor隠蔽、smart constructor | Commodity、Quantity、Balance、Transaction、DateRange、identityのcanonical value |
+| `Either`、`NonEmpty`、`do` notation | typed failure、空でないdiagnostics、前段のsuccessへ依存するadmission |
+| `Semigroup`、`Monoid`、`Foldable`、`foldMap` | Balance、Flow、Matrix、Daily Target、Backingのlawful aggregation |
+| parametric polymorphismと高階関数 | collection shapeに依存しないreductionとtyped basis |
+| `traverse`とMap combinator | shapeとcoordinateを保つvalidation、projection、lookup、aggregation |
+| pure coreとexplicit IO shell | accounting、policy、Report、candidate preparationと外界の分離 |
+| `StateT LoadedFiles (ExceptT LoadError IO)` | include graph state、typed failure、file read effectの明示的な重なり |
+| module abstraction | public facade、internal facts、stable component、spike、editor、application entryのownership |
+
+point-free notationは変換方向がよく見える場所で使う一つの表記であり、使用量を美しさの尺度にしない。domain上の中間名や複数声部が見える場合はargument、`where`、record constructionを明示する。
+
+**DIRECTION**
+
+リポジトリ全体を、一つの書法へ均したfunction集ではなく、主題、反復、変奏、楽章、effect boundaryが読める大きな楽譜へ育てる。
+
+```text
+validated source
+  -> canonical facts
+  -> named domain basis
+  -> named projection
+  -> rendering
+
+editor intent
+  -> pure candidate
+  -> complete-source admission
+  -> explicit publication effect
+```
+
+**SKETCH**
+
+| 候補 | 導入を検討するdomain上の兆候 |
+|---|---|
+| Applicative validation | independent validation errorを一度に蓄積したい |
+| phantom type / DataKinds | preview、admitted、confirmed、published stageを実際に取り違え得る |
+| GADT | commandごとにinputとresult typeの対応が異なる |
+| custom typeclass / type family | 複数domainがsyntaxではなく同じlawとoperation setを共有する |
+| optics | 深いrecord updateが主題を隠し、同じfocus operationが反復する |
+| recursion scheme | 同じrecursive shapeのfoldとunfoldが複数ownerで重複する |
+| effect abstraction | current capability recordやtransformer boundaryではeffect contractのreuse/testが明確に難しい |
+
+これは未使用機能の不足表ではない。現在のADT、named pure function、standard typeclass、explicit effect boundaryがdomainを最も正確に表すなら、それが現在の正しい音である。
+
+**QUESTION**
+
+- input admissionにApplicativeなerror accumulationが自然なindependent validationはあるか
+- editor lifecycle stageはcurrent typeで実際に取り違え可能か
+- large moduleは新しい抽象より先に楽章分けを必要としているか
+- source間の共通化候補は同じlawを共有するのか、処理順が似ているだけか
+
+### 7.7 Daily-use cutover
+
+**CURRENT**
+
+Haskell editorとdaily command hubはmainにある。canonical writer authorityはまだ`bqn-ledger`にある。
+
+**DIRECTION**
+
+全BQN operationの移植を待たず、現在の日常operation setを安全に扱えることをnon-canonical copyで確認し、別の明示cutoverでwriterとdaily entryを切り替える。
+
+**QUESTION**
+
+- 現在本当に必要なdaily write operationはどれか
+- cutover後もBQN readerを使うか
+- rollback時の唯一writerとsource selectionをどう固定するか
+
+次の有限sliceは[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)が所有する。
 
 ## 8. 新しいスケッチの書式
-
-リポジトリのどこかを考えるときは、必要に応じて次の形を追加する。
 
 ```markdown
 ### <対象領域>
@@ -446,17 +483,16 @@ renderSection
 一つの有限な変更として試せる候補。着手決定ではない。
 ```
 
-コード案を置く場合は、既存APIと同じ名前に見えても`SKETCH`であることを明示する。未合意の案を、作業指示や現在契約として扱わない。
+未合意の案を、作業指示やcurrent contractとして扱わない。
 
 ## 9. 同期規則
 
-- 作業前に最新`main`、open PR、並行branch、対象source、関連owner文書を確認する
-- component、topology、domain ownership、主要data flowが変わった場合、`CURRENT`を同じsliceで同期する
+- 作業前にlatest `main`、open PR、parallel branch、target source、owner documentを確認する
+- component、topology、domain ownership、major data flowが変わった場合、`CURRENT`を同じsliceで同期する
 - `DIRECTION`は作者との合意が変わったときだけ更新する
-- `SKETCH`は比較と対話のために書き換えられるが、実装済みの事実と混ぜない
-- 個別functionの局所変更だけで全体scoreが変わらない場合、機械的に追記しない
-- この文書へcommit日誌、完了PR一覧、古い移行手順を蓄積しない
-- 詳細契約が変わる場合は、このスコアだけでなく正規owner文書を更新する
-- 実装と合わなくなった`CURRENT`、役目を終えた`SKETCH`、解けた`QUESTION`は剪定する
+- local function変更だけで全体scoreが変わらない場合、機械的に追記しない
+- commit log、completed PR list、old migration procedureを蓄積しない
+- detail contractが変わる場合は正規owner文書も更新する
+- implementationと合わなくなった`CURRENT`、役目を終えた`SKETCH`、解けた`QUESTION`は剪定する
 
 コードスコアは完成図ではない。現在演奏されている全体と、次に試せる数小節を、同じ視野へ置き続けるための面である。
