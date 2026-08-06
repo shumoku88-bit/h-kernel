@@ -10,15 +10,17 @@ usage() {
 Usage:
   tools/hk
   tools/hk report [REPORT_ARGS...]
+  tools/hk actual-add <ACTUAL_JOURNAL>
   tools/hk edit EDITOR_COMMAND [EDITOR_ARGS...]
   tools/hk check
   tools/hk help
 
 Commands:
-  report  Run the existing Haskell report entrypoint. This is the default.
-  edit    Pass all remaining arguments to h-kernel-editor-cli.
-  check   Run the repository's standard build, test, and ownership audit.
-  help    Show this help.
+  report      Run the existing Haskell report entrypoint. This is the default.
+  actual-add  Run the existing Actual add TUI for one explicit Journal path.
+  edit        Pass all remaining arguments to h-kernel-editor-cli.
+  check       Run the repository's standard build, test, and ownership audit.
+  help        Show this help.
 EOF
 }
 
@@ -32,6 +34,14 @@ shift
 case "$command" in
   report)
     exec "$REPORT" "$@"
+    ;;
+  actual-add)
+    if [ "$#" -ne 1 ]; then
+      printf 'tools/hk actual-add requires exactly one ACTUAL_JOURNAL path\n' >&2
+      exit 2
+    fi
+    cd "$ROOT"
+    exec "$CABAL" run exe:h-kernel-editor-tui -- "$1"
     ;;
   edit)
     cd "$ROOT"
