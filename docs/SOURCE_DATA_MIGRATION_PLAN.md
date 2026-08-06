@@ -1,21 +1,23 @@
 # 正規世帯sourceの所有権と移行
 
 ステータス: アクティブ  
-Owner: household source topology、writer authority、native source migration
+Owner: household source topology、source別writer authority、native source migration
 
 ## 1. 現在の配置
 
 正規世帯sourceは`h-kernel`のGit履歴には置かず、user-ownedな別のprivate repositoryに置く。
 
 ```text
-canonical location  separate private data repository
-current writer      bqn-ledger editor
-current readers     bqn-ledger and h-kernel
-future writer       h-kernel editor after explicit cutover
-public h-kernel     code, docs, synthetic evidence only
+canonical location        separate private data repository
+actual.journal writer     h-kernel editor
+other retained writers    unchanged by Actual cutover
+current readers           bqn-ledger and h-kernel
+public h-kernel           code, docs, synthetic evidence only
 ```
 
 `h-kernel`は`HKERNEL_LEDGER_DATA_DIR`またはGit管理外の`ledger-data.local`からdirectoryを明示的に受け取る。private repositoryの名前やpathをcode、fixture、CIへ固定しない。
+
+2026-08-06の明示的なcutoverにより、canonical `actual.journal`のwriter authorityだけを`h-kernel`へ移した。他のphysical sourceのwriter authorityは、この決定から推測して移さない。
 
 ## 2. Source ownership
 
@@ -23,7 +25,7 @@ public h-kernel     code, docs, synthetic evidence only
 
 | basename | owner class | current writer/readers |
 |---|---|---|
-| `actual.journal` | Account declaration、Actual fact、completion evidence | bqn-ledger / both engines |
+| `actual.journal` | Account declaration、Actual fact、completion evidence | h-kernel editor / both engines |
 | `plan.journal` | native Plan fact | bqn-ledger / h-kernel |
 | `accounts.tsv` | retained Account metadata | bqn-ledger / both engines |
 | `plan.tsv` | retained Plan compatibility source | bqn-ledger |
@@ -35,7 +37,7 @@ public h-kernel     code, docs, synthetic evidence only
 | `issues.tsv` | household notebook source | bqn-ledger / both engines |
 | report manifest files | retained bqn-ledger execution configuration | bqn-ledger |
 
-同じphysical directoryにあることは、fact、policy、projection、execution configが同じdomain ownerを持つことを意味しない。
+同じphysical directoryにあることは、fact、policy、projection、execution configが同じdomain ownerまたはwriter authorityを持つことを意味しない。
 
 ## 3. Retained sourceのfield分類
 
@@ -64,7 +66,7 @@ public h-kernel     code, docs, synthetic evidence only
 
 `HKernel.Household.AccountProfile.TSV`はretained `accounts.tsv`の物理admissionを所有する。`role`と`currency`を既存smart constructorで`AccountDeclaration`へ変換し、残る全metadataをsemantic classifierへ渡す。Account identityと`AccountType`はActual Journal registryと双方向に照合する。Actual Journalがper-Account default Commodityを明示する場合はretained evidenceとの一致を要求し、省略している場合は矛盾ではなく未宣言として扱う。unknown key、適用外key、独立したinvalid座標は黙って失わない。
 
-Household Report compositionはstable adapterを使用し、`AccountProfileTSVError`を既存`HouseholdSourceError`へ翻訳するだけである。Spike-local `AccountFact`、旧`parseAccounts`、metadata parser、role parser、type-only registry gateは削除済みである。private source format、writer authority、target TOML生成はこのcutoverでは変更していない。
+Household Report compositionはstable adapterを使用し、`AccountProfileTSVError`を既存`HouseholdSourceError`へ翻訳するだけである。Spike-local `AccountFact`、旧`parseAccounts`、metadata parser、role parser、type-only registry gateは削除済みである。private source format、`accounts.tsv` writer authority、target TOML生成はActual cutoverでは変更していない。
 
 同じ`HKernel.Household.AccountProfile.TSV`は、admitted `Map Account RetainedAccountProfile`からAccount declarationだけを射影し、Account identityで明示的に並べたdeterministic `accounts.journal` shadow Textを生成する。生成するAccount directiveは`type:`を必ず持ち、retained Commodity evidenceがある場合は各Accountの`commodity:` metadataとして必ず明示する。global `commodity` directiveへ畳まない。
 
@@ -81,7 +83,7 @@ exact parityはAccount集合、Account identity、`AccountType`、default Commod
 
 shadow parity errorはparse rejection件数または不一致座標の種類だけを保持し、Account名、source row、生成Textを保持しない。public testとCIは独立したsynthetic sourceだけを使う。private canonical sourceの追加rehearsalではshadowをfileへ保存せず、stdout、CI、PR、Issueへ内容を出さず、成功・失敗と秘密を含まない件数だけを扱う。
 
-このshadow conversionはcurrent reader、Report composition、source selection、writerへ接続しない。`accounts.tsv`のretire、`accounts.journal`の正規source採用、Actual JournalのAccount directive削除、writer authority移動は、それぞれ別の明示sliceでのみ行う。current compatibility parityとnative target parityを同一条件へ潰さない。
+このshadow conversionはcurrent reader、Report composition、source selection、writerへ接続しない。`accounts.tsv`のretire、`accounts.journal`の正規source採用、Actual JournalのAccount directive削除、`accounts.tsv` writer authority移動は、それぞれ別の明示sliceでのみ行う。current compatibility parityとnative target parityを同一条件へ潰さない。
 
 ### `cycle.tsv`
 
@@ -141,16 +143,34 @@ public repositoryのexampleとtest corpusは独立したsynthetic dataだけを�
 
 詳細は[`../SECURITY.md`](../SECURITY.md)が所有する。
 
-## 5. 一人のwriter
+## 5. Source別のwriter law
 
-- `bqn-ledger`の`LEDGER_DATA_DIR`はprivate canonical directoryを指す。
-- `h-kernel`は同じdirectoryをread-onlyでadmitする。
+private repositoryへの物理分離は、全sourceが同じwriterを持つことを意味しない。writer authorityはphysical sourceごとに明示する。
+
+### 5.1 `actual.journal`
+
+- canonical writerは`h-kernel` editorである。
+- `h-kernel`と`bqn-ledger`はreaderとして同じsourceを読める。
+- `bqn-ledger`のcanonical `actual.journal` write operationは使用しない。
+- ordinary Actual addの日常入口は`tools/hk actual-add <ACTUAL_JOURNAL>`である。
+- correctionは元factを編集せず、h-kernelのexplicit Actual reverseを使う。
+- preview後にsourceが変化した場合はstaleとして拒否し、current sourceからやり直す。
+
+activation、stop、rollbackの正規contractは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
+
+### 5.2 Other retained source
+
+- Plan、Budget movement、Issue、retained metadata、policy、execution configのwriter authorityはActual cutoverで変更しない。
+- 同じdirectoryにあることや、h-kernel editorにwrite capabilityが存在することからauthority移動を推測しない。
+- source別cutoverは、それぞれ別のevidenceと作者承認を持つ明示sliceで行う。
+
+### 5.3 Shared operational rules
+
 - public checkout内に同期copyを作らない。
 - source rowをrepository間でcopyまたはmergeするscriptを置かない。
 - validation failure時は通常writeを止め、canonical directoryそのものを修復する。
 - backupはcanonical Git treeとpublic Git履歴の外に置く。
-
-private repositoryへの物理分離はwriter authorityの移動ではない。明示的なcutoverまでは`bqn-ledger`がwriterである。
+- dual writeまたはalternating writerを行わない。
 
 ## 6. h-kernel-native target
 
@@ -172,7 +192,7 @@ issues.tsv
 - `household.toml`: stable household policy
 - `issues.tsv`: 会計factを暗黙生成しないnotebook source
 
-このtargetは方向であり、current compatibility fileを証拠なしに削除する許可ではない。
+このtargetは方向であり、current compatibility fileを証拠なしに削除する許可ではない。Actual writer cutoverはsource format migrationではない。
 
 ## 7. Source migration law
 
@@ -182,23 +202,39 @@ issues.tsv
 - conversionはsource commitとconverter versionに対してdeterministicにする。
 - Account identity、Actual、Plan、Budget、policy、ordering、provenanceのsemantic parityを観察する。
 - source format migrationとwriter cutoverを同じsliceへ混ぜない。
+- 一つのsourceのwriter cutoverから、別sourceのauthority移動を推測しない。
 
-## 8. h-kernel editor cutover gate
+## 8. Source writer cutover gate
 
-writer authorityは、少なくとも次を満たす明示PRでのみ移す。
+source別writer authorityは、少なくとも次を満たす明示PRでのみ移す。
 
-1. 必要なAccount、Actual、Plan、Budget、policy、notebook operationのparity
+1. 対象sourceに必要なoperation parity
 2. mutation前previewとstrict complete-source admission
 3. stale source rejection
 4. atomic publishとpartial write不在
 5. ignored backup、failure test、restore
 6. duplicate identity、exact Quantity、Commodity別balance、provenanceの維持
 7. synthetic sourceとprivate source copyを使った運用rehearsal
-8. bqn-ledgerとのsemantic comparison
+8. legacy writerとのsemantic comparison
 9. dual writeを防ぐ運用変更
 10. 作者による明示承認
 
-cutover完了までは`bqn-ledger`が唯一のwriterであり、`h-kernel` editorの試験はsynthetic sourceまたは明示的な非正規copyを対象にする。
+### 8.1 Actual cutover completion
+
+`actual.journal`については、次のevidenceとdecisionによってこのgateを通過した。
+
+- public synthetic writer testによるsuccess、stale rejection、restore
+- Actual candidate semantic comparison
+- Actual reverse provenance contract
+- private canonical sourceの明示的non-canonical copyによるpreview、commit、post-admission rehearsal
+- rehearsal中のcanonical source、repository file、writer authority不変というsanitized operator evidence
+- `tools/hk actual-add`から既存TUIへ渡すthin daily entrypoint
+- `bqn-ledger` writerをcanonical `actual.journal`へ向けないsingle-user operation law
+- 2026-08-06の作者明示承認
+
+詳細は[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
+
+この完了は、他sourceのgateを満たしたことを意味しない。
 
 ## 9. 検証
 
@@ -216,6 +252,12 @@ private canonical sourceへ影響する変更では、内容を出力せず明�
 
 ```sh
 HKERNEL_LEDGER_DATA_DIR=/absolute/path/to/private-ledger-data ./report all >/dev/null
+```
+
+canonical Actual addの日常入口:
+
+```sh
+./tools/hk actual-add /absolute/path/to/private-ledger-data/actual.journal
 ```
 
 Account declaration shadow rehearsalでは、stable Account admission後のprofileをmemory上でrender・parse-backし、shadow Textを保存または出力しない。failure時はAccount集合、AccountType、default Commodity、parse rejectionのどの種類かだけを報告し、値を含めない。
