@@ -20,7 +20,7 @@ module HKernel.Editor.TUI.ActualAdd
 
 import Data.Text (Text)
 
-import HKernel.Editor.ActualAdd
+import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddInputError(..)
   , ActualAddPreview(..)
@@ -65,7 +65,7 @@ initialActualAddState :: ActualAddState
 initialActualAddState = ActualAddState emptyActualAddInput EditingActualAdd
 
 -- | Brick-facing interaction contract. Shared Actual input admission, preview,
--- and publication outcome classification live in HKernel.Editor.ActualAdd.
+-- and publication outcome classification live in HKernel.Editor.ActualAppend.
 -- This module owns only UI navigation and account-selection state.
 transitionActualAdd
   :: Text
