@@ -18,55 +18,19 @@ module HKernel.Editor.TUI.ActualAdd
   , classifyActualAddWriteResult
   ) where
 
-import Data.Bifunctor (first)
-import Data.List.NonEmpty (NonEmpty(..))
 import Data.Text (Text)
-import qualified Data.Text as T
-import Data.Time.Calendar (Day)
-import Data.Time.Format (defaultTimeLocale, parseTimeM)
 
-import HKernel.Account (mkAccount)
-import HKernel.Editor.ActualAppend
-  ( ActualAppendPreview(..)
-  , ActualEditError
-  , ActualEditIntent(..)
-  , prepareActualAppend
+import HKernel.Editor.ActualAdd
+  ( ActualAddInput(..)
+  , ActualAddInputError(..)
+  , ActualAddPreview(..)
+  , ActualAddWriteFailure(..)
+  , ActualAddWriteOutcome(..)
+  , buildActualAddIntent
+  , classifyActualAddWriteResult
+  , emptyActualAddInput
+  , prepareActualAddPreview
   )
-import HKernel.Editor.ActualWriter (WriteError(..))
-import HKernel.Editor.TransactionBlock (IntentPosting(..))
-import HKernel.Money
-  ( mkCommodity
-  , negateQuantity
-  , parseQuantity
-  , quantityToRational
-  )
-
--- | Text entered by the Actual-add TUI before domain admission.
-data ActualAddInput = ActualAddInput
-  { addDateText        :: Text
-  , addDescriptionText :: Text
-  , addFromAccountText :: Text
-  , addToAccountText   :: Text
-  , addAmountText      :: Text
-  } deriving (Eq, Show)
-
-data ActualAddInputError
-  = ActualAddInvalidDate
-  | ActualAddInvalidFromAccount
-  | ActualAddInvalidToAccount
-  | ActualAddInvalidAmountShape
-  | ActualAddInvalidQuantity
-  | ActualAddAmountMustBePositive
-  | ActualAddInvalidCommodity
-  deriving (Eq, Show)
-
--- | Preview state retains only the candidate block, never the complete private
--- source supplied to validation.
-data ActualAddPreview
-  = ActualAddInputRejected ActualAddInputError
-  | ActualAddCandidateRejected (NonEmpty ActualEditError)
-  | ActualAddCandidateReady Text
-  deriving (Eq, Show)
 
 data AccountSelectionTarget
   = SelectFromAccount
@@ -97,76 +61,12 @@ data ActualAddAction
   | ReturnToActualAddInput
   deriving (Eq, Show)
 
--- | Delivery-level failure kind presented by the Actual-add TUI.
---
--- This keeps filesystem and admission details out of the Brick event loop
--- while preserving whether automatic restoration completed.
-data ActualAddWriteFailure
-  = ActualAddPostAdmissionFailure
-  | ActualAddPostPublishReadFailure
-  deriving (Eq, Show)
-
-data ActualAddWriteOutcome
-  = ActualAddWriteSucceeded
-  | ActualAddWriteStale
-  | ActualAddWriteRecovered ActualAddWriteFailure
-  | ActualAddWriteFailed ActualAddWriteFailure
-  | ActualAddWriteFileIOFailed
-  deriving (Eq, Show)
-
-emptyActualAddInput :: ActualAddInput
-emptyActualAddInput = ActualAddInput "" "" "" "" ""
-
 initialActualAddState :: ActualAddState
 initialActualAddState = ActualAddState emptyActualAddInput EditingActualAdd
 
--- | Admit a positive magnitude and derive the balancing source posting by
--- negating the parsed Quantity value, never by manipulating its input text.
-buildActualAddIntent
-  :: ActualAddInput
-  -> Either ActualAddInputError ActualEditIntent
-buildActualAddIntent input = do
-  date <- maybe (Left ActualAddInvalidDate) Right
-    (parseTimeM
-      True
-      defaultTimeLocale
-      "%Y-%m-%d"
-      (T.unpack (addDateText input)) :: Maybe Day)
-  fromAccount <- first (const ActualAddInvalidFromAccount)
-    (mkAccount (addFromAccountText input))
-  toAccount <- first (const ActualAddInvalidToAccount)
-    (mkAccount (addToAccountText input))
-  (quantityText, commodityText) <- case T.words (addAmountText input) of
-    [quantityValue, commodityValue] -> Right (quantityValue, commodityValue)
-    _ -> Left ActualAddInvalidAmountShape
-  quantity <- first (const ActualAddInvalidQuantity)
-    (parseQuantity quantityText)
-  if quantityToRational quantity <= 0
-    then Left ActualAddAmountMustBePositive
-    else pure ()
-  commodity <- first (const ActualAddInvalidCommodity)
-    (mkCommodity commodityText)
-  pure
-    (ActualEditIntent
-      date
-      (addDescriptionText input)
-      ( IntentPosting toAccount quantity (Just commodity)
-        :| [IntentPosting fromAccount (negateQuantity quantity) (Just commodity)]
-      )
-      [])
-
-prepareActualAddPreview :: Text -> ActualAddInput -> ActualAddPreview
-prepareActualAddPreview source input =
-  case buildActualAddIntent input of
-    Left inputError -> ActualAddInputRejected inputError
-    Right intent -> case prepareActualAppend source intent of
-      Left sourceErrors -> ActualAddCandidateRejected sourceErrors
-      Right preview -> ActualAddCandidateReady (candidateBlock preview)
-
--- | Pure interaction contract used by the Brick adapter and focused tests.
--- The admitted source is supplied to the transition and is not retained in UI
--- state or diagnostics. Confirmation records only the user's decision; source
--- writing remains a separate effect owned by the delivery adapter and writer.
+-- | Brick-facing interaction contract. Shared Actual input admission, preview,
+-- and publication outcome classification live in HKernel.Editor.ActualAdd.
+-- This module owns only UI navigation and account-selection state.
 transitionActualAdd
   :: Text
   -> ActualAddAction
@@ -214,23 +114,3 @@ transitionActualAdd source action state = case action of
       state { actualAddMode = ActualAddConfirmed block }
     _ -> state
   ReturnToActualAddInput -> state { actualAddMode = EditingActualAdd }
-
--- | Collapse the safe writer result into the finite outcomes the interaction
--- layer can present. The complete source and source-local admission errors are
--- never retained in UI state.
-classifyActualAddWriteResult
-  :: Either (WriteError sourceError) ()
-  -> ActualAddWriteOutcome
-classifyActualAddWriteResult result = case result of
-  Right () -> ActualAddWriteSucceeded
-  Left StaleFile -> ActualAddWriteStale
-  Left (PostAdmissionFailed { restoredFromBackup = True }) ->
-    ActualAddWriteRecovered ActualAddPostAdmissionFailure
-  Left (PostAdmissionFailed { restoredFromBackup = False }) ->
-    ActualAddWriteFailed ActualAddPostAdmissionFailure
-  Left (PostPublishReadFailed { restoredFromBackup = True }) ->
-    ActualAddWriteRecovered ActualAddPostPublishReadFailure
-  Left (PostPublishReadFailed { restoredFromBackup = False }) ->
-    ActualAddWriteFailed ActualAddPostPublishReadFailure
-  Left (FileIOError _) ->
-    ActualAddWriteFileIOFailed
