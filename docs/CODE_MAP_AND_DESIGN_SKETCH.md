@@ -22,6 +22,7 @@
 - Haskellの書法は[`HASKELL_NATIVE_CODE_POLICY.md`](HASKELL_NATIVE_CODE_POLICY.md)
 - editorの現在能力と次のsliceは[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)
 - source topologyとwriter authorityは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)
+- Actual writer cutoverは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)
 - リポジトリ運用と文書寿命は[`REPOSITORY_POLICY.md`](REPOSITORY_POLICY.md)
 - 公開データ境界は[`../SECURITY.md`](../SECURITY.md)
 
@@ -51,7 +52,7 @@
 | `app/` | report CLIのfile、environment、stdout、exit boundary | delivery adapter |
 | `editor-app/` | editor CLIのargument、preview、explicit commit、exit boundary | delivery adapter |
 | `editor-tui-app/` | Actual addのBrick event loopとterminal interaction | delivery adapter |
-| `tools/hk` | report、edit、check、helpへのrouting | daily doorway |
+| `tools/hk` | report、actual-add、edit、check、helpへのrouting | daily doorway |
 | `tools/` | repository audit、focused verifier、report verification | operations |
 | `tests/` | module、component、effect、Report surface、repository ownershipのobservable contract | verification |
 | `docs/` | policy、architecture、contract、observation、この全体スコア | documentation |
@@ -102,7 +103,7 @@ graph TD
     AccountProfileSource["retained accounts.tsv"]
     BudgetMovementSource["retained budget_alloc.tsv"]
     ConfigSources["budget.toml / household.toml / config.tsv / daily_target_scope.tsv"]
-    ExplicitWriteTarget["explicit synthetic / non-canonical target"]
+    RehearsalTarget["explicit synthetic / non-canonical target"]
 
     CoreAdmission["Journal / Actual / Plan admission"]
     AccountProfileAdmission["Household.AccountProfile.TSV"]
@@ -138,10 +139,11 @@ graph TD
     CoreAdmission --> Candidate
     AccountProfileAdmission --> Candidate
     HouseholdAdmission --> Candidate
-    Writer --> ExplicitWriteTarget
+    Writer --> CanonicalActual
+    Writer --> RehearsalTarget
 ```
 
-この図は主要な受け渡しを示す。各parser、Report、editor commandの完全なcall graphではない。safe writerは明示されたpathへwriteできるが、current writer authorityではsynthetic sourceまたはnon-canonical copyだけを対象にする。
+この図は主要な受け渡しを示す。各parser、Report、editor commandの完全なcall graphではない。safe writerは明示されたpathだけへwriteする。current authorityではcanonical `actual.journal`と明示的rehearsal targetをh-kernel editorが扱い、他sourceのwriter authorityはActual cutover前のownerに残る。
 
 ## 5. CURRENTとDIRECTION: 各声部
 
@@ -196,7 +198,7 @@ fact、selected policy、validated policy、derived resultを別の声部とし�
 - application config、Account profile admission、Household policy、Daily Target、Backing、Budget movement admissionはstable componentにある
 - `HKernel.Spike.HouseholdReport`はstable ownerの値を一つのsurfaceへ合成する
 - Spike-local Account parserとmetadata classifierは削除済みである
-- writer authorityは移行しておらず、Report pathはread-onlyである
+- Actual writer authorityはh-kernelへ移ったが、Report pathは引き続きread-onlyである
 
 **DIRECTION**
 
@@ -224,6 +226,8 @@ calculation result、Report semantics、section composition、terminal physics�
 - safe writerはstale rejection、backup、atomic publication、post-admission、restore-capable failureを所有する
 - Actual reverseはnew durable `event-id`とexplicit `reverses` relationを要求する
 - Actual add TUIはexisting candidate preparationとwriterを再利用する
+- canonical `actual.journal`のwriter authorityはh-kernel editorにある
+- ordinary Actual addは`tools/hk actual-add <ACTUAL_JOURNAL>`からTUIを起動する
 
 **DIRECTION**
 
@@ -236,12 +240,13 @@ Editorを一つのprocedureへしない。intent、candidate、admission、publi
 ```text
 tools/hk
   -> report
+  -> actual-add
   -> edit
   -> check
   -> help
 ```
 
-`tools/hk`は引数とexit statusを既存ownerへ渡す。domain calculation、source selection semantics、mutation、audit ruleを所有しない。
+`tools/hk`は引数とexit statusを既存ownerへ渡す。domain calculation、source selection semantics、mutation、audit ruleを所有しない。`actual-add`も一つのexplicit pathを既存TUIへ渡すだけである。
 
 **DIRECTION**
 
@@ -255,9 +260,10 @@ tools/hk
 - property testがBalance lawをmulti-commodity generated valueで観察する
 - editor testがcandidate、stale、publication、restoreをsynthetic sourceで観察する
 - repository auditがCabal source ownershipと`docs/INDEX.toml`を検査する
-- command hub verifierがrouting、argument preservation、error statusをsynthetic stubで観察する
+- command hub verifierがrouting、argument preservation、path arity、error statusをsynthetic stubで観察する
 - CIはpublic checkoutにprivate canonical sourceを要求しない
 - Report contractとsnapshotがsurface compatibilityを検証する
+- private non-canonical rehearsalは秘密を含まないoutcomeだけをevidenceとして残す
 
 **DIRECTION**
 
@@ -310,16 +316,17 @@ owner = "repository-operations"
 
 **CURRENT**
 
-fact、declaration、policy、note、compatibility source、execution configはpublic Gitの外にある一つのprivate canonical directoryへ置く。current writerは`bqn-ledger`であり、`h-kernel`はreaderとnon-canonical rehearsal editorである。
+fact、declaration、policy、note、compatibility source、execution configはpublic Gitの外にある一つのprivate canonical directoryへ置く。canonical `actual.journal`のwriterはh-kernel editorであり、bqn-ledgerとh-kernelはreaderである。他sourceのwriter authorityはActual cutoverで変更していない。
 
 **DIRECTION**
 
-一つのwriter authorityとprivate boundaryを壊さず、fact、policy、compatibility surface、operation configを人間と機械が見分けられる構成にする。
+source別の一つのwriter authorityとprivate boundaryを壊さず、fact、policy、compatibility surface、operation configを人間と機械が見分けられる構成にする。
 
 **QUESTION**
 
 - private source内のinventoryをどのrepositoryが所有するか
-- cutover後もBQN readerをcanonical sourceへ向け続けるか
+- BQN readerをcanonical Actual sourceへ向け続ける期間とreversal provenance対応をどう扱うか
+- Plan、Budget、Issue sourceをどの順序で観察するか
 
 ### 7.3 Stable Household composition
 
@@ -441,21 +448,22 @@ editor intent
 - large moduleは新しい抽象より先に楽章分けを必要としているか
 - source間の共通化候補は同じlawを共有するのか、処理順が似ているだけか
 
-### 7.7 Daily-use cutover
+### 7.7 Actual daily-use observation
 
 **CURRENT**
 
-Haskell editorとdaily command hubはmainにある。canonical writer authorityはまだ`bqn-ledger`にある。
+Haskell editorとdaily command hubはmainにある。canonical `actual.journal`のwriter authorityはh-kernel editorへcutoverされ、ordinary Actual addは`tools/hk actual-add`からTUIへ入る。
 
 **DIRECTION**
 
-全BQN operationの移植を待たず、現在の日常operation setを安全に扱えることをnon-canonical copyで確認し、別の明示cutoverでwriterとdaily entryを切り替える。
+Actual-only cutoverを小さな日常operationとして観察し、preview、confirmation、publication、post-admission、Report readback、single-writer lawを維持する。別sourceのcutoverを暗黙に連鎖させない。
 
 **QUESTION**
 
-- 現在本当に必要なdaily write operationはどれか
-- cutover後もBQN readerを使うか
-- rollback時の唯一writerとsource selectionをどう固定するか
+- daily Actual addで不足するinteractionは何か
+- BQN readerへHaskell-native reversal provenance対応が必要になるか
+- Plan、Budget、Issue sourceのwriter authorityを動かす必要があるか
+- rollback時のreader compatibilityをどこまで確認するか
 
 次の有限sliceは[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)が所有する。
 
