@@ -47,7 +47,7 @@ edit intent
 - raw textとstyled textを分けるCJK-aware terminal rendering
 - Actual、Account、Budget movement、Issue、Plan lifecycleのtyped editor operations
 - preview、strict complete-source admission、stale rejection、backup、atomic publication、post-admission、restore-capable failure
-- report、edit、check、helpをまとめるthin `tools/hk`
+- report、actual-add、edit、check、helpをまとめるthin `tools/hk`
 
 ## Daily command hub
 
@@ -60,6 +60,9 @@ edit intent
 # report commandへ委譲
 ./tools/hk report bs
 ./tools/hk report all
+
+# explicit Actual Journal pathを既存Actual add TUIへ渡す
+./tools/hk actual-add /absolute/path/to/actual.journal
 
 # editor CLIへ残りの引数をそのまま委譲
 ./tools/hk edit ...
@@ -138,25 +141,22 @@ canonical household sourceは、public `h-kernel` repositoryではなくuser-own
 ```bash
 export HKERNEL_LEDGER_DATA_DIR=/absolute/path/to/private-ledger-data
 ./tools/hk report all
+./tools/hk actual-add "$HKERNEL_LEDGER_DATA_DIR/actual.journal"
 ```
 
 `ledger-data.local`にはprivate data directoryのpathを一行で書きます。このfileはGit管理しません。
 
-現在のcanonical writerは`bqn-ledger`です。`h-kernel`にeditorとwrite capabilityが存在しても、明示的なcutoverまではwriter authorityは移りません。
+`actual.journal`のcanonical writerは、2026-08-06の明示的なcutover contractにより`h-kernel` editorへ移る。`bqn-ledger`はreaderまたはReport engineとして使えるが、canonical `actual.journal`を変更するoperationには使わない。
 
 ```text
-before explicit cutover
-  canonical writer = bqn-ledger
-  h-kernel write = synthetic or explicit non-canonical rehearsal only
-
-after explicit cutover
-  canonical writer = h-kernel
-  bqn-ledger writer is not used against canonical source
+canonical actual.journal writer = h-kernel editor
+bqn-ledger actual write          = not used
+other source writer authority    = unchanged by this cutover
 ```
 
-single-user operationのためcross-process shared lockやdual-editor alternating canonical writeはcutover要件にしません。writerを切り替えるときは旧operationを終え、new editorでlatest sourceを読み直します。
+single-user operationのためcross-process shared lockは必須にしません。writerを切り替えるときは旧operationを終え、new editorでlatest sourceを読み直します。preview後にsourceが変化した場合はstaleとして拒否し、current sourceからpreviewをやり直します。
 
-cutoverの現在地は[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)、source topologyとwriter authorityは[`docs/SOURCE_DATA_MIGRATION_PLAN.md`](docs/SOURCE_DATA_MIGRATION_PLAN.md)が所有します。
+Actual writer cutoverの決定、activation、stop、rollbackは[`docs/ACTUAL_WRITER_CUTOVER_001.md`](docs/ACTUAL_WRITER_CUTOVER_001.md)が所有する。editorの現在地は[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)、source topologyと他sourceのwriter authorityは[`docs/SOURCE_DATA_MIGRATION_PLAN.md`](docs/SOURCE_DATA_MIGRATION_PLAN.md)が所有します。
 
 private source、backup、temporary file、recovery workspace、generated report、local pathをpublic Gitへcommitしません。
 
@@ -258,7 +258,7 @@ current CLI operation:
 
 Plan editはcurrent CLI operationではありません。
 
-Actual add TUIはexisting candidate preparationとsafe writerを使うdelivery adapterです。complete private sourceやwriter authorityをUI stateへ持ち込みません。
+Actual add TUIはexisting candidate preparationとsafe writerを使うdelivery adapterです。complete private sourceやwriter authorityをUI stateへ持ち込みません。cutover後のordinary canonical Actual addは、このTUIを`tools/hk actual-add <ACTUAL_JOURNAL>`から起動します。
 
 ## Architecture map
 
@@ -281,8 +281,9 @@ Dependency directionとeffect ownershipは[`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - [`docs/CODE_MAP_AND_DESIGN_SKETCH.md`](docs/CODE_MAP_AND_DESIGN_SKETCH.md): 全体のコードスコアと設計机
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): component、dependency、effect、domain invariant
 - [`docs/HASKELL_NATIVE_CODE_POLICY.md`](docs/HASKELL_NATIVE_CODE_POLICY.md): domainとHaskellの対応
-- [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): editor CURRENT、NEXT、cutover gate
-- [`docs/SOURCE_DATA_MIGRATION_PLAN.md`](docs/SOURCE_DATA_MIGRATION_PLAN.md): private source topologyとwriter authority
+- [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): editor CURRENT、NEXT、cutover後の運用観察
+- [`docs/ACTUAL_WRITER_CUTOVER_001.md`](docs/ACTUAL_WRITER_CUTOVER_001.md): `actual.journal` writer authority、activation、rollback
+- [`docs/SOURCE_DATA_MIGRATION_PLAN.md`](docs/SOURCE_DATA_MIGRATION_PLAN.md): private source topologyとsource別writer authority
 - [`docs/REPORT_CONFIGURATION.md`](docs/REPORT_CONFIGURATION.md): report source selection
 - [`docs/REPORT_VERIFICATION.md`](docs/REPORT_VERIFICATION.md): report verification contract
 - [`SECURITY.md`](SECURITY.md): public/private boundary
