@@ -47,33 +47,46 @@ edit intent
 - raw textとstyled textを分けるCJK-aware terminal rendering
 - Actual、Account、Budget movement、Issue、Plan lifecycleのtyped editor operations
 - preview、strict complete-source admission、stale rejection、backup、atomic publication、post-admission、restore-capable failure
-- report、actual-add、actual-reverse、edit、check、helpをまとめるthin `tools/hk`
+- report、actual-add/transfer、actual-multi、actual-reverse、account、plan、budget、issue、edit、check、helpをまとめるthin `tools/hk`
 
 ## Daily command hub
 
-日常入口は`tools/hk`です。
+日常入口は`tools/hk`です。引数なし（TTY）で起動した場合、対話型メニューが開きます。
 
 ```bash
-# default report
+# 対話型日常メニューを起動 (TTY環境)
 ./tools/hk
+
+# --base DIR で private ledger directory を明示指定
+./tools/hk --base /path/to/private-ledger-data
 
 # report commandへ委譲
 ./tools/hk report bs
 ./tools/hk report all
 
-# explicit Actual Journal pathを既存Actual add TUIへ渡す
-./tools/hk actual-add /absolute/path/to/actual.journal
+# ordinary Actual add / transfer (2-posting add) TUIを起動
+./tools/hk actual-add [/absolute/path/to/actual.journal]
+
+# Actual multi-posting (append) CLIへ委譲
+./tools/hk actual-multi [/absolute/path/to/actual.journal] 2026-08-06 "multi posting" Acct1 -100 JPY Acct2 100 JPY
 
 # explicit Actual reversal intentを既存Editor CLIへ渡す
 # defaultはpreview。publication時だけ--commitを付ける
 ./tools/hk actual-reverse \
-  /absolute/path/to/actual.journal \
+  [--commit] \
+  [/absolute/path/to/actual.journal] \
   NEW-EVENT-ID \
   TARGET-EVENT-ID \
   2026-08-06 \
   correction-description
 
-# editor CLIへ残りの引数をそのまま委譲
+# Account, Plan, Budget, Issue CLIへ委譲
+./tools/hk account [/absolute/path/to/actual.journal] Assets:Saving asset JPY
+./tools/hk plan add ...
+./tools/hk budget ...
+./tools/hk issue ...
+
+# editor CLIまたはファイル編集へ委譲
 ./tools/hk edit ...
 
 # build、test、repository ownership audit
@@ -83,7 +96,7 @@ edit intent
 ./tools/hk help
 ```
 
-`tools/hk`は会計計算、Report rendering、editor admission、source mutation、audit ruleを再実装しません。既存ownerへroutingし、そのexit statusを保つ小さなdoorwayです。`actual-reverse`もtargetを選択したりidentityを生成したりせず、`h-kernel-editor-cli reverse`へ引数をそのまま渡します。
+`tools/hk`は会計計算、Report rendering、editor admission、source mutation、audit ruleを再実装しません。`--base DIR`、`HKERNEL_LEDGER_DATA_DIR`、または`ledger-data.local`から private source directory を解決し、既存の Haskell CLI/TUI Executable へ routing します。
 
 ## Build and verification
 
