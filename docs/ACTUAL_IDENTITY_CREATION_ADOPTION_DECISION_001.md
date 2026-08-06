@@ -92,29 +92,74 @@ h-kernelが今後 canonical source へ新しく書き込む Actual transaction �
 
 ## 6. Generator ownership (Decision D)
 
-Identity generator の所有権境界を以下のように明確化する。
+Identity generator の所有権境界を以下のように確定する。
 
-* **非所有**:
-  * Journal parser (`HKernel.Actual.Journal`) は identity を生成しない（読み取り・検証のみ）。
-  * Safe publication writer (`HKernel.Editor.ActualWriter`) は identity を生成しない。
-  * Candidate serializer は暗黙の identity 生成を行わない。
-* **推奨所有者（Generator Owner）**:
-  * Identity generator の所有権は、Actual operation を構築する **application / editor 境界** に置く（例: `HKernel.Editor.ActualIdentity` または `HKernel.Editor.ActualIdentityCreation`）。
-* **処理フロー概念図**:
-  ```text
-  operation adapter
-    -> request/generate ActualTransactionId
-    -> domain validation
-    -> ActualEditIntent metadata
-    -> candidate rendering
-    -> strict parse-back
-    -> confirmation
-    -> safe publication
-  ```
-* **設計原則**:
-  * generic ID utility（汎用文字列処理など）に置かない。
-  * Plan ID generator と無意味に共通化・併合しない。
-  * parser や writer の内部へ押し込まない。
+### Selected owner
+
+```text
+HKernel.Editor.ActualIdentity
+```
+
+Identity generator の所有権は、`HKernel.Editor.ActualIdentity` モジュールに一意に確定する。
+
+### 将来本モジュールが所有するもの
+
+* Actual identity generation request
+* generator injection boundary
+* generated Text の `ActualTransactionId` admission
+* existing admitted identity との collision 確認
+* 有限 retry または typed failure
+* identity format implementation
+
+### 本モジュールが所有しないもの
+
+* Journal parsing
+* Transaction rendering
+* safe publication
+* backup / restore
+* stale detection
+* TUI navigation
+* Plan identity generation
+* historical source rewrite
+
+### Existing domain typeとの関係
+
+既存のドメイン型および検証関数を再定義しない。
+
+```haskell
+HKernel.Plan.Completion.ActualTransactionId
+HKernel.Plan.Completion.mkActualTransactionId
+```
+
+`HKernel.Editor.ActualIdentity` は、新しい identity 型を並行して作るモジュールではない。
+
+本モジュールの役割は以下の通りである。
+
+```text
+opaque/random candidate Text
+  -> mkActualTransactionId
+  -> admitted ActualTransactionId
+  -> collision check
+```
+
+`ActualTransactionId` の domain validation ownership は既存の `HKernel.Plan.Completion` に残す。
+
+### Application adapterとの関係
+
+TUI または CLI adapter は、operation 開始時または最初の valid preview 前に `HKernel.Editor.ActualIdentity` へ identity を要求する。生成された identity は同一 operation 内で固定する。
+
+以下のモジュールへ生成処理を置かない。
+
+* `HKernel.Actual.Journal`
+* `HKernel.Editor.ActualWriter`
+* `HKernel.Editor.TransactionBlock`
+* rendering helper
+
+### Format gateとの分離
+
+Generator owner は今回 `HKernel.Editor.ActualIdentity` に一意に確定するが、具体的な ID フォーマット（UUID v4, UUID v7, ULID, opaque random token 等）の最終選択は、引き続き次実装 slice 冒頭の有限 gate として残す。
+
+「owner 候補（確定済み）」と「format 候補（次 slice gate）」を明確に区別する。
 
 ## 7. Generation timing (Decision E)
 
@@ -159,7 +204,7 @@ Identity のフォーマットが満たすべき定量的・構造的要件を�
   * 候補: UUID v4, UUID v7, ULID, cryptographically random opaque token, timestamp + random suffix.
 * **依存関係と有限ゲート**:
   * 本sliceでは外部ライブラリ等の依存関係（dependency）を追加しない。
-  * 具体的かつ最終的なフォーマットの選択（外部dependency導入の有無等）は、次実装sliceの最初のgateとして有限に残す。
+  * Generator owner は `HKernel.Editor.ActualIdentity` に確定済みである。具体的かつ最終的なフォーマットの選択（外部dependency導入の有無等）は、次実装sliceの最初のgateとして有限に残す。
   * ただし、「内容や位置から導出しない」という semantic decision は本決定をもって確定とする。
 
 ## 9. Plan completion compatibility (Decision B)
@@ -294,7 +339,7 @@ Transaction browser における各行の Reverse 操作に対する適格性（
 5. **Reject: writer-side hidden generation**
    * **理由**: プレビューした candidate と出版される candidate が一致しなくなる。テスト可能性が低下する。
 
-## 16. Privacy boundary
+## 15. Privacy boundary
 
 * private canonical source へのアクセスを厳禁とする。
 * 実データ（private paths, real accounts, dates, amounts, descriptions, hashes）を文書やログ、テストに含めない。
