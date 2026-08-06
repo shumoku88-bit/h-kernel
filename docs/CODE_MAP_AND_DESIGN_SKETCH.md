@@ -1,7 +1,7 @@
 # h-kernel コードスコア
 
 ステータス: アクティブな全体設計面  
-更新日: 2026-08-04
+更新日: 2026-08-06
 
 ## 1. この文書の役割
 
@@ -419,6 +419,75 @@ renderSection
 - Report factやBudget resultのうち、どの結合が本当に同じ観察文脈を保つか
 - `AccountBalances`の組合せは公開代数なのか、query owner内部のreductionに留めるべきか
 - 可換projectionへ落とす前に保持すべき順序、identity、provenanceを型からどう読めるようにするか
+
+### 7.6 Haskell機能の現在地
+
+**CURRENT**
+
+現在の`main`では、Haskellの機能を網羅するためではなく、domain構造をコードから読めるようにするため、次の機能が実際のownerで使われている。
+
+| Haskellの声部 | 現在対応しているdomain構造 |
+|---|---|
+| ADTとpattern matching | Account種別、command、period、load・validation・editor failureなど、domainに実在するcase |
+| `newtype`、constructor隠蔽、smart constructor | Commodity、Quantity、Balance、Transaction、DateRange、identityなどのcanonical valueとinvalid stateの排除 |
+| `Either`、`NonEmpty`、`do` notation | typed failure、空でないdiagnostics、前段の成功値へ依存するadmissionとcandidate preparation |
+| `Semigroup`、`Monoid`、`Foldable`、`foldMap` | Balance、Flow、Matrix、Daily Target、Backingなど、単位元と結合則を持つ寄与の集約 |
+| parametric polymorphismと高階関数 | collection形状に依存しないreduction、row・column・evidenceを型parameterとして保つbasis |
+| `traverse`とMap combinator | collectionの形と座標を保ったvalidation、projection、lookup、aggregation |
+| pure coreとIO shell | accounting、policy、Report、candidate preparationを純粋に保ち、file・environment・terminal effectを境界へ限定する構成 |
+| `StateT LoadedFiles (ExceptT LoadError IO)` | include graphで必要なloaded state、typed failure、file read effectの明示的な重なり |
+| module abstraction | public facade、internal facts、stable component、spike、editor、application entryの公開範囲とownership |
+
+ポイントフリー記法は、変換の向きがよく見える場所で使う一つの表記であり、使用量を美しさの尺度にしない。引数、`where`、record constructionによってdomain上の中間名や複数声部が見える場合は、それらを明示する。
+
+**DIRECTION**
+
+リポジトリ全体を、一つの書法へ均したfunction集ではなく、主題、反復、変奏、楽章、effect boundaryが読める大きな楽譜へ育てる。
+
+```text
+validated source
+  -> canonical facts
+  -> named domain basis
+  -> named projection
+  -> rendering
+
+editor intent
+  -> pure candidate
+  -> complete-source admission
+  -> explicit publication effect
+```
+
+高度なHaskell機能は学習対象だが、導入checklistにはしない。新しい機能は、具体的なdomain構造に対応し、invalid state、branch、重複、手続き的stateのいずれかを実際に引ける場合に採用する。
+
+**SKETCH**
+
+現在まだ中心的に使っていない機能には、次のような導入条件が考えられる。
+
+| 候補 | 導入を検討するdomain上の兆候 |
+|---|---|
+| Applicative validation | date、description、postingなど、互いに独立したvalidation errorを一度に蓄積したい |
+| phantom type / DataKinds | preview、admitted、confirmed、publishedなど、editor lifecycleの異なる段階を実際に取り違え得る |
+| GADT | command constructorごとに必要な入力と返すresult型が異なり、その対応を型signatureから読む必要がある |
+| custom typeclass / type family | Actual、Plan、Budget、Issueなどが、syntaxの類似ではなく同じlawと操作集合を本当に共有する |
+| optics | 深いrecord更新がdomain上の主題を隠し、同じ焦点操作が複数ownerで反復する |
+| recursion scheme | include graph、Account tree、Report treeなど、同じ再帰構造の走査と組立てが複数箇所で重複する |
+| effect abstraction | 現在の能力recordやtransformer boundaryでは、同じeffect契約の再利用またはtestが明確に難しくなる |
+
+これらは未使用機能の不足表ではない。現在のADT、名前付きpure function、標準typeclass、explicit effect boundaryがdomainを最も正確に表すなら、それが現在の正しい音である。
+
+**QUESTION**
+
+- 現在のinput admissionに、fail-fastではなくApplicativeなerror accumulationが自然な独立validationはあるか
+- editorのpreview、admission、confirmation、publicationは、現在の型で実際に取り違え可能か
+- `HKernel.Report`や`HKernel.Editor.ActualWriter`の大きさは、新しい抽象より先に楽章分けを必要としているか
+- sourceごとの共通化候補は同じdomain lawを共有するのか、それとも表面上の処理順が似ているだけか
+- 新しい機能を、目新しさではなくdomainとの対応とfocused evidenceで説明できるか
+
+**OWNER DOCUMENTS**
+
+- [`HASKELL_NATIVE_CODE_POLICY.md`](HASKELL_NATIVE_CODE_POLICY.md)
+- [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- [`BALANCE_ALGEBRA.md`](BALANCE_ALGEBRA.md)
 
 ## 8. 新しいスケッチの書式
 
