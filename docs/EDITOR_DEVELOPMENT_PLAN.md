@@ -40,7 +40,7 @@ h-kernel-editor-tui
   owns: Actual add interaction and explicit confirmation
 
 tools/hk
-  owns: report / actual-add / edit / check / help routing only
+  owns: report / actual-add / actual-reverse / edit / check / help routing only
 ```
 
 ### 2.1 Current editor operations
@@ -129,7 +129,29 @@ ordinary canonical Actual addの日常入口は次である。
 ./tools/hk actual-add /absolute/path/to/actual.journal
 ```
 
-### 2.6 Daily command hub
+### 2.6 Actual reverse daily entrypoint
+
+Actual reverseのdomain operation、candidate preparation、strict complete-source admission、safe writerは既存Editor ownerにある。daily command hubはそれらを再実装せず、explicit reversal intentをEditor CLIへ渡す専用入口だけを持つ。
+
+```sh
+./tools/hk actual-reverse \
+  [--commit] \
+  /absolute/path/to/actual.journal \
+  NEW-EVENT-ID \
+  TARGET-EVENT-ID \
+  YYYY-MM-DD \
+  DESCRIPTION...
+```
+
+- previewがdefaultであり、publicationには`--commit`を明示する
+- `tools/hk`は引数の意味を解釈せず、`h-kernel-editor-cli reverse`へ順序を保って委譲する
+- target Transaction選択、新しいidentity生成、reader compatibilityはこのrouteの責任ではない
+- selectorまたはreverse専用TUIはまだ存在しない
+- reversal provenanceをordinary append parityへ薄めない
+
+この入口はcanonical `actual.journal`の既存writer authorityを使うだけであり、他sourceのwriter authorityを変更しない。
+
+### 2.7 Daily command hub
 
 `tools/hk`は日常入口としてmainへmergeされている。
 
@@ -137,6 +159,7 @@ ordinary canonical Actual addの日常入口は次である。
 tools/hk
   -> report
   -> actual-add
+  -> actual-reverse
   -> edit
   -> check
   -> help
@@ -145,6 +168,7 @@ tools/hk
 - 引数なしは既存report launcherへ委譲する
 - `report`は既存report entrypointへ引数を渡す
 - `actual-add`は一つのexplicit Journal pathを既存Actual add TUIへ渡す
+- `actual-reverse`は`reverse` leafを付けて既存Editor CLIへ残りの引数を渡す
 - `edit`は`h-kernel-editor-cli`へ引数を渡す
 - `check`はrepository標準build、test、ownership auditを呼ぶ
 - command hub自身はsourceを読まず、書かず、会計計算をしない
@@ -218,42 +242,45 @@ cutover判断は、BQN editorの全機能移植ではなく、`actual.journal`�
 
 cutover contractは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
 
-## 6. NEXT: Actual daily-use observation period
+## 6. NEXT: Actual reverse daily-use observation
 
-次の有限sliceは、新しい機能の追加ではなく、Actual-only cutover後の日常運用を観察することである。
+次の有限sliceは、専用routeの追加後にActual reverseの日常操作として不足するread-only selectionとoperator experienceを観察することである。
 
 有限な問い:
 
-> canonical `actual.journal`のordinary addを`tools/hk actual-add`から行い、single-writer law、preview、confirmation、publication、post-admission、Report readbackを日常の小さなoperationとして維持できるか。
+> canonical `actual.journal`のcorrectionを`tools/hk actual-reverse`からpreviewし、explicit identityとtarget relationを保ったまま安全に操作できるか。target選択の不足はsemantic capability不足ではなくread-only interaction不足として分離できるか。
 
 ### Scope
 
-- ordinary Actual addを最初の日常operationとする
-- write前にlatest sourceを読み、TUIでpreviewする
-- confirmation後だけpublicationする
-- write success後にReportまたはstrict admissionでreadbackする
+- reverse candidateは既存`prepareActualReverse`を使う
+- defaultはpreviewだけとする
+- publication時だけ`--commit`を明示する
+- source mutation前後のstrict admissionとReport readbackを確認する
+- target Transactionとidentityはprivate valueをpublic evidenceへ出さない
+- dedicated selectorが必要かをoperation observationとして記録する
 - `bqn-ledger` writerをcanonical `actual.journal`へ向けない
 - failure時は次のwriteを止め、cutover contractのstop procedureへ戻る
-- private valueをpublic Issue、PR、CI、fixtureへ出さない
-- operation outcomeだけをsanitizedに記録する
 
 ### Non-goals
 
+- reversal provenanceの変更
 - source format migration
 - Budget、Issue、Plan source writer cutover
-- bqn-ledger reader removal
+- bqn-ledger reader removalまたはadaptation
+- selectorとTUIの同時実装
 - Plan editの新規実装
 - shared lock
 - dual-editor alternating write
 - historical reversal cleanup
-- UIの大型化
 
-観察期間でActual addの不足が見つかった場合も、他sourceのcutoverや無関係なeditor featureを同じsliceへ混ぜない。
+観察でselection gapが確認されても、reader compatibilityや他sourceのcutoverを同じsliceへ混ぜない。
 
 ## 7. Remaining decisions after Actual cutover
 
 Actual-only cutover後にも、次は別の明示sliceとして残る。
 
+- Actual multi-postingの日常入口またはinteraction
+- Actual reverse target selectorとidentity input experience
 - Plan source writer authority
 - Budget movement source writer authority
 - Issue source writer authority

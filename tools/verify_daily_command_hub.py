@@ -97,6 +97,31 @@ def main() -> None:
             )
 
         log.write_text("", encoding="utf-8")
+        result = invoke(
+            [
+                "actual-reverse",
+                "--commit",
+                "private actual.journal",
+                "reverse-new-id",
+                "target-old-id",
+                "2026-08-06",
+                "correct",
+                "entry",
+            ],
+            env,
+        )
+        assert_success(result, "Actual reverse CLI delegation")
+        expected_actual_reverse = [
+            "cabal <run> <exe:h-kernel-editor-cli> <--> <reverse> <--commit> "
+            "<private actual.journal> <reverse-new-id> <target-old-id> "
+            "<2026-08-06> <correct> <entry>"
+        ]
+        if read_log(log) != expected_actual_reverse:
+            raise AssertionError(
+                f"Actual reverse arguments differed: {read_log(log)!r}"
+            )
+
+        log.write_text("", encoding="utf-8")
         result = invoke(["edit", "append", "actual.journal", "coffee shop"], env)
         assert_success(result, "editor delegation")
         expected_editor = [
@@ -122,6 +147,7 @@ def main() -> None:
         expected_help_entries = (
             "tools/hk report",
             "tools/hk actual-add",
+            "tools/hk actual-reverse",
             "tools/hk edit",
         )
         if not all(entry in result.stdout for entry in expected_help_entries):
