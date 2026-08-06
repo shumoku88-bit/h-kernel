@@ -8,9 +8,25 @@ import qualified Data.Text.IO as TIO
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (accountName)
-import HKernel.Editor.ActualAppend (ActualEditIntent(..))
+import HKernel.Editor.ActualAppend
+  ( ActualAddInput(..)
+  , ActualAddInputError(..)
+  , ActualAddPreview(..)
+  , ActualAddWriteFailure(..)
+  , ActualAddWriteOutcome(..)
+  , ActualEditIntent(..)
+  , buildActualAddIntent
+  , classifyActualAddWriteResult
+  )
 import HKernel.Editor.ActualWriter (WriteError(..))
 import HKernel.Editor.TUI.ActualAdd
+  ( AccountSelectionTarget(..)
+  , ActualAddAction(..)
+  , ActualAddMode(..)
+  , ActualAddState(..)
+  , initialActualAddState
+  , transitionActualAdd
+  )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Money (renderQuantity)
 
