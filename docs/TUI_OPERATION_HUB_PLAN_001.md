@@ -87,16 +87,17 @@ All other operations, including `OperationActualReverse`, remain typed `Operatio
 2. Read-only Actual transaction list / selector (**PR #39**)
 3. TUI operation source snapshot lifecycle (**PR #40**)
 4. Durable identity creation / adoption decision (**PR #41**)
-5. Ordinary Actual add durable identity creation (**Current slice**)
-6. Shared identity generator adoption by other future Actual creators (**Next recommended slice**)
-7. Source-aligned no-identity adoption engine
-8. Read-only browser identity adoption entrypoint
-9. Actual reverse TUI
-10. Actual multi-posting TUI
-11. Account declaration TUI
-12. Report selection & read-only rendering
-13. Plan operations
-14. Budget and Issue operations after authority decisions
+5. Ordinary Actual add durable identity creation (**PR #42**)
+6. Plan finish durable event identity adoption (**Current slice**)
+7. Actual reverse canonical new-event identity admission (**Next slice**)
+8. Source-aligned no-identity adoption engine
+9. Read-only browser identity adoption entrypoint
+10. Actual reverse TUI
+11. Actual multi-posting TUI
+12. Account declaration TUI
+13. Report selection & read-only rendering
+14. Plan operations
+15. Budget and Issue operations after authority decisions
 
 ## Slice Scope: Ordinary Actual Add Durable Identity Creation
 

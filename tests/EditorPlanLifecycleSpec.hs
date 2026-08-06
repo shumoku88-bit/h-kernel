@@ -10,10 +10,23 @@ import Data.Time.Calendar (fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (Account, mkAccount)
-import HKernel.Actual.Journal (parseActualJournal)
+import HKernel.Actual.Journal
+  ( ActualTransactionIdentity(..)
+  , ActualTransactionRecord(..)
+  , actualJournalCompletionDeclarations
+  , actualJournalRecords
+  , parseActualJournal
+  )
+import HKernel.Editor.ActualIdentity (admitActualEventIdentityText)
 import HKernel.Editor.PlanLifecycle
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Money (Commodity, Quantity, mkCommodity, parseQuantity)
+import HKernel.Plan (mkPlanId)
+import HKernel.Plan.Completion
+  ( ActualTransactionId
+  , declaredCompletionPlanId
+  , mkActualTransactionId
+  )
 import HKernel.Plan.Journal (parsePlanJournal)
 
 main :: IO ()
@@ -23,9 +36,15 @@ main = do
         , ("testPlanAddUsesPlanAdmissionOnly", testPlanAddUsesPlanAdmissionOnly)
         , ("testPlanAddInvalidSeries", testPlanAddInvalidSeries)
         , ("testPlanFinishSuccess", testPlanFinishSuccess)
+        , ("testPlanFinishMetadataAndRelation", testPlanFinishMetadataAndRelation)
         , ("testPlanFinishMissingAmount", testPlanFinishMissingAmount)
         , ("testPlanFinishNegativeAmount", testPlanFinishNegativeAmount)
         , ("testPlanFinishZeroAmount", testPlanFinishZeroAmount)
+        , ("testPlanFinishDirectPreparationBypassRejected", testPlanFinishDirectPreparationBypassRejected)
+        , ("testPlanFinishCollisionRejected", testPlanFinishCollisionRejected)
+        , ("testPlanFinishAlreadyClosed", testPlanFinishAlreadyClosed)
+        , ("testPlanFinishNotFound", testPlanFinishNotFound)
+        , ("testPlanFinishHistoricalPlanIdOnlyCompletionValid", testPlanFinishHistoricalPlanIdOnlyCompletionValid)
         ]
   mapM_ print results
   if all snd results
@@ -45,6 +64,11 @@ planFixture = T.unlines
   , "  ; plan-id: plan-2023-01-01-lunch"
   , "  assets:bank  -500 JPY"
   , "  expenses:food  500 JPY"
+  , ""
+  , "2023-01-02 another plan"
+  , "  ; plan-id: plan-2023-01-02-dinner"
+  , "  assets:bank  -1000 JPY"
+  , "  expenses:food  1000 JPY"
   ]
 
 planFixtureWithActualOnlyMetadata :: Text
@@ -78,6 +102,36 @@ actualFixture = T.unlines
   , "  expenses:food  -1000 JPY"
   ]
 
+actualFixtureWithHistoricalCompletion :: Text
+actualFixtureWithHistoricalCompletion = T.unlines
+  [ "account assets:bank"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , ""
+  , "2023-01-02 historical plan completion"
+  , "  ; plan-id: plan-2023-01-01-lunch"
+  , "  assets:bank  -500 JPY"
+  , "  expenses:food  500 JPY"
+  ]
+
+actualFixtureWithExistingEventId :: Text
+actualFixtureWithExistingEventId = T.unlines
+  [ "account assets:bank"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , ""
+  , "2023-01-02 existing actual with explicit id"
+  , "  ; event-id: evt-550e8400-e29b-41d4-a716-446655440100"
+  , "  assets:bank  1000 JPY"
+  , "  expenses:food  -1000 JPY"
+  ]
+
 accBank :: Account
 accBank = either (error "bad account") id (mkAccount "assets:bank")
 
@@ -94,6 +148,14 @@ positiveQty value =
 
 comm :: Text -> Commodity
 comm = either (error "bad comm") id . mkCommodity
+
+sampleEventId :: ActualTransactionId
+sampleEventId = either (error "bad event id") id
+  (admitActualEventIdentityText "evt-550e8400-e29b-41d4-a716-446655440100")
+
+sampleEventId2 :: ActualTransactionId
+sampleEventId2 = either (error "bad event id") id
+  (admitActualEventIdentityText "evt-550e8400-e29b-41d4-a716-446655440101")
 
 planAddIntent :: Maybe Text -> PlanAddIntent
 planAddIntent series = PlanAddIntent
@@ -138,6 +200,7 @@ testPlanFinishSuccess :: Bool
 testPlanFinishSuccess =
   let intent = PlanFinishIntent
         { finishPlanId = "plan-2023-01-01-lunch"
+        , finishActualEventId = sampleEventId
         , finishActualDate = fromGregorian 2023 1 2
         , finishActualAmount = Just (positiveQty "600")
         }
@@ -145,14 +208,43 @@ testPlanFinishSuccess =
        Right preview ->
          let block = finishCandidateBlock preview
          in "plan-2023-01-01-lunch" `T.isInfixOf` block
+              && "evt-550e8400-e29b-41d4-a716-446655440100" `T.isInfixOf` block
               && "600 JPY" `T.isInfixOf` block
               && "-600 JPY" `T.isInfixOf` block
+       Left err -> error (show err)
+
+testPlanFinishMetadataAndRelation :: Bool
+testPlanFinishMetadataAndRelation =
+  let intent = PlanFinishIntent
+        { finishPlanId = "plan-2023-01-01-lunch"
+        , finishActualEventId = sampleEventId
+        , finishActualDate = fromGregorian 2023 1 2
+        , finishActualAmount = Just (positiveQty "600")
+        }
+  in case preparePlanFinish planFixture actualFixture intent of
+       Right preview ->
+         let block = finishCandidateBlock preview
+             completeSource = finishCandidateCompleteSource preview
+             eventIdPos = T.breakOn "evt-550e8400-e29b-41d4-a716-446655440100" block
+             planIdPos = T.breakOn "plan-2023-01-01-lunch" block
+         in case parseActualJournal completeSource of
+              Right admittedJ ->
+                let decls = actualJournalCompletionDeclarations admittedJ
+                    records = actualJournalRecords admittedJ
+                    isExplicitOrigin rec = case actualRecordIdentity rec of
+                      ActualWithExplicitEventIdentity _ -> True
+                      _ -> False
+                in T.length (fst eventIdPos) < T.length (fst planIdPos)
+                     && map declaredCompletionPlanId decls == [either (error "bad plan id") id (mkPlanId "plan-2023-01-01-lunch")]
+                     && any isExplicitOrigin records
+              Left _ -> False
        Left err -> error (show err)
 
 testPlanFinishMissingAmount :: Bool
 testPlanFinishMissingAmount =
   let intent = PlanFinishIntent
         { finishPlanId = "plan-2023-01-01-lunch"
+        , finishActualEventId = sampleEventId
         , finishActualDate = fromGregorian 2023 1 2
         , finishActualAmount = Nothing
         }
@@ -160,6 +252,7 @@ testPlanFinishMissingAmount =
        Right preview ->
          let block = finishCandidateBlock preview
          in "plan-2023-01-01-lunch" `T.isInfixOf` block
+              && "evt-550e8400-e29b-41d4-a716-446655440100" `T.isInfixOf` block
               && "500 JPY" `T.isInfixOf` block
               && "-500 JPY" `T.isInfixOf` block
        Left err -> error (show err)
@@ -173,3 +266,66 @@ testPlanFinishZeroAmount :: Bool
 testPlanFinishZeroAmount =
   mkPositivePlanFinishAmount (qty "0")
     == Left (NonPositivePlanFinishAmount (qty "0"))
+
+testPlanFinishDirectPreparationBypassRejected :: Bool
+testPlanFinishDirectPreparationBypassRejected =
+  let legacyId = either (error "bad id") id (mkActualTransactionId "legacy-plan-finish-event")
+      intent = PlanFinishIntent
+        { finishPlanId = "plan-2023-01-01-lunch"
+        , finishActualEventId = legacyId
+        , finishActualDate = fromGregorian 2023 1 2
+        , finishActualAmount = Nothing
+        }
+  in case preparePlanFinish planFixture actualFixture intent of
+       Left (FinishInvalidActualEventIdentity :| []) -> True
+       _ -> False
+
+testPlanFinishCollisionRejected :: Bool
+testPlanFinishCollisionRejected =
+  let intent = PlanFinishIntent
+        { finishPlanId = "plan-2023-01-01-lunch"
+        , finishActualEventId = sampleEventId
+        , finishActualDate = fromGregorian 2023 1 2
+        , finishActualAmount = Nothing
+        }
+  in case preparePlanFinish planFixture actualFixtureWithExistingEventId intent of
+       Left (FinishActualEventIdentityAlreadyExists :| []) -> True
+       _ -> False
+
+testPlanFinishAlreadyClosed :: Bool
+testPlanFinishAlreadyClosed =
+  let intent = PlanFinishIntent
+        { finishPlanId = "plan-2023-01-01-lunch"
+        , finishActualEventId = sampleEventId2
+        , finishActualDate = fromGregorian 2023 1 2
+        , finishActualAmount = Nothing
+        }
+  in case preparePlanFinish planFixture actualFixtureWithHistoricalCompletion intent of
+       Left (FinishPlanAlreadyClosed pId :| []) ->
+         pId == either (error "bad plan id") id (mkPlanId "plan-2023-01-01-lunch")
+       _ -> False
+
+testPlanFinishNotFound :: Bool
+testPlanFinishNotFound =
+  let intent = PlanFinishIntent
+        { finishPlanId = "plan-2023-01-99-nonexistent"
+        , finishActualEventId = sampleEventId
+        , finishActualDate = fromGregorian 2023 1 2
+        , finishActualAmount = Nothing
+        }
+  in case preparePlanFinish planFixture actualFixture intent of
+       Left (FinishPlanNotFound _ :| []) -> True
+       _ -> False
+
+testPlanFinishHistoricalPlanIdOnlyCompletionValid :: Bool
+testPlanFinishHistoricalPlanIdOnlyCompletionValid =
+  case parseActualJournal actualFixtureWithHistoricalCompletion of
+    Right actualJ ->
+      let decls = actualJournalCompletionDeclarations actualJ
+          records = actualJournalRecords actualJ
+          isDerivedOrigin rec = case actualRecordIdentity rec of
+            ActualWithPlanDerivedRuntimeIdentity _ _ -> True
+            _ -> False
+      in length decls == 1
+           && any isDerivedOrigin records
+    Left _ -> False

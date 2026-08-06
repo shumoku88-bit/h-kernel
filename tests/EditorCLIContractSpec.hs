@@ -13,7 +13,7 @@ import HKernel.Editor.ActualReverse
   )
 import HKernel.Editor.CLI
 import HKernel.Editor.IssueAppend (intentAmount, intentDetails)
-import HKernel.Editor.PlanLifecycle (addDate)
+import HKernel.Editor.PlanLifecycle (addDate, finishActualEventId)
 import HKernel.Household.BudgetMovement (householdBudgetMovementMemo)
 import HKernel.Plan.Completion (actualTransactionIdText)
 
@@ -31,10 +31,15 @@ main = do
         , ("Issue amount pair rejects one-sided omission", testIssueAmountPair)
         , ("Issue blank amount and details are preserved", testIssueBlankAmount)
         , ("Plan add requires explicit date", testPlanAddDateRequired)
+        , ("Plan finish accepts canonical event-id", testPlanFinishCanonicalEventId)
+        , ("Plan finish requires explicit event-id", testPlanFinishEventIdRequired)
+        , ("Plan finish rejects non-canonical event-ids", testPlanFinishInvalidEventIds)
+        , ("Plan finish permits option order independence", testPlanFinishOptionOrderIndependence)
         , ("Plan finish requires explicit actual date", testPlanFinishDateRequired)
         , ("Plan finish rejects negative actual amount", testPlanFinishNegativeAmount)
         , ("Plan finish rejects zero actual amount", testPlanFinishZeroAmount)
         , ("Plan add admits command-local commit", testPlanAddCommit)
+        , ("usage text contains --event-id with canonical format", testUsageTextContainsEventId)
         ]
   mapM_ print results
   if all snd results
@@ -216,6 +221,82 @@ testPlanAddDateRequired =
     , "JPY"
     ] == Left CliPlanAddDateRequired
 
+testPlanFinishCanonicalEventId :: Bool
+testPlanFinishCanonicalEventId = case parseEditorCommand
+  [ "plan"
+  , "finish"
+  , "--commit"
+  , "plan.journal"
+  , "actual.journal"
+  , "--id"
+  , "plan-2026-08-05-meal"
+  , "--event-id"
+  , "evt-550e8400-e29b-41d4-a716-446655440100"
+  , "--actual-date"
+  , "2026-08-05"
+  , "--actual-amount"
+  , "500"
+  ] of
+    Right (CommitRequested, PlanFinishCmd "plan.journal" "actual.journal" intent) ->
+      actualTransactionIdText (finishActualEventId intent) == "evt-550e8400-e29b-41d4-a716-446655440100"
+    _ -> False
+
+testPlanFinishEventIdRequired :: Bool
+testPlanFinishEventIdRequired =
+  parseEditorCommand
+    [ "plan"
+    , "finish"
+    , "plan.journal"
+    , "actual.journal"
+    , "--id"
+    , "plan-2026-08-05-meal"
+    , "--actual-date"
+    , "2026-08-05"
+    ] == Left CliPlanFinishEventIdRequired
+
+testPlanFinishInvalidEventIds :: Bool
+testPlanFinishInvalidEventIds =
+  all isRejected
+    [ "banana"
+    , "evt-legacy-plan-finish"
+    , "evt-550E8400-E29B-41D4-A716-446655440100"
+    , "evt-550e8400-e29b-11d4-a716-446655440100"
+    , "evt-550e8400-e29b-51d4-a716-446655440100"
+    , "550e8400-e29b-41d4-a716-446655440100"
+    ]
+  where
+    isRejected eventIdText = parseEditorCommand
+      [ "plan"
+      , "finish"
+      , "plan.journal"
+      , "actual.journal"
+      , "--id"
+      , "plan-2026-08-05-meal"
+      , "--event-id"
+      , eventIdText
+      , "--actual-date"
+      , "2026-08-05"
+      ] == Left CliInvalidActualTransactionId
+
+testPlanFinishOptionOrderIndependence :: Bool
+testPlanFinishOptionOrderIndependence = case parseEditorCommand
+  [ "plan"
+  , "finish"
+  , "plan.journal"
+  , "actual.journal"
+  , "--actual-date"
+  , "2026-08-05"
+  , "--event-id"
+  , "evt-550e8400-e29b-41d4-a716-446655440100"
+  , "--actual-amount"
+  , "500"
+  , "--id"
+  , "plan-2026-08-05-meal"
+  ] of
+    Right (PreviewOnly, PlanFinishCmd _ _ intent) ->
+      actualTransactionIdText (finishActualEventId intent) == "evt-550e8400-e29b-41d4-a716-446655440100"
+    _ -> False
+
 testPlanFinishDateRequired :: Bool
 testPlanFinishDateRequired =
   parseEditorCommand
@@ -225,6 +306,8 @@ testPlanFinishDateRequired =
     , "actual.journal"
     , "--id"
     , "plan-2026-08-05-meal"
+    , "--event-id"
+    , "evt-550e8400-e29b-41d4-a716-446655440100"
     ] == Left CliPlanFinishDateRequired
 
 testPlanFinishNegativeAmount :: Bool
@@ -236,6 +319,8 @@ testPlanFinishNegativeAmount =
     , "actual.journal"
     , "--id"
     , "plan-2026-08-05-meal"
+    , "--event-id"
+    , "evt-550e8400-e29b-41d4-a716-446655440100"
     , "--actual-date"
     , "2026-08-05"
     , "--actual-amount"
@@ -251,6 +336,8 @@ testPlanFinishZeroAmount =
     , "actual.journal"
     , "--id"
     , "plan-2026-08-05-meal"
+    , "--event-id"
+    , "evt-550e8400-e29b-41d4-a716-446655440100"
     , "--actual-date"
     , "2026-08-05"
     , "--actual-amount"
@@ -276,3 +363,8 @@ testPlanAddCommit = case parseEditorCommand
     Right (CommitRequested, PlanAddCmd _ _ intent) ->
       addDate intent == fromGregorian 2026 8 5
     _ -> False
+
+testUsageTextContainsEventId :: Bool
+testUsageTextContainsEventId =
+  "--event-id EVT-UUID-V4" `elem` lines usageText
+    || any (\l -> "--event-id" `elem` words l && "EVT-UUID-V4" `elem` words l) (lines usageText)

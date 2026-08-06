@@ -47,7 +47,7 @@ import HKernel.Money
   , mkCommodity
   , parseQuantity
   )
-import HKernel.Plan.Completion (mkActualTransactionId)
+import HKernel.Plan.Completion (ActualTransactionId, mkActualTransactionId)
 
 data CommitMode
   = PreviewOnly
@@ -85,6 +85,7 @@ data CliError
   | CliPlanAddPostingRequired
   | CliPlanAddOptionInvalid
   | CliPlanFinishIdRequired
+  | CliPlanFinishEventIdRequired
   | CliPlanFinishDateRequired
   | CliPlanFinishAmountMustBePositive
   | CliPlanFinishOptionInvalid
@@ -267,13 +268,14 @@ parsePlanAddOptions fields ("--series":series:rest) =
 parsePlanAddOptions _ _ = Left CliPlanAddOptionInvalid
 
 data PlanFinishFields = PlanFinishFields
-  { planFinishIdField     :: Maybe Text
-  , planFinishDateField   :: Maybe Day
-  , planFinishAmountField :: Maybe PositivePlanFinishAmount
+  { planFinishIdField      :: Maybe Text
+  , planFinishEventIdField :: Maybe ActualTransactionId
+  , planFinishDateField    :: Maybe Day
+  , planFinishAmountField  :: Maybe PositivePlanFinishAmount
   }
 
 emptyPlanFinishFields :: PlanFinishFields
-emptyPlanFinishFields = PlanFinishFields Nothing Nothing Nothing
+emptyPlanFinishFields = PlanFinishFields Nothing Nothing Nothing Nothing
 
 parsePlanFinish :: [String] -> Either CliError EditorCommand
 parsePlanFinish (planFile:actualFile:optionArgs) = do
@@ -281,11 +283,13 @@ parsePlanFinish (planFile:actualFile:optionArgs) = do
   planId <- case planFinishIdField fields of
     Just value | not (T.null value) -> Right value
     _ -> Left CliPlanFinishIdRequired
+  eventId <- maybe (Left CliPlanFinishEventIdRequired) Right
+    (planFinishEventIdField fields)
   actualDate <- maybe (Left CliPlanFinishDateRequired) Right
     (planFinishDateField fields)
   pure
     (PlanFinishCmd planFile actualFile
-      (PlanFinishIntent planId actualDate (planFinishAmountField fields)))
+      (PlanFinishIntent planId eventId actualDate (planFinishAmountField fields)))
 parsePlanFinish _ = Left CliUsage
 
 parsePlanFinishOptions
@@ -296,6 +300,12 @@ parsePlanFinishOptions fields [] = Right fields
 parsePlanFinishOptions fields ("--id":planId:rest) =
   parsePlanFinishOptions fields
     { planFinishIdField = Just (T.pack planId) }
+    rest
+parsePlanFinishOptions fields ("--event-id":eventIdText:rest) = do
+  eventId <- mapDomainError CliInvalidActualTransactionId
+    (admitActualEventIdentityText (T.pack eventIdText))
+  parsePlanFinishOptions fields
+    { planFinishEventIdField = Just eventId }
     rest
 parsePlanFinishOptions fields ("--actual-date":dateText:rest) = do
   date <- parseDate dateText
@@ -382,6 +392,7 @@ renderCliError errorValue = case errorValue of
   CliPlanAddPostingRequired -> "at least one --posting is required for plan add"
   CliPlanAddOptionInvalid -> "invalid or incomplete plan add option"
   CliPlanFinishIdRequired -> "--id is required for plan finish"
+  CliPlanFinishEventIdRequired -> "--event-id is required for plan finish"
   CliPlanFinishDateRequired -> "--actual-date is required for plan finish"
   CliPlanFinishAmountMustBePositive -> "--actual-amount must be a positive magnitude"
   CliPlanFinishOptionInvalid -> "invalid or incomplete plan finish option"
@@ -395,5 +406,6 @@ usageText = unlines
   , "  h-kernel-editor-cli budget [--commit] <budget_alloc.tsv> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm>"
   , "  h-kernel-editor-cli issue [--commit] <issues.tsv> <id> <status> <YYYY-MM-DD> <category> <title> <qty|-> <comm|-> <details...>"
   , "  h-kernel-editor-cli plan add [--commit] <plan.journal> <actual.journal> --date YYYY-MM-DD --description DESC --posting ACCT QTY COMM ... [--id ID] [--series SERIES]"
-  , "  h-kernel-editor-cli plan finish [--commit] <plan.journal> <actual.journal> --id ID --actual-date YYYY-MM-DD [--actual-amount POSITIVE_QTY]"
+  , "  h-kernel-editor-cli plan finish [--commit] <plan.journal> <actual.journal> --id ID --event-id EVT-UUID-V4 --actual-date YYYY-MM-DD [--actual-amount POSITIVE_QTY]"
   ]
+

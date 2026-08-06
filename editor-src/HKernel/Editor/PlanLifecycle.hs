@@ -19,7 +19,6 @@ module HKernel.Editor.PlanLifecycle
 import Data.Bifunctor (first)
 import Data.Char (isAsciiLower, isAsciiUpper, toLower)
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -32,6 +31,11 @@ import HKernel.Editor.ActualAppend
   , ActualAppendPreview(..)
   , prepareActualAppend
   )
+import HKernel.Editor.ActualIdentity
+  ( actualEventIdentityMetadata
+  , actualIdentityIsAlreadyUsed
+  , admitActualEventIdentityText
+  )
 import HKernel.Editor.SourceAppend (appendSourceBlock)
 import HKernel.Editor.TransactionBlock
   ( IntentPosting(..)
@@ -40,7 +44,7 @@ import HKernel.Editor.TransactionBlock
   , prepareTransactionBlock
   )
 import HKernel.Journal (journalAccountRegistry)
-import HKernel.Ledger (Posting, Transaction, transactionDescription, transactionPostings, postingAccount, postingAmount, mkPosting)
+import HKernel.Ledger (transactionDescription, transactionPostings, postingAccount, postingAmount, mkPosting)
 import HKernel.Money
   ( Quantity
   , amountCommodity
@@ -63,9 +67,12 @@ import HKernel.Plan.Journal
   , planJournalTransactions
   , identifiedPlanId
   , identifiedPlanTransaction
-  , IdentifiedPlanTransaction
   )
-import HKernel.Plan.Completion (declaredCompletionPlanId)
+import HKernel.Plan.Completion
+  ( ActualTransactionId
+  , actualTransactionIdText
+  , declaredCompletionPlanId
+  )
 
 -- Plan Add
 
@@ -194,9 +201,10 @@ mkPositivePlanFinishAmount quantity
   | otherwise = Right (PositivePlanFinishAmount quantity)
 
 data PlanFinishIntent = PlanFinishIntent
-  { finishPlanId       :: Text
-  , finishActualDate   :: Day
-  , finishActualAmount :: Maybe PositivePlanFinishAmount
+  { finishPlanId        :: Text
+  , finishActualEventId :: ActualTransactionId
+  , finishActualDate    :: Day
+  , finishActualAmount  :: Maybe PositivePlanFinishAmount
   } deriving (Eq, Show)
 
 data PlanFinishPreview = PlanFinishPreview
@@ -213,6 +221,8 @@ data PlanFinishError
   | FinishPlanNotFound PlanId
   | FinishPlanAlreadyClosed PlanId
   | FinishActualAmountOnlyForBinaryPlan
+  | FinishInvalidActualEventIdentity
+  | FinishActualEventIdentityAlreadyExists
   deriving (Eq, Show)
 
 preparePlanFinish
@@ -223,6 +233,13 @@ preparePlanFinish
 preparePlanFinish planSource actualSource intent = do
   planJ <- first (pure . FinishPlanJournalSyntaxError) (parsePlanJournal planSource)
   actualJ <- first (pure . FinishActualJournalSyntaxError) (parseActualJournal actualSource)
+
+  canonicalEventId <- first (const (pure FinishInvalidActualEventIdentity))
+    (admitActualEventIdentityText (actualTransactionIdText (finishActualEventId intent)))
+
+  if actualIdentityIsAlreadyUsed actualJ canonicalEventId
+    then Left (pure FinishActualEventIdentityAlreadyExists)
+    else Right ()
 
   pId <- first (pure . FinishInvalidId) (mkPlanId (finishPlanId intent))
 
@@ -253,13 +270,16 @@ preparePlanFinish planSource actualSource intent = do
               in mkPosting (postingAccount p) (mkAmount (amountCommodity (postingAmount p)) qty)
           in Right (fmap modifyPosting originalPostings)
 
-  let intentPostings = fmap (\p -> IntentPosting (postingAccount p) (amountQuantity (postingAmount p)) (Just (amountCommodity (postingAmount p)))) updatedPostings
+  let finishIntentPostings = fmap (\p -> IntentPosting (postingAccount p) (amountQuantity (postingAmount p)) (Just (amountCommodity (postingAmount p)))) updatedPostings
 
   let actualIntent = ActualEditIntent
         { intentDate = finishActualDate intent
         , intentDescription = transactionDescription txn
-        , intentPostings = intentPostings
-        , intentMetadata = [("plan-id", planIdText pId)]
+        , intentPostings = finishIntentPostings
+        , intentMetadata =
+            [ actualEventIdentityMetadata canonicalEventId
+            , ("plan-id", planIdText pId)
+            ]
         }
 
   actualPreview <- first (pure . FinishActualEditError) (prepareActualAppend actualSource actualIntent)
@@ -272,3 +292,4 @@ preparePlanFinish planSource actualSource intent = do
   _ <- first (pure . FinishCandidateParseError) (parseActualJournal (finishCandidateCompleteSource preview))
 
   pure preview
+
