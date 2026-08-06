@@ -9,11 +9,12 @@ import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (accountName)
 import HKernel.Editor.ActualAppend (ActualEditIntent(..))
+import HKernel.Editor.ActualIdentity (admitActualEventIdentityText)
 import HKernel.Editor.ActualWriter (WriteError(..))
 import HKernel.Editor.TUI.ActualAdd
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Money (renderQuantity)
-import HKernel.Plan.Completion (ActualTransactionId, mkActualTransactionId)
+import HKernel.Plan.Completion (ActualTransactionId)
 
 main :: IO ()
 main = do
@@ -41,7 +42,7 @@ main = do
   if all snd results then exitSuccess else exitFailure
 
 syntheticId :: ActualTransactionId
-syntheticId = case mkActualTransactionId "evt-synthetic-ordinary-001" of
+syntheticId = case admitActualEventIdentityText "evt-550e8400-e29b-41d4-a716-446655440020" of
   Right actualId -> actualId
   Left _ -> error "Invalid synthetic ID"
 
@@ -57,7 +58,7 @@ validInput = ActualAddInput
 expectedBlock :: T.Text
 expectedBlock = T.unlines
   [ "2026-08-05 Groceries"
-  , "    ; event-id: evt-synthetic-ordinary-001"
+  , "    ; event-id: evt-550e8400-e29b-41d4-a716-446655440020"
   , "  expenses:food  100 JPY"
   , "  assets:cash  -100 JPY"
   ]
@@ -70,7 +71,7 @@ testPositiveMagnitude = case buildActualAddIntent syntheticId validInput of
         && renderQuantity (intentQuantity destination) == "100"
         && accountName (intentAccount source) == "assets:cash"
         && renderQuantity (intentQuantity source) == "-100"
-        && intentMetadata intent == [("event-id", "evt-synthetic-ordinary-001")]
+        && intentMetadata intent == [("event-id", "evt-550e8400-e29b-41d4-a716-446655440020")]
     _ -> False
   Left _ -> False
 
@@ -178,7 +179,7 @@ testIdentityStabilityOnRePreview source =
       s4 = transitionActualAdd source RequestActualAddPreview s3
   in case actualAddMode s4 of
     ShowingActualAddPreview (ActualAddCandidateReady block) ->
-      "evt-synthetic-ordinary-001" `T.isInfixOf` block
+      "evt-550e8400-e29b-41d4-a716-446655440020" `T.isInfixOf` block
         && "Updated Groceries" `T.isInfixOf` block
         && actualAddIdentity s4 == syntheticId
     _ -> False

@@ -189,13 +189,15 @@ Identity のフォーマットおよび生成仕様を以下のように確定�
 
 * **Selected format**: `evt-` + UUID v4 canonical lowercase text (例: `evt-550e8400-e29b-41d4-a716-446655440000`)
 * **Generator owner**: `HKernel.Editor.ActualIdentity`
+* **Canonical creation admission boundary**: `HKernel.Editor.ActualIdentity.admitActualEventIdentityText` (exact `evt-` prefix, canonical lowercase hyphenated UUID text, version 4 nibble, RFC variant nibble in `8`, `9`, `a`, `b`, and domain `mkActualTransactionId`)
 * **Production source**: `Data.UUID.V4.nextRandom` (h-kernel-editor library build-depends: `uuid >= 1.3.16 && < 1.4`)
-* **Domain admission**: `HKernel.Plan.Completion.mkActualTransactionId`
+* **Domain storage type**: `HKernel.Plan.Completion.ActualTransactionId` (no redundant domain types)
 * **Collision set**: fresh admitted `ActualJournal` が持つすべての effective Actual identities (`actualJournalIdentifiedTransactions` / `identifiedActualId`)（explicit event identity と plan-derived runtime identity の両方）
 * **Retry policy**: 有限リトライ (`actualIdentityAttemptLimit = 8`)
 * **Sanitized failure**: candidate, existing IDs, source text, path, IOException をログや UI State に保持しない
 * **TUI lifecycle**: `OperationActualAdd` 開始時に 1 回のみ生成し、同一 operation 内（preview, back, confirmation, publication）で固定
-* **CLI contract**: CLI `append` では自動生成を行わず、オペレータが明示的に `<EVENT_ID>` を指定する契約（`h-kernel-editor-cli append [--commit] <journal.txt> <event-id> <YYYY-MM-DD> <desc> ...`）
+* **CLI contract**: CLI `append` では自動生成を行わず、オペレータが明示的に `<evt-uuid-v4>` を指定する契約（`h-kernel-editor-cli append [--commit] <journal.txt> <evt-uuid-v4> <YYYY-MM-DD> <desc> ...`）。`admitActualEventIdentityText` による判定を共有し非 canonical ID を拒否する。
+* **Historical reader compatibility**: 既存 source 内の legacy event IDs, plan-derived IDs, no-identity transactions は上位互換として維持し、新規 creation 入口（ordinary add TUI, CLI append, generator injection）のみに本 admission を適用する。
 
 
 ## 9. Plan completion compatibility (Decision B)

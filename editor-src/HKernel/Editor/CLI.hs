@@ -24,7 +24,10 @@ import HKernel.Account
   , mkAccount
   )
 import HKernel.Editor.ActualAppend (ActualEditIntent(..))
-import HKernel.Editor.ActualIdentity (actualEventIdentityMetadata)
+import HKernel.Editor.ActualIdentity
+  ( actualEventIdentityMetadata
+  , admitActualEventIdentityText
+  )
 import HKernel.Editor.ActualReverse (ActualReverseIntent(..))
 import HKernel.Editor.IssueAppend (IssueAppendIntent(..))
 import HKernel.Editor.PlanLifecycle
@@ -115,7 +118,7 @@ admitCommit rest = (PreviewOnly, rest)
 parseAppend :: [String] -> Either CliError EditorCommand
 parseAppend (journalFile:eventIdText:dateText:description:postingArgs) = do
   eventId <- mapDomainError CliInvalidActualTransactionId
-    (mkActualTransactionId (T.pack eventIdText))
+    (admitActualEventIdentityText (T.pack eventIdText))
   date <- parseDate dateText
   postings <- parsePostings postingArgs
   nonEmptyPostings <- maybe (Left CliPostingRequired) Right
@@ -386,7 +389,7 @@ renderCliError errorValue = case errorValue of
 usageText :: String
 usageText = unlines
   [ "Usage:"
-  , "  h-kernel-editor-cli append [--commit] <journal.txt> <event-id> <YYYY-MM-DD> <desc> [<acct> <qty> <comm> ...]"
+  , "  h-kernel-editor-cli append [--commit] <journal.txt> <evt-uuid-v4> <YYYY-MM-DD> <desc> [<acct> <qty> <comm> ...]"
   , "  h-kernel-editor-cli reverse [--commit] <journal.txt> <new-event-id> <target-event-id> <YYYY-MM-DD> <desc...>"
   , "  h-kernel-editor-cli account [--commit] <journal.txt> <account> <type> [<commodity>]"
   , "  h-kernel-editor-cli budget [--commit] <budget_alloc.tsv> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm>"

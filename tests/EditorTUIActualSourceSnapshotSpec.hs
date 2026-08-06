@@ -29,7 +29,8 @@ import HKernel.Editor.TUI.ActualSourceSnapshot
   , admitActualSourceSnapshot
   , loadActualSourceSnapshotUsing
   )
-import HKernel.Plan.Completion (ActualTransactionId, mkActualTransactionId)
+import HKernel.Editor.ActualIdentity (admitActualEventIdentityText)
+import HKernel.Plan.Completion (ActualTransactionId)
 
 main :: IO ()
 main = do
@@ -43,12 +44,12 @@ main = do
   putStrLn "EditorTUIActualSourceSnapshotSpec: ALL PASSED"
 
 id1 :: ActualTransactionId
-id1 = case mkActualTransactionId "evt-synthetic-add-001" of
+id1 = case admitActualEventIdentityText "evt-550e8400-e29b-41d4-a716-446655440021" of
   Right i -> i
   Left _ -> error "Invalid id1"
 
 id2 :: ActualTransactionId
-id2 = case mkActualTransactionId "evt-synthetic-add-002" of
+id2 = case admitActualEventIdentityText "evt-550e8400-e29b-41d4-a716-446655440022" of
   Right i -> i
   Left _ -> error "Invalid id2"
 
@@ -225,8 +226,8 @@ testConsecutiveActualAddEvidence = withSystemTempDirectory "consecutive-add-test
 
   assertBool "final file contains 1st transaction (Dinner)" ("Dinner" `T.isInfixOf` finalContent)
   assertBool "final file contains 2nd transaction (Coffee)" ("Coffee" `T.isInfixOf` finalContent)
-  assertBool "final file contains 1st event-id" ("evt-synthetic-add-001" `T.isInfixOf` finalContent)
-  assertBool "final file contains 2nd event-id" ("evt-synthetic-add-002" `T.isInfixOf` finalContent)
+  assertBool "final file contains 1st event-id" ("evt-550e8400-e29b-41d4-a716-446655440021" `T.isInfixOf` finalContent)
+  assertBool "final file contains 2nd event-id" ("evt-550e8400-e29b-41d4-a716-446655440022" `T.isInfixOf` finalContent)
   assertBool "final file did not revert to initial source" (finalContent /= initialSource)
   case parseActualJournal finalContent of
     Left err -> assertFailure ("Final journal failed admission: " <> show err)

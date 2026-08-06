@@ -2,7 +2,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module HKernel.Editor.ActualIdentity
-  ( ActualIdentityGenerationFailure(..)
+  ( ActualEventIdentityAdmissionFailure(..)
+  , admitActualEventIdentityText
+  , actualIdentityIsAlreadyUsed
+  , ActualIdentityGenerationFailure(..)
   , ActualIdentityCandidateSource(..)
   , actualIdentityAttemptLimit
   , defaultCandidateSource
@@ -29,6 +32,11 @@ import HKernel.Plan.Completion
   , mkActualTransactionId
   )
 
+-- | Admission failure for canonical new Actual event identities.
+data ActualEventIdentityAdmissionFailure
+  = ActualEventIdentityFormatInvalid
+  deriving (Eq, Show)
+
 -- | Explicit taxonomy of identity generation failures.
 --
 -- This structure contains no raw exception messages, candidate strings,
@@ -38,6 +46,61 @@ data ActualIdentityGenerationFailure
   | ActualIdentityCandidateInvalid
   | ActualIdentityCollisionLimitReached
   deriving (Eq, Show)
+
+-- | Pure admission boundary for new canonical Actual event identities.
+--
+-- Enforces:
+-- 1. Exact lowercase "evt-" prefix
+-- 2. Valid UUID text parseable by Data.UUID.fromText
+-- 3. Canonical lowercase hyphenated text matching Data.UUID.toText
+-- 4. UUID version nibble '4'
+-- 5. UUID RFC variant nibble in ['8', '9', 'a', 'b']
+-- 6. Admitted by domain 'mkActualTransactionId'
+admitActualEventIdentityText
+  :: Text
+  -> Either ActualEventIdentityAdmissionFailure ActualTransactionId
+admitActualEventIdentityText value = do
+  body <- requirePrefix value
+  uuid <- requireUuid body
+  requireCanonicalRoundTrip body uuid
+  requireVersion4AndRfcVariant body uuid
+  mapDomainFailure (mkActualTransactionId value)
+  where
+    requirePrefix text = case T.stripPrefix "evt-" text of
+      Just b -> Right b
+      Nothing -> Left ActualEventIdentityFormatInvalid
+
+    requireUuid b = case UUID.fromText b of
+      Just u -> Right u
+      Nothing -> Left ActualEventIdentityFormatInvalid
+
+    requireCanonicalRoundTrip b u =
+      if UUID.toText u == b
+        then Right ()
+        else Left ActualEventIdentityFormatInvalid
+
+    requireVersion4AndRfcVariant b u =
+      case T.splitOn "-" b of
+        [g1, g2, g3, g4, g5]
+          | UUID.toText u == b
+          , T.take 1 g3 == "4"
+          , T.take 1 g4 `elem` ["8", "9", "a", "b"]
+            -> Right ()
+        _ -> Left ActualEventIdentityFormatInvalid
+
+    mapDomainFailure res = case res of
+      Right actualId -> Right actualId
+      Left _ -> Left ActualEventIdentityFormatInvalid
+
+-- | Pure predicate checking whether an admitted 'ActualTransactionId' is already in use
+-- by any effective identity in the given journal snapshot (explicit event identity or
+-- plan-derived runtime identity).
+actualIdentityIsAlreadyUsed
+  :: ActualJournal
+  -> ActualTransactionId
+  -> Bool
+actualIdentityIsAlreadyUsed journal actualId =
+  actualId `elem` map identifiedActualId (actualJournalIdentifiedTransactions journal)
 
 -- | Abstraction for identity candidate acquisition.
 --
@@ -75,15 +138,15 @@ generateActualTransactionId =
 -- | Generate an admitted unique 'ActualTransactionId' for the given journal snapshot
 -- using a supplied candidate source.
 --
--- Checks against all effective Actual identities in the snapshot (both explicit
--- event identities and plan-derived runtime identities) up to 'actualIdentityAttemptLimit'.
+-- Candidates must pass 'admitActualEventIdentityText' and are checked against all
+-- effective Actual identities in the snapshot (both explicit event identities and
+-- plan-derived runtime identities) up to 'actualIdentityAttemptLimit'.
 generateActualTransactionIdUsing
   :: ActualIdentityCandidateSource
   -> ActualJournal
   -> IO (Either ActualIdentityGenerationFailure ActualTransactionId)
 generateActualTransactionIdUsing candidateSource journal = go 1
   where
-    existingIds = map identifiedActualId (actualJournalIdentifiedTransactions journal)
     go attempt
       | attempt > actualIdentityAttemptLimit =
           pure (Left ActualIdentityCollisionLimitReached)
@@ -92,10 +155,10 @@ generateActualTransactionIdUsing candidateSource journal = go 1
           case candidateResult of
             Left err -> pure (Left err)
             Right candidateText ->
-              case mkActualTransactionId candidateText of
+              case admitActualEventIdentityText candidateText of
                 Left _ -> pure (Left ActualIdentityCandidateInvalid)
                 Right actualId ->
-                  if actualId `elem` existingIds
+                  if actualIdentityIsAlreadyUsed journal actualId
                     then go (attempt + 1)
                     else pure (Right actualId)
 

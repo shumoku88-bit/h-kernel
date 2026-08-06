@@ -103,8 +103,9 @@ All other operations, including `OperationActualReverse`, remain typed `Operatio
 In this slice (`feat/ordinary-actual-add-durable-identity-001`), we introduce `HKernel.Editor.ActualIdentity` and attach durable `evt-<UUID-v4>` event identities to ordinary Actual additions across both TUI and CLI entrypoints:
 
 1. **Dedicated Identity Module & Production UUID v4 Generator**:
-   - `HKernel.Editor.ActualIdentity` is the sole owner of candidate generation, collision checking, and finite retry logic.
+   - `HKernel.Editor.ActualIdentity` is the sole owner of candidate generation, canonical admission (`admitActualEventIdentityText`), collision checking, and finite retry logic.
    - Reuses `HKernel.Plan.Completion.ActualTransactionId` and `mkActualTransactionId` without defining redundant identity domain types.
+   - Enforces exact `evt-` prefix, canonical lowercase hyphenated UUID text, version 4 nibble, and RFC variant nibble (`8`, `9`, `a`, `b`).
    - Production candidate generator uses `Data.UUID.V4.nextRandom` and `Data.UUID.toText` with `evt-` prefix (e.g. `evt-550e8400-e29b-41d4-a716-446655440000`).
    - Checks candidates against all effective identities in the admitted `ActualJournal` (both explicit event identities and plan-derived runtime identities) up to `actualIdentityAttemptLimit = 8`.
 
@@ -115,8 +116,8 @@ In this slice (`feat/ordinary-actual-add-durable-identity-001`), we introduce `H
    - Hub re-entry starts a fresh operation session with a newly generated identity.
 
 3. **CLI Explicit Event-ID Contract**:
-   - CLI `append` requires an explicit `<EVENT_ID>` argument (`h-kernel-editor-cli append [--commit] <journal.txt> <event-id> <YYYY-MM-DD> <desc> ...`).
-   - Rejects the legacy identity-free append grammar.
+   - CLI `append` requires an explicit `<evt-uuid-v4>` argument (`h-kernel-editor-cli append [--commit] <journal.txt> <evt-uuid-v4> <YYYY-MM-DD> <desc> ...`).
+   - Validates `<evt-uuid-v4>` via `admitActualEventIdentityText` and rejects non-canonical identities as well as the legacy identity-free append grammar.
 
 4. **Sanitized Failure Diagnostics & Backward Compatibility**:
    - Generator failure taxonomy (`ActualIdentityGenerationFailure`) contains no candidate strings, source text, filesystem paths, or raw `IOException` details.
@@ -133,11 +134,11 @@ In this slice (`feat/ordinary-actual-add-durable-identity-001`), we introduce `H
 - Pure `HKernel.Editor.TUI.OperationHub` module implemented and exposed in Cabal.
 - `HKernel.Editor.TUI.ActualBrowse` pure module implemented and exposed in Cabal.
 - `HKernel.Editor.TUI.ActualSourceSnapshot` pure module implemented and exposed in Cabal.
-- `HKernel.Editor.ActualIdentity` pure module implemented and exposed in Cabal.
+- `HKernel.Editor.ActualIdentity` pure module implemented and exposed in Cabal with `admitActualEventIdentityText`.
 - `OperationActualAdd` and `OperationActualBrowse` perform fresh source reads on operation entry and use immutable atomic snapshots.
 - Source text and account registry are atomically coupled within `ActualSourceSnapshot`.
 - TUI `OperationActualAdd` attaches a durable `evt-<UUID-v4>` event-id metadata to every added transaction block.
-- CLI `append` requires explicit `<EVENT_ID>` and rejects old identity-free grammar.
+- CLI `append` requires explicit `<evt-uuid-v4>` and rejects non-canonical IDs and old identity-free grammar.
 - Consecutive Actual add operations within the same TUI session start from current admitted source with distinct durable identities.
 - Safe writer stale rejection remains active and fail-closed against external changes.
 - Load and identity generation failures are sanitized and allow safe return to Hub for retry.

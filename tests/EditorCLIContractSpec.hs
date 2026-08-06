@@ -20,9 +20,9 @@ import HKernel.Plan.Completion (actualTransactionIdText)
 main :: IO ()
 main = do
   let results =
-        [ ("append command accepts explicit event-id parameter", testAppendExplicitEventId)
+        [ ("append command accepts canonical event-id parameter", testAppendExplicitEventId)
         , ("append command without explicit event-id is rejected", testAppendOldGrammarRejected)
-        , ("append command rejects invalid event-id", testAppendInvalidEventId)
+        , ("append command rejects non-canonical event-ids", testAppendInvalidEventIds)
         , ("budget usage shape is admitted", testBudgetUsageShape)
         , ("budget extra argument is rejected", testBudgetExtraArgument)
         , ("budget memo named --commit remains data", testBudgetCommitTextIsData)
@@ -46,7 +46,7 @@ testAppendExplicitEventId = case parseEditorCommand
   [ "append"
   , "--commit"
   , "actual.journal"
-  , "evt-synthetic-cli-001"
+  , "evt-550e8400-e29b-41d4-a716-446655440010"
   , "2026-08-05"
   , "Groceries"
   , "expenses:food"
@@ -55,7 +55,7 @@ testAppendExplicitEventId = case parseEditorCommand
   ] of
     Right (CommitRequested, AppendCmd "actual.journal" intent) ->
       intentDescription intent == "Groceries"
-        && intentMetadata intent == [("event-id", "evt-synthetic-cli-001")]
+        && intentMetadata intent == [("event-id", "evt-550e8400-e29b-41d4-a716-446655440010")]
     _ -> False
 
 testAppendOldGrammarRejected :: Bool
@@ -73,19 +73,27 @@ testAppendOldGrammarRejected = case parseEditorCommand
     Left CliUsage -> True
     _ -> False
 
-testAppendInvalidEventId :: Bool
-testAppendInvalidEventId = case parseEditorCommand
-  [ "append"
-  , "actual.journal"
-  , "invalid event id with spaces"
-  , "2026-08-05"
-  , "Groceries"
-  , "expenses:food"
-  , "100"
-  , "JPY"
-  ] of
-    Left CliInvalidActualTransactionId -> True
-    _ -> False
+testAppendInvalidEventIds :: Bool
+testAppendInvalidEventIds =
+  all isRejected
+    [ "invalid event id with spaces"
+    , "evt-synthetic-cli-001"
+    , "banana"
+    , "evt-550E8400-E29B-41D4-A716-446655440010"
+    , "evt-550e8400-e29b-11d4-a716-446655440010"
+    , "550e8400-e29b-41d4-a716-446655440010"
+    ]
+  where
+    isRejected eventIdText = parseEditorCommand
+      [ "append"
+      , "actual.journal"
+      , eventIdText
+      , "2026-08-05"
+      , "Groceries"
+      , "expenses:food"
+      , "100"
+      , "JPY"
+      ] == Left CliInvalidActualTransactionId
 
 testBudgetUsageShape :: Bool
 testBudgetUsageShape = case parseEditorCommand
