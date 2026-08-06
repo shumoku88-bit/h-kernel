@@ -41,3 +41,9 @@ account income:salary
   ; reverses: evt-20260802-rent
   assets:cash  100000 JPY
   expenses:rent  -100000 JPY
+
+2026-08-06 Planned Dinner with Event ID
+  ; event-id: evt-20260806-dinner
+  ; plan-id: plan-dinner-001
+  expenses:food  3000 JPY
+  assets:cash  -3000 JPY

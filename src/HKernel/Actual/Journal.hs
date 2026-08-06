@@ -25,6 +25,7 @@ module HKernel.Actual.Journal
   , actualJournalReversalDeclarations
   , actualJournalRecords
   , ActualTransactionRecord(..)
+  , ActualTransactionIdentity(..)
   , ActualReversalDeclaration
   , reversalTransactionId
   , reversedTransactionId
@@ -74,10 +75,17 @@ data ActualJournal = ActualJournal
   , actualJournalRecords                :: [ActualTransactionRecord]
   } deriving (Eq, Show)
 
--- | One source-aligned transaction record with optional durable identity and reversal target.
+-- | Explicit origin of an admitted Actual transaction's identity.
+data ActualTransactionIdentity
+  = ActualWithoutIdentity
+  | ActualWithExplicitEventIdentity ActualTransactionId
+  | ActualWithPlanDerivedRuntimeIdentity PlanId ActualTransactionId
+  deriving (Eq, Show)
+
+-- | One source-aligned transaction record with explicit identity origin and reversal target.
 data ActualTransactionRecord = ActualTransactionRecord
   { actualRecordTransaction :: Transaction
-  , actualRecordIdentity    :: Maybe ActualTransactionId
+  , actualRecordIdentity    :: ActualTransactionIdentity
   , actualRecordReverses    :: Maybe ActualTransactionId
   } deriving (Eq, Show)
 
@@ -306,9 +314,16 @@ admitTransactionMetadata transaction metadata = TransactionMetadataAdmission
                       , reversedTransactionId = targetId
                       })
 
+    identityOrigin = case maybeEvent of
+      Just (_, actualId) -> ActualWithExplicitEventIdentity actualId
+      Nothing -> case (maybePlan, maybeDerivedEvent) of
+        (Just (_, planId), Just (_, actualId)) ->
+          ActualWithPlanDerivedRuntimeIdentity planId actualId
+        _ -> ActualWithoutIdentity
+
     record = ActualTransactionRecord
       { actualRecordTransaction = transaction
-      , actualRecordIdentity = fmap snd effectiveEvent
+      , actualRecordIdentity = identityOrigin
       , actualRecordReverses = fmap reversedTransactionId reversalDeclaration
       }
 

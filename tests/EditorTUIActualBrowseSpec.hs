@@ -8,18 +8,22 @@ import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Actual.Journal
   ( ActualJournal
+  , ActualJournalError(..)
   , parseActualJournal
   )
 import HKernel.Editor.TUI.ActualBrowse
   ( ActualBrowseAction(..)
+  , ActualBrowseLoadFailure(..)
   , ActualBrowseRow(..)
   , ActualBrowseState(..)
   , ActualIdentityStatus(..)
   , buildActualBrowseRows
+  , classifyActualBrowseLoad
   , initialActualBrowseState
   , selectedBrowseRow
   , transitionActualBrowse
   )
+import HKernel.Plan (planIdText)
 import HKernel.Plan.Completion (actualTransactionIdText)
 
 main :: IO ()
@@ -31,15 +35,18 @@ main = do
 
   let rows = buildActualBrowseRows journal
       results =
-        [ ("admitted count matches record count", length rows == 6)
+        [ ("admitted count matches record count", length rows == 7)
         , ("source order is preserved", testSourceOrder rows)
         , ("ordinary transaction retains no identity", testOrdinaryNoIdentity rows)
-        , ("explicit event-id is aligned", testExplicitEventId rows)
-        , ("plan completion derived identity is aligned", testPlanDerivedIdentity rows)
-        , ("reversal relation is aligned", testReversalRelation rows)
+        , ("explicit event-id is explicit durable identity", testExplicitEventId rows)
+        , ("plan completion derived identity is plan-derived runtime identity", testPlanDerivedIdentity rows)
+        , ("both event-id and plan-id yields explicit event identity", testBothEventAndPlanId rows)
+        , ("reversal relation is aligned and distinct from identity origin", testReversalRelation rows)
         , ("identical contents remain separate records", testIdenticalContentsSeparate rows)
-        , ("pure browser initial selection", testInitialSelection journal)
-        , ("pure browser navigation and boundaries", testNavigation journal)
+        , ("pure browser initial selection and navigation", testNavigation journal)
+        , ("load classification file read failure", testLoadFileReadFailed)
+        , ("load classification admission failure", testLoadAdmissionFailed)
+        , ("load classification success", testLoadSuccess source)
         , ("state contains no complete source or path", testNoPrivateDataInState journal)
         ]
 
@@ -48,31 +55,38 @@ main = do
 
 testSourceOrder :: [ActualBrowseRow] -> Bool
 testSourceOrder rows =
-  length rows == 6
-    && rowIdentityStatus (head rows) == ActualHasNoDurableIdentity
+  length rows == 7
+    && rowIdentityStatus (head rows) == ActualHasNoIdentity
 
 testOrdinaryNoIdentity :: [ActualBrowseRow] -> Bool
 testOrdinaryNoIdentity rows =
-  rowIdentityStatus (rows !! 0) == ActualHasNoDurableIdentity
+  rowIdentityStatus (rows !! 0) == ActualHasNoIdentity
     && rowReverses (rows !! 0) == Nothing
 
 testExplicitEventId :: [ActualBrowseRow] -> Bool
 testExplicitEventId rows = case rowIdentityStatus (rows !! 1) of
-  ActualHasDurableIdentity actualId ->
+  ActualHasExplicitDurableIdentity actualId ->
     actualTransactionIdText actualId == "evt-20260802-rent"
   _ -> False
 
 testPlanDerivedIdentity :: [ActualBrowseRow] -> Bool
 testPlanDerivedIdentity rows = case rowIdentityStatus (rows !! 4) of
-  ActualHasDurableIdentity actualId ->
-    actualTransactionIdText actualId == "plan-completion-plan-lunch-001"
+  ActualHasPlanDerivedRuntimeIdentity planId actualId ->
+    planIdText planId == "plan-lunch-001"
+      && actualTransactionIdText actualId == "plan-completion-plan-lunch-001"
+  _ -> False
+
+testBothEventAndPlanId :: [ActualBrowseRow] -> Bool
+testBothEventAndPlanId rows = case rowIdentityStatus (rows !! 6) of
+  ActualHasExplicitDurableIdentity actualId ->
+    actualTransactionIdText actualId == "evt-20260806-dinner"
   _ -> False
 
 testReversalRelation :: [ActualBrowseRow] -> Bool
 testReversalRelation rows =
   let revRow = rows !! 5
   in case (rowIdentityStatus revRow, rowReverses revRow) of
-    (ActualHasDurableIdentity revId, Just targetId) ->
+    (ActualHasExplicitDurableIdentity revId, Just targetId) ->
       actualTransactionIdText revId == "evt-20260805-reversal"
         && actualTransactionIdText targetId == "evt-20260802-rent"
     _ -> False
@@ -82,14 +96,8 @@ testIdenticalContentsSeparate rows =
   let row3 = rows !! 2
       row4 = rows !! 3
   in rowTransaction row3 == rowTransaction row4
-      && rowIdentityStatus row3 == ActualHasNoDurableIdentity
-      && rowIdentityStatus row4 == ActualHasNoDurableIdentity
-
-testInitialSelection :: ActualJournal -> Bool
-testInitialSelection journal =
-  let state = initialActualBrowseState journal
-  in browseSelectedIndex state == 0
-      && fmap rowIdentityStatus (selectedBrowseRow state) == Just ActualHasNoDurableIdentity
+      && rowIdentityStatus row3 == ActualHasNoIdentity
+      && rowIdentityStatus row4 == ActualHasNoIdentity
 
 testNavigation :: ActualJournal -> Bool
 testNavigation journal =
@@ -99,11 +107,31 @@ testNavigation journal =
       back1  = transitionActualBrowse BrowseMoveUp state2
       atTop  = transitionActualBrowse BrowseMoveUp state0
       maxMove = foldr ($) state0 (replicate 20 (transitionActualBrowse BrowseMoveDown))
-  in browseSelectedIndex state1 == 1
+  in browseSelectedIndex state0 == 0
+      && fmap rowIdentityStatus (selectedBrowseRow state0) == Just ActualHasNoIdentity
+      && browseSelectedIndex state1 == 1
       && browseSelectedIndex state2 == 2
       && browseSelectedIndex back1 == 1
       && browseSelectedIndex atTop == 0
-      && browseSelectedIndex maxMove == 5
+      && browseSelectedIndex maxMove == 6
+
+testLoadFileReadFailed :: Bool
+testLoadFileReadFailed =
+  let dummyReadError = Left ("IO error: file not found" :: String)
+      classified = classifyActualBrowseLoad dummyReadError parseActualJournal
+  in classified == Left ActualBrowseFileReadFailed
+
+testLoadAdmissionFailed :: Bool
+testLoadAdmissionFailed =
+  let invalidSource = Right ("invalid journal content" :: T.Text)
+      classified = classifyActualBrowseLoad invalidSource parseActualJournal
+  in classified == Left ActualBrowseAdmissionFailed
+
+testLoadSuccess :: T.Text -> Bool
+testLoadSuccess source =
+  case classifyActualBrowseLoad (Right source) parseActualJournal of
+    Right state -> length (browseRows state) == 7
+    Left _ -> False
 
 testNoPrivateDataInState :: ActualJournal -> Bool
 testNoPrivateDataInState journal =

@@ -3,6 +3,9 @@
 
 module Main (main) where
 
+import Control.Exception (IOException, try)
+import Control.Monad.IO.Class (liftIO)
+
 import Brick
 import Brick.Forms
 import Brick.Widgets.Border
@@ -47,12 +50,13 @@ import HKernel.Editor.TUI.ActualAdd
   )
 import HKernel.Editor.TUI.ActualBrowse
   ( ActualBrowseAction(..)
+  , ActualBrowseLoadFailure(..)
   , ActualBrowseRow(..)
   , ActualBrowseState(..)
   , ActualIdentityStatus(..)
   , browseRows
   , browseSelectedIndex
-  , initialActualBrowseState
+  , classifyActualBrowseLoad
   , transitionActualBrowse
   )
 import HKernel.Editor.TUI.OperationHub
@@ -73,6 +77,7 @@ import HKernel.Ledger
   , transactionDescription
   , transactionPostings
   )
+import HKernel.Plan (planIdText)
 import HKernel.Plan.Completion (actualTransactionIdText)
 
 
@@ -117,6 +122,8 @@ data UIState event
   | ShowActualBrowse
       ActualBrowseState
       (L.List Name ActualBrowseRow)
+  | ShowActualBrowseLoadFailure
+      ActualBrowseLoadFailure
   | InputForm (Form ActualAddInput event Name)
   | SelectAccount
       AccountSelectionTarget
@@ -196,11 +203,19 @@ drawUI (AppWrapper _ (ShowOperationHub _ hubList)) =
 drawUI (AppWrapper _ (ShowActualBrowse _ browseList)) =
   [ center
       (borderWithLabel (str "Actual Transactions (Read-Only)")
-        (hLimit 78
+        (hLimit 82
           (vLimit 20
             (L.renderList renderBrowseRow True browseList
               <=> str " "
               <=> str "[Esc/Q] Back to Hub | [Up/Down] Navigate | [Enter] Select"))))
+  ]
+drawUI (AppWrapper _ (ShowActualBrowseLoadFailure failure)) =
+  [ center
+      (borderWithLabel (str "Actual Browse Failure")
+        (padAll 1
+          (renderBrowseLoadFailure failure
+            <=> str " "
+            <=> str "[Esc/Q] Back to Hub")))
   ]
 drawUI (AppWrapper _ (InputForm form)) =
   [ center
@@ -269,10 +284,12 @@ renderBrowseRow selected row =
       desc = transactionDescription tx
       postingsCount = T.pack (show (length (transactionPostings tx))) <> " p."
       idWidget = case rowIdentityStatus row of
-        ActualHasDurableIdentity actualId ->
+        ActualHasExplicitDurableIdentity actualId ->
           withAttr (attrName "success") (txt ("[" <> actualTransactionIdText actualId <> "]"))
-        ActualHasNoDurableIdentity ->
-          withAttr (attrName "disabled") (txt "[No ID]")
+        ActualHasPlanDerivedRuntimeIdentity planId _actualId ->
+          withAttr (attrName "warning") (txt ("[plan-derived: " <> planIdText planId <> "]"))
+        ActualHasNoIdentity ->
+          withAttr (attrName "disabled") (txt "[no identity]")
       revWidget = case rowReverses row of
         Just targetId ->
           withAttr (attrName "warning") (txt (" (reverses: " <> actualTransactionIdText targetId <> ")"))
@@ -285,6 +302,15 @@ renderBrowseRow selected row =
   in if selected
        then withAttr L.listSelectedAttr content
        else content
+
+renderBrowseLoadFailure :: ActualBrowseLoadFailure -> Widget Name
+renderBrowseLoadFailure failure = case failure of
+  ActualBrowseFileReadFailed ->
+    withAttr (attrName "error")
+      (str "The current Actual Journal could not be read.")
+  ActualBrowseAdmissionFailed ->
+    withAttr (attrName "error")
+      (str "The current Actual Journal failed admission.")
 
 selectionLabel :: AccountSelectionTarget -> String
 selectionLabel SelectFromAccount = "Select From Account"
@@ -364,6 +390,8 @@ appEvent event = do
       handleHubEvent context hubState hubList event
     ShowActualBrowse browseState browseList ->
       handleBrowseEvent context browseState browseList event
+    ShowActualBrowseLoadFailure failure ->
+      handleBrowseLoadFailureEvent context failure event
     InputForm form -> handleInputEvent context form event
     SelectAccount target accountList form ->
       handleAccountSelection context target accountList form event
@@ -393,12 +421,14 @@ handleHubEvent context hubState hubList event = case event of
             case selectedOp of
               OperationActualAdd ->
                 put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
-              OperationActualBrowse ->
-                case parseActualJournal (contextSource context) of
-                  Left _ -> pure ()
-                  Right journal ->
-                    let browseState = initialActualBrowseState journal
-                        browseList = L.list BrowseRowList (Vec.fromList (browseRows browseState)) 1
+              OperationActualBrowse -> do
+                readResult <- liftIO (try (TIO.readFile (contextSourcePath context)) :: IO (Either IOException Text))
+                let outcome = classifyActualBrowseLoad readResult parseActualJournal
+                case outcome of
+                  Left failure ->
+                    put (AppWrapper context (ShowActualBrowseLoadFailure failure))
+                  Right browseState ->
+                    let browseList = L.list BrowseRowList (Vec.fromList (browseRows browseState)) 1
                     in put (AppWrapper context (ShowActualBrowse browseState browseList))
               _ -> pure ()
           OperationDisabled _ -> pure ()
@@ -440,6 +470,17 @@ handleBrowseEvent context browseState browseList event = case event of
       let nextState = transitionActualBrowse action browseState
           nextList = L.listMoveTo (browseSelectedIndex nextState) browseList
       put (AppWrapper context (ShowActualBrowse nextState nextList))
+
+handleBrowseLoadFailureEvent
+  :: AppContext
+  -> ActualBrowseLoadFailure
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleBrowseLoadFailureEvent context _ event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> returnToHub context
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> returnToHub context
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> returnToHub context
+  _ -> pure ()
 
 returnToHub :: AppContext -> EventM Name AppWrapper ()
 returnToHub context =
