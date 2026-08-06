@@ -8,6 +8,7 @@ module HKernel.Editor.TUI.ActualSourceSnapshot
   , actualSnapshotSource
   , actualSnapshotJournal
   , actualSnapshotAccountNames
+  , actualSourceStartupFailureText
   , admitActualSourceSnapshot
   , loadActualSourceSnapshot
   , loadActualSourceSnapshotUsing
@@ -35,6 +36,13 @@ data ActualSourceLoadFailure
   = ActualSourceFileReadFailed
   | ActualSourceAdmissionFailed
   deriving (Eq, Show)
+
+-- | Sanitized human-readable message for startup load failures.
+-- Guarantees that no filesystem path, raw source, or exception details are disclosed.
+actualSourceStartupFailureText :: ActualSourceLoadFailure -> Text
+actualSourceStartupFailureText failure = case failure of
+  ActualSourceFileReadFailed -> "Failed to read the Actual Journal."
+  ActualSourceAdmissionFailed -> "The Actual Journal failed admission."
 
 -- | Identifies which TUI operation requested the source snapshot.
 data ActualSourceOperation

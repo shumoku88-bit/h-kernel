@@ -5,16 +5,12 @@ module HKernel.Editor.TUI.ActualBrowse
   , ActualBrowseRow(..)
   , ActualBrowseState(..)
   , ActualBrowseAction(..)
-  , ActualBrowseLoadFailure(..)
   , buildActualBrowseRows
   , initialActualBrowseState
   , initialActualBrowseStateFromSnapshot
   , selectedBrowseRow
   , transitionActualBrowse
-  , classifyActualBrowseLoad
   ) where
-
-import Data.Text (Text)
 
 import HKernel.Actual.Journal
   ( ActualJournal
@@ -35,12 +31,6 @@ data ActualIdentityStatus
   = ActualHasExplicitDurableIdentity ActualTransactionId
   | ActualHasPlanDerivedRuntimeIdentity PlanId ActualTransactionId
   | ActualHasNoIdentity
-  deriving (Eq, Show)
-
--- | Sanitized classification of browser load failures without raw source, exception, or path details.
-data ActualBrowseLoadFailure
-  = ActualBrowseFileReadFailed
-  | ActualBrowseAdmissionFailed
   deriving (Eq, Show)
 
 -- | One read-only row projected from an admitted Actual transaction record.
@@ -111,14 +101,3 @@ transitionActualBrowse action state = case action of
         newIdx = min maxIdx (browseSelectedIndex state + 1)
     in state { browseSelectedIndex = newIdx }
   BrowseSelectRow -> state
-
--- | Purely classify file-read and journal-parsing outcomes into browser states or sanitized failure kinds.
-classifyActualBrowseLoad
-  :: Either e1 Text
-  -> (Text -> Either e2 ActualJournal)
-  -> Either ActualBrowseLoadFailure ActualBrowseState
-classifyActualBrowseLoad readOutcome parseJournalFunc = case readOutcome of
-  Left _ -> Left ActualBrowseFileReadFailed
-  Right source -> case parseJournalFunc source of
-    Left _ -> Left ActualBrowseAdmissionFailed
-    Right journal -> Right (initialActualBrowseState journal)

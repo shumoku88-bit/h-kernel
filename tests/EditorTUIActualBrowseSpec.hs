@@ -8,21 +8,20 @@ import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Actual.Journal
   ( ActualJournal
-  , ActualJournalError(..)
   , parseActualJournal
   )
 import HKernel.Editor.TUI.ActualBrowse
   ( ActualBrowseAction(..)
-  , ActualBrowseLoadFailure(..)
   , ActualBrowseRow(..)
   , ActualBrowseState(..)
   , ActualIdentityStatus(..)
   , buildActualBrowseRows
-  , classifyActualBrowseLoad
   , initialActualBrowseState
+  , initialActualBrowseStateFromSnapshot
   , selectedBrowseRow
   , transitionActualBrowse
   )
+import HKernel.Editor.TUI.ActualSourceSnapshot (admitActualSourceSnapshot)
 import HKernel.Plan (planIdText)
 import HKernel.Plan.Completion (actualTransactionIdText)
 
@@ -44,9 +43,7 @@ main = do
         , ("reversal relation is aligned and distinct from identity origin", testReversalRelation rows)
         , ("identical contents remain separate records", testIdenticalContentsSeparate rows)
         , ("pure browser initial selection and navigation", testNavigation journal)
-        , ("load classification file read failure", testLoadFileReadFailed)
-        , ("load classification admission failure", testLoadAdmissionFailed)
-        , ("load classification success", testLoadSuccess source)
+        , ("initial state from admitted snapshot matches row count", testInitialStateFromSnapshot source)
         , ("state contains no complete source or path", testNoPrivateDataInState journal)
         ]
 
@@ -115,22 +112,12 @@ testNavigation journal =
       && browseSelectedIndex atTop == 0
       && browseSelectedIndex maxMove == 6
 
-testLoadFileReadFailed :: Bool
-testLoadFileReadFailed =
-  let dummyReadError = Left ("IO error: file not found" :: String)
-      classified = classifyActualBrowseLoad dummyReadError parseActualJournal
-  in classified == Left ActualBrowseFileReadFailed
-
-testLoadAdmissionFailed :: Bool
-testLoadAdmissionFailed =
-  let invalidSource = Right ("invalid journal content" :: T.Text)
-      classified = classifyActualBrowseLoad invalidSource parseActualJournal
-  in classified == Left ActualBrowseAdmissionFailed
-
-testLoadSuccess :: T.Text -> Bool
-testLoadSuccess source =
-  case classifyActualBrowseLoad (Right source) parseActualJournal of
-    Right state -> length (browseRows state) == 7
+testInitialStateFromSnapshot :: T.Text -> Bool
+testInitialStateFromSnapshot source =
+  case admitActualSourceSnapshot source of
+    Right snapshot ->
+      let state = initialActualBrowseStateFromSnapshot snapshot
+      in length (browseRows state) == 7
     Left _ -> False
 
 testNoPrivateDataInState :: ActualJournal -> Bool

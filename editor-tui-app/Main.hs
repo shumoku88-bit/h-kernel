@@ -55,6 +55,7 @@ import HKernel.Editor.TUI.ActualSourceSnapshot
   , actualSnapshotAccountNames
   , actualSnapshotJournal
   , actualSnapshotSource
+  , actualSourceStartupFailureText
   , loadActualSourceSnapshot
   )
 import HKernel.Editor.TUI.OperationHub
@@ -716,10 +717,7 @@ main = do
     [journalFile] -> do
       snapshotResult <- loadActualSourceSnapshot journalFile
       snapshot <- case snapshotResult of
-        Left ActualSourceFileReadFailed ->
-          die ("Failed to read journal file: " <> journalFile)
-        Left ActualSourceAdmissionFailed ->
-          die ("Failed to parse and admit journal file: " <> journalFile)
+        Left failure -> die (T.unpack (actualSourceStartupFailureText failure))
         Right snap -> pure snap
       let context = AppContext journalFile snapshot
           initialState = AppWrapper context mkInitialHubUIState

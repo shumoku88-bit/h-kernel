@@ -129,6 +129,11 @@ In the TUI source snapshot recovery slice (`fix/tui-actual-source-snapshot-001`)
    - Load failures (`ActualSourceFileReadFailed` and `ActualSourceAdmissionFailed`) are sanitized into `ShowActualSourceLoadFailure` without exposing raw source text, IOException details, or filesystem paths.
    - Safe writer semantics, backup/rollback, and writer authority remain unchanged.
 
+5. **Sole Ownership of Load & Admission Responsibility**:
+   - `HKernel.Editor.TUI.ActualSourceSnapshot` is the sole owner of source file reading, journal admission, sanitized load failure classification, and immutable snapshot construction.
+   - `HKernel.Editor.TUI.ActualBrowse` consumes admitted snapshots/journals to project row states (`buildActualBrowseRows`, `initialActualBrowseStateFromSnapshot`) and no longer maintains a parallel `ActualBrowseLoadFailure` or `classifyActualBrowseLoad` helper.
+   - Startup load failures in the executable (`Main.hs`) are sanitized (`actualSourceStartupFailureText`) and never disclose the supplied filesystem path, IOException details, or source text in stderr or diagnostic output.
+
 ## Private / Public Boundary & Source Protection
 
 - Public test suites use synthetic fixture sources (`tests/fixtures/editor/actual-add.journal` and `tests/fixtures/editor/actual-browse.journal`).

@@ -25,6 +25,7 @@ import HKernel.Editor.TUI.ActualSourceSnapshot
   , actualSnapshotAccountNames
   , actualSnapshotJournal
   , actualSnapshotSource
+  , actualSourceStartupFailureText
   , admitActualSourceSnapshot
   , loadActualSourceSnapshotUsing
   )
@@ -34,6 +35,7 @@ main = do
   testSnapshotAdmission
   testInvalidAdmission
   testSanitizedFailures
+  testSanitizedStartupFailures
   testRefreshLifecycle
   testConsecutiveActualAddEvidence
   testStableOperationSnapshot
@@ -76,6 +78,15 @@ testSanitizedFailures :: IO ()
 testSanitizedFailures = do
   assertEqual "read failure show" "ActualSourceFileReadFailed" (show ActualSourceFileReadFailed)
   assertEqual "admission failure show" "ActualSourceAdmissionFailed" (show ActualSourceAdmissionFailed)
+
+testSanitizedStartupFailures :: IO ()
+testSanitizedStartupFailures = do
+  let readMsg = actualSourceStartupFailureText ActualSourceFileReadFailed
+      admissionMsg = actualSourceStartupFailureText ActualSourceAdmissionFailed
+  assertEqual "read failure startup text" "Failed to read the Actual Journal." readMsg
+  assertEqual "admission failure startup text" "The Actual Journal failed admission." admissionMsg
+  assertBool "read failure message contains no path" (not ("/" `T.isInfixOf` readMsg))
+  assertBool "admission failure message contains no path" (not ("/" `T.isInfixOf` admissionMsg))
 
 testRefreshLifecycle :: IO ()
 testRefreshLifecycle = do
