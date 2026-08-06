@@ -131,3 +131,7 @@ role = "architecture"
 path = "docs/TUI_OPERATION_HUB_PLAN_001.md"
 role = "architecture"
 
+[[documents]]
+path = "docs/ACTUAL_IDENTITY_CREATION_ADOPTION_DECISION_001.md"
+role = "contract"
+

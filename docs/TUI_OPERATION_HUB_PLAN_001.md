@@ -85,16 +85,16 @@ All other operations, including `OperationActualReverse`, remain typed `Operatio
 
 1. Top-level operation hub & existing Actual add connection (**PR #38**)
 2. Read-only Actual transaction list / selector (**PR #39**)
-3. TUI operation source snapshot lifecycle (**Current slice**)
-4. Durable identity creation / adoption decision (**Next recommended slice**)
-5. Actual reverse TUI (connecting existing Actual reverse pure engine)
-6. Actual multi-posting TUI
-7. Account declaration TUI
-8. Report selection & read-only rendering
-9. Plan read-only selector & source compatibility verification
-10. Plan lifecycle operations
-11. Budget movement TUI after writer cutover decision
-12. Issue lifecycle TUI after capability/authority decision
+3. TUI operation source snapshot lifecycle (**PR #40**)
+4. Durable identity creation / adoption decision (**Current slice**)
+5. Ordinary Actual add durable identity creation (**Next recommended slice**)
+6. No-identity adoption engine and UI
+7. Actual reverse TUI
+8. Actual multi-posting TUI
+9. Account declaration TUI
+10. Report selection & read-only rendering
+11. Plan operations
+12. Budget and Issue operations after authority decisions
 
 ## Slice Scope: TUI Operation Source Snapshot Lifecycle
 
