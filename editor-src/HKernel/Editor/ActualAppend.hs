@@ -5,29 +5,47 @@ module HKernel.Editor.ActualAppend
   , ActualEditError(..)
   , ActualAppendPreview(..)
   , prepareActualAppend
+  , ActualAddInput(..)
+  , ActualAddInputError(..)
+  , ActualAddPreview(..)
+  , ActualAddWriteFailure(..)
+  , ActualAddWriteOutcome(..)
+  , emptyActualAddInput
+  , buildActualAddIntent
+  , prepareActualAddPreview
+  , classifyActualAddWriteResult
   ) where
 
 import Data.Bifunctor (first)
-import Data.List.NonEmpty (NonEmpty)
+import Data.List.NonEmpty (NonEmpty(..))
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time.Calendar (Day)
+import Data.Time.Format (defaultTimeLocale, parseTimeM)
 
-import HKernel.Account (Account)
+import HKernel.Account (Account, mkAccount)
 import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError
   , actualJournalValue
   , parseActualJournal
   )
+import HKernel.Editor.ActualWriter (WriteError(..))
 import HKernel.Editor.SourceAppend (appendSourceBlock)
 import HKernel.Editor.TransactionBlock
-  ( IntentPosting
+  ( IntentPosting(..)
   , TransactionBlockError(..)
   , TransactionBlockIntent(..)
   , prepareTransactionBlock
   )
 import HKernel.Journal (journalAccountRegistry)
 import HKernel.Ledger (TransactionError)
+import HKernel.Money
+  ( mkCommodity
+  , negateQuantity
+  , parseQuantity
+  , quantityToRational
+  )
 
 -- | A request to append a new transaction to the Actual journal.
 data ActualEditIntent = ActualEditIntent
@@ -88,3 +106,108 @@ toActualEditError blockError = case blockError of
   BlockMissingCommodity account -> MissingCommodity account
   BlockZeroAmount account -> ZeroAmount account
   BlockValidationError transactionError -> ValidationError transactionError
+
+-- | Delivery-neutral text input for the ordinary two-posting Actual add
+-- operation. Brick, Haskeline, HTTP, or another adapter can construct the same
+-- value before calling this shared owner.
+data ActualAddInput = ActualAddInput
+  { addDateText        :: Text
+  , addDescriptionText :: Text
+  , addFromAccountText :: Text
+  , addToAccountText   :: Text
+  , addAmountText      :: Text
+  } deriving (Eq, Show)
+
+data ActualAddInputError
+  = ActualAddInvalidDate
+  | ActualAddInvalidFromAccount
+  | ActualAddInvalidToAccount
+  | ActualAddInvalidAmountShape
+  | ActualAddInvalidQuantity
+  | ActualAddAmountMustBePositive
+  | ActualAddInvalidCommodity
+  deriving (Eq, Show)
+
+-- | Delivery-neutral preview retaining only the candidate transaction block.
+data ActualAddPreview
+  = ActualAddInputRejected ActualAddInputError
+  | ActualAddCandidateRejected (NonEmpty ActualEditError)
+  | ActualAddCandidateReady Text
+  deriving (Eq, Show)
+
+data ActualAddWriteFailure
+  = ActualAddPostAdmissionFailure
+  | ActualAddPostPublishReadFailure
+  deriving (Eq, Show)
+
+data ActualAddWriteOutcome
+  = ActualAddWriteSucceeded
+  | ActualAddWriteStale
+  | ActualAddWriteRecovered ActualAddWriteFailure
+  | ActualAddWriteFailed ActualAddWriteFailure
+  | ActualAddWriteFileIOFailed
+  deriving (Eq, Show)
+
+emptyActualAddInput :: ActualAddInput
+emptyActualAddInput = ActualAddInput "" "" "" "" ""
+
+-- | Admit a positive magnitude and derive the balancing source posting by
+-- negating the parsed Quantity value, never by manipulating its input text.
+buildActualAddIntent
+  :: ActualAddInput
+  -> Either ActualAddInputError ActualEditIntent
+buildActualAddIntent input = do
+  date <- maybe (Left ActualAddInvalidDate) Right
+    (parseTimeM
+      True
+      defaultTimeLocale
+      "%Y-%m-%d"
+      (T.unpack (addDateText input)) :: Maybe Day)
+  fromAccount <- first (const ActualAddInvalidFromAccount)
+    (mkAccount (addFromAccountText input))
+  toAccount <- first (const ActualAddInvalidToAccount)
+    (mkAccount (addToAccountText input))
+  (quantityText, commodityText) <- case T.words (addAmountText input) of
+    [quantityValue, commodityValue] -> Right (quantityValue, commodityValue)
+    _ -> Left ActualAddInvalidAmountShape
+  quantity <- first (const ActualAddInvalidQuantity)
+    (parseQuantity quantityText)
+  if quantityToRational quantity <= 0
+    then Left ActualAddAmountMustBePositive
+    else pure ()
+  commodity <- first (const ActualAddInvalidCommodity)
+    (mkCommodity commodityText)
+  pure
+    (ActualEditIntent
+      date
+      (addDescriptionText input)
+      ( IntentPosting toAccount quantity (Just commodity)
+        :| [IntentPosting fromAccount (negateQuantity quantity) (Just commodity)]
+      )
+      [])
+
+prepareActualAddPreview :: Text -> ActualAddInput -> ActualAddPreview
+prepareActualAddPreview source input =
+  case buildActualAddIntent input of
+    Left inputError -> ActualAddInputRejected inputError
+    Right intent -> case prepareActualAppend source intent of
+      Left sourceErrors -> ActualAddCandidateRejected sourceErrors
+      Right preview -> ActualAddCandidateReady (candidateBlock preview)
+
+-- | Collapse the safe writer result into a finite delivery-neutral outcome.
+classifyActualAddWriteResult
+  :: Either (WriteError sourceError) ()
+  -> ActualAddWriteOutcome
+classifyActualAddWriteResult result = case result of
+  Right () -> ActualAddWriteSucceeded
+  Left StaleFile -> ActualAddWriteStale
+  Left (PostAdmissionFailed { restoredFromBackup = True }) ->
+    ActualAddWriteRecovered ActualAddPostAdmissionFailure
+  Left (PostAdmissionFailed { restoredFromBackup = False }) ->
+    ActualAddWriteFailed ActualAddPostAdmissionFailure
+  Left (PostPublishReadFailed { restoredFromBackup = True }) ->
+    ActualAddWriteRecovered ActualAddPostPublishReadFailure
+  Left (PostPublishReadFailed { restoredFromBackup = False }) ->
+    ActualAddWriteFailed ActualAddPostPublishReadFailure
+  Left (FileIOError _) ->
+    ActualAddWriteFileIOFailed
