@@ -13,6 +13,7 @@ import qualified Data.Text.IO as TIO
 import System.Directory (removeFile)
 import System.Exit (exitFailure, exitSuccess)
 
+import ActualComparisonSupport
 import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.Editor.ActualWriter
 import HKernel.Plan.Journal (parsePlanJournal)
