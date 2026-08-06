@@ -44,7 +44,7 @@ Usage:
   tools/hk [--base DIR] help
 
 Commands:
-  report          Run the existing Haskell report entrypoint. This is the default in non-interactive mode.
+  report          Run the existing Haskell report entrypoint.
   actual-add      Run the existing Actual add TUI (supports 2-posting add and fund transfer).
   actual-multi    Route multi-posting Actual transaction append directly to h-kernel-editor-cli.
   actual-reverse  Route an explicit Actual reversal intent directly to h-kernel-editor-cli.
