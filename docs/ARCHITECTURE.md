@@ -7,7 +7,7 @@
 
 この文書は、`h-kernel`の安定したcomponent境界、依存方向、会計上の不変条件、effectの置き場所を所有する。
 
-全体の現在地と未決定案は[`CODE_MAP_AND_DESIGN_SKETCH.md`](CODE_MAP_AND_DESIGN_SKETCH.md)、Haskellの書法は[`HASKELL_NATIVE_CODE_POLICY.md`](HASKELL_NATIVE_CODE_POLICY.md)、writer authorityは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)が所有する。
+全体の現在地と未決定案は[`CODE_MAP_AND_DESIGN_SKETCH.md`](CODE_MAP_AND_DESIGN_SKETCH.md)、Haskellの書法は[`HASKELL_NATIVE_CODE_POLICY.md`](HASKELL_NATIVE_CODE_POLICY.md)、writer authorityは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)と[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
 
 ## 2. Functional coreと明示的なeffect boundary
 
@@ -75,7 +75,7 @@ app/             h-kernel report executable
 editor-app/      h-kernel-editor-cli
 editor-tui-app/  h-kernel-editor-tui
 repository root  report launchers and build helpers
-tools/hk         report / edit / check / help routing only
+tools/hk         report / actual-add / edit / check / help routing only
 tools/           repository audit and verification tools
 ```
 
@@ -176,7 +176,7 @@ h-kernel-spike-household-report -> h-kernel-household
 
 report app                     -> h-kernel + h-kernel-spike-household-report
 editor app / editor TUI        -> h-kernel-editor
-tools/hk                       -> existing report launcher / editor CLI / checks
+tools/hk                       -> existing report launcher / editor CLI / editor TUI / checks
 ```
 
 次は禁止する。
@@ -192,4 +192,6 @@ tools/hk                       -> existing report launcher / editor CLI / checks
 
 componentにwrite capabilityが存在することと、canonical writer authorityは別である。
 
-明示的なcutoverまでは`bqn-ledger`がprivate canonical sourceのwriterであり、`h-kernel` editorはsynthetic sourceまたは明示的なnon-canonical copyだけへwriteする。single-user cutover、reader compatibility、rehearsal、rollbackは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)と[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)が所有する。
+2026-08-06の明示的なcutoverにより、canonical `actual.journal`のwriter authorityは`h-kernel` editorが持つ。`bqn-ledger`は同じsourceをreaderとして使えるが、canonical `actual.journal`を変更するoperationには使わない。
+
+他のprivate source fileのwriter authorityは、このActual-only cutoverでは変更しない。source別authority、activation、single-writer law、stop、rollbackは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)、[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)、[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
