@@ -168,24 +168,15 @@ Household policy、Daily Target、Backing、Budget movement、Account profile ad
 ## 7. Dependency direction
 
 ```text
-Money / Account
-      ^
-      |
-Ledger / Journal / Actual / Plan / Budget
-      ^
-      |
-Engine / Report / Render
-      ^
-      |
-h-kernel-household
-      ^
-      |             h-kernel-editor
-      |                    ^
-      +---- spike ----------+
+h-kernel-household             -> h-kernel
+h-kernel-editor                -> h-kernel
+h-kernel-editor                -> h-kernel-household
+h-kernel-spike-household-report -> h-kernel
+h-kernel-spike-household-report -> h-kernel-household
 
-report app ---------> h-kernel + spike
-editor app / TUI ---> h-kernel-editor
-tools/hk ----------> existing executable and checks
+report app                     -> h-kernel + h-kernel-spike-household-report
+editor app / editor TUI        -> h-kernel-editor
+tools/hk                       -> existing report launcher / editor CLI / checks
 ```
 
 次は禁止する。

@@ -97,11 +97,12 @@ graph TD
     EditorApp["editor CLI / TUI"]
     Checks["build / test / repository audit"]
 
-    ActualSource["private actual.journal"]
-    PlanSource["private plan.journal"]
+    CanonicalActual["private canonical actual.journal"]
+    CanonicalPlan["private canonical plan.journal"]
     AccountProfileSource["retained accounts.tsv"]
     BudgetMovementSource["retained budget_alloc.tsv"]
     ConfigSources["budget.toml / household.toml / config.tsv / daily_target_scope.tsv"]
+    ExplicitWriteTarget["explicit synthetic / non-canonical target"]
 
     CoreAdmission["Journal / Actual / Plan admission"]
     AccountProfileAdmission["Household.AccountProfile.TSV"]
@@ -121,8 +122,8 @@ graph TD
     Hub --> EditorApp
     Hub --> Checks
 
-    ActualSource --> CoreAdmission --> Accounting
-    PlanSource --> CoreAdmission
+    CanonicalActual --> CoreAdmission --> Accounting
+    CanonicalPlan --> CoreAdmission
     AccountProfileSource --> AccountProfileAdmission
     BudgetMovementSource --> HouseholdAdmission
     ConfigSources --> HouseholdAdmission
@@ -137,12 +138,10 @@ graph TD
     CoreAdmission --> Candidate
     AccountProfileAdmission --> Candidate
     HouseholdAdmission --> Candidate
-    Writer --> ActualSource
-    Writer --> PlanSource
-    Writer --> BudgetMovementSource
+    Writer --> ExplicitWriteTarget
 ```
 
-この図は主要な受け渡しを示す。各parser、Report、editor commandの完全なcall graphではない。
+この図は主要な受け渡しを示す。各parser、Report、editor commandの完全なcall graphではない。safe writerは明示されたpathへwriteできるが、current writer authorityではsynthetic sourceまたはnon-canonical copyだけを対象にする。
 
 ## 5. CURRENTとDIRECTION: 各声部
 
