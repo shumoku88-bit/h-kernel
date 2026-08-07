@@ -1,11 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Platform-neutral admission for the retained application configuration.
+-- | Application-level source topology and retained configuration admission.
 --
--- The current application contract uses only the selected Actual Journal file.
--- Other retained keys remain accepted without being promoted to domain facts.
+-- The canonical Household root is the stable application bootstrap: delivery
+-- adapters receive one root and this module resolves the canonical basenames in
+-- one place. The retained @config.tsv@ parser remains temporarily for migration
+-- evidence; it is not the owner of Household facts or policy.
 module HKernel.Application.Config
-  ( ApplicationConfig
+  ( HouseholdRoot
+  , HouseholdRootError(..)
+  , mkHouseholdRoot
+  , householdRootPath
+  , HouseholdSourcePaths(..)
+  , householdSourcePaths
+  , ApplicationConfig
   , applicationActualJournalFile
   , ApplicationConfigError(..)
   , parseApplicationConfig
@@ -16,8 +24,55 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
+import System.FilePath ((</>), normalise)
 
--- | The application-level source selection admitted from @config.tsv@.
+-- | One canonical Household directory supplied by the application bootstrap.
+newtype HouseholdRoot = HouseholdRoot
+  { householdRootPath :: FilePath
+  } deriving (Eq, Show)
+
+data HouseholdRootError
+  = EmptyHouseholdRootPath
+  deriving (Eq, Show)
+
+mkHouseholdRoot :: FilePath -> Either HouseholdRootError HouseholdRoot
+mkHouseholdRoot path
+  | null path = Left EmptyHouseholdRootPath
+  | otherwise = Right (HouseholdRoot (normalise path))
+
+-- | Physical paths for the agreed canonical source/config target.
+--
+-- No TUI screen, CLI route, or Report preset should construct these basenames
+-- independently. The record says where a semantic owner lives; it does not
+-- imply that all files share one parser or writer.
+data HouseholdSourcePaths = HouseholdSourcePaths
+  { householdAccountsJournalPath :: FilePath
+  , householdActualJournalPath   :: FilePath
+  , householdPlanJournalPath     :: FilePath
+  , householdBudgetJournalPath   :: FilePath
+  , householdBudgetConfigPath    :: FilePath
+  , householdPolicyConfigPath    :: FilePath
+  , householdReportConfigPath    :: FilePath
+  , householdIssuesPath          :: FilePath
+  } deriving (Eq, Show)
+
+householdSourcePaths :: HouseholdRoot -> HouseholdSourcePaths
+householdSourcePaths root = HouseholdSourcePaths
+  { householdAccountsJournalPath = at "accounts.journal"
+  , householdActualJournalPath = at "actual.journal"
+  , householdPlanJournalPath = at "plan.journal"
+  , householdBudgetJournalPath = at "budget.journal"
+  , householdBudgetConfigPath = at "budget.toml"
+  , householdPolicyConfigPath = at "household.toml"
+  , householdReportConfigPath = at "report.toml"
+  , householdIssuesPath = at "issues.tsv"
+  }
+  where
+    at basename = householdRootPath root </> basename
+
+-- Retained config.tsv compatibility
+
+-- | The application-level source selection admitted from retained @config.tsv@.
 newtype ApplicationConfig = ApplicationConfig
   { applicationActualJournalFile :: Text
   } deriving (Eq, Show)
