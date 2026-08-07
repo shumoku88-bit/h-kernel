@@ -31,7 +31,7 @@ import HKernel.Actual.Journal
   , parseActualJournal
   )
 import HKernel.Editor.ActualWriter (WriteError(..))
-import HKernel.Editor.SourceAppend (appendSourceBlock)
+import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Editor.TransactionBlock
   ( IntentPosting(..)
   , TransactionBlockError(..)
@@ -82,7 +82,8 @@ prepareActualAppend existingSource intent = do
 
   let preview = ActualAppendPreview
         { candidateBlock = block
-        , candidateCompleteSource = appendSourceBlock existingSource block
+        , candidateCompleteSource =
+            appendSourceBlock existingSource (SourceBlock block)
         }
 
   _ <- first (pure . CandidateSourceParseError)

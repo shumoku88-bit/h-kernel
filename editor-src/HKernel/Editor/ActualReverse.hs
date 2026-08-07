@@ -26,7 +26,7 @@ import HKernel.Actual.Journal
   , reversedTransactionId
   , reversalTransactionId
   )
-import HKernel.Editor.SourceAppend (appendSourceBlock)
+import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Ledger
   ( Posting
   , Transaction
@@ -152,7 +152,8 @@ buildPreview
 buildPreview existingSource newTxn intent =
   ActualReversePreview
     { candidateBlock = block
-    , candidateCompleteSource = appendSourceBlock existingSource block
+    , candidateCompleteSource =
+        appendSourceBlock existingSource (SourceBlock block)
     }
   where
     block = renderReverseTransaction newTxn intent

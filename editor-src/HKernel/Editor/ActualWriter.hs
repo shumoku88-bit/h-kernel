@@ -22,7 +22,7 @@ import HKernel.Actual.Journal
   ( ActualJournalError
   , parseActualJournal
   )
-import HKernel.Editor.SourceAppend (appendSourceBlock)
+import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 
 data WriteIntent = WriteIntent
   { targetFilePath    :: FilePath
@@ -100,7 +100,8 @@ publishActualBlock filePath expectedSource block =
     (WriteIntent
       { targetFilePath = filePath
       , expectedOldBytes = expectedSource
-      , candidateNewBytes = appendSourceBlock expectedSource block
+      , candidateNewBytes =
+          appendSourceBlock expectedSource (SourceBlock block)
       })
 
 checkStaleAndWrite

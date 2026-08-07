@@ -32,7 +32,7 @@ import HKernel.Editor.ActualAppend
   , ActualAppendPreview(..)
   , prepareActualAppend
   )
-import HKernel.Editor.SourceAppend (appendSourceBlock)
+import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Editor.TransactionBlock
   ( IntentPosting(..)
   , TransactionBlockIntent(..)
@@ -166,7 +166,8 @@ preparePlanAdd planSource actualSource intent = do
 
   let preview = PlanAddPreview
         { addCandidateBlock = block
-        , addCandidateCompleteSource = appendSourceBlock planSource block
+        , addCandidateCompleteSource =
+            appendSourceBlock planSource (SourceBlock block)
         }
 
   _ <- first (pure . AddCandidateParseError) (parsePlanJournal (addCandidateCompleteSource preview))
