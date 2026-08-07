@@ -13,6 +13,7 @@ module HKernel.Editor.Interaction.ActualAdd
   , ActualAddState(..)
   , ActualAddAction(..)
   , initialActualAddState
+  , enterActualAddPreview
   , transitionActualAdd
   ) where
 
@@ -23,7 +24,6 @@ import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddPreview(..)
   , emptyActualAddInput
-  , prepareActualAddPreview
   )
 
 data AccountSelectionTarget
@@ -48,7 +48,6 @@ data ActualAddAction
   = BeginAccountSelection AccountSelectionTarget
   | ChooseAccount Account
   | CancelAccountSelection
-  | RequestActualAddPreview
   | RequestActualAddConfirmation
   | CancelActualAddConfirmation
   | ConfirmActualAdd
@@ -58,16 +57,20 @@ data ActualAddAction
 initialActualAddState :: ActualAddState
 initialActualAddState = ActualAddState emptyActualAddInput EditingActualAdd
 
--- | Apply one UI-independent interaction action to the ordinary Actual add
--- workflow. Source admission and candidate preparation remain owned by
--- 'HKernel.Editor.ActualAppend'; delivery adapters only choose when to issue
--- these actions and how to present the resulting state.
+-- | Enter preview mode with a preview prepared by the Actual operation owner.
+-- Interaction does not need the complete source that produced this value.
+enterActualAddPreview :: ActualAddPreview -> ActualAddState -> ActualAddState
+enterActualAddPreview preview state =
+  state { actualAddMode = ShowingActualAddPreview preview }
+
+-- | Apply one source-independent interaction action to the ordinary Actual add
+-- workflow. Candidate preparation remains owned by 'HKernel.Editor.ActualAppend';
+-- delivery adapters supply the resulting preview through 'enterActualAddPreview'.
 transitionActualAdd
-  :: Text
-  -> ActualAddAction
+  :: ActualAddAction
   -> ActualAddState
   -> ActualAddState
-transitionActualAdd source action state = case action of
+transitionActualAdd action state = case action of
   BeginAccountSelection target ->
     state { actualAddMode = SelectingActualAccount target }
   ChooseAccount account -> case actualAddMode state of
@@ -87,12 +90,6 @@ transitionActualAdd source action state = case action of
   CancelAccountSelection -> case actualAddMode state of
     SelectingActualAccount _ -> state { actualAddMode = EditingActualAdd }
     _ -> state
-  RequestActualAddPreview ->
-    state
-      { actualAddMode =
-          ShowingActualAddPreview
-            (prepareActualAddPreview source (actualAddInput state))
-      }
   RequestActualAddConfirmation -> case actualAddMode state of
     ShowingActualAddPreview (ActualAddCandidateReady block) ->
       state { actualAddMode = ConfirmingActualAdd block }
