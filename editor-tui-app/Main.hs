@@ -27,17 +27,15 @@ import qualified Data.Vector as Vec
 import System.Directory (doesDirectoryExist)
 import System.Environment (getArgs)
 import System.Exit (die)
-import System.FilePath ((</>), takeDirectory)
+import System.FilePath (takeDirectory)
 import System.IO.Error (tryIOError)
 import Text.Read (readMaybe)
 
 import HKernel.Account
   ( Account
   , AccountDeclaration
-  , AccountType(..)
   , accountDeclarations
   , accountName
-  , accountTypeFor
   , declaredAccount
   , declaredAccountDefaultCommodity
   , declaredAccountType
@@ -61,6 +59,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualAddAction(..)
   , ActualAddMode(..)
   , ActualAddState(..)
+  , dailyAccountCandidates
   , enterActualAddPreview
   , initialActualAddStateForDay
   , setActualAddDate
@@ -372,7 +371,7 @@ drawSectionTabBar currentSection =
     sectionNum ActualSection   = "1"
     sectionNum PlansSection    = "2"
     sectionNum BudgetSection   = "3"
-    sectionNum AccountsSection  = "4"
+    sectionNum AccountsSection = "4"
     sectionNum IssuesSection   = "5"
     sectionNum ReportsSection  = "6"
     sectionNum SettingsSection = "7"
@@ -380,7 +379,7 @@ drawSectionTabBar currentSection =
     sectionName ActualSection   = "Actual"
     sectionName PlansSection    = "Plans"
     sectionName BudgetSection   = "Budget"
-    sectionName AccountsSection  = "Accounts"
+    sectionName AccountsSection = "Accounts"
     sectionName IssuesSection   = "Issues"
     sectionName ReportsSection  = "Reports"
     sectionName SettingsSection = "Settings"
@@ -390,7 +389,7 @@ drawSectionBody context = case contextCurrentSection context of
   ActualSection   -> drawWorkspace context
   PlansSection    -> drawPlansView context
   BudgetSection   -> drawBudgetView context
-  AccountsSection  -> drawAccountsView context
+  AccountsSection -> drawAccountsView context
   IssuesSection   -> drawIssuesView context
   ReportsSection  -> drawReportsView context
   SettingsSection -> drawSettingsView context
@@ -869,49 +868,15 @@ openAccountSelection context target form =
     (AppWrapper context
       (SelectAccount
         target
-        (L.list AccountList (Vec.fromList (dailyAccountCandidates context target)) 1)
+        (L.list
+          AccountList
+          (Vec.fromList
+            (dailyAccountCandidates
+              (householdStateAccountsRegistry (contextHouseholdState context))
+              (contextAllTransactions context)
+              target))
+          1)
         form))
-
-dailyAccountCandidates
-  :: AppContext
-  -> AccountSelectionTarget
-  -> [Account]
-dailyAccountCandidates context target =
-  recentMatching <> remaining
-  where
-    registry = householdStateAccountsRegistry (contextHouseholdState context)
-    matching = filter (matchesDailyRole registry target) (contextAccounts context)
-    matchingSet = Set.fromList matching
-    recentMatching =
-      uniqueAccounts
-        [ account
-        | transaction <- reverse (contextAllTransactions context)
-        , posting <- NonEmpty.toList (transactionPostings transaction)
-        , let account = postingAccount posting
-        , Set.member account matchingSet
-        ]
-    recentSet = Set.fromList recentMatching
-    remaining = filter (`Set.notMember` recentSet) matching
-
-matchesDailyRole
-  :: HKernel.Account.AccountRegistry
-  -> AccountSelectionTarget
-  -> Account
-  -> Bool
-matchesDailyRole registry target account =
-  case (target, accountTypeFor account registry) of
-    (SelectToAccount, Just Expense) -> True
-    (SelectFromAccount, Just Asset) -> True
-    (SelectFromAccount, Just Liability) -> True
-    _ -> False
-
-uniqueAccounts :: [Account] -> [Account]
-uniqueAccounts = go Set.empty
-  where
-    go _ [] = []
-    go seen (account : rest)
-      | Set.member account seen = go seen rest
-      | otherwise = account : go (Set.insert account seen) rest
 
 handleAccountSelection
   :: AppContext
