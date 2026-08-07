@@ -30,8 +30,10 @@ import HKernel.Account
   ( Account
   , AccountRegistry
   , AccountType(..)
+  , accountDeclarations
   , accountName
   , accountTypeFor
+  , declaredAccount
   )
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
@@ -108,14 +110,9 @@ dailyAccountCandidates
 dailyAccountCandidates registry transactions target =
   recentMatching <> remaining
   where
-    matching =
+    allMatching =
       filter (matchesDailyRole registry target)
-        [ account
-        | transaction <- transactions
-        , posting <- NonEmpty.toList (transactionPostings transaction)
-        , let account = postingAccount posting
-        ]
-    allMatching = uniqueAccounts matching
+        (map declaredAccount (accountDeclarations registry))
     matchingSet = Set.fromList allMatching
     recentMatching =
       uniqueAccounts
