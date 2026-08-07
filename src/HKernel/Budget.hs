@@ -131,7 +131,7 @@ data Pacing
   | Flex
   deriving (Eq, Ord, Show)
 
--- | One irreducible entitlement change from @budget.tsv@.
+-- | One irreducible dated entitlement change.
 --
 -- Positive and negative exact 'Amount' values use the same shape, so an initial
 -- allocation and a later adjustment are not separate event types.
