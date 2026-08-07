@@ -40,6 +40,7 @@ import HKernel.Household.BudgetMovement.TSV
 import HKernel.Journal
   ( Journal
   , JournalError(..)
+  , JournalErrorReason(..)
   , combineJournalDocuments
   , includePath
   , journalDocumentIncludes
@@ -153,7 +154,7 @@ resolveInMemoryJournal registry input = do
         else do
           let resolve include
                 | includePath include == "accounts.journal" = Right accountsDocument
-                | otherwise = Left (pure (UnresolvedInclude include))
+                | otherwise = Left (pure (JournalError 0 (UnresolvedInclude include)))
           resolved <- resolveJournalDocumentIncludes resolve document
           validateJournalDocument resolved
 
