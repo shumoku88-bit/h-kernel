@@ -4,6 +4,7 @@
 module Main (main) where
 
 import Control.Exception (IOException, catch)
+import Data.List.NonEmpty (NonEmpty((:|)))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -20,18 +21,18 @@ import HKernel.Editor.ActualWriter
   , publishWithAdmission
   )
 import HKernel.Editor.BudgetMovementAppend
-  ( BudgetMovementAppendPreview(..)
-  , prepareBudgetMovementAppend
-  )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.BudgetMovement.TSV
   ( parseHouseholdBudgetMovements )
+import HKernel.Journal (parseJournal)
 import HKernel.Money (mkAmount, mkCommodity, quantityFromInteger)
 
 main :: IO ()
 main = do
   let tests =
-        [ ("testValidBudgetMovement", pure testValidBudgetMovement)
+        [ ("testNativeBudgetJournalCandidate", pure testNativeBudgetJournalCandidate)
+        , ("testNativeBudgetJournalRejectsNonBudgetEndpoint", pure testNativeBudgetJournalRejectsNonBudgetEndpoint)
+        , ("testValidBudgetMovement", pure testValidBudgetMovement)
         , ("testBudgetMovementCommit", testBudgetMovementCommit)
         ]
   results <- sequence [action | (_, action) <- tests]
@@ -44,6 +45,22 @@ main = do
 fixtureSource :: Text
 fixtureSource = T.unlines
   [ "2026-08-01\topening\tbudget:living\tbudget:food\t1000\tcurrency=JPY"
+  ]
+
+nativeRootSource :: Text
+nativeRootSource = "include accounts.journal\n"
+
+nativeLoadedSource :: Text
+nativeLoadedSource = T.unlines
+  [ "account budget:food"
+  , "    type: budget"
+  , "    commodity: JPY"
+  , "account budget:living"
+  , "    type: budget"
+  , "    commodity: JPY"
+  , "account assets:cash"
+  , "    type: asset"
+  , "    commodity: JPY"
   ]
 
 testMovement :: HouseholdBudgetMovement
@@ -59,6 +76,35 @@ testMovement = HouseholdBudgetMovement
         (either (error "bad comm") id (mkCommodity "JPY"))
         (quantityFromInteger 500)
   }
+
+testNativeBudgetJournalCandidate :: Bool
+testNativeBudgetJournalCandidate =
+  case prepareBudgetJournalMovementAppend
+      (mustRight (parseJournal nativeLoadedSource))
+      nativeRootSource
+      testMovement of
+    Left err -> error (show err)
+    Right preview ->
+      budgetJournalCandidateBlock preview == T.unlines
+        [ "2026-08-04 transfer"
+        , "    budget:food    -500 JPY"
+        , "    budget:living    500 JPY"
+        ]
+      && nativeRootSource `T.isPrefixOf`
+          budgetJournalCandidateCompleteSource preview
+
+testNativeBudgetJournalRejectsNonBudgetEndpoint :: Bool
+testNativeBudgetJournalRejectsNonBudgetEndpoint =
+  let invalid = testMovement
+        { householdBudgetMovementFrom =
+            either (error "bad account") id (mkAccount "assets:cash")
+        }
+  in case prepareBudgetJournalMovementAppend
+      (mustRight (parseJournal nativeLoadedSource))
+      nativeRootSource
+      invalid of
+    Left (BudgetJournalEndpointNotBudget BudgetJournalFrom :| []) -> True
+    _ -> False
 
 testValidBudgetMovement :: Bool
 testValidBudgetMovement =
@@ -101,3 +147,7 @@ removeIfPresent path =
   catch
     (removeTextFile defaultWriterFileSystem path)
     (\(_ :: IOException) -> pure ())
+
+mustRight :: Show error => Either error value -> value
+mustRight (Right value) = value
+mustRight (Left err) = error ("invalid fixture: " ++ show err)
