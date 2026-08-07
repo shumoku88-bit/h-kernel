@@ -35,7 +35,7 @@ import HKernel.Actual.Journal
   )
 import HKernel.Editor.ActualWorkspace (transactionsForAccount)
 import HKernel.Editor.ActualWriter (publishActualBlock)
-import HKernel.Editor.TUI.ActualAdd
+import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
   , ActualAddAction(..)
   , ActualAddInput(..)
