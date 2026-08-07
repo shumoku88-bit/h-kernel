@@ -88,6 +88,7 @@ import HKernel.HouseholdIssue (HouseholdIssue)
 import HKernel.Journal
   ( Journal
   , JournalError(..)
+  , JournalErrorReason(..)
   , includePath
   , journalAccountRegistry
   , parseJournalDocument
@@ -369,7 +370,7 @@ resolveInMemoryJournal accountsText input = do
   accountsDocument <- parseJournalDocument accountsText
   let resolve include
         | includePath include == "accounts.journal" = Right accountsDocument
-        | otherwise = Left (pure (UnresolvedInclude include))
+        | otherwise = Left (pure (JournalError 0 (UnresolvedInclude include)))
   resolved <- resolveJournalDocumentIncludes resolve document
   validateJournalDocument resolved
 
