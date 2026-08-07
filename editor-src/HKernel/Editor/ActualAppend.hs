@@ -14,6 +14,7 @@ module HKernel.Editor.ActualAppend
   , emptyActualAddInput
   , buildActualAddIntent
   , prepareActualAddPreview
+  , prepareActualAddPreviewFromResolvedJournal
   , classifyActualAddWriteResult
   ) where
 
@@ -222,9 +223,27 @@ buildActualAddIntent input = do
 
 prepareActualAddPreview :: Text -> ActualAddInput -> ActualAddPreview
 prepareActualAddPreview source input =
+  prepareActualAddPreviewWith (prepareActualAppend source) input
+
+prepareActualAddPreviewFromResolvedJournal
+  :: Journal
+  -> Text
+  -> ActualAddInput
+  -> ActualAddPreview
+prepareActualAddPreviewFromResolvedJournal resolvedJournal source input =
+  prepareActualAddPreviewWith
+    (prepareActualAppendFromResolvedJournal resolvedJournal source)
+    input
+
+prepareActualAddPreviewWith
+  :: (ActualEditIntent
+      -> Either (NonEmpty ActualEditError) ActualAppendPreview)
+  -> ActualAddInput
+  -> ActualAddPreview
+prepareActualAddPreviewWith prepare input =
   case buildActualAddIntent input of
     Left inputError -> ActualAddInputRejected inputError
-    Right intent -> case prepareActualAppend source intent of
+    Right intent -> case prepare intent of
       Left sourceErrors -> ActualAddCandidateRejected sourceErrors
       Right preview -> ActualAddCandidateReady (candidateBlock preview)
 

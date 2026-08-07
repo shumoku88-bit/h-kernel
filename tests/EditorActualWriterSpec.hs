@@ -224,10 +224,10 @@ testResolvedActualWrite =
     "tests/fixtures/resolved-writer-actual.journal"
     resolvedWriterOld
     (\path -> do
-      result <- publishActualAppendFromResolvedJournal
-        (WriteIntent path
-          (ExpectedSource resolvedWriterOld)
-          (CandidateSource resolvedWriterNew))
+      result <- publishActualBlockFromResolvedJournal
+        path
+        resolvedWriterOld
+        resolvedWriterBlock
       case result of
         Right () -> (== resolvedWriterNew) <$> TIO.readFile path
         Left err -> print err >> pure False)
@@ -336,12 +336,23 @@ resolvedWriterOld = Text.unlines
   , "  expenses:food  100 JPY"
   ]
 
-resolvedWriterNew :: Text
-resolvedWriterNew = resolvedWriterOld <> Text.unlines
-  [ ""
-  , "2026-08-05 appended"
+resolvedWriterBlock :: Text
+resolvedWriterBlock = Text.unlines
+  [ "2026-08-05 appended"
   , "  ; event-id: appended-event"
   , "  assets:bank  -50 JPY"
+  , "  expenses:food  50 JPY"
+  ]
+
+resolvedWriterNew :: Text
+resolvedWriterNew = resolvedWriterOld <> "\n" <> resolvedWriterBlock
+
+resolvedWriterInvalid :: Text
+resolvedWriterInvalid = resolvedWriterOld <> Text.unlines
+  [ ""
+  , "2026-08-05 invalid"
+  , "  ; event-id: invalid-event"
+  , "  assets:unknown  -50 JPY"
   , "  expenses:food  50 JPY"
   ]
 
@@ -357,15 +368,6 @@ resolvedWriterTypeMismatch = Text.unlines
   , "  ; event-id: existing-event"
   , "  assets:bank  -100 JPY"
   , "  expenses:food  100 JPY"
-  ]
-
-resolvedWriterInvalid :: Text
-resolvedWriterInvalid = resolvedWriterOld <> Text.unlines
-  [ ""
-  , "2026-08-05 invalid"
-  , "  ; event-id: invalid-event"
-  , "  assets:unknown  -50 JPY"
-  , "  expenses:food  50 JPY"
   ]
 
 actualOld :: Text

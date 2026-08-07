@@ -17,6 +17,7 @@ module HKernel.Editor.ActualWriter
   , publishActualAppend
   , publishActualAppendFromResolvedJournal
   , publishActualBlock
+  , publishActualBlockFromResolvedJournal
   ) where
 
 import Control.Exception (IOException, catch)
@@ -174,12 +175,25 @@ publishActualBlock
   -> IO (Either (WriteError ActualJournalError) ())
 publishActualBlock filePath expectedSource block =
   publishActualAppend
-    (WriteIntent
-      { targetFilePath = filePath
-      , expectedOldBytes = ExpectedSource expectedSource
-      , candidateNewBytes = CandidateSource
-          (appendSourceBlock expectedSource (SourceBlock block))
-      })
+    (actualBlockWriteIntent filePath expectedSource block)
+
+-- | Publish an already validated block through resolved Actual admission.
+publishActualBlockFromResolvedJournal
+  :: FilePath
+  -> Text
+  -> Text
+  -> IO (Either (WriteError ActualSourceAdmissionError) ())
+publishActualBlockFromResolvedJournal filePath expectedSource block =
+  publishActualAppendFromResolvedJournal
+    (actualBlockWriteIntent filePath expectedSource block)
+
+actualBlockWriteIntent :: FilePath -> Text -> Text -> WriteIntent
+actualBlockWriteIntent filePath expectedSource block = WriteIntent
+  { targetFilePath = filePath
+  , expectedOldBytes = ExpectedSource expectedSource
+  , candidateNewBytes = CandidateSource
+      (appendSourceBlock expectedSource (SourceBlock block))
+  }
 
 type Admission sourceError =
   FilePath -> Text -> IO (Either (NonEmpty sourceError) ())
