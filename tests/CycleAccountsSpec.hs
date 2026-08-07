@@ -24,6 +24,14 @@ main = do
         (fromGregorian 2026 6 15)
         (fromGregorian 2026 8 15)
       report = cycleAccounts currentPeriod previousPeriod journal
+      currentCycle = mustRight
+        (currentCycleAccounts (fromGregorian 2026 8 14) currentPeriod journal)
+      previousCycle = mustRight
+        (currentCycleAccounts (fromGregorian 2026 6 14) previousPeriod journal)
+      completeComparison = mustRight
+        (cycleComparison CompleteCycles currentCycle previousCycle)
+      alignedComparison = mustRight
+        (cycleComparison AlignedElapsed currentCycle previousCycle)
       jpy = mustRight (mkCommodity "JPY")
       usd = mustRight (mkCommodity "USD")
       food = mustRight (mkAccount "cost:food")
@@ -34,6 +42,83 @@ main = do
       medicalRow = rowFor medical report
       oldRow = rowFor oldExpense report
       travelRow = rowFor travel report
+      currentFood = currentRowFor food currentCycle
+
+  assertEqual
+    "current-cycle report retains the explicit cycle"
+    currentPeriod
+    (currentCycleAccountsPeriod currentCycle)
+  assertEqual
+    "current-cycle report retains the inclusive observation"
+    (fromGregorian 2026 8 14)
+    (currentCycleAccountsObservation currentCycle)
+  assertEqual
+    "current-cycle report publishes every declared Account in canonical order"
+    8
+    (length (currentCycleAccountsRows currentCycle))
+  assertEqual
+    "current-cycle opening is the exact balance before cycle start"
+    (jpyBalance 100 jpy)
+    (currentCycleAccountOpening currentFood)
+  assertEqual
+    "current-cycle debit lane keeps positive movement"
+    (jpyBalance 150 jpy)
+    (currentCycleAccountDebit currentFood)
+  assertEqual
+    "current-cycle credit lane keeps signed negative movement"
+    (jpyBalance (-20) jpy)
+    (currentCycleAccountCredit currentFood)
+  assertEqual
+    "current-cycle movement is debit plus signed credit"
+    (jpyBalance 130 jpy)
+    (currentCycleAccountRowMovement currentFood)
+  assertEqual
+    "current-cycle closing is opening plus movement"
+    (jpyBalance 230 jpy)
+    (currentCycleAccountRowClosing currentFood)
+  assertEqual
+    "current-cycle opening, movement, and closing remain double-entry balanced"
+    True
+    (currentCycleAccountsBalanced currentCycle)
+  assertEqual
+    "current-cycle debit and signed credit totals cancel exactly"
+    emptyBalance
+    (sumBalances
+      [ currentCycleAccountsDebitTotal currentCycle
+      , currentCycleAccountsCreditTotal currentCycle
+      ])
+
+  assertEqual
+    "complete cycle comparison retains its policy"
+    CompleteCycles
+    (cycleComparisonPolicy completeComparison)
+  assertEqual
+    "aligned elapsed accepts equal observed day counts"
+    AlignedElapsed
+    (cycleComparisonPolicy alignedComparison)
+  assertEqual
+    "cycle comparison publishes current minus baseline movement"
+    (jpyBalance 30 jpy)
+    (comparisonDifferenceFor food completeComparison)
+  assertEqual
+    "cycle comparison remains balanced by Commodity"
+    True
+    (cycleComparisonBalanced completeComparison)
+
+  let partialCurrent = mustRight
+        (currentCycleAccounts (fromGregorian 2026 8 13) currentPeriod journal)
+  assertEqual
+    "aligned elapsed rejects different observed day counts"
+    (Left (CycleComparisonElapsedDayCountMismatch 60 61))
+    (cycleComparison AlignedElapsed partialCurrent previousCycle)
+  assertEqual
+    "complete comparison rejects a partial current cycle"
+    (Left CycleComparisonRequiresCompleteCycles)
+    (cycleComparison CompleteCycles partialCurrent previousCycle)
+  assertEqual
+    "current-cycle observation must occur inside the resolved period"
+    (Left (CurrentCycleObservationOutsidePeriod (fromGregorian 2026 8 15)))
+    (currentCycleAccounts (fromGregorian 2026 8 15) currentPeriod journal)
 
   assertEqual
     "cycle accounts retain the explicit current observation period"
@@ -159,6 +244,18 @@ main = do
     [unknownLeft, unknownRight]
     (map cycleAccountRowAccount
       (cycleAccountsUnclassifiedRows unknownReport))
+
+currentRowFor :: Account -> CurrentCycleAccounts -> CurrentCycleAccountRow
+currentRowFor account report = case filter ((== account) . currentCycleAccount)
+    (currentCycleAccountsRows report) of
+  [row] -> row
+  unexpected -> error ("expected one current-cycle row, got " ++ show unexpected)
+
+comparisonDifferenceFor :: Account -> CycleComparison -> Balance
+comparisonDifferenceFor account report = case filter
+    ((== account) . cycleComparisonAccount) (cycleComparisonRows report) of
+  [row] -> cycleComparisonRowDifference row
+  unexpected -> error ("expected one comparison row, got " ++ show unexpected)
 
 rowFor :: Account -> CycleAccounts -> CycleAccountRow
 rowFor account report = case filter ((== account) . cycleAccountRowAccount)
