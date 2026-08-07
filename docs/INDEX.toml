@@ -114,3 +114,7 @@ role = "architecture"
 [[documents]]
 path = "docs/ARCHITECTURE_CODE_QUALITY_REVIEW.md"
 role = "observation"
+
+[[documents]]
+path = "docs/EDITOR_TUI_HUB_DESIGN.md"
+role = "architecture"
