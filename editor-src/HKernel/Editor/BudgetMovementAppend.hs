@@ -10,14 +10,20 @@ module HKernel.Editor.BudgetMovementAppend
   ) where
 
 import Data.Bifunctor (first)
-import Data.Functor.Identity (Identity(..), runIdentity)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Format (defaultTimeLocale, formatTime)
 
-import HKernel.Account (Account, AccountRegistry, AccountType(..), accountDeclarations, accountName, accountTypeFor)
+import HKernel.Account
+  ( Account
+  , AccountRegistry
+  , AccountType(..)
+  , accountDeclarations
+  , accountName
+  , accountTypeFor
+  )
 import HKernel.Account.Journal (renderAccountDeclaration)
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Household.BudgetMovement
@@ -33,14 +39,20 @@ import HKernel.Household.BudgetMovement.TSV
   )
 import HKernel.Journal
   ( Journal
-  , JournalError
+  , JournalError(..)
   , combineJournalDocuments
+  , includePath
   , journalDocumentIncludes
   , parseJournalDocument
   , resolveJournalDocumentIncludes
   , validateJournalDocument
   )
-import HKernel.Money (amountCommodity, amountQuantity, commodityCode, renderQuantity)
+import HKernel.Money
+  ( amountCommodity
+  , amountQuantity
+  , commodityCode
+  , renderQuantity
+  )
 
 data BudgetMovementAppendError
   = SourceParseError (NonEmpty HouseholdBudgetMovementTSVError)
@@ -128,16 +140,22 @@ resolveInMemoryJournal
   -> Text
   -> Either (NonEmpty JournalError) Journal
 resolveInMemoryJournal registry input = do
-  doc <- parseJournalDocument input
-  case renderRegistryText registry of
-    Nothing -> validateJournalDocument doc
-    Just accText -> case parseJournalDocument accText of
-      Left _ -> validateJournalDocument doc
-      Right accountsDoc ->
-        let resolvedDoc = runIdentity (resolveJournalDocumentIncludes (\_ -> Identity accountsDoc) doc)
-        in if null (journalDocumentIncludes doc)
-             then validateJournalDocument (combineJournalDocuments accountsDoc resolvedDoc)
-             else validateJournalDocument resolvedDoc
+  document <- parseJournalDocument input
+  accountText <- case renderRegistryText registry of
+    Nothing -> validateJournalDocument document >> Right ""
+    Just value -> Right value
+  if accountText == ""
+    then validateJournalDocument document
+    else do
+      accountsDocument <- parseJournalDocument accountText
+      if null (journalDocumentIncludes document)
+        then validateJournalDocument (combineJournalDocuments accountsDocument document)
+        else do
+          let resolve include
+                | includePath include == "accounts.journal" = Right accountsDocument
+                | otherwise = Left (pure (UnresolvedInclude include))
+          resolved <- resolveJournalDocumentIncludes resolve document
+          validateJournalDocument resolved
 
 renderRegistryText :: AccountRegistry -> Maybe Text
 renderRegistryText registry =
