@@ -158,16 +158,19 @@ CLIはTUIの代替実装ではなく、同じtyped operationを直接呼ぶ入�
 - [ ] current codeを説明しない設計文書を増やさない。
 - [ ] `repository-audit`で文書ownerとリンクを継続検証する。
 
-## 将来: bqn-ledger catch-up
+## 将来: bqn-ledger cross-engine parity
 
-h-kernelの正規運用を完成させた後、余裕ができたら`bqn-ledger`を同じcanonical Household sourceへ追いつかせる。
+h-kernelの正規運用を完成させた後、`bqn-ledger`を同じcanonical Household sourceへ追いつかせる。
 
 - native Journal / TOML sourceを直接admitする
-- h-kernelと同じidentity / provenance / exact arithmetic semanticsを保持する
-- Actual、Plan、Budget、Issue、configurationのwrite operationをsourceごとに実装・検証する
-- dual writeせず、同じ正データに対する別applicationとして切り替えて使える状態を目指す
+- source syntax、version、identity、ordering、errorを言語非依存のcontractとして共有する
+- h-kernelと同じprovenance / exact arithmetic / balance semanticsを保持する
+- Actual、Account、Plan、Budget、Issue、configurationの同じoperationを実装する
+- 同じReport queryに対する会計factと集計結果を一致させる。terminal layoutの完全一致は別に判断する
+- 独立したsynthetic parity corpusを両実装で実行し、private sourceをfixtureにしない
+- dual writeせず、一操作につき一つのapplicationだけを使い、次の操作前にfresh sourceを読む
 
-この将来項目のためにh-kernel側へBQN compatibility layerやgeneric argument shapeを持ち込まない。
+この将来項目のためにh-kernel側へ旧BQN compatibility layerやgeneric argument shapeを持ち込まない。
 
 ## 作業順
 

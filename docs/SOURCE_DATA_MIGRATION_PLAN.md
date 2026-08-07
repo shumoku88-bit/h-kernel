@@ -56,7 +56,22 @@ report.toml
 issues.tsv
 ```
 
-legacy sourceは意味をtyped ownerへ移し、semantic parityを確認した後に削除する。BQN互換形式を新しいsourceへ保存することは目標にしない。
+legacy sourceは意味をtyped ownerへ移し、semantic parityを確認した後に削除する。旧BQN形式を新しいsourceへ保存することは目標にしない。将来のbqn-ledgerは、新しいcanonical形式へ追従する。
+
+## 将来のcross-engine parity
+
+現在はh-kernelを先に完成させるが、最終的にはh-kernelとbqn-ledgerが同じcanonical sourceを読み、同じdomain operationとReport semanticsを提供する。
+
+共有contractはHaskellの内部型やBQNのarray shapeではなく、次の外部挙動で固定する。
+
+- source syntaxとversion
+- identity、ordering、Quantity、Commodity、balance invariant
+- operation intent、成功結果、finite failure
+- preview、stale rejection、publication後の再admission
+- Report query coordinateと会計上の結果
+- 独立したsynthetic parity corpus
+
+両applicationがwrite可能になってもdual writeしない。一操作では選択した一つだけを起動し、もう一方は次の操作前にfresh sourceを読み直す。
 
 ## Writer law
 
@@ -94,16 +109,6 @@ typed intent
 8. legacy sourceと現在不要な互換説明を削除する
 
 source format変更、writer実装、UI変更を無関係に一つのsliceへ混ぜない。h-kernelで安全に完了できることを現在の移行条件とする。将来のbqn-ledger対応はこの順序から独立したcatch-upとして扱う。
-
-## Future bqn-ledger catch-up
-
-h-kernelの正規運用が安定した後、必要なら`bqn-ledger`を同じcanonical Household sourceへ追いつかせる。
-
-- target Journal / TOMLをnativeに読む
-- identity、provenance、exact arithmetic、policy ownershipを弱めない
-- writer operationをsourceごとに実装・検証する
-- dual writeや同期copyを導入しない
-- h-kernel専用compatibility layerではなく、bqn-ledger自身がcanonical contractへ適合する
 
 ## Private/public boundary
 

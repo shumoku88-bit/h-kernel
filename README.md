@@ -2,7 +2,7 @@
 
 型で不正な状態を減らし、exact multi-commodity arithmeticを保つHaskellの複式簿記・家計applicationです。
 
-現在の正規データ運用は`h-kernel`へ一本化します。`actual.journal`は現在h-kernelで読み書きでき、残るsourceも順次移行します。`bqn-ledger`は現時点では正規データのreader、writer、fallbackとして使用しません。将来余裕ができたら、同じcanonical Household sourceへのnative対応を進め、reader/writer機能をh-kernelに追いつかせます。この将来対応は現在のh-kernel migration gateではありません。
+現在の正規データ運用は`h-kernel`へ一本化します。`actual.journal`は現在h-kernelで読み書きでき、残るsourceも順次移行します。`bqn-ledger`は現時点では正規データのreader、writer、fallbackとして使用しません。h-kernelのcanonical contract安定後、同じsource、operation、Report semanticsへ追従させます。この将来対応は現在のh-kernel migration gateではありません。
 
 ## 現在の構成
 

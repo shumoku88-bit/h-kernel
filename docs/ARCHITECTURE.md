@@ -198,7 +198,7 @@ tools/hk                        -> existing report launcher / editor CLI / edito
 
 ## 8. 正規application
 
-`h-kernel`が現在の正規データを扱う唯一のapplication targetである。`bqn-ledger`は互換性がないためreader、writer、fallbackとして使用しない。
+現在は`h-kernel`が正規データを扱う唯一のapplication targetである。`bqn-ledger`は互換性がないため運用せず、canonical contract安定後に別実装として追従させる。
 
 `actual.journal`はh-kernel editorが読み書きする。他sourceはh-kernel operationをsourceごとに完成させる。未対応operationは暗黙fallbackせず停止し、必要な場合だけ明示的な手編集を行う。
 
