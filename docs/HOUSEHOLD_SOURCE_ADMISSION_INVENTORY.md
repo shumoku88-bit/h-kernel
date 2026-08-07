@@ -37,6 +37,8 @@ Household Report compositionは、source syntaxをまとめて扱うgeneric pars
 
 `HKERNEL_LEDGER_DATA_DIR`利用時のActual sourceは`<directory>/actual.journal`で決まり、`config.tsv`の`ACTUAL_JOURNAL_FILE=actual.journal`を再確認しない。`cycle.tsv`のcycle座標は現在`household.toml`から読み、Planは`plan.journal`から読む。
 
+current Household Report compositionは旧`HKernel.Application.Config`を通らない。また、`HKernel.Budget.TSV`がadmitする旧`budget.tsv`もcurrent Household Report sourceではない。現在のEntitlement historyは`budget_alloc.tsv`からadmitした`HouseholdBudgetMovement`をdomain `BudgetChange`へ変換して構成する。
+
 これはprivate sourceの削除や、bqn-ledger側のreader/writer authority変更を意味しない。
 
 ## Inventory
