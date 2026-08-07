@@ -160,8 +160,8 @@ executePreview admit sourceFile existingSource block completeSource commitMode =
     CommitRequested -> do
       let writeIntent = WriteIntent
             { targetFilePath = sourceFile
-            , expectedOldBytes = existingSource
-            , candidateNewBytes = completeSource
+            , expectedOldBytes = ExpectedSource existingSource
+            , candidateNewBytes = CandidateSource completeSource
             }
       writeResult <- publishWithAdmission admit writeIntent
       case writeResult of

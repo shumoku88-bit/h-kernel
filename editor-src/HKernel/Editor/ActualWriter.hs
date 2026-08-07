@@ -2,7 +2,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module HKernel.Editor.ActualWriter
-  ( WriteIntent(..)
+  ( ExpectedSource(..)
+  , CandidateSource(..)
+  , WriteIntent(..)
   , WriteError(..)
   , WriterFileSystem(..)
   , defaultWriterFileSystem
@@ -24,10 +26,25 @@ import HKernel.Actual.Journal
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 
+-- | The complete source snapshot that the caller observed before preview.
+--
+-- This is a temporal coordinate rather than a validation claim. Keeping it
+-- distinct from the candidate prevents the safe-writer boundary from accepting
+-- the two source roles interchangeably.
+newtype ExpectedSource = ExpectedSource Text
+  deriving (Eq, Show)
+
+-- | The complete source proposed for publication after preview preparation.
+--
+-- This is a semantic/temporal coordinate rather than an admission claim. The
+-- supplied admission function still owns validation of the complete source.
+newtype CandidateSource = CandidateSource Text
+  deriving (Eq, Show)
+
 data WriteIntent = WriteIntent
   { targetFilePath    :: FilePath
-  , expectedOldBytes  :: Text
-  , candidateNewBytes :: Text
+  , expectedOldBytes  :: ExpectedSource
+  , candidateNewBytes :: CandidateSource
   } deriving (Eq, Show)
 
 data WriteError sourceError
@@ -99,9 +116,9 @@ publishActualBlock filePath expectedSource block =
   publishActualAppend
     (WriteIntent
       { targetFilePath = filePath
-      , expectedOldBytes = expectedSource
-      , candidateNewBytes =
-          appendSourceBlock expectedSource (SourceBlock block)
+      , expectedOldBytes = ExpectedSource expectedSource
+      , candidateNewBytes = CandidateSource
+          (appendSourceBlock expectedSource (SourceBlock block))
       })
 
 checkStaleAndWrite
@@ -111,7 +128,7 @@ checkStaleAndWrite
   -> IO (Either (WriteError sourceError) ())
 checkStaleAndWrite fileSystem admit intent = do
   currentBytes <- readTextFile fileSystem (targetFilePath intent)
-  if currentBytes /= expectedOldBytes intent
+  if currentBytes /= expectedSourceText (expectedOldBytes intent)
     then pure (Left StaleFile)
     else withAtomicSwap fileSystem admit intent
 
@@ -124,9 +141,11 @@ withAtomicSwap fileSystem admit intent = do
   let filePath = targetFilePath intent
       backupPath = filePath <> ".backup.tmp"
       newPath = filePath <> ".new.tmp"
+      expectedSource = expectedSourceText (expectedOldBytes intent)
+      candidateSource = candidateSourceText (candidateNewBytes intent)
 
-  writeTextFile fileSystem backupPath (expectedOldBytes intent)
-  writeTextFile fileSystem newPath (candidateNewBytes intent)
+  writeTextFile fileSystem backupPath expectedSource
+  writeTextFile fileSystem newPath candidateSource
   renameTextFile fileSystem newPath filePath
 
   verifyOrRollback fileSystem admit filePath backupPath
@@ -160,3 +179,9 @@ restoreBackup fileSystem backupPath filePath =
   catch
     (renameTextFile fileSystem backupPath filePath >> pure True)
     (\(_ :: IOException) -> pure False)
+
+expectedSourceText :: ExpectedSource -> Text
+expectedSourceText (ExpectedSource source) = source
+
+candidateSourceText :: CandidateSource -> Text
+candidateSourceText (CandidateSource source) = source
