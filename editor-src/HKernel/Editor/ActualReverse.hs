@@ -112,7 +112,7 @@ findTargetTransaction
   -> Either (NonEmpty ActualReverseError) Transaction
 findTargetTransaction targetId journal =
   maybe
-    (Left (TargetNotFound targetId) NonEmpty.:| [])
+    (Left (TargetNotFound targetId NonEmpty.:| []))
     (Right . identifiedActualTransaction)
     (Foldable.find
       ((== targetId) . identifiedActualId)
