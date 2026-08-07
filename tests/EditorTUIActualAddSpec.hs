@@ -17,6 +17,7 @@ import HKernel.Editor.ActualAppend
   , ActualEditIntent(..)
   , buildActualAddIntent
   , classifyActualAddWriteResult
+  , prepareActualAddPreview
   )
 import HKernel.Editor.ActualWriter (WriteError(..))
 import HKernel.Editor.Interaction.ActualAdd
@@ -24,6 +25,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualAddAction(..)
   , ActualAddMode(..)
   , ActualAddState(..)
+  , enterActualAddPreview
   , initialActualAddState
   , transitionActualAdd
   )
@@ -38,8 +40,8 @@ main = do
         , ("negative magnitude is rejected", testNegativeMagnitude)
         , ("zero magnitude is rejected", testZeroMagnitude)
         , ("amount shape is explicit", testAmountShape)
-        , ("from Account selection updates input", testFromSelection source)
-        , ("cancelled selection preserves input", testCancelSelection source)
+        , ("from Account selection updates input", testFromSelection)
+        , ("cancelled selection preserves input", testCancelSelection)
         , ("preview transition retains candidate block only", testPreviewTransition source)
         , ("rejected preview cannot enter confirmation", testRejectedPreviewCannotConfirm source)
         , ("ready preview enters confirmation", testReadyPreviewEntersConfirmation source)
@@ -97,26 +99,24 @@ testAmountShape =
   buildActualAddIntent (validInput { addAmountText = "100" })
     == Left ActualAddInvalidAmountShape
 
-testFromSelection :: T.Text -> Bool
-testFromSelection source = case mkAccount "assets:cash" of
+testFromSelection :: Bool
+testFromSelection = case mkAccount "assets:cash" of
   Left _ -> False
   Right account ->
     let selecting = transitionActualAdd
-          source
           (BeginAccountSelection SelectFromAccount)
           initialActualAddState
-        selected = transitionActualAdd source (ChooseAccount account) selecting
+        selected = transitionActualAdd (ChooseAccount account) selecting
     in addFromAccountText (actualAddInput selected) == "assets:cash"
         && actualAddMode selected == EditingActualAdd
 
-testCancelSelection :: T.Text -> Bool
-testCancelSelection source =
+testCancelSelection :: Bool
+testCancelSelection =
   let initial = ActualAddState validInput EditingActualAdd
       selecting = transitionActualAdd
-        source
         (BeginAccountSelection SelectToAccount)
         initial
-      cancelled = transitionActualAdd source CancelAccountSelection selecting
+      cancelled = transitionActualAdd CancelAccountSelection selecting
   in actualAddInput cancelled == validInput
       && actualAddMode cancelled == EditingActualAdd
 
@@ -132,19 +132,16 @@ testPreviewTransition source =
 
 testRejectedPreviewCannotConfirm :: T.Text -> Bool
 testRejectedPreviewCannotConfirm source =
-  let initial = ActualAddState
-        (validInput { addAmountText = "0 JPY" })
-        EditingActualAdd
-      rejected = transitionActualAdd source RequestActualAddPreview initial
-      confirmation =
-        transitionActualAdd source RequestActualAddConfirmation rejected
+  let input = validInput { addAmountText = "0 JPY" }
+      initial = ActualAddState input EditingActualAdd
+      rejected = enterActualAddPreview (prepareActualAddPreview source input) initial
+      confirmation = transitionActualAdd RequestActualAddConfirmation rejected
   in confirmation == rejected
 
 testReadyPreviewEntersConfirmation :: T.Text -> Bool
 testReadyPreviewEntersConfirmation source =
   let confirmation =
         transitionActualAdd
-          source
           RequestActualAddConfirmation
           (readyPreviewState source)
   in actualAddMode confirmation == ConfirmingActualAdd expectedBlock
@@ -153,11 +150,10 @@ testConfirmationCancellation :: T.Text -> Bool
 testConfirmationCancellation source =
   let confirmation =
         transitionActualAdd
-          source
           RequestActualAddConfirmation
           (readyPreviewState source)
       cancelled =
-        transitionActualAdd source CancelActualAddConfirmation confirmation
+        transitionActualAdd CancelActualAddConfirmation confirmation
   in actualAddMode cancelled
       == ShowingActualAddPreview (ActualAddCandidateReady expectedBlock)
 
@@ -165,19 +161,17 @@ testConfirmationAccepted :: T.Text -> Bool
 testConfirmationAccepted source =
   let confirmation =
         transitionActualAdd
-          source
           RequestActualAddConfirmation
           (readyPreviewState source)
-      accepted = transitionActualAdd source ConfirmActualAdd confirmation
+      accepted = transitionActualAdd ConfirmActualAdd confirmation
       stateRendering = T.pack (show accepted)
   in actualAddMode accepted == ActualAddConfirmed expectedBlock
       && not ("Opening Balance" `T.isInfixOf` stateRendering)
 
 readyPreviewState :: T.Text -> ActualAddState
 readyPreviewState source =
-  transitionActualAdd
-    source
-    RequestActualAddPreview
+  enterActualAddPreview
+    (prepareActualAddPreview source validInput)
     (ActualAddState validInput EditingActualAdd)
 
 testWriteSuccess :: Bool
