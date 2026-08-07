@@ -72,6 +72,10 @@ path = "docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md"
 role = "architecture"
 
 [[documents]]
+path = "docs/HOUSEHOLD_CANONICAL_TARGET.md"
+role = "architecture"
+
+[[documents]]
 path = "docs/LIABILITY_POSITION_DESIGN_SKETCH.md"
 role = "architecture"
 
