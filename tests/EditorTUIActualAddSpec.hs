@@ -16,6 +16,7 @@ import HKernel.Editor.ActualAppend
   , ActualAddWriteOutcome(..)
   , ActualEditIntent(..)
   , buildActualAddIntent
+  , buildActualAddIntentWithRegistry
   , classifyActualAddWriteResult
   , prepareActualAddPreview
   )
@@ -25,12 +26,21 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualAddAction(..)
   , ActualAddMode(..)
   , ActualAddState(..)
+  , dailyAccountCandidates
+  , filterDailyAccountCandidates
   , enterActualAddPreview
   , initialActualAddState
+  , initialActualAddStateForDay
+  , setActualAddDate
   , transitionActualAdd
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
-import HKernel.Money (renderQuantity)
+import HKernel.Journal
+  ( journalAccountRegistry
+  , journalTransactions
+  , parseJournal
+  )
+import HKernel.Money (commodityCode, renderQuantity)
 
 main :: IO ()
 main = do
@@ -39,7 +49,16 @@ main = do
         [ ("positive magnitude builds balanced typed intent", testPositiveMagnitude)
         , ("negative magnitude is rejected", testNegativeMagnitude)
         , ("zero magnitude is rejected", testZeroMagnitude)
-        , ("amount shape is explicit", testAmountShape)
+        , ("amount shape is explicit without registry", testAmountShape)
+        , ("daily amount infers canonical default commodity", testDefaultCommodityInference source)
+        , ("conflicting defaults fail before candidate creation", testConflictingDefaults)
+        , ("missing defaults fail before candidate creation", testMissingDefaults)
+        , ("daily entry starts on supplied day", testInitialDay)
+        , ("daily entry can switch to yesterday", testYesterday)
+        , ("expense candidates are typed and recent-first", testExpenseCandidates)
+        , ("payment candidates are typed, recent-first, and retain unused Accounts", testPaymentCandidates)
+        , ("candidate search is case-insensitive and order-preserving", testCandidateSearch)
+        , ("empty candidate search preserves recent-first list", testEmptyCandidateSearch)
         , ("from Account selection updates input", testFromSelection)
         , ("cancelled selection preserves input", testCancelSelection)
         , ("preview transition retains candidate block only", testPreviewTransition source)
@@ -98,6 +117,156 @@ testAmountShape :: Bool
 testAmountShape =
   buildActualAddIntent (validInput { addAmountText = "100" })
     == Left ActualAddInvalidAmountShape
+
+testDefaultCommodityInference :: T.Text -> Bool
+testDefaultCommodityInference source =
+  case parseJournal source of
+    Left _ -> False
+    Right journal ->
+      case buildActualAddIntentWithRegistry
+          (journalAccountRegistry journal)
+          (validInput { addAmountText = "100" }) of
+        Left _ -> False
+        Right intent -> case NonEmpty.toList (intentPostings intent) of
+          [destination, sourcePosting] ->
+            showCommodity destination == "JPY"
+              && showCommodity sourcePosting == "JPY"
+          _ -> False
+  where
+    showCommodity = maybe "" commodityCode . intentCommodity
+
+testConflictingDefaults :: Bool
+testConflictingDefaults =
+  case parseJournal conflictingDefaultSource of
+    Left _ -> False
+    Right journal ->
+      buildActualAddIntentWithRegistry
+        (journalAccountRegistry journal)
+        (validInput { addAmountText = "100" })
+        == Left ActualAddConflictingDefaultCommodity
+
+testMissingDefaults :: Bool
+testMissingDefaults =
+  case parseJournal missingDefaultSource of
+    Left _ -> False
+    Right journal ->
+      buildActualAddIntentWithRegistry
+        (journalAccountRegistry journal)
+        (validInput { addAmountText = "100" })
+        == Left ActualAddMissingDefaultCommodity
+
+conflictingDefaultSource :: T.Text
+conflictingDefaultSource = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: USD"
+  ]
+
+missingDefaultSource :: T.Text
+missingDefaultSource = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "account expenses:food"
+  , "  type: Expense"
+  ]
+
+testInitialDay :: Bool
+testInitialDay =
+  let today = read "2026-08-08"
+      state = initialActualAddStateForDay today
+  in addDateText (actualAddInput state) == "2026-08-08"
+      && actualAddMode state == EditingActualAdd
+
+testYesterday :: Bool
+testYesterday =
+  let today = read "2026-08-08"
+      yesterday = read "2026-08-07"
+      initial = initialActualAddStateForDay today
+      changed = setActualAddDate yesterday initial
+  in addDateText (actualAddInput changed) == "2026-08-07"
+      && actualAddMode changed == EditingActualAdd
+
+testExpenseCandidates :: Bool
+testExpenseCandidates =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      map accountName
+        (dailyAccountCandidates
+          (journalAccountRegistry journal)
+          (journalTransactions journal)
+          SelectToAccount)
+        == ["expenses:books", "expenses:food"]
+
+testPaymentCandidates :: Bool
+testPaymentCandidates =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      map accountName
+        (dailyAccountCandidates
+          (journalAccountRegistry journal)
+          (journalTransactions journal)
+          SelectFromAccount)
+        == ["liabilities:card", "assets:cash", "assets:bank"]
+
+testCandidateSearch :: Bool
+testCandidateSearch =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates =
+            dailyAccountCandidates
+              (journalAccountRegistry journal)
+              (journalTransactions journal)
+              SelectToAccount
+      in map accountName (filterDailyAccountCandidates "BOOK" candidates)
+          == ["expenses:books"]
+
+testEmptyCandidateSearch :: Bool
+testEmptyCandidateSearch =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates =
+            dailyAccountCandidates
+              (journalAccountRegistry journal)
+              (journalTransactions journal)
+              SelectFromAccount
+      in filterDailyAccountCandidates "  " candidates == candidates
+
+candidateSource :: T.Text
+candidateSource = T.unlines
+  [ "account assets:bank"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account liabilities:card"
+  , "  type: Liability"
+  , "  commodity: JPY"
+  , "account expenses:books"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , "account income:pension"
+  , "  type: Income"
+  , "  commodity: JPY"
+  , ""
+  , "2026-08-06 groceries"
+  , "  expenses:food  100 JPY"
+  , "  assets:cash  -100 JPY"
+  , ""
+  , "2026-08-07 books"
+  , "  expenses:books  200 JPY"
+  , "  liabilities:card  -200 JPY"
+  ]
 
 testFromSelection :: Bool
 testFromSelection = case mkAccount "assets:cash" of

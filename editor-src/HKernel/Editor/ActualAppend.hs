@@ -13,6 +13,7 @@ module HKernel.Editor.ActualAppend
   , ActualAddWriteOutcome(..)
   , emptyActualAddInput
   , buildActualAddIntent
+  , buildActualAddIntentWithRegistry
   , prepareActualAddPreview
   , prepareActualAddPreviewFromResolvedJournal
   , classifyActualAddWriteResult
@@ -20,12 +21,19 @@ module HKernel.Editor.ActualAppend
 
 import Data.Bifunctor (first)
 import Data.List.NonEmpty (NonEmpty(..))
+import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 
-import HKernel.Account (Account, mkAccount)
+import HKernel.Account
+  ( Account
+  , AccountRegistry
+  , declaredAccountDefaultCommodity
+  , lookupAccountDeclaration
+  , mkAccount
+  )
 import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError
@@ -49,7 +57,9 @@ import HKernel.Journal
   )
 import HKernel.Ledger (TransactionError)
 import HKernel.Money
-  ( mkCommodity
+  ( Commodity
+  , Quantity
+  , mkCommodity
   , negateQuantity
   , parseQuantity
   , quantityToRational
@@ -161,6 +171,8 @@ data ActualAddInputError
   | ActualAddInvalidQuantity
   | ActualAddAmountMustBePositive
   | ActualAddInvalidCommodity
+  | ActualAddMissingDefaultCommodity
+  | ActualAddConflictingDefaultCommodity
   deriving (Eq, Show)
 
 -- | Delivery-neutral preview retaining only the candidate transaction block.
@@ -186,12 +198,47 @@ data ActualAddWriteOutcome
 emptyActualAddInput :: ActualAddInput
 emptyActualAddInput = ActualAddInput "" "" "" "" ""
 
--- | Admit a positive magnitude and derive the balancing source posting by
--- negating the parsed Quantity value, never by manipulating its input text.
+-- | Preserve the explicit CLI/text contract: callers that do not supply a
+-- registry must state both positive quantity and commodity.
 buildActualAddIntent
   :: ActualAddInput
   -> Either ActualAddInputError ActualEditIntent
 buildActualAddIntent input = do
+  (date, fromAccount, toAccount) <- parseActualAddCoordinates input
+  (quantityText, commodityText) <- case T.words (addAmountText input) of
+    [quantityValue, commodityValue] -> Right (quantityValue, commodityValue)
+    _ -> Left ActualAddInvalidAmountShape
+  quantity <- parsePositiveQuantity quantityText
+  commodity <- first (const ActualAddInvalidCommodity)
+    (mkCommodity commodityText)
+  pure (makeActualAddIntent input date fromAccount toAccount quantity commodity)
+
+-- | Daily entry may omit the commodity when the selected canonical Account
+-- declarations supply one unambiguous default. A single available default is
+-- enough because the other Account can still accept an explicitly rendered
+-- commodity; two different defaults are rejected before candidate creation.
+buildActualAddIntentWithRegistry
+  :: AccountRegistry
+  -> ActualAddInput
+  -> Either ActualAddInputError ActualEditIntent
+buildActualAddIntentWithRegistry registry input = do
+  (date, fromAccount, toAccount) <- parseActualAddCoordinates input
+  (quantityText, commodity) <- case T.words (addAmountText input) of
+    [quantityValue, commodityValue] -> do
+      parsedCommodity <- first (const ActualAddInvalidCommodity)
+        (mkCommodity commodityValue)
+      Right (quantityValue, parsedCommodity)
+    [quantityValue] -> do
+      inferred <- inferDefaultCommodity registry fromAccount toAccount
+      Right (quantityValue, inferred)
+    _ -> Left ActualAddInvalidAmountShape
+  quantity <- parsePositiveQuantity quantityText
+  pure (makeActualAddIntent input date fromAccount toAccount quantity commodity)
+
+parseActualAddCoordinates
+  :: ActualAddInput
+  -> Either ActualAddInputError (Day, Account, Account)
+parseActualAddCoordinates input = do
   date <- maybe (Left ActualAddInvalidDate) Right
     (parseTimeM
       True
@@ -202,28 +249,57 @@ buildActualAddIntent input = do
     (mkAccount (addFromAccountText input))
   toAccount <- first (const ActualAddInvalidToAccount)
     (mkAccount (addToAccountText input))
-  (quantityText, commodityText) <- case T.words (addAmountText input) of
-    [quantityValue, commodityValue] -> Right (quantityValue, commodityValue)
-    _ -> Left ActualAddInvalidAmountShape
+  pure (date, fromAccount, toAccount)
+
+parsePositiveQuantity
+  :: Text
+  -> Either ActualAddInputError Quantity
+parsePositiveQuantity quantityText = do
   quantity <- first (const ActualAddInvalidQuantity)
     (parseQuantity quantityText)
   if quantityToRational quantity <= 0
     then Left ActualAddAmountMustBePositive
-    else pure ()
-  commodity <- first (const ActualAddInvalidCommodity)
-    (mkCommodity commodityText)
-  pure
-    (ActualEditIntent
-      date
-      (addDescriptionText input)
-      ( IntentPosting toAccount quantity (Just commodity)
-        :| [IntentPosting fromAccount (negateQuantity quantity) (Just commodity)]
-      )
-      [])
+    else Right quantity
+
+inferDefaultCommodity
+  :: AccountRegistry
+  -> Account
+  -> Account
+  -> Either ActualAddInputError Commodity
+inferDefaultCommodity registry fromAccount toAccount =
+  case catMaybes (map defaultFor [fromAccount, toAccount]) of
+    [] -> Left ActualAddMissingDefaultCommodity
+    commodity : rest
+      | all (== commodity) rest -> Right commodity
+      | otherwise -> Left ActualAddConflictingDefaultCommodity
+  where
+    defaultFor account =
+      declaredAccountDefaultCommodity =<<
+        lookupAccountDeclaration account registry
+
+makeActualAddIntent
+  :: ActualAddInput
+  -> Day
+  -> Account
+  -> Account
+  -> Quantity
+  -> Commodity
+  -> ActualEditIntent
+makeActualAddIntent input date fromAccount toAccount quantity commodity =
+  ActualEditIntent
+    date
+    (addDescriptionText input)
+    ( IntentPosting toAccount quantity (Just commodity)
+      :| [IntentPosting fromAccount (negateQuantity quantity) (Just commodity)]
+    )
+    []
 
 prepareActualAddPreview :: Text -> ActualAddInput -> ActualAddPreview
 prepareActualAddPreview source input =
-  prepareActualAddPreviewWith (prepareActualAppend source) input
+  prepareActualAddPreviewWith
+    buildActualAddIntent
+    (prepareActualAppend source)
+    input
 
 prepareActualAddPreviewFromResolvedJournal
   :: Journal
@@ -232,16 +308,18 @@ prepareActualAddPreviewFromResolvedJournal
   -> ActualAddPreview
 prepareActualAddPreviewFromResolvedJournal resolvedJournal source input =
   prepareActualAddPreviewWith
+    (buildActualAddIntentWithRegistry (journalAccountRegistry resolvedJournal))
     (prepareActualAppendFromResolvedJournal resolvedJournal source)
     input
 
 prepareActualAddPreviewWith
-  :: (ActualEditIntent
+  :: (ActualAddInput -> Either ActualAddInputError ActualEditIntent)
+  -> (ActualEditIntent
       -> Either (NonEmpty ActualEditError) ActualAppendPreview)
   -> ActualAddInput
   -> ActualAddPreview
-prepareActualAddPreviewWith prepare input =
-  case buildActualAddIntent input of
+prepareActualAddPreviewWith build prepare input =
+  case build input of
     Left inputError -> ActualAddInputRejected inputError
     Right intent -> case prepare intent of
       Left sourceErrors -> ActualAddCandidateRejected sourceErrors
