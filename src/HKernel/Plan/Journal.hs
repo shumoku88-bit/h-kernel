@@ -22,6 +22,7 @@ module HKernel.Plan.Journal
   , identifiedPlanTransaction
   , PlanJournalError(..)
   , parsePlanJournal
+  , admitPlanJournalFromResolvedJournal
   , ClassifiedPlanTransaction(..)
   , PlanClassificationError(..)
   , classifyPlanJournal
@@ -108,26 +109,32 @@ parsePlanJournal
   -> Either (NonEmpty PlanJournalError) PlanJournal
 parsePlanJournal input = case parseJournal input of
   Left journalErrors -> Left (fmap PlanJournalSyntaxError journalErrors)
-  Right journal
-    | transactionCount /= metadataCount -> Left
-        (PlanJournalTransactionMetadataAlignmentMismatch
-          transactionCount metadataCount NonEmpty.:| [])
-    | otherwise -> case NonEmpty.nonEmpty allErrors of
-        Just errors -> Left errors
-        Nothing -> Right PlanJournal
-          { planJournalValue = journal
-          , planJournalTransactions = map locatedPlanValue locatedPlans
-          }
-    where
-      transactions = journalTransactions journal
-      metadataBlocks = transactionMetadataBlocks input
-      transactionCount = length transactions
-      metadataCount = length metadataBlocks
-      admissions = zipWith admitPlanMetadata transactions metadataBlocks
-      locatedPlans = mapMaybe admissionPlan admissions
-      allErrors =
-        concatMap admissionErrors admissions
-          ++ duplicatePlanIdErrors locatedPlans
+  Right journal -> admitPlanJournalFromResolvedJournal journal input
+
+admitPlanJournalFromResolvedJournal
+  :: Journal
+  -> Text
+  -> Either (NonEmpty PlanJournalError) PlanJournal
+admitPlanJournalFromResolvedJournal journal input
+  | transactionCount /= metadataCount = Left
+      (PlanJournalTransactionMetadataAlignmentMismatch
+        transactionCount metadataCount NonEmpty.:| [])
+  | otherwise = case NonEmpty.nonEmpty allErrors of
+      Just errors -> Left errors
+      Nothing -> Right PlanJournal
+        { planJournalValue = journal
+        , planJournalTransactions = map locatedPlanValue locatedPlans
+        }
+  where
+    transactions = journalTransactions journal
+    metadataBlocks = transactionMetadataBlocks input
+    transactionCount = length transactions
+    metadataCount = length metadataBlocks
+    admissions = zipWith admitPlanMetadata transactions metadataBlocks
+    locatedPlans = mapMaybe admissionPlan admissions
+    allErrors =
+      concatMap admissionErrors admissions
+        ++ duplicatePlanIdErrors locatedPlans
 
 type LocatedLine = (Int, Text)
 

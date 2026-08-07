@@ -111,11 +111,13 @@ library h-kernel-editor
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 library h-kernel-spike-household-report
-    exposed-modules:  HKernel.Spike.HouseholdReport
+    exposed-modules:  HKernel.Household.Application
+                    , HKernel.Spike.HouseholdReport
                     , HKernel.Spike.HouseholdReport.Render
     other-modules:    HKernel.Spike.HouseholdConsumption
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
+                    , directory >= 1.3 && < 1.4
                     , filepath >= 1.4 && < 1.6
                     , h-kernel
                     , h-kernel-household
@@ -632,6 +634,7 @@ executable h-kernel-editor-cli
     build-depends:    base >= 4.14 && < 5
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
+                    , filepath >= 1.4 && < 1.6
                     , h-kernel
                     , h-kernel-household
                     , h-kernel-editor
@@ -642,7 +645,10 @@ executable h-kernel-editor-cli
 executable h-kernel-editor-tui
     main-is:          Main.hs
     build-depends:    base >= 4.14 && < 5
+                    , containers >= 0.6 && < 0.8
                     , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
+                    , filepath >= 1.4 && < 1.6
                     , brick >= 1.0
                     , vty >= 6.0
                     , vty-crossplatform
@@ -650,6 +656,8 @@ executable h-kernel-editor-tui
                     , microlens-mtl
                     , vector
                     , h-kernel
+                    , h-kernel-household
+                    , h-kernel-spike-household-report
                     , h-kernel-editor
     hs-source-dirs:   editor-tui-app
     default-language: Haskell2010
@@ -726,5 +734,21 @@ test-suite h-kernel-editor-tui-actual-add-test
                     , h-kernel
                     , h-kernel-editor
                     , text
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-canonical-household-test
+    type:             exitcode-stdio-1.0
+    main-is:          CanonicalHouseholdSpec.hs
+    hs-source-dirs:   tests
+    build-depends:    base >= 4.14 && < 5
+                    , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
+                    , directory >= 1.3 && < 1.4
+                    , filepath >= 1.4 && < 1.6
+                    , h-kernel
+                    , h-kernel-household
+                    , h-kernel-spike-household-report
+                    , h-kernel-editor
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns

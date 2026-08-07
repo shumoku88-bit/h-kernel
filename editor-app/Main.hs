@@ -4,12 +4,15 @@ module Main (main) where
 
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 
+import HKernel.Account.Journal (parseAccountJournal)
 import HKernel.Actual.Journal (parseActualJournal)
+import HKernel.Application.Config (HouseholdSourcePaths(..), householdSourcePaths, mkHouseholdRoot)
 import qualified HKernel.Editor.ActualAccountAppend as ActualAccountAppend
 import qualified HKernel.Editor.ActualAppend as ActualAppend
 import qualified HKernel.Editor.ActualReverse as ActualReverse
@@ -24,6 +27,7 @@ import HKernel.Household.Issue.TSV (parseHouseholdIssues)
 import HKernel.Journal (Journal)
 import HKernel.Loader (loadJournal)
 import HKernel.Plan.Journal (parsePlanJournal)
+import System.FilePath ((</>), normalise, takeDirectory)
 
 die :: String -> IO a
 die message = hPutStrLn stderr message >> exitFailure
@@ -74,29 +78,70 @@ executeCommand commitMode command = case command of
 
   AccountCmd journalFile declaration -> do
     existingSource <- TIO.readFile journalFile
-    case ActualAccountAppend.prepareActualAccountAppend existingSource declaration of
-      Left errors -> validationFailed errors
-      Right preview ->
-        executePreview
-          (publishWithAdmission parseActualJournal)
-          journalFile
-          existingSource
-          (ActualAccountAppend.candidateBlock preview)
-          (ActualAccountAppend.candidateCompleteSource preview)
-          commitMode
+    let dir = takeDirectory journalFile
+        rootDir = if dir == "" then "." else dir
+        paths = case mkHouseholdRoot rootDir of
+          Right r -> householdSourcePaths r
+          Left _ -> case mkHouseholdRoot "." of
+            Right r -> householdSourcePaths r
+            Left _ -> error "unreachable"
+    if normalise journalFile == normalise (householdAccountsJournalPath paths)
+      then case ActualAccountAppend.prepareAccountJournalAppend existingSource declaration of
+        Left errors -> validationFailed errors
+        Right preview ->
+          executePreview
+            (publishWithAdmission parseAccountJournal)
+            journalFile
+            existingSource
+            (ActualAccountAppend.accountCandidateBlock preview)
+            (ActualAccountAppend.accountCandidateCompleteSource preview)
+            commitMode
+      else case ActualAccountAppend.prepareActualAccountAppend existingSource declaration of
+        Left errors -> validationFailed errors
+        Right preview ->
+          executePreview
+            publishActualAppendFromResolvedJournal
+            journalFile
+            existingSource
+            (ActualAccountAppend.candidateBlock preview)
+            (ActualAccountAppend.candidateCompleteSource preview)
+            commitMode
 
-  BudgetMovementCmd tsvFile movement -> do
-    existingSource <- TIO.readFile tsvFile
-    case BudgetMovementAppend.prepareBudgetMovementAppend existingSource movement of
-      Left errors -> validationFailed errors
-      Right preview ->
-        executePreview
-          (publishWithAdmission parseHouseholdBudgetMovements)
-          tsvFile
-          existingSource
-          (BudgetMovementAppend.candidateBlock preview)
-          (BudgetMovementAppend.candidateCompleteSource preview)
-          commitMode
+  BudgetMovementCmd targetFile movement -> do
+    existingSource <- TIO.readFile targetFile
+    let dir = takeDirectory targetFile
+        rootDir = if dir == "" then "." else dir
+        paths = case mkHouseholdRoot rootDir of
+          Right r -> householdSourcePaths r
+          Left _ -> case mkHouseholdRoot "." of
+            Right r -> householdSourcePaths r
+            Left _ -> error "unreachable"
+    if normalise targetFile == normalise (householdBudgetJournalPath paths)
+      then do
+        accountsText <- TIO.readFile (householdAccountsJournalPath paths)
+        registry <- case parseAccountJournal accountsText of
+          Left errors -> validationFailed errors
+          Right r -> pure r
+        case BudgetMovementAppend.prepareBudgetJournalMovementAppend registry existingSource movement of
+          Left errors -> validationFailed errors
+          Right preview ->
+            executePreview
+              publishBudgetJournalAppend
+              targetFile
+              existingSource
+              (BudgetMovementAppend.budgetJournalCandidateBlock preview)
+              (BudgetMovementAppend.budgetJournalCandidateCompleteSource preview)
+              commitMode
+      else case BudgetMovementAppend.prepareBudgetMovementAppend existingSource movement of
+        Left errors -> validationFailed errors
+        Right preview ->
+          executePreview
+            (publishWithAdmission parseHouseholdBudgetMovements)
+            targetFile
+            existingSource
+            (BudgetMovementAppend.candidateBlock preview)
+            (BudgetMovementAppend.candidateCompleteSource preview)
+            commitMode
 
   IssueCmd tsvFile intent -> do
     existingSource <- TIO.readFile tsvFile

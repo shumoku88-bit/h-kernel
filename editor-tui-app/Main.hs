@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Main (main) where
 
@@ -13,26 +14,33 @@ import Graphics.Vty.CrossPlatform (mkVty)
 import Lens.Micro (Lens', Traversal')
 import Lens.Micro.Mtl ()
 
-import Control.Exception (IOException, try)
+import Control.Exception (try)
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import Data.Time.Calendar (Day)
+import Data.Time.LocalTime (getZonedTime, localDay, zonedTimeToLocalTime)
 import qualified Data.Vector as Vec
 import System.Environment (getArgs)
 import System.Exit (die)
+import System.FilePath ((</>), takeDirectory)
+import System.IO.Error (tryIOError)
 
 import HKernel.Account
   ( Account
+  , AccountDeclaration
   , accountDeclarations
   , accountName
   , declaredAccount
+  , declaredAccountDefaultCommodity
+  , declaredAccountType
   )
-import HKernel.Actual.Journal
-  ( ActualJournal
-  , actualJournalValue
-  , parseActualJournal
-  )
+import HKernel.Actual.Journal (actualJournalValue)
+import HKernel.Application.Config (HouseholdSourcePaths(..), mkHouseholdRoot)
+import HKernel.Budget.Policy (EnvelopeDefinition, budgetPolicyEnvelopeDefinitions, envelopeDefinitionExpenseAccounts, envelopeDefinitionId)
+import HKernel.Engine (mkDateRange)
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddPreview(..)
@@ -52,10 +60,15 @@ import HKernel.Editor.Interaction.ActualAdd
   , enterActualAddPreview
   , transitionActualAdd
   )
-import HKernel.Journal
-  ( journalAccountRegistry
-  , journalTransactions
+import HKernel.Household.Application
+  ( HouseholdState(..)
+  , buildHouseholdReportSurfaceFromHousehold
+  , loadCanonicalHousehold
   )
+import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
+import HKernel.Household.Policy (householdAllocationEnvelopes, householdCycleIncomeAccount, householdPolicyCycle, householdUnassignedBudgetAccounts)
+import HKernel.HouseholdIssue (HouseholdIssue(..))
+import HKernel.Journal (journalTransactions)
 import HKernel.Ledger
   ( Posting
   , Transaction
@@ -71,7 +84,31 @@ import HKernel.Money
   , commodityCode
   , renderQuantity
   )
-
+import HKernel.Plan
+  ( CommittedOutgoingPlan
+  , committedPlanAmount
+  , committedPlanDate
+  , committedPlanDirection
+  , committedPlanId
+  , committedPlanMemo
+  , declaredOutgoingPaymentDirection
+  , declaredPaymentDestination
+  , declaredPaymentSource
+  , planIdText
+  , positiveAmountValue
+  )
+import HKernel.Render
+  ( renderBalanceSheetWithPresentation
+  , renderDailyFlowWithPresentation
+  , renderMonthlyAccountsWithPresentation
+  , renderProfitAndLossWithPresentation
+  , renderRecentTransactionsWithPresentation
+  , renderTrialBalanceWithPresentation
+  )
+import HKernel.Report (balanceSheetAsOf, dailyFlow, defaultRecentCount, monthlyAccounts, profitAndLoss, recentTransactions, reportBook, trialBalanceAsOf)
+import HKernel.Report.Config (reportConfigurationPlan, reportConfigurationPresentation)
+import HKernel.Spike.HouseholdReport (HouseholdReportSurface(..))
+import HKernel.Spike.HouseholdReport.Render (renderReportBookWithHouseholdPresentation)
 
 data Name
   = DateField
@@ -82,12 +119,39 @@ data Name
   | AccountList
   | WorkspaceAccountList
   | WorkspaceTransactionList
+  | PlansViewport
+  | BudgetViewport
+  | AccountsViewport
+  | IssuesViewport
+  | ReportsViewport
+  | SettingsViewport
   deriving (Eq, Ord, Show)
 
 data WorkspaceFocus
   = AccountsFocus
   | TransactionsFocus
   deriving (Eq, Show)
+
+data HouseholdSection
+  = ActualSection
+  | PlansSection
+  | BudgetSection
+  | AccountsSection
+  | IssuesSection
+  | ReportsSection
+  | SettingsSection
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
+data ReportChoice
+  = ReportTrialBalance
+  | ReportBalanceSheet
+  | ReportProfitAndLoss
+  | ReportDailyFlow
+  | ReportMonthlyAccounts
+  | ReportCycleAccounts
+  | ReportRecentTransactions
+  | ReportCombinedBook
+  deriving (Eq, Ord, Show, Enum, Bounded)
 
 addDateTextL :: Lens' ActualAddInput Text
 addDateTextL f input =
@@ -131,7 +195,11 @@ data UIState event
   | ShowWorkspaceReloadFailure
 
 data AppContext = AppContext
-  { contextAccounts             :: [Account]
+  { contextHouseholdState       :: HouseholdState
+  , contextCurrentSection       :: HouseholdSection
+  , contextSelectedReport       :: ReportChoice
+  , contextObservationDay       :: Day
+  , contextAccounts             :: [Account]
   , contextWorkspaceAccounts    :: L.List Name (Maybe Account)
   , contextAllTransactions      :: [Transaction]
   , contextWorkspaceList        :: L.List Name Transaction
@@ -193,7 +261,7 @@ zoomWorkspaceList _ wrapper = pure wrapper
 
 drawUI :: AppWrapper -> [Widget Name]
 drawUI (AppWrapper context Workspace) =
-  [ drawWorkspace context ]
+  [ drawHouseholdShell context ]
 drawUI (AppWrapper _ (InputForm form)) =
   [ center
       (borderWithLabel (str "Add actual")
@@ -254,34 +322,235 @@ drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
               ]))))
   ]
 
+drawHouseholdShell :: AppContext -> Widget Name
+drawHouseholdShell context =
+  vBox
+    [ drawSectionTabBar (contextCurrentSection context)
+    , drawSectionBody context
+    ]
+
+drawSectionTabBar :: HouseholdSection -> Widget Name
+drawSectionTabBar currentSection =
+  borderWithLabel (str "h-kernel Household")
+    (hBox (map renderTab [minBound .. maxBound]))
+  where
+    renderTab section
+      | section == currentSection =
+          withAttr (attrName "activeTab") (str (" [" <> sectionNum section <> ": " <> sectionName section <> "] "))
+      | otherwise =
+          str ("  " <> sectionNum section <> ": " <> sectionName section <> "  ")
+
+    sectionNum ActualSection   = "1"
+    sectionNum PlansSection    = "2"
+    sectionNum BudgetSection   = "3"
+    sectionNum AccountsSection  = "4"
+    sectionNum IssuesSection   = "5"
+    sectionNum ReportsSection  = "6"
+    sectionNum SettingsSection = "7"
+
+    sectionName ActualSection   = "Actual"
+    sectionName PlansSection    = "Plans"
+    sectionName BudgetSection   = "Budget"
+    sectionName AccountsSection  = "Accounts"
+    sectionName IssuesSection   = "Issues"
+    sectionName ReportsSection  = "Reports"
+    sectionName SettingsSection = "Settings"
+
+drawSectionBody :: AppContext -> Widget Name
+drawSectionBody context = case contextCurrentSection context of
+  ActualSection   -> drawWorkspace context
+  PlansSection    -> drawPlansView context
+  BudgetSection   -> drawBudgetView context
+  AccountsSection  -> drawAccountsView context
+  IssuesSection   -> drawIssuesView context
+  ReportsSection  -> drawReportsView context
+  SettingsSection -> drawSettingsView context
+
 drawWorkspace :: AppContext -> Widget Name
 drawWorkspace context =
   vBox
-    [ borderWithLabel (str "h-kernel · Actual workspace")
-        (hBox
-          [ hLimit 30
+    [ hBox
+        [ hLimit 30
+            (borderWithLabel
+              (workspacePaneLabel context AccountsFocus "Accounts")
+              (vLimit 16
+                (L.renderList
+                  renderWorkspaceAccount
+                  (contextWorkspaceFocus context == AccountsFocus)
+                  (contextWorkspaceAccounts context))))
+        , padLeft (Pad 1)
+            (padRight Max
               (borderWithLabel
-                (workspacePaneLabel context AccountsFocus "Accounts")
+                (workspacePaneLabel context TransactionsFocus "Transactions")
                 (vLimit 16
                   (L.renderList
-                    renderWorkspaceAccount
-                    (contextWorkspaceFocus context == AccountsFocus)
-                    (contextWorkspaceAccounts context))))
-          , padLeft (Pad 1)
-              (padRight Max
-                (borderWithLabel
-                  (workspacePaneLabel context TransactionsFocus "Transactions")
-                  (vLimit 16
-                    (L.renderList
-                      renderWorkspaceTransaction
-                      (contextWorkspaceFocus context == TransactionsFocus)
-                      (contextWorkspaceList context)))))
-          ])
+                    renderWorkspaceTransaction
+                    (contextWorkspaceFocus context == TransactionsFocus)
+                    (contextWorkspaceList context)))))
+        ]
     , borderWithLabel (str "Selected transaction")
         (padAll 1 (renderWorkspaceSelection context))
     , txt ("Filter: " <> workspaceFilterText context)
-    , str "[Tab/left/right] Focus   [j/k or arrows] Select   [a] Add actual   [q] Quit"
+    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [a] Add Actual   [q] Quit"
     ]
+
+drawPlansView :: AppContext -> Widget Name
+drawPlansView context =
+  vBox
+    [ borderWithLabel (str "Planned Transactions (plan.journal)")
+        (vLimit 18
+          (viewport PlansViewport Vertical
+            (vBox (map renderPlan plans))))
+    , str "[1-7] Switch section   [q] Quit"
+    ]
+  where
+    plans = case buildHouseholdReportSurfaceFromHousehold (contextObservationDay context) (contextHouseholdState context) of
+      Right surface -> householdPlannedTransactions surface
+      Left _ -> []
+
+renderPlan :: CommittedOutgoingPlan -> Widget Name
+renderPlan plan =
+  padBottom (Pad 1)
+    (vBox
+      [ txt (T.pack (show (committedPlanDate plan)) <> "  [" <> planIdText (committedPlanId plan) <> "]  " <> committedPlanMemo plan)
+      , txt ("  From: " <> accountName (declaredAccount (declaredPaymentSource dir)) <> "  To: " <> accountName (declaredAccount (declaredPaymentDestination dir)) <> "  " <> renderQuantity (amountQuantity amount) <> " " <> commodityCode (amountCommodity amount))
+      ])
+  where
+    dir = declaredOutgoingPaymentDirection (committedPlanDirection plan)
+    amount = positiveAmountValue (committedPlanAmount plan)
+
+drawBudgetView :: AppContext -> Widget Name
+drawBudgetView context =
+  vBox
+    [ borderWithLabel (str "Budget Movements & Policy (budget.journal)")
+        (vLimit 18
+          (viewport BudgetViewport Vertical
+            (vBox
+              [ str "--- Budget Movements ---"
+              , vBox (map renderBudgetMovement (householdStateBudgetMovements state))
+              , str " "
+              , str "--- Spendable Envelopes ---"
+              , vBox (map renderEnvelopeDef (budgetPolicyEnvelopeDefinitions (householdStateBudgetPolicy state)))
+              ])))
+    , str "[1-7] Switch section   [q] Quit"
+    ]
+  where
+    state = contextHouseholdState context
+
+renderBudgetMovement :: HouseholdBudgetMovement -> Widget Name
+renderBudgetMovement m =
+  txt (T.pack (show (householdBudgetMovementDate m)) <> "  " <> householdBudgetMovementMemo m
+        <> "  " <> accountName (householdBudgetMovementFrom m) <> " -> " <> accountName (householdBudgetMovementTo m)
+        <> "  " <> renderQuantity (amountQuantity (householdBudgetMovementAmount m)) <> " " <> commodityCode (amountCommodity (householdBudgetMovementAmount m)))
+
+renderEnvelopeDef :: EnvelopeDefinition -> Widget Name
+renderEnvelopeDef ed =
+  txt ("Envelope: " <> T.pack (show (envelopeDefinitionId ed)) <> "  Expenses: " <> T.intercalate ", " (map accountName (envelopeDefinitionExpenseAccounts ed)))
+
+drawAccountsView :: AppContext -> Widget Name
+drawAccountsView context =
+  vBox
+    [ borderWithLabel (str "Canonical Account Declarations (accounts.journal)")
+        (vLimit 18
+          (viewport AccountsViewport Vertical
+            (vBox (map renderAccountDecl (accountDeclarations (householdStateAccountsRegistry (contextHouseholdState context)))))))
+    , str "[1-7] Switch section   [q] Quit"
+    ]
+
+renderAccountDecl :: AccountDeclaration -> Widget Name
+renderAccountDecl decl =
+  txt (accountName (declaredAccount decl) <> "  type: " <> T.pack (show (declaredAccountType decl))
+        <> maybe "" (\c -> "  default commodity: " <> commodityCode c) (declaredAccountDefaultCommodity decl))
+
+drawIssuesView :: AppContext -> Widget Name
+drawIssuesView context =
+  vBox
+    [ borderWithLabel (str "Household Notebook (issues.tsv)")
+        (vLimit 18
+          (viewport IssuesViewport Vertical
+            (if null issues
+               then str "No issues recorded."
+               else vBox (map renderIssue issues))))
+    , str "[1-7] Switch section   [q] Quit"
+    ]
+  where
+    issues = householdStateIssues (contextHouseholdState context)
+
+renderIssue :: HouseholdIssue -> Widget Name
+renderIssue issue =
+  padBottom (Pad 1)
+    (vBox
+      [ txt ("[" <> T.pack (show (householdIssueStatus issue)) <> "]  " <> T.pack (show (householdIssueRecordedOn issue)) <> "  Due: " <> T.pack (show (householdIssueDue issue)))
+      , txt ("  Text: " <> householdIssueText issue)
+      , maybe emptyWidget (\amt -> txt ("  Amount: " <> renderQuantity (amountQuantity amt) <> " " <> commodityCode (amountCommodity amt))) (householdIssueAmount issue)
+      , txt ("  Details: " <> householdIssueDetails issue)
+      ])
+
+drawReportsView :: AppContext -> Widget Name
+drawReportsView context =
+  vBox
+    [ borderWithLabel (str ("Household Report: " <> show (contextSelectedReport context)))
+        (vLimit 18
+          (viewport ReportsViewport Vertical (renderSelectedReport context)))
+    , txt ("Active report: " <> T.pack (show (contextSelectedReport context)) <> "  |  Press [r] to cycle reports")
+    , str "[1-7] Switch section   [r] Cycle Report   [q] Quit"
+    ]
+
+renderSelectedReport :: AppContext -> Widget Name
+renderSelectedReport context = case contextSelectedReport context of
+  ReportTrialBalance ->
+    txt (renderTrialBalanceWithPresentation pres (trialBalanceAsOf day journal))
+  ReportBalanceSheet ->
+    txt (renderBalanceSheetWithPresentation pres (balanceSheetAsOf day journal))
+  ReportProfitAndLoss ->
+    txt (renderProfitAndLossWithPresentation pres (profitAndLoss (defaultDateRange day) journal))
+  ReportDailyFlow ->
+    txt (renderDailyFlowWithPresentation pres (dailyFlow (defaultDateRange day) journal))
+  ReportMonthlyAccounts ->
+    txt (renderMonthlyAccountsWithPresentation pres (monthlyAccounts (defaultDateRange day) journal))
+  ReportCycleAccounts ->
+    case buildHouseholdReportSurfaceFromHousehold day state of
+      Left err -> txt ("Report surface error: " <> T.pack (show err))
+      Right surface -> txt (renderReportBookWithHouseholdPresentation pres (reportBook (defaultDateRange day) journal) surface)
+  ReportRecentTransactions ->
+    txt (renderRecentTransactionsWithPresentation pres (recentTransactions defaultRecentCount day journal))
+  ReportCombinedBook ->
+    case buildHouseholdReportSurfaceFromHousehold day state of
+      Left err -> txt ("Report surface error: " <> T.pack (show err))
+      Right surface ->
+        txt (renderReportBookWithHouseholdPresentation pres (reportBook (defaultDateRange day) journal) surface)
+  where
+    state = contextHouseholdState context
+    day = contextObservationDay context
+    journal = actualJournalValue (householdStateActualJournal state)
+    pres = reportConfigurationPresentation (householdStateReportConfig state)
+    defaultDateRange d = case mkDateRange d d of
+      Right r -> r
+      Left _ -> error "unreachable date range"
+
+drawSettingsView :: AppContext -> Widget Name
+drawSettingsView context =
+  vBox
+    [ borderWithLabel (str "Household Settings & Policy")
+        (vLimit 18
+          (viewport SettingsViewport Vertical
+            (vBox
+              [ str "=== [budget.toml] Budget Policy ==="
+              , str ("Envelopes count: " <> show (length (budgetPolicyEnvelopeDefinitions (householdStateBudgetPolicy state))))
+              , str " "
+              , str "=== [household.toml] Household Policy ==="
+              , txt ("Income Cycle Account: " <> accountName (householdCycleIncomeAccount (householdPolicyCycle (householdStatePolicy state))))
+              , txt ("Allocation Envelopes: " <> T.pack (show (householdAllocationEnvelopes (householdStatePolicy state))))
+              , txt ("Unassigned Accounts: " <> T.intercalate ", " (map accountName (Set.toAscList (householdUnassignedBudgetAccounts (householdStatePolicy state)))))
+              , str " "
+              , str "=== [report.toml] Report Configuration ==="
+              , txt ("Report Plan: " <> T.pack (show (reportConfigurationPlan (householdStateReportConfig state))))
+              , txt ("Presentation: " <> T.pack (show (reportConfigurationPresentation (householdStateReportConfig state))))
+              ])))
+    , str "[1-7] Switch section   [q] Quit"
+    ]
+  where
+    state = contextHouseholdState context
 
 workspacePaneLabel
   :: AppContext
@@ -411,7 +680,6 @@ renderWriteOutcome outcome = case outcome of
       (vBox
         [ str "Publication failed and automatic recovery did not complete."
         , txt (writeFailureText failure)
-        , str "Verify the rehearsal source before continuing."
         ])
 
 writeFailureText :: ActualAddWriteFailure -> Text
@@ -446,18 +714,39 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> halt
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
-  VtyEvent (V.EvKey (V.KChar 'a') []) ->
+
+  -- Section Navigation Shortcuts
+  VtyEvent (V.EvKey (V.KChar '1') []) -> put (AppWrapper (context { contextCurrentSection = ActualSection }) Workspace)
+  VtyEvent (V.EvKey (V.KChar '2') []) -> put (AppWrapper (context { contextCurrentSection = PlansSection }) Workspace)
+  VtyEvent (V.EvKey (V.KChar '3') []) -> put (AppWrapper (context { contextCurrentSection = BudgetSection }) Workspace)
+  VtyEvent (V.EvKey (V.KChar '4') []) -> put (AppWrapper (context { contextCurrentSection = AccountsSection }) Workspace)
+  VtyEvent (V.EvKey (V.KChar '5') []) -> put (AppWrapper (context { contextCurrentSection = IssuesSection }) Workspace)
+  VtyEvent (V.EvKey (V.KChar '6') []) -> put (AppWrapper (context { contextCurrentSection = ReportsSection }) Workspace)
+  VtyEvent (V.EvKey (V.KChar '7') []) -> put (AppWrapper (context { contextCurrentSection = SettingsSection }) Workspace)
+
+  -- Report Cycling in Reports section
+  VtyEvent (V.EvKey (V.KChar 'r') []) | contextCurrentSection context == ReportsSection ->
+    put (AppWrapper (context { contextSelectedReport = cycleReport (contextSelectedReport context) }) Workspace)
+
+  -- Workspace-specific actions
+  VtyEvent (V.EvKey (V.KChar 'a') []) | contextCurrentSection context == ActualSection ->
     put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
-  VtyEvent (V.EvKey (V.KChar 'A') []) ->
+  VtyEvent (V.EvKey (V.KChar 'A') []) | contextCurrentSection context == ActualSection ->
     put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
-  VtyEvent (V.EvKey (V.KChar '\t') []) ->
+  VtyEvent (V.EvKey (V.KChar '\t') []) | contextCurrentSection context == ActualSection ->
     put (AppWrapper (toggleWorkspaceFocus context) Workspace)
-  VtyEvent (V.EvKey V.KLeft []) ->
+  VtyEvent (V.EvKey V.KLeft []) | contextCurrentSection context == ActualSection ->
     put (AppWrapper (context { contextWorkspaceFocus = AccountsFocus }) Workspace)
-  VtyEvent (V.EvKey V.KRight []) ->
+  VtyEvent (V.EvKey V.KRight []) | contextCurrentSection context == ActualSection ->
     put (AppWrapper (context { contextWorkspaceFocus = TransactionsFocus }) Workspace)
-  VtyEvent vtyEvent -> handleWorkspaceListEvent context vtyEvent
+  VtyEvent vtyEvent | contextCurrentSection context == ActualSection ->
+    handleWorkspaceListEvent context vtyEvent
   _ -> pure ()
+
+cycleReport :: ReportChoice -> ReportChoice
+cycleReport choice
+  | choice == maxBound = minBound
+  | otherwise = succ choice
 
 toggleWorkspaceFocus :: AppContext -> AppContext
 toggleWorkspaceFocus context =
@@ -667,20 +956,16 @@ acceptConfirmation context block form = do
 
 reloadWorkspaceContext :: AppContext -> IO (Maybe AppContext)
 reloadWorkspaceContext context = do
-  readResult <-
-    try (TIO.readFile (contextSourcePath context)) :: IO (Either IOException Text)
-  case readResult of
+  let root = householdStateRoot (contextHouseholdState context)
+  loadResult <- loadCanonicalHousehold root
+  case loadResult of
     Left _ -> pure Nothing
-    Right freshSource -> case parseActualJournal freshSource of
-      Left _ -> pure Nothing
-      Right journal ->
-        pure
-          (Just
-            (makeWorkspaceContext
-              True
-              (contextSourcePath context)
-              freshSource
-              journal))
+    Right freshState -> do
+      readResult <- try (TIO.readFile (contextSourcePath context))
+      case readResult of
+        Left (_ :: IOError) -> pure Nothing
+        Right freshSource ->
+          pure (Just (makeWorkspaceContext True (contextObservationDay context) (contextSourcePath context) freshSource freshState))
 
 handleWriteOutcomeEvent
   :: ActualAddWriteOutcome
@@ -700,12 +985,17 @@ handleExitOnlyEvent event = case event of
 
 makeWorkspaceContext
   :: Bool
+  -> Day
   -> FilePath
   -> Text
-  -> ActualJournal
+  -> HouseholdState
   -> AppContext
-makeWorkspaceContext focusLatest journalFile source journal =
+makeWorkspaceContext focusLatest today journalFile source state =
   AppContext
+    state
+    ActualSection
+    ReportTrialBalance
+    today
     accounts
     workspaceAccounts
     transactions
@@ -714,9 +1004,9 @@ makeWorkspaceContext focusLatest journalFile source journal =
     journalFile
     source
   where
-    actualJournal = actualJournalValue journal
+    actualJournal = actualJournalValue (householdStateActualJournal state)
     declarations =
-      accountDeclarations (journalAccountRegistry actualJournal)
+      accountDeclarations (householdStateAccountsRegistry state)
     accounts = map declaredAccount declarations
     transactions = journalTransactions actualJournal
     workspaceAccounts =
@@ -740,6 +1030,7 @@ app = App
   , appAttrMap = const
       (attrMap V.defAttr
         [ (L.listSelectedAttr, V.black `on` V.white)
+        , (attrName "activeTab", V.black `on` V.cyan)
         , (attrName "error", fg V.red)
         , (attrName "success", fg V.green)
         , (attrName "warning", fg V.yellow)
@@ -748,20 +1039,28 @@ app = App
 
 main :: IO ()
 main = do
+  today <- localDay . zonedTimeToLocalTime <$> getZonedTime
   arguments <- getArgs
   case arguments of
-    [journalFile] -> do
-      source <- TIO.readFile journalFile
-      journal <- case parseActualJournal source of
-        Left sourceErrors ->
-          die
-            ("Failed to parse journal:\n"
-              <> unlines (map show (NonEmpty.toList sourceErrors)))
-        Right admittedJournal -> pure admittedJournal
-      let context = makeWorkspaceContext False journalFile source journal
+    [path] -> do
+      let rootDir = takeDirectory path
+          rootPath = if rootDir == "" then "." else rootDir
+      root <- case mkHouseholdRoot rootPath of
+        Left err -> die ("Invalid household root: " <> show err)
+        Right r -> pure r
+      householdResult <- loadCanonicalHousehold root
+      state <- case householdResult of
+        Left errs -> die ("Failed to load canonical Household:\n" <> unlines (map show (NonEmpty.toList errs)))
+        Right s -> pure s
+      let journalFile = householdActualJournalPath (householdStatePaths state)
+      readResult <- tryIOError (TIO.readFile journalFile)
+      source <- case readResult of
+        Left err -> die ("Cannot read actual.journal: " <> show err)
+        Right content -> pure content
+      let context = makeWorkspaceContext False today journalFile source state
           initialState = AppWrapper context Workspace
           buildVty = mkVty V.defaultConfig
       initialVty <- buildVty
       _ <- customMain initialVty buildVty Nothing app initialState
       pure ()
-    _ -> die "Usage: h-kernel-editor-tui <actual.journal>"
+    _ -> die "Usage: h-kernel-editor-tui <household-root-or-actual.journal>"
