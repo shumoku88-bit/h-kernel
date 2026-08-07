@@ -19,7 +19,7 @@ import HKernel.Editor.ActualAppend
   , classifyActualAddWriteResult
   )
 import HKernel.Editor.ActualWriter (WriteError(..))
-import HKernel.Editor.TUI.ActualAdd
+import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
   , ActualAddAction(..)
   , ActualAddMode(..)
