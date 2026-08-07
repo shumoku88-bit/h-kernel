@@ -22,6 +22,8 @@ main = do
 characterizeValidPolicy :: IO ()
 characterizeValidPolicy = do
   let policy = mustRight (parseBudgetPolicy validConfig)
+      rendered = renderBudgetPolicy policy
+      reparsed = mustRight (parseBudgetPolicy rendered)
       food = mustRight (mkEnvelopeId "food")
       operating = mustRight (mkBackingPoolId "operating")
       foodExpense = mustRight (mkAccount "expenses:food")
@@ -51,6 +53,12 @@ characterizeValidPolicy = do
   assertEqual "an Asset account resolves to exactly one backing pool"
     (Just operating)
     (budgetPolicyBackingPoolForAsset smbc policy)
+  assertEqual "canonical Budget TOML re-admits the exact same policy"
+    policy
+    reparsed
+  assertEqual "canonical Budget TOML is idempotent after re-admission"
+    rendered
+    (renderBudgetPolicy reparsed)
 
 characterizeTomlAdmission :: IO ()
 characterizeTomlAdmission = do
