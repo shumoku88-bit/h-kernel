@@ -281,7 +281,7 @@ assertLeftEqual label expected result = case result of
 assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
 assertEqual label expected actual
   | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise -> failTest label
+  | otherwise = failTest label
       ("expected: " ++ show expected ++ ", but got: " ++ show actual)
 
 failTest :: String -> String -> IO ()
