@@ -7,13 +7,17 @@ Owner: 正規sourceの現在地、h-kernel移行順、安全なwrite条件
 
 正規データはuser-owned private repositoryのrootに置く。public `h-kernel`にはcode、文書、独立したsynthetic fixtureだけを置く。
 
-`bqn-ledger`は現在の正規データと互換性がなく、日常reader、writer、fallbackとして使用しない。残っているlegacy sourceはデータとして保持するが、その存在をBQN applicationの継続利用理由にしない。
+現在の正規データ運用は`h-kernel`へ一本化する。`bqn-ledger`は現時点では正規データのreader、writer、fallbackとして使用しない。残っているlegacy sourceはmigration evidenceとして保持するが、その存在を旧applicationへ戻る理由にしない。
+
+将来余裕ができたら、`bqn-ledger`を同じcanonical Household sourceへnative対応させ、reader/writer機能をh-kernelへ追いつかせられる。この将来対応は現在のh-kernel migration gateではなく、h-kernel側へBQN compatibility formatを保存する理由にもならない。
 
 ```text
-canonical application  h-kernel
-canonical data         separate private repository
-bqn-ledger operation   unsupported / not used
-unimplemented write    explicit manual edit until h-kernel operation is verified
+canonical application now  h-kernel
+canonical data             separate private repository
+bqn-ledger now             not used as reader / writer / fallback
+bqn-ledger later           optional native catch-up to the same canonical source
+unimplemented h-kernel write
+                           explicit manual edit until verified
 ```
 
 未実装operationを理由に、互換性のないwriterへ戻したりdual writeしたりしない。
@@ -87,9 +91,19 @@ typed intent
 5. Budget movementを`budget.journal`へ移す
 6. Plan、Issueの日常操作を完成させる
 7. retained policy/configを`budget.toml`、`household.toml`、`report.toml`へ移す
-8. legacy sourceと互換説明を削除する
+8. legacy sourceと現在不要な互換説明を削除する
 
-source format変更、writer実装、UI変更を無関係に一つのsliceへ混ぜない。ただしBQN writer authorityの承認待ちにはしない。h-kernelで安全に完了できることを移行条件とする。
+source format変更、writer実装、UI変更を無関係に一つのsliceへ混ぜない。h-kernelで安全に完了できることを現在の移行条件とする。将来のbqn-ledger対応はこの順序から独立したcatch-upとして扱う。
+
+## Future bqn-ledger catch-up
+
+h-kernelの正規運用が安定した後、必要なら`bqn-ledger`を同じcanonical Household sourceへ追いつかせる。
+
+- target Journal / TOMLをnativeに読む
+- identity、provenance、exact arithmetic、policy ownershipを弱めない
+- writer operationをsourceごとに実装・検証する
+- dual writeや同期copyを導入しない
+- h-kernel専用compatibility layerではなく、bqn-ledger自身がcanonical contractへ適合する
 
 ## Private/public boundary
 
