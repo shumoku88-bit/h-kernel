@@ -5,68 +5,158 @@
 - coding assistantは作業開始時にこのファイルを最初に読み、最上位の未完了項目から一つの有限sliceを選ぶ。
 - 実装の正確な契約は各owner文書とcode/testが所有する。このファイルへ設計詳細や作業日誌を増やさない。
 - 完了は、操作例、focused test、必要な正データの非破壊確認で観察できた場合だけチェックする。
-- 新しい計画文書を追加せず、必要なら既存文書を置換・統合・削除する。
+- 新しい計画文書を増やさず、必要なら既存文書を置換・統合・削除する。
 
 ## 目標
 
-正データを直接編集するより、`h-kernel`のCLI/TUIから操作する方が速く、分かりやすく、安全な状態にする。現在の運用では`bqn-ledger`へreader、writer、fallbackとして依存しない。将来は同じcanonical Household sourceへのnative対応を進め、`bqn-ledger`のreader/writer機能を追いつかせられるが、それを現在のh-kernel完成条件にはしない。
+正データを直接編集するより、`h-kernel`から操作する方が速く、分かりやすく、安全な状態にする。
 
-## P0: コマンドを信用できる状態にする
+現在の正規運用は`h-kernel`へ一本化する。`bqn-ledger`は現時点のreader、writer、fallbackとして使わないが、廃止はしない。h-kernelが安定した後に同じcanonical Household sourceへnative対応させ、reader/writer機能を追いつかせられる。
 
-- [ ] 利用者が失敗したREADMEのmulti-posting入力を、実際の引数と正データ形式に沿って再現し、原因を固定する。
-- [ ] `actual-multi`のsource path省略時に`--base` / `HKERNEL_LEDGER_DATA_DIR` / `ledger-data.local`から`actual.journal`を解決する。READMEの任意引数表記と実装を一致させる。
-- [ ] `tools/hk help`に、コピーして使える完全な構文と例を各commandについて表示する。`[ARGS...]`や`...`だけで操作方法を隠さない。
-- [ ] 全commandの検証表を作り、routeだけでなく実CLIのparse、preview、`--commit`、再admission、更新結果をsynthetic sourceでend-to-end testする。
-  - [ ] workspace / `actual-add`
-  - [ ] `actual-multi`（3件以上のPostingを含む）
-  - [ ] `actual-reverse`
-  - [ ] `account`
-  - [ ] `plan add` / `plan finish`
-  - [ ] `budget`
-  - [ ] `issue`
-  - [ ] report commands
-  - [ ] `check` / `help` / invalid input
-- [ ] standard testが成功しても日常commandが壊れたままにならないよう、上記end-to-end testを`cabal test all`または`tools/hk check`へ接続する。
-- [ ] private正データの内容を出力せず、read/admissionを確認する。write確認は正データそのものではなく明示的な非canonical copyで行う。
+TUIはBQN時代のcommand hubを再現しない。UIはdomainのtyped operationとtyped Report requestを選択・入力・表示する薄いadapterとする。
 
-現時点の証拠:
+## P0: 正データ操作を全部取り戻す
 
-- explicit journal pathを指定した3 Postingの`actual-multi` previewはsynthetic journalで成功した。
-- 現在の`tools/verify_daily_command_hub.py`は主に引数転送をstubで確認しており、editor CLIによるpreview/commitまでは確認していない。
-- READMEは`actual-multi [ACTUAL_JOURNAL]`と読めるが、現在のrouterはpathを省略補完しない。
+旧bqn-ledgerの日常操作を最低線として、canonical sourceに対する操作をh-kernelで復元する。
 
-## P1: 日常UIを直接編集より便利にする
+### Actual / Account
 
-- [ ] 日常頻度の高い操作と、直接編集している理由（入力数、探索、修正、確認、待ち時間）を短く観察し、操作時間を改善基準にする。
-- [ ] TUIの起動後に、利用可能な操作、key、現在のsource、失敗理由、次にできることが画面から分かるようにする。
-- [ ] native multi-posting Actual addをTUIから行えるようにする。Postingの追加・削除・並べ替え・balance確認を入力中に行えるようにする。
-- [ ] Actual reverseを一覧から選択してpreviewできるようにし、event IDの手入力を日常経路から外す。
-- [ ] Account、Plan、Budget、Issue、Reportへ一つの日常入口から到達できるようにする。
-- [ ] CLIも二級UIとせず、default source解決、対話補助、明確なdiagnostic、shell completionにより単発操作を快適にする。
-- [ ] TUI/CLIのどちらから操作しても同じtyped operation、admission、preview、safe writerを使う。
+- [ ] ordinary expenseをAccount選択から記帳できる。
+- [ ] incomeをAccount選択から記帳できる。
+- [ ] asset間move / transferを記帳できる。
+- [ ] native multi-posting transactionを2件以上、TUIでは3件以上も自然に入力できる。
+- [ ] transaction currency / Commodityを明示できる。
+- [ ] Actual reverseを一覧から選び、新しいdurable identityと`reverses` relationを持つinverse transactionとして記帳できる。
+- [ ] Account declarationを追加できる。AccountTypeとoptional default Commodityを明示し、名前から意味を推測しない。
+- [ ] Actual / Account操作は既存`ActualAppend`、`ActualReverse`、`ActualAccountAppend`と共通safe writerを使う。
 
-UIの完了条件は「screenが存在する」ことではない。作者が正データの直接編集を選ぶ主な理由がなくなり、失敗時に修復方法が分かることとする。
+### Plan
 
-## P2: 正データの全writerをh-kernelへ移す
+- [ ] Plan add。
+- [ ] Plan edit。少なくともdate / Amountの変更をtyped diff preview付きで行う。
+- [ ] Plan finish。Actualへのcompletion evidenceを残し、元Plan factを破壊しない。
+- [ ] recurrence / series / cycle relationなどnative Plan metadataを失わない。
+- [ ] open / overdue / futureなどの選択はdate文字列のUI推測ではなくtyped Plan stateから行う。
 
-現在の運用では`bqn-ledger`を正データのreader、writer、fallbackとして使わない。未対応operationは明示的な手編集として扱い、sourceごとにpreview、complete-source admission、backup、atomic publication、post-admissionを確認してh-kernelへ移す。将来の`bqn-ledger` native writer対応は別projectのcatch-upであり、このP2をブロックしない。
+### Budget
 
-- [ ] 現在の正データsourceごとに「読める / 書ける / 日常操作がある / 手編集が必要」を内容非公開で確認する。
-- [ ] Account metadata writerをh-kernelへ移す。
-- [ ] Plan add / finish / edit writerをh-kernelへ移す。
-- [ ] Budget movementとBudget policy writerをh-kernelへ移す。
-- [ ] Issue writerをh-kernelへ移す。
-- [ ] Household / Report / application configurationのtyped writerを用意する。
-- [ ] 各cutover後に、現在の運用から不要になったlegacy writer依存と互換説明を削除する。
+- [ ] `budget.journal`へBudget movementを追加できる。
+- [ ] source / destination Budget Account、date、description、exact Amountを選択できる。
+- [ ] `budget.toml`のgeneral Budget policyをtypedに編集できる。
+- [ ] Envelope membership、pacing、backing、Expense assignmentをAccount名prefixから推測しない。
 
-## P3: 文書を圧縮する
+### Household / Issue / configuration
+
+- [ ] `issues.tsv`へIssue / Decisionを追加できる。
+- [ ] Issue statusを更新できるか、append-only lifecycleとして表すかを現在のsemantic ownerに合わせて完成させる。
+- [ ] `household.toml`をtypedに編集できる。
+- [ ] `report.toml`をtypedに編集できる。
+- [ ] application-level defaultが必要ならHousehold fact/policyと混ぜず専用ownerへ置く。
+
+### 共通write law
+
+すべてのwrite operationは同じeffect boundaryを通す。
+
+```text
+typed intent
+  -> candidate
+  -> complete-source admission
+  -> preview
+  -> explicit confirmation
+  -> stale rejection
+  -> backup
+  -> atomic publication
+  -> post-admission
+```
+
+- [ ] UIごとにwriterを再実装しない。
+- [ ] unsupported operationをlegacy applicationへfallbackしない。
+- [ ] private canonical sourceで最初のwrite testを行わず、明示的なnon-canonical copyでrehearsalする。
+- [ ] end-to-end testを`cabal test all`または`tools/hk check`へ接続する。
+
+## P1: canonical source / configを完成させる
+
+目標root:
+
+```text
+accounts.journal
+actual.journal
+plan.journal
+budget.journal
+budget.toml
+household.toml
+report.toml
+issues.tsv
+```
+
+- [ ] `accounts.tsv -> accounts.journal` migrationを完了し、Account declarationのownerを一本化する。
+- [ ] `budget_alloc.tsv -> budget.journal` migrationを完了する。
+- [ ] `daily_target_scope.tsv`の意味を`household.toml` / `plan.journal`へ移し切る。
+- [ ] `cycle.tsv` / `config.tsv`の残存意味をtyped ownerへ移す。
+- [ ] `plan.tsv` compatibility sourceをnative Plan parity後にretireする。
+- [ ] legacy report manifest群の全座標をtyped `report.toml`または別の正しいownerへ移し、retireする。
+- [ ] legacy sourceを削除する前にsemantic parity、reader cutover、private source admissionを確認する。
+- [ ] canonical basenameはHousehold root ownerが一箇所で解決し、TUI/CLIが個別pathを組み立てない。
+
+## P2: TUIを日常のHousehold applicationにする
+
+現在のActual専用Brick screenを、domain operationとReportへ到達するHousehold workspaceへ育てる。
+
+### Top-level
+
+- [ ] 起動時に`HouseholdRoot`を一度loadし、typed Household / policy / Report configをcontextとして持つ。
+- [ ] top-level navigationを`Actual / Plan / Budget / Accounts / Issues / Reports / Settings`程度のdomain単位にする。
+- [ ] shell command名やsource filenameをnavigation modelにしない。
+- [ ] operation実行後はcanonical rootから再admitして画面を更新する。
+
+### Editing
+
+- [ ] P0で完成した全write operationへTUIから到達できる。
+- [ ] Account、Plan、Budget、Issueは一覧から対象を選べる。
+- [ ] multi-postingはPosting追加・削除・並べ替えとbalance状態を入力中に確認できる。
+- [ ] preview / confirm / success / stale / recovery failureを共通interactionとして扱う。
+
+### Reports
+
+TUIから`All reports`と各Reportを個別に開けるようにする。
+
+- [ ] All reports
+- [ ] Envelope & Backing
+- [ ] Account Balances / Trial Balance
+- [ ] Balance Sheet
+- [ ] Profit & Loss
+- [ ] Recent Transactions
+- [ ] Planned
+- [ ] Cycle Accounts
+- [ ] Cycle Comparison
+- [ ] Monthly Accounts
+- [ ] Daily Flow
+- [ ] Daily Target
+- [ ] Issues
+
+現在h-kernelに存在するReport projection / Household surfaceを再利用する。TUIでReport本文を再計算しない。`Cycle Comparison`は旧BQN reportに存在し、現在のh-kernel section inventoryでは欠けているため、まずtyped Reportとして復元してからTUIへ載せる。
+
+- [ ] Report一覧から一件選択して表示できる。
+- [ ] 前後Reportへ移動できる。
+- [ ] Reportごとのquery defaultは`report.toml`から得る。
+- [ ] 必要なReportだけその場でoverrideできるが、source filenameをReport requestへ埋め込まない。
+
+## P3: CLIを薄く保つ
+
+CLIはTUIの代替実装ではなく、同じtyped operationを直接呼ぶ入口とする。
+
+- [ ] `--base` / `HKERNEL_LEDGER_DATA_DIR` / `ledger-data.local`からHousehold rootを一度解決する。
+- [ ] `actual-multi`を含む各commandでsource path手入力を日常経路から外す。
+- [ ] `tools/hk help`へコピーして使える完全な構文を載せる。
+- [ ] CLIとTUIでvalidation / preview / writer semanticsを共有する。
+
+## P4: 文書とcompatibilityを削る
 
 - [x] 完了済みreview、BQN観察記録、将来adapter設計、重複code mapをGit履歴へ戻した。
-- [x] `README.md`を現在のbuild・command・format・safetyへ絞った。
-- [x] `AGENTS.md`をこのTODOと必要なcontractへの短い入口へ絞った。
-- [x] Editorとsource migrationの現在地をそれぞれ一つのownerへ統合した。
-- [ ] 残るdomain/report文書は、対象codeを変更するsliceで重複部分を継続的に削る。
-- [ ] 文書削減後も`repository-audit`でリンク、index、正規ownerを検証する。
+- [x] README / AGENTS / source migration ownerを現在の運用へ圧縮した。
+- [ ] native source切替後、retained parser / compatibility builderをparity evidenceの役目が終わった順に削る。
+- [ ] current codeを説明しない設計文書を増やさない。
+- [ ] `repository-audit`で文書ownerとリンクを継続検証する。
 
 ## 将来: bqn-ledger catch-up
 
@@ -81,8 +171,9 @@ h-kernelの正規運用を完成させた後、余裕ができたら`bqn-ledger`
 
 ## 作業順
 
-1. P0で壊れた・分かりにくいcommandを再現可能にする。
-2. commandの安全性をtestで固定してからP1のUIへ接続する。
-3. P2はsourceごとに有限sliceで進める。
-4. P3は実装と別sliceで行い、以後の文書増殖を止める。
-5. h-kernelの正規運用が安定してから、必要に応じてbqn-ledger catch-upを再開する。
+1. P1のnative root reader migrationを現在の並行PRから着地させる。
+2. P0のwrite operationをsourceごとに完成させる。特にPlan edit、native Budget Journal writer、typed config writerを埋める。
+3. P2で既存typed operationをTUIへ接続し、Report browserを追加する。
+4. P3でCLIのpath / help / interactionを同じapplication layerへ寄せる。
+5. P4で役目を終えたcompatibility codeと文書を削る。
+6. h-kernelが日常運用で安定してからbqn-ledger catch-upを再開する。
