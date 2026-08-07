@@ -1,26 +1,28 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | TOML decoding for report period and presentation plans.
+-- | TOML decoding and canonical rendering for report period and presentation plans.
 --
 -- TOML syntax is converted immediately into typed domain values. The report
--- engine never depends on TOML values, and the renderer receives only a
--- validated presentation coordinate.
+-- engine never depends on TOML values, and canonical publication is derived
+-- from the validated configuration rather than preserving incidental formatting.
 module HKernel.Report.Config
   ( ReportConfiguration(..)
   , parseReportConfiguration
   , parseReportConfig
+  , renderReportConfiguration
   , renderReportConfigErrors
   ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
-import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import HKernel.Report.Plan
 import HKernel.Report.Presentation
 import HKernel.Report.RecentTransactions
   ( RecentCount
   , mkRecentCount
+  , recentCountValue
   )
 import Toml (decode)
 import Toml.Schema
@@ -108,6 +110,94 @@ parseReportConfiguration input = case (decode input :: Result String RawConfig) 
 -- | Decode only the symbolic period plan for callers that do not render.
 parseReportConfig :: Text -> Either [Text] ReportPlan
 parseReportConfig = fmap reportConfigurationPlan . parseReportConfiguration
+
+-- | Render one admitted report configuration as deterministic canonical TOML.
+--
+-- The serializer owns only query defaults and presentation. It never embeds
+-- canonical source filenames, Account classification, Envelope membership, or
+-- other Household policy coordinates.
+renderReportConfiguration :: ReportConfiguration -> Text
+renderReportConfiguration configuration = T.unlines
+  [ "[presentation.amounts]"
+  , "negative-style = " <> quoted (renderNegativeStyle
+      (presentationNegativeStyle presentation))
+  , "negative-color = " <> quoted (renderNegativeColor
+      (presentationNegativeColor presentation))
+  , ""
+  , "[reports.trial-balance]"
+  , "as-of = " <> quoted (renderAsOf (trialBalanceSpec plan))
+  , ""
+  , "[reports.balance-sheet]"
+  , "as-of = " <> quoted (renderAsOf (balanceSheetSpec plan))
+  , ""
+  , "[reports.profit-and-loss]"
+  , renderRangeLine "from" (profitAndLossSpec plan)
+  , renderRangeThroughLine (profitAndLossSpec plan)
+  , ""
+  , "[reports.daily-flow]"
+  , renderRangeLine "from" (dailyFlowSpec plan)
+  , renderRangeThroughLine (dailyFlowSpec plan)
+  , "max-date-columns = " <> T.pack
+      (show (dateColumnCountValue
+        (presentationDailyFlowDateColumns presentation)))
+  , ""
+  , "[reports.monthly-accounts]"
+  , renderRangeLine "from" (monthlyAccountsSpec plan)
+  , renderRangeThroughLine (monthlyAccountsSpec plan)
+  , ""
+  , "[reports.recent-transactions]"
+  , "through = " <> quoted (renderEndBoundary
+      (recentSpecThrough (recentTransactionsSpec plan)))
+  , "count = " <> T.pack
+      (show (recentCountValue
+        (recentSpecCount (recentTransactionsSpec plan))))
+  ]
+  where
+    plan = reportConfigurationPlan configuration
+    presentation = reportConfigurationPresentation configuration
+
+renderNegativeStyle :: NegativeStyle -> Text
+renderNegativeStyle AccountingParentheses = "parentheses"
+renderNegativeStyle LeadingMinus = "minus"
+
+renderNegativeColor :: NegativeToneColor -> Text
+renderNegativeColor RedColor = "red"
+renderNegativeColor BrightRedColor = "bright-red"
+renderNegativeColor GreenColor = "green"
+renderNegativeColor YellowColor = "yellow"
+renderNegativeColor BlueColor = "blue"
+renderNegativeColor MagentaColor = "magenta"
+renderNegativeColor CyanColor = "cyan"
+renderNegativeColor WhiteColor = "white"
+
+renderAsOf :: AsOfSpec -> Text
+renderAsOf (AsOf reference) = renderDateReference reference
+
+renderDateReference :: DateReference -> Text
+renderDateReference Latest = "latest"
+renderDateReference (ExactDate day) = renderDay day
+
+renderRangeLine :: Text -> RangeSpec -> Text
+renderRangeLine key (RangeSpec start _) =
+  key <> " = " <> quoted (renderStartBoundary start)
+
+renderRangeThroughLine :: RangeSpec -> Text
+renderRangeThroughLine (RangeSpec _ end) =
+  "through = " <> quoted (renderEndBoundary end)
+
+renderStartBoundary :: StartBoundary -> Text
+renderStartBoundary FromBeginning = "beginning"
+renderStartBoundary (FromDate day) = renderDay day
+
+renderEndBoundary :: EndBoundary -> Text
+renderEndBoundary ThroughLatest = "latest"
+renderEndBoundary (ThroughDate day) = renderDay day
+
+renderDay :: Day -> Text
+renderDay = T.pack . formatTime defaultTimeLocale "%F"
+
+quoted :: Text -> Text
+quoted value = "\"" <> value <> "\""
 
 renderReportConfigErrors :: [Text] -> Text
 renderReportConfigErrors = T.unlines . map ("  " <>)
