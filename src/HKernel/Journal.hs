@@ -9,9 +9,10 @@ module HKernel.Journal
   , IncludeError(..)
   , mkInclude
   , includePath
-  , JournalDocument
+  , JournalDocument(..)
   , journalDocumentIncludes
   , resolveJournalDocumentIncludes
+  , combineJournalDocuments
   , parseJournalDocument
   , validateJournalDocument
   , Journal
@@ -172,6 +173,11 @@ resolveJournalDocumentIncludes resolve (JournalDocument blocks) =
     resolveBlock block = pure [block]
 
     documentBlocks (JournalDocument includedBlocks) = includedBlocks
+
+-- | Combine two parsed journal documents in sequence.
+combineJournalDocuments :: JournalDocument -> JournalDocument -> JournalDocument
+combineJournalDocuments (JournalDocument b1) (JournalDocument b2) =
+  JournalDocument (b1 ++ b2)
 
 parseJournalDocument
   :: Text

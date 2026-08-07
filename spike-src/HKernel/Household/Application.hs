@@ -16,6 +16,7 @@ module HKernel.Household.Application
 
 import Control.Exception (IOException)
 import Data.Bifunctor (first)
+import Data.Functor.Identity (Identity(..), runIdentity)
 import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -37,7 +38,6 @@ import HKernel.Account
   , accountTypeFor
   , declaredAccount
   , declaredAccountType
-  , lookupAccountDeclaration
   )
 import HKernel.Account.Journal
   ( AccountJournalError
@@ -45,11 +45,11 @@ import HKernel.Account.Journal
   )
 import HKernel.Actual.Journal
   ( ActualJournal
-  , ActualJournalError
+  , ActualJournalError(..)
   , actualJournalCompletionDeclarations
   , actualJournalIdentifiedTransactions
   , actualJournalValue
-  , parseActualJournal
+  , admitActualJournalFromResolvedJournal
   )
 import HKernel.Application.Config
   ( HouseholdRoot
@@ -92,7 +92,11 @@ import HKernel.Household.Policy
 import HKernel.HouseholdIssue (HouseholdIssue)
 import HKernel.Journal
   ( Journal
+  , JournalError(..)
   , journalAccountRegistry
+  , parseJournalDocument
+  , resolveJournalDocumentIncludes
+  , validateJournalDocument
   )
 import HKernel.Ledger
   ( postingAccount
@@ -112,13 +116,13 @@ import HKernel.Plan.Completion
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , PlanJournal
-  , PlanJournalError
+  , PlanJournalError(..)
   , ProjectedCommittedOutgoingPlan
+  , admitPlanJournalFromResolvedJournal
   , classifiedIncomingPlanTransactions
   , classifyPlanJournal
   , identifiedPlanId
   , identifiedPlanTransaction
-  , parsePlanJournal
   , planJournalValue
   , projectCommittedOutgoingPlans
   , projectedCommittedOutgoingPlan
@@ -168,6 +172,7 @@ data HouseholdLoadError
   | HouseholdPlanParseFailed (NonEmpty PlanJournalError)
   | HouseholdPlanRegistryDisagreement FilePath Text
   | HouseholdBudgetLoadFailed LoadError
+  | HouseholdBudgetParseFailed (NonEmpty JournalError)
   | HouseholdBudgetMovementAdmitFailed (NonEmpty HouseholdBudgetMovementJournalError)
   | HouseholdBudgetRegistryDisagreement FilePath Text
   | HouseholdBudgetPolicyParseFailed [Text]
@@ -221,28 +226,27 @@ loadRest root paths accountsRegistry = do
     Left errs -> pure (Left errs)
     Right journal -> do
       content <- TIO.readFile (householdActualJournalPath paths)
-      case parseActualJournal content of
+      case admitActualJournalFromResolvedJournal journal content of
         Left errs -> pure (Left (NonEmpty.singleton (HouseholdActualParseFailed errs)))
-        Right aj -> pure (Right (journal, aj))
+        Right aj -> pure (Right aj)
 
   case actualJournalResult of
     Left errs -> pure (Left errs)
-    Right (resolvedActualJournal', actualJournal) -> do
-      let actualRegistry = journalAccountRegistry resolvedActualJournal'
+    Right actualJournal -> do
+      let actualRegistry = journalAccountRegistry (actualJournalValue actualJournal)
 
       -- Exact AccountRegistry equality gate
       if accountsRegistry /= actualRegistry
         then pure (Left (NonEmpty.singleton (HouseholdAccountRegistryDisagreement accountsRegistry actualRegistry)))
-        else loadWithActual root paths accountsRegistry resolvedActualJournal' actualJournal
+        else loadWithActual root paths accountsRegistry actualJournal
 
 loadWithActual
   :: HouseholdRoot
   -> HouseholdSourcePaths
   -> AccountRegistry
-  -> Journal
   -> ActualJournal
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
-loadWithActual root paths accountsRegistry resolvedActualJournal actualJournal = do
+loadWithActual root paths accountsRegistry actualJournal = do
   -- 3. plan.journal
   planLoadResult <- loadJournal (householdPlanJournalPath paths)
   resolvedPlanJournal <- case planLoadResult of
@@ -253,83 +257,47 @@ loadWithActual root paths accountsRegistry resolvedActualJournal actualJournal =
     Left errs -> pure (Left errs)
     Right journal -> do
       content <- TIO.readFile (householdPlanJournalPath paths)
-      case parsePlanJournal content of
+      case admitPlanJournalFromResolvedJournal journal content of
         Left errs -> pure (Left (NonEmpty.singleton (HouseholdPlanParseFailed errs)))
         Right pj -> pure (Right (content, pj))
 
   case planJournalResult of
     Left errs -> pure (Left errs)
     Right (planContent, planJournal) -> do
-      case validatePlanRegistry paths accountsRegistry planJournal of
-        Left errs -> pure (Left errs)
-        Right () -> loadWithPlan root paths accountsRegistry resolvedActualJournal actualJournal planContent planJournal
-
-validatePlanRegistry
-  :: HouseholdSourcePaths
-  -> AccountRegistry
-  -> PlanJournal
-  -> Either (NonEmpty HouseholdLoadError) ()
-validatePlanRegistry paths actualRegistry planJournal =
-  case NonEmpty.nonEmpty errors of
-    Nothing -> Right ()
-    Just errs -> Left errs
-  where
-    planRegistry = journalAccountRegistry (planJournalValue planJournal)
-    errors =
-      [ HouseholdPlanRegistryDisagreement (householdPlanJournalPath paths)
-          ("Account metadata disagrees with accounts.journal for " <> accountName account)
-      | declaration <- accountDeclarations planRegistry
-      , let account = declaredAccount declaration
-      , lookupAccountDeclaration account actualRegistry /= Just declaration
-      ]
+      let planRegistry = journalAccountRegistry (planJournalValue planJournal)
+      if accountsRegistry /= planRegistry
+        then pure (Left (NonEmpty.singleton (HouseholdPlanRegistryDisagreement (householdPlanJournalPath paths) "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
+        else loadWithPlan root paths accountsRegistry actualJournal planContent planJournal
 
 loadWithPlan
   :: HouseholdRoot
   -> HouseholdSourcePaths
   -> AccountRegistry
-  -> Journal
   -> ActualJournal
   -> Text
   -> PlanJournal
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
-loadWithPlan root paths accountsRegistry resolvedActualJournal actualJournal planContent planJournal = do
+loadWithPlan root paths accountsRegistry actualJournal planContent planJournal = do
   -- 4. budget.journal
   budgetLoadResult <- loadJournal (householdBudgetJournalPath paths)
-  budgetJournal <- case budgetLoadResult of
+  resolvedBudgetJournal <- case budgetLoadResult of
     Left err -> pure (Left (NonEmpty.singleton (HouseholdBudgetLoadFailed err)))
     Right j -> pure (Right j)
 
-  budgetResult <- case budgetJournal of
+  budgetResult <- case resolvedBudgetJournal of
     Left errs -> pure (Left errs)
     Right bj -> case admitHouseholdBudgetMovementJournal bj of
       Left errs -> pure (Left (NonEmpty.singleton (HouseholdBudgetMovementAdmitFailed errs)))
-      Right movements -> case validateBudgetRegistry paths accountsRegistry bj of
-        Left errs -> pure (Left errs)
-        Right () -> pure (Right (bj, movements))
+      Right movements -> do
+        let budgetRegistry = journalAccountRegistry bj
+        if accountsRegistry /= budgetRegistry
+          then pure (Left (NonEmpty.singleton (HouseholdBudgetRegistryDisagreement (householdBudgetJournalPath paths) "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
+          else pure (Right (bj, movements))
 
   case budgetResult of
     Left errs -> pure (Left errs)
     Right (budgetJournal', budgetMovements) ->
       loadConfigsAndIssues root paths accountsRegistry actualJournal planContent planJournal budgetJournal' budgetMovements
-
-validateBudgetRegistry
-  :: HouseholdSourcePaths
-  -> AccountRegistry
-  -> Journal
-  -> Either (NonEmpty HouseholdLoadError) ()
-validateBudgetRegistry paths actualRegistry budgetJournal =
-  case NonEmpty.nonEmpty errors of
-    Nothing -> Right ()
-    Just errs -> Left errs
-  where
-    budgetRegistry = journalAccountRegistry budgetJournal
-    errors =
-      [ HouseholdBudgetRegistryDisagreement (householdBudgetJournalPath paths)
-          ("Account metadata disagrees with accounts.journal for " <> accountName account)
-      | declaration <- accountDeclarations budgetRegistry
-      , let account = declaredAccount declaration
-      , lookupAccountDeclaration account actualRegistry /= Just declaration
-      ]
 
 loadConfigsAndIssues
   :: HouseholdRoot
@@ -456,6 +424,16 @@ admitPlanJournalForScope planJournal = case classifyPlanJournal planJournal of
     Left err -> Left (T.pack (show err))
     Right projected -> Right (map projectedCommittedOutgoingPlan projected)
 
+resolveInMemoryJournal
+  :: Text
+  -> Text
+  -> Either (NonEmpty JournalError) Journal
+resolveInMemoryJournal accountsText input = do
+  doc <- parseJournalDocument input
+  accountsDoc <- parseJournalDocument accountsText
+  let resolvedDoc = runIdentity (resolveJournalDocumentIncludes (\_ -> Identity accountsDoc) doc)
+  validateJournalDocument resolvedDoc
+
 -- | Parse pure text of all 8 canonical Household files in memory.
 admitCanonicalHousehold
   :: HouseholdRoot
@@ -471,22 +449,33 @@ admitCanonicalHousehold
 admitCanonicalHousehold root accountsText actualText planText budgetText budgetPolicyText householdPolicyText reportConfigText issuesText = do
   paths <- Right (householdSourcePaths root)
   accountsRegistry <- first (NonEmpty.singleton . HouseholdAccountsParseFailed) (parseAccountJournal accountsText)
-  actualJournal <- first (NonEmpty.singleton . HouseholdActualParseFailed) (parseActualJournal actualText)
+
+  resolvedActualJournal <- first (NonEmpty.singleton . HouseholdActualParseFailed . fmap ActualJournalSyntaxError)
+    (resolveInMemoryJournal accountsText actualText)
+  actualJournal <- first (NonEmpty.singleton . HouseholdActualParseFailed)
+    (admitActualJournalFromResolvedJournal resolvedActualJournal actualText)
   let actualRegistry = journalAccountRegistry (actualJournalValue actualJournal)
   if accountsRegistry /= actualRegistry
     then Left (NonEmpty.singleton (HouseholdAccountRegistryDisagreement accountsRegistry actualRegistry))
     else Right ()
 
-  planJournal <- first (NonEmpty.singleton . HouseholdPlanParseFailed) (parsePlanJournal planText)
-  case validatePlanRegistry paths accountsRegistry planJournal of
-    Left errs -> Left errs
-    Right () -> Right ()
+  resolvedPlanJournal <- first (NonEmpty.singleton . HouseholdPlanParseFailed . fmap PlanJournalSyntaxError)
+    (resolveInMemoryJournal accountsText planText)
+  planJournal <- first (NonEmpty.singleton . HouseholdPlanParseFailed)
+    (admitPlanJournalFromResolvedJournal resolvedPlanJournal planText)
+  let planRegistry = journalAccountRegistry (planJournalValue planJournal)
+  if accountsRegistry /= planRegistry
+    then Left (NonEmpty.singleton (HouseholdPlanRegistryDisagreement (householdPlanJournalPath paths) "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry"))
+    else Right ()
 
-  budgetJournal <- first (pure . HouseholdBudgetLoadFailed . const (undefined :: LoadError))
-    (case parseActualJournal budgetText of
-       Left _ -> Left ()
-       Right aj -> Right (actualJournalValue aj))
-  budgetMovements <- first (NonEmpty.singleton . HouseholdBudgetMovementAdmitFailed) (admitHouseholdBudgetMovementJournal budgetJournal)
+  budgetJournal <- first (NonEmpty.singleton . HouseholdBudgetParseFailed)
+    (resolveInMemoryJournal accountsText budgetText)
+  budgetMovements <- first (NonEmpty.singleton . HouseholdBudgetMovementAdmitFailed)
+    (admitHouseholdBudgetMovementJournal budgetJournal)
+  let budgetRegistry = journalAccountRegistry budgetJournal
+  if accountsRegistry /= budgetRegistry
+    then Left (NonEmpty.singleton (HouseholdBudgetRegistryDisagreement (householdBudgetJournalPath paths) "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry"))
+    else Right ()
 
   budgetPolicy <- first (NonEmpty.singleton . HouseholdBudgetPolicyParseFailed) (parseBudgetPolicy budgetPolicyText)
   policy <- first (NonEmpty.singleton . HouseholdPolicyParseFailed) (parseHouseholdPolicy budgetPolicy householdPolicyText)

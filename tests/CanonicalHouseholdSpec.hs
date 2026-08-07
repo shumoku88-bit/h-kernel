@@ -66,9 +66,11 @@ testRegistryDisagreementFailure :: IO ()
 testRegistryDisagreementFailure = do
   let dir = "/tmp/synthetic_household_disagree_spec"
   createDirectoryIfMissing True dir
-  let badAccounts = syntheticAccounts <> "\naccount Assets:Crypto\n  type: Asset\n  commodity: BTC\n"
-      badActual = syntheticActual <> "\naccount Assets:Crypto\n  type: Asset\n  commodity: ETH\n"
-  writeSyntheticFiles dir badAccounts badActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+  let accountsText = syntheticAccounts <> "\naccount Assets:Crypto\n  type: Asset\n  commodity: BTC\n"
+      actualAccountsText = syntheticAccounts <> "\naccount Assets:Crypto\n  type: Asset\n  commodity: ETH\n"
+      actualText = "include actual_accounts.journal\n\n2026-06-01 * Income anchor\n  Income:Salary  -300000 JPY\n  Assets:Bank\n"
+  TIO.writeFile (dir </> "actual_accounts.journal") actualAccountsText
+  writeSyntheticFiles dir accountsText actualText syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
   
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
@@ -182,25 +184,7 @@ syntheticAccounts = T.unlines
 
 syntheticActual :: Text
 syntheticActual = T.unlines
-  [ "account Assets:Bank"
-  , "  type: Asset"
-  , "  commodity: JPY"
-  , ""
-  , "account Income:Salary"
-  , "  type: Income"
-  , "  commodity: JPY"
-  , ""
-  , "account Expenses:Groceries"
-  , "  type: Expense"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Living"
-  , "  type: Budget"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Daily"
-  , "  type: Budget"
-  , "  commodity: JPY"
+  [ "include accounts.journal"
   , ""
   , "2026-06-01 * Income anchor"
   , "  Income:Salary  -300000 JPY"
@@ -217,25 +201,7 @@ syntheticActual = T.unlines
 
 syntheticPlan :: Text
 syntheticPlan = T.unlines
-  [ "account Assets:Bank"
-  , "  type: Asset"
-  , "  commodity: JPY"
-  , ""
-  , "account Income:Salary"
-  , "  type: Income"
-  , "  commodity: JPY"
-  , ""
-  , "account Expenses:Groceries"
-  , "  type: Expense"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Living"
-  , "  type: Budget"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Daily"
-  , "  type: Budget"
-  , "  commodity: JPY"
+  [ "include accounts.journal"
   , ""
   , "2026-08-01 * Income anchor"
   , "  ; plan-id: P001"
@@ -250,25 +216,7 @@ syntheticPlan = T.unlines
 
 syntheticBudget :: Text
 syntheticBudget = T.unlines
-  [ "account Assets:Bank"
-  , "  type: Asset"
-  , "  commodity: JPY"
-  , ""
-  , "account Income:Salary"
-  , "  type: Income"
-  , "  commodity: JPY"
-  , ""
-  , "account Expenses:Groceries"
-  , "  type: Expense"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Living"
-  , "  type: Budget"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Daily"
-  , "  type: Budget"
-  , "  commodity: JPY"
+  [ "include accounts.journal"
   , ""
   , "2026-07-01 * Allocate Daily"
   , "  Budget:Daily  100000 JPY"

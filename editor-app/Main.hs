@@ -12,6 +12,7 @@ import System.IO (hPutStrLn, stderr)
 
 import HKernel.Account.Journal (parseAccountJournal)
 import HKernel.Actual.Journal (parseActualJournal)
+import HKernel.Application.Config (HouseholdSourcePaths(..), householdSourcePaths, mkHouseholdRoot)
 import qualified HKernel.Editor.ActualAccountAppend as ActualAccountAppend
 import qualified HKernel.Editor.ActualAppend as ActualAppend
 import qualified HKernel.Editor.ActualReverse as ActualReverse
@@ -26,7 +27,7 @@ import HKernel.Household.Issue.TSV (parseHouseholdIssues)
 import HKernel.Journal (Journal)
 import HKernel.Loader (loadJournal)
 import HKernel.Plan.Journal (parsePlanJournal)
-import System.FilePath ((</>), takeDirectory)
+import System.FilePath ((</>), normalise, takeDirectory)
 
 die :: String -> IO a
 die message = hPutStrLn stderr message >> exitFailure
@@ -77,7 +78,14 @@ executeCommand commitMode command = case command of
 
   AccountCmd journalFile declaration -> do
     existingSource <- TIO.readFile journalFile
-    if "accounts.journal" `T.isSuffixOf` T.pack journalFile
+    let dir = takeDirectory journalFile
+        rootDir = if dir == "" then "." else dir
+        paths = case mkHouseholdRoot rootDir of
+          Right r -> householdSourcePaths r
+          Left _ -> case mkHouseholdRoot "." of
+            Right r -> householdSourcePaths r
+            Left _ -> error "unreachable"
+    if normalise journalFile == normalise (householdAccountsJournalPath paths)
       then case ActualAccountAppend.prepareAccountJournalAppend existingSource declaration of
         Left errors -> validationFailed errors
         Right preview ->
@@ -92,7 +100,7 @@ executeCommand commitMode command = case command of
         Left errors -> validationFailed errors
         Right preview ->
           executePreview
-            (publishWithAdmission parseActualJournal)
+            publishActualAppendFromResolvedJournal
             journalFile
             existingSource
             (ActualAccountAppend.candidateBlock preview)
@@ -101,11 +109,16 @@ executeCommand commitMode command = case command of
 
   BudgetMovementCmd targetFile movement -> do
     existingSource <- TIO.readFile targetFile
-    if ".journal" `T.isSuffixOf` T.pack targetFile
+    let dir = takeDirectory targetFile
+        rootDir = if dir == "" then "." else dir
+        paths = case mkHouseholdRoot rootDir of
+          Right r -> householdSourcePaths r
+          Left _ -> case mkHouseholdRoot "." of
+            Right r -> householdSourcePaths r
+            Left _ -> error "unreachable"
+    if normalise targetFile == normalise (householdBudgetJournalPath paths)
       then do
-        let dir = takeDirectory targetFile
-            accountsFile = dir </> "accounts.journal"
-        accountsText <- TIO.readFile accountsFile
+        accountsText <- TIO.readFile (householdAccountsJournalPath paths)
         registry <- case parseAccountJournal accountsText of
           Left errors -> validationFailed errors
           Right r -> pure r
@@ -113,7 +126,7 @@ executeCommand commitMode command = case command of
           Left errors -> validationFailed errors
           Right preview ->
             executePreview
-              (publishWithAdmission parseActualJournal)
+              publishBudgetJournalAppend
               targetFile
               existingSource
               (BudgetMovementAppend.budgetJournalCandidateBlock preview)

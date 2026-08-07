@@ -38,7 +38,7 @@ import HKernel.Account
   , declaredAccountType
   )
 import HKernel.Actual.Journal (actualJournalValue)
-import HKernel.Application.Config (mkHouseholdRoot)
+import HKernel.Application.Config (HouseholdSourcePaths(..), mkHouseholdRoot)
 import HKernel.Budget.Policy (EnvelopeDefinition, budgetPolicyEnvelopeDefinitions, envelopeDefinitionExpenseAccounts, envelopeDefinitionId)
 import HKernel.Engine (mkDateRange)
 import HKernel.Editor.ActualAppend
@@ -1052,7 +1052,7 @@ main = do
       state <- case householdResult of
         Left errs -> die ("Failed to load canonical Household:\n" <> unlines (map show (NonEmpty.toList errs)))
         Right s -> pure s
-      let journalFile = if "actual.journal" `T.isSuffixOf` T.pack path then path else rootPath </> "actual.journal"
+      let journalFile = householdActualJournalPath (householdStatePaths state)
       readResult <- tryIOError (TIO.readFile journalFile)
       source <- case readResult of
         Left err -> die ("Cannot read actual.journal: " <> show err)

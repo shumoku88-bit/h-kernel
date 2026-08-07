@@ -10,14 +10,15 @@ module HKernel.Editor.BudgetMovementAppend
   ) where
 
 import Data.Bifunctor (first)
+import Data.Functor.Identity (Identity(..), runIdentity)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Format (defaultTimeLocale, formatTime)
 
-import HKernel.Account (Account, AccountRegistry, AccountType(..), accountName, accountTypeFor)
-import HKernel.Actual.Journal (actualJournalValue, parseActualJournal)
+import HKernel.Account (Account, AccountRegistry, AccountType(..), accountDeclarations, accountName, accountTypeFor)
+import HKernel.Account.Journal (renderAccountDeclaration)
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Household.BudgetMovement
   ( HouseholdBudgetMovement(..)
@@ -29,6 +30,15 @@ import HKernel.Household.BudgetMovement
 import HKernel.Household.BudgetMovement.TSV
   ( HouseholdBudgetMovementTSVError
   , parseHouseholdBudgetMovements
+  )
+import HKernel.Journal
+  ( Journal
+  , JournalError
+  , combineJournalDocuments
+  , journalDocumentIncludes
+  , parseJournalDocument
+  , resolveJournalDocumentIncludes
+  , validateJournalDocument
   )
 import HKernel.Money (amountCommodity, amountQuantity, commodityCode, renderQuantity)
 
@@ -76,7 +86,7 @@ data BudgetJournalMovementAppendError
   = BudgetJournalMovementNotBudgetAccount Account
   | BudgetJournalRenderError (NonEmpty HouseholdBudgetMovementJournalRenderError)
   | BudgetJournalCandidateAdmitError (NonEmpty HouseholdBudgetMovementJournalError)
-  | BudgetJournalCandidateParseError Text
+  | BudgetJournalCandidateParseError (NonEmpty JournalError)
   deriving (Eq, Show)
 
 data BudgetJournalMovementAppendPreview = BudgetJournalMovementAppendPreview
@@ -101,9 +111,8 @@ prepareBudgetJournalMovementAppend registry existingSource movement = do
             appendSourceBlock existingSource (SourceBlock block)
         }
 
-  candidateJournal <- case parseActualJournal (budgetJournalCandidateCompleteSource preview) of
-    Left err -> Left (NonEmpty.singleton (BudgetJournalCandidateParseError (T.pack (show err))))
-    Right aj -> Right (actualJournalValue aj)
+  candidateJournal <- first (pure . BudgetJournalCandidateParseError)
+    (resolveInMemoryJournal registry (budgetJournalCandidateCompleteSource preview))
 
   _ <- first (pure . BudgetJournalCandidateAdmitError)
     (admitHouseholdBudgetMovementJournal candidateJournal)
@@ -113,3 +122,25 @@ prepareBudgetJournalMovementAppend registry existingSource movement = do
     verifyBudgetAccount acc = case accountTypeFor acc registry of
       Just Budget -> Right ()
       _ -> Left (NonEmpty.singleton (BudgetJournalMovementNotBudgetAccount acc))
+
+resolveInMemoryJournal
+  :: AccountRegistry
+  -> Text
+  -> Either (NonEmpty JournalError) Journal
+resolveInMemoryJournal registry input = do
+  doc <- parseJournalDocument input
+  case renderRegistryText registry of
+    Nothing -> validateJournalDocument doc
+    Just accText -> case parseJournalDocument accText of
+      Left _ -> validateJournalDocument doc
+      Right accountsDoc ->
+        let resolvedDoc = runIdentity (resolveJournalDocumentIncludes (\_ -> Identity accountsDoc) doc)
+        in if null (journalDocumentIncludes doc)
+             then validateJournalDocument (combineJournalDocuments accountsDoc resolvedDoc)
+             else validateJournalDocument resolvedDoc
+
+renderRegistryText :: AccountRegistry -> Maybe Text
+renderRegistryText registry =
+  case traverse renderAccountDeclaration (accountDeclarations registry) of
+    Left _ -> Nothing
+    Right rendered -> Just (T.unlines rendered)

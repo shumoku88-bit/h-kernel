@@ -18,6 +18,9 @@ module HKernel.Editor.ActualWriter
   , publishActualAppendFromResolvedJournal
   , publishActualBlock
   , publishActualBlockFromResolvedJournal
+  , BudgetJournalSourceAdmissionError(..)
+  , admitBudgetJournalPath
+  , publishBudgetJournalAppend
   ) where
 
 import Control.Exception (IOException, catch)
@@ -33,6 +36,11 @@ import HKernel.Actual.Journal
   , parseActualJournal
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
+import HKernel.Household.BudgetMovement
+  ( HouseholdBudgetMovement
+  , HouseholdBudgetMovementJournalError
+  , admitHouseholdBudgetMovementJournal
+  )
 import HKernel.Loader (LoadError, loadJournal)
 
 -- | The complete source snapshot that the caller observed before preview.
@@ -161,6 +169,29 @@ publishActualAppendFromResolvedJournal
   -> IO (Either (WriteError ActualSourceAdmissionError) ())
 publishActualAppendFromResolvedJournal =
   publishWithPathAdmission admitActualJournalPath
+
+data BudgetJournalSourceAdmissionError
+  = BudgetJournalSourceLoadError LoadError
+  | BudgetJournalSourceAdmitError (NonEmpty HouseholdBudgetMovementJournalError)
+  deriving (Show)
+
+-- | Admit a Budget journal root through its filesystem-resolved Journal graph.
+admitBudgetJournalPath
+  :: FilePath
+  -> IO (Either (NonEmpty BudgetJournalSourceAdmissionError) [HouseholdBudgetMovement])
+admitBudgetJournalPath filePath = do
+  resolved <- loadJournal filePath
+  pure $ case resolved of
+    Left loadError -> Left (pure (BudgetJournalSourceLoadError loadError))
+    Right journal -> case admitHouseholdBudgetMovementJournal journal of
+      Left errors -> Left (pure (BudgetJournalSourceAdmitError errors))
+      Right movements -> Right movements
+
+publishBudgetJournalAppend
+  :: WriteIntent
+  -> IO (Either (WriteError BudgetJournalSourceAdmissionError) ())
+publishBudgetJournalAppend =
+  publishWithPathAdmission admitBudgetJournalPath
 
 -- | Place an already validated Actual transaction block and delegate all file
 -- safety behavior to the existing Actual writer.
