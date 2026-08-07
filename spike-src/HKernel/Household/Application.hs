@@ -16,28 +16,18 @@ module HKernel.Household.Application
 
 import Control.Exception (IOException)
 import Data.Bifunctor (first)
-import Data.Functor.Identity (Identity(..), runIdentity)
-import Data.List (sortOn)
-import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Set as Set
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (Day)
-import System.Directory (doesFileExist)
-import System.FilePath ((</>), takeDirectory)
 import System.IO.Error (tryIOError)
 
 import HKernel.Account
-  ( Account
-  , AccountRegistry
+  ( AccountRegistry
   , AccountType(..)
-  , accountDeclarations
-  , accountName
   , accountTypeFor
-  , declaredAccount
-  , declaredAccountType
   )
 import HKernel.Account.Journal
   ( AccountJournalError
@@ -46,8 +36,6 @@ import HKernel.Account.Journal
 import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError(..)
-  , actualJournalCompletionDeclarations
-  , actualJournalIdentifiedTransactions
   , actualJournalValue
   , admitActualJournalFromResolvedJournal
   )
@@ -58,87 +46,70 @@ import HKernel.Application.Config
   )
 import HKernel.Budget.Config (parseBudgetPolicy)
 import HKernel.Budget.Policy (BudgetPolicy)
-import HKernel.Engine (journalEntries, entryAccount, entryAmount, entryDate)
-import HKernel.Household.Backing
-  ( HouseholdBackingPlan(..)
-  , deriveHouseholdBacking
+import HKernel.Household.AccountProfile
+  ( HouseholdAccountPolicy
+  , householdAssetClassByAccount
+  , householdBudgetGroupByAccount
+  , householdBudgetKindByAccount
+  , householdEnvelopeRoleByAccount
+  , householdSpendClassByAccount
   )
 import HKernel.Household.BudgetMovement
-  ( HouseholdBudgetMovement(..)
+  ( HouseholdBudgetMovement
   , HouseholdBudgetMovementJournalError
   , admitHouseholdBudgetMovementJournal
   )
-import HKernel.Household.Config (parseHouseholdPolicy)
+import HKernel.Household.Config
+  ( HouseholdConfiguration
+  , householdConfigurationAccountPolicy
+  , householdConfigurationDailyTargetAssets
+  , householdConfigurationPolicy
+  , parseHouseholdConfiguration
+  )
 import HKernel.Household.DailyTarget
-  ( DailyTargetScope
-  , DailyTargetScopeId
+  ( DailyTargetAssetSelection
+  , DailyTargetScope
   , DailyTargetSelectionError
   , dailyTargetScopeFromSelections
-  , deriveDailyTarget
-  , mkDailyTargetScopeId
   , parseDailyTargetPlanJournalSelections
-  , selectDailyTargetAsset
   )
-import HKernel.Household.DailyTarget.TSV (parseDailyTargetScope)
-import HKernel.Household.Issue.TSV (HouseholdIssueTSVError, parseHouseholdIssues)
+import HKernel.Household.Issue.TSV
+  ( HouseholdIssueTSVError
+  , parseHouseholdIssues
+  )
 import HKernel.Household.Policy
   ( AccountValidatedHouseholdPolicy
   , HouseholdPolicy
   , HouseholdPolicyAccountError
-  , householdCycleIncomeAccount
-  , householdPolicyCycle
   , validateHouseholdPolicyAccounts
   )
 import HKernel.HouseholdIssue (HouseholdIssue)
 import HKernel.Journal
   ( Journal
   , JournalError(..)
+  , includePath
   , journalAccountRegistry
   , parseJournalDocument
   , resolveJournalDocumentIncludes
   , validateJournalDocument
   )
-import HKernel.Ledger
-  ( postingAccount
-  , postingAmount
-  , transactionDate
-  , transactionPostings
-  )
 import HKernel.Loader (LoadError, loadJournal)
-import HKernel.Money (amountQuantity, zeroQuantity)
-import HKernel.Period (Period, mkPeriod, periodContains)
-import HKernel.Plan (CommittedOutgoingPlan, PlanId, committedPlanAmount, committedPlanDate, committedPlanDirection, committedPlanId, declaredOutgoingPaymentDirection, declaredPaymentDestination, declaredPaymentSource, planIdText)
-import HKernel.Plan.Completion
-  ( PlanCompletionDeclaration
-  , declaredCompletionPlanId
-  , resolveOpenCommittedOutgoingPlans
-  )
 import HKernel.Plan.Journal
-  ( IdentifiedPlanTransaction
-  , PlanJournal
+  ( PlanJournal
   , PlanJournalError(..)
-  , ProjectedCommittedOutgoingPlan
   , admitPlanJournalFromResolvedJournal
-  , classifiedIncomingPlanTransactions
-  , classifyPlanJournal
-  , identifiedPlanId
-  , identifiedPlanTransaction
   , planJournalValue
-  , projectCommittedOutgoingPlans
-  , projectedCommittedOutgoingPlan
   )
-import HKernel.Report.Config (ReportConfiguration, parseReportConfiguration)
-import HKernel.Report.CycleAccounts (cycleAccounts)
-import HKernel.Spike.HouseholdConsumption
-  ( HouseholdBudgetError
-  , deriveHouseholdBudgetObservation
-  , householdBudgetConsumption
-  , householdBudgetEntitlement
-  , householdBudgetObservationPolicy
-  , householdBudgetRemaining
+import HKernel.Report.Config
+  ( ReportConfiguration
+  , parseReportConfiguration
   )
 import HKernel.Spike.HouseholdReport
-  ( HouseholdReportSurface(..)
+  ( HouseholdReportSurface
+  , HouseholdSourceError
+  , admitPlanJournal
+  , admittedOutgoingPlanValues
+  , buildHouseholdReportSurfaceFromAdmitted
   )
 
 -- | The canonical Household application state loaded from the 8 canonical paths.
@@ -151,10 +122,11 @@ data HouseholdState = HouseholdState
   , householdStateBudgetJournal    :: Journal
   , householdStateBudgetMovements  :: [HouseholdBudgetMovement]
   , householdStateBudgetPolicy     :: BudgetPolicy
+  , householdStateConfiguration    :: HouseholdConfiguration
   , householdStatePolicy           :: HouseholdPolicy
   , householdStateValidatedPolicy  :: AccountValidatedHouseholdPolicy
   , householdStateReportConfig     :: ReportConfiguration
-  , householdStateIssues          :: [HouseholdIssue]
+  , householdStateIssues           :: [HouseholdIssue]
   , householdStateDailyScope       :: DailyTargetScope
   } deriving (Eq, Show)
 
@@ -178,13 +150,12 @@ data HouseholdLoadError
   | HouseholdBudgetPolicyParseFailed [Text]
   | HouseholdPolicyParseFailed [Text]
   | HouseholdPolicyAccountValidationFailed (NonEmpty HouseholdPolicyAccountError)
+  | HouseholdAccountPolicyRegistryDisagreement Text
   | HouseholdReportConfigParseFailed [Text]
   | HouseholdIssuesParseFailed (NonEmpty HouseholdIssueTSVError)
   | HouseholdDailyTargetScopeFailed (NonEmpty DailyTargetSelectionError)
-  | HouseholdPlanAnalysisFailed Text
-  | HouseholdCycleError Text
-  | HouseholdPlanResolutionFailed Text
-  | HouseholdBudgetObservationFailed (NonEmpty HouseholdBudgetError)
+  | HouseholdPlanProjectionFailed (NonEmpty HouseholdSourceError)
+  | HouseholdReportCalculationFailed (NonEmpty HouseholdSourceError)
   deriving (Show)
 
 -- | Load one canonical Household root from disk into a typed 'HouseholdState'.
@@ -193,83 +164,59 @@ loadCanonicalHousehold
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
 loadCanonicalHousehold root = do
   let paths = householdSourcePaths root
+  accountsContentResult <- readHouseholdSource (householdAccountsJournalPath paths)
+  case accountsContentResult of
+    Left errors -> pure (Left errors)
+    Right accountsContent -> case parseAccountJournal accountsContent of
+      Left errors -> pure (Left (pure (HouseholdAccountsParseFailed errors)))
+      Right accountsRegistry -> loadActual root paths accountsRegistry
 
-  -- 1. accounts.journal
-  accountsResult <- tryIOError (TIO.readFile (householdAccountsJournalPath paths))
-  accountsContent <- case accountsResult of
-    Left err -> pure (Left (NonEmpty.singleton (HouseholdSourceReadFailed (householdAccountsJournalPath paths) err)))
-    Right content -> pure (Right content)
-
-  accountsRegistry <- case accountsContent of
-    Left errs -> pure (Left errs)
-    Right content -> case parseAccountJournal content of
-      Left errs -> pure (Left (NonEmpty.singleton (HouseholdAccountsParseFailed errs)))
-      Right registry -> pure (Right registry)
-
-  case accountsRegistry of
-    Left errs -> pure (Left errs)
-    Right admittedAccountsRegistry -> loadRest root paths admittedAccountsRegistry
-
-loadRest
+loadActual
   :: HouseholdRoot
   -> HouseholdSourcePaths
   -> AccountRegistry
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
-loadRest root paths accountsRegistry = do
-  -- 2. actual.journal via loadJournal include resolution
-  actualLoadResult <- loadJournal (householdActualJournalPath paths)
-  resolvedActualJournal <- case actualLoadResult of
-    Left err -> pure (Left (NonEmpty.singleton (HouseholdActualLoadFailed err)))
-    Right j -> pure (Right j)
+loadActual root paths accountsRegistry = do
+  rootTextResult <- readHouseholdSource (householdActualJournalPath paths)
+  case rootTextResult of
+    Left errors -> pure (Left errors)
+    Right rootText -> do
+      loaded <- loadJournal (householdActualJournalPath paths)
+      case loaded of
+        Left err -> pure (Left (pure (HouseholdActualLoadFailed err)))
+        Right resolved -> case admitActualJournalFromResolvedJournal resolved rootText of
+          Left errors -> pure (Left (pure (HouseholdActualParseFailed errors)))
+          Right actualJournal
+            | accountsRegistry /= journalAccountRegistry (actualJournalValue actualJournal) ->
+                pure (Left (pure (HouseholdAccountRegistryDisagreement
+                  accountsRegistry
+                  (journalAccountRegistry (actualJournalValue actualJournal)))))
+            | otherwise -> loadPlan root paths accountsRegistry actualJournal
 
-  actualJournalResult <- case resolvedActualJournal of
-    Left errs -> pure (Left errs)
-    Right journal -> do
-      content <- TIO.readFile (householdActualJournalPath paths)
-      case admitActualJournalFromResolvedJournal journal content of
-        Left errs -> pure (Left (NonEmpty.singleton (HouseholdActualParseFailed errs)))
-        Right aj -> pure (Right aj)
-
-  case actualJournalResult of
-    Left errs -> pure (Left errs)
-    Right actualJournal -> do
-      let actualRegistry = journalAccountRegistry (actualJournalValue actualJournal)
-
-      -- Exact AccountRegistry equality gate
-      if accountsRegistry /= actualRegistry
-        then pure (Left (NonEmpty.singleton (HouseholdAccountRegistryDisagreement accountsRegistry actualRegistry)))
-        else loadWithActual root paths accountsRegistry actualJournal
-
-loadWithActual
+loadPlan
   :: HouseholdRoot
   -> HouseholdSourcePaths
   -> AccountRegistry
   -> ActualJournal
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
-loadWithActual root paths accountsRegistry actualJournal = do
-  -- 3. plan.journal
-  planLoadResult <- loadJournal (householdPlanJournalPath paths)
-  resolvedPlanJournal <- case planLoadResult of
-    Left err -> pure (Left (NonEmpty.singleton (HouseholdPlanLoadFailed err)))
-    Right j -> pure (Right j)
+loadPlan root paths accountsRegistry actualJournal = do
+  rootTextResult <- readHouseholdSource (householdPlanJournalPath paths)
+  case rootTextResult of
+    Left errors -> pure (Left errors)
+    Right rootText -> do
+      loaded <- loadJournal (householdPlanJournalPath paths)
+      case loaded of
+        Left err -> pure (Left (pure (HouseholdPlanLoadFailed err)))
+        Right resolved -> case admitPlanJournalFromResolvedJournal resolved rootText of
+          Left errors -> pure (Left (pure (HouseholdPlanParseFailed errors)))
+          Right planJournal
+            | accountsRegistry /= journalAccountRegistry (planJournalValue planJournal) ->
+                pure (Left (pure (HouseholdPlanRegistryDisagreement
+                  (householdPlanJournalPath paths)
+                  "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
+            | otherwise -> loadBudget root paths accountsRegistry actualJournal rootText planJournal
 
-  planJournalResult <- case resolvedPlanJournal of
-    Left errs -> pure (Left errs)
-    Right journal -> do
-      content <- TIO.readFile (householdPlanJournalPath paths)
-      case admitPlanJournalFromResolvedJournal journal content of
-        Left errs -> pure (Left (NonEmpty.singleton (HouseholdPlanParseFailed errs)))
-        Right pj -> pure (Right (content, pj))
-
-  case planJournalResult of
-    Left errs -> pure (Left errs)
-    Right (planContent, planJournal) -> do
-      let planRegistry = journalAccountRegistry (planJournalValue planJournal)
-      if accountsRegistry /= planRegistry
-        then pure (Left (NonEmpty.singleton (HouseholdPlanRegistryDisagreement (householdPlanJournalPath paths) "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
-        else loadWithPlan root paths accountsRegistry actualJournal planContent planJournal
-
-loadWithPlan
+loadBudget
   :: HouseholdRoot
   -> HouseholdSourcePaths
   -> AccountRegistry
@@ -277,27 +224,23 @@ loadWithPlan
   -> Text
   -> PlanJournal
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
-loadWithPlan root paths accountsRegistry actualJournal planContent planJournal = do
-  -- 4. budget.journal
-  budgetLoadResult <- loadJournal (householdBudgetJournalPath paths)
-  resolvedBudgetJournal <- case budgetLoadResult of
-    Left err -> pure (Left (NonEmpty.singleton (HouseholdBudgetLoadFailed err)))
-    Right j -> pure (Right j)
-
-  budgetResult <- case resolvedBudgetJournal of
-    Left errs -> pure (Left errs)
-    Right bj -> case admitHouseholdBudgetMovementJournal bj of
-      Left errs -> pure (Left (NonEmpty.singleton (HouseholdBudgetMovementAdmitFailed errs)))
-      Right movements -> do
-        let budgetRegistry = journalAccountRegistry bj
-        if accountsRegistry /= budgetRegistry
-          then pure (Left (NonEmpty.singleton (HouseholdBudgetRegistryDisagreement (householdBudgetJournalPath paths) "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
-          else pure (Right (bj, movements))
-
-  case budgetResult of
-    Left errs -> pure (Left errs)
-    Right (budgetJournal', budgetMovements) ->
-      loadConfigsAndIssues root paths accountsRegistry actualJournal planContent planJournal budgetJournal' budgetMovements
+loadBudget root paths accountsRegistry actualJournal planRootText planJournal = do
+  rootTextResult <- readHouseholdSource (householdBudgetJournalPath paths)
+  case rootTextResult of
+    Left errors -> pure (Left errors)
+    Right _ -> do
+      loaded <- loadJournal (householdBudgetJournalPath paths)
+      case loaded of
+        Left err -> pure (Left (pure (HouseholdBudgetLoadFailed err)))
+        Right budgetJournal
+          | accountsRegistry /= journalAccountRegistry budgetJournal ->
+              pure (Left (pure (HouseholdBudgetRegistryDisagreement
+                (householdBudgetJournalPath paths)
+                "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
+          | otherwise -> case admitHouseholdBudgetMovementJournal budgetJournal of
+              Left errors -> pure (Left (pure (HouseholdBudgetMovementAdmitFailed errors)))
+              Right budgetMovements ->
+                loadConfigsAndIssues root paths accountsRegistry actualJournal planRootText planJournal budgetJournal budgetMovements
 
 loadConfigsAndIssues
   :: HouseholdRoot
@@ -309,130 +252,124 @@ loadConfigsAndIssues
   -> Journal
   -> [HouseholdBudgetMovement]
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
-loadConfigsAndIssues root paths accountsRegistry actualJournal planContent planJournal budgetJournal budgetMovements = do
-  -- 5. budget.toml
-  budgetConfigContent <- TIO.readFile (householdBudgetConfigPath paths)
-  budgetPolicy <- case parseBudgetPolicy budgetConfigContent of
-    Left errs -> pure (Left (NonEmpty.singleton (HouseholdBudgetPolicyParseFailed errs)))
-    Right bp -> pure (Right bp)
+loadConfigsAndIssues root paths accountsRegistry actualJournal planRootText planJournal budgetJournal budgetMovements = do
+  budgetTextResult <- readHouseholdSource (householdBudgetConfigPath paths)
+  case budgetTextResult of
+    Left errors -> pure (Left errors)
+    Right budgetText -> case parseBudgetPolicy budgetText of
+      Left errors -> pure (Left (pure (HouseholdBudgetPolicyParseFailed errors)))
+      Right budgetPolicy -> do
+        householdTextResult <- readHouseholdSource (householdPolicyConfigPath paths)
+        case householdTextResult of
+          Left errors -> pure (Left errors)
+          Right householdText -> case parseHouseholdConfiguration budgetPolicy householdText of
+            Left errors -> pure (Left (pure (HouseholdPolicyParseFailed errors)))
+            Right configuration -> do
+              let policy = householdConfigurationPolicy configuration
+              case validateHouseholdPolicyAccounts accountsRegistry policy of
+                Left errors -> pure (Left (pure (HouseholdPolicyAccountValidationFailed errors)))
+                Right validatedPolicy -> case validateHouseholdAccountPolicy accountsRegistry
+                    (householdConfigurationAccountPolicy configuration) of
+                  Left errors -> pure (Left errors)
+                  Right () -> do
+                    reportTextResult <- readHouseholdSource (householdReportConfigPath paths)
+                    case reportTextResult of
+                      Left errors -> pure (Left errors)
+                      Right reportText -> case parseReportConfiguration reportText of
+                        Left errors -> pure (Left (pure (HouseholdReportConfigParseFailed errors)))
+                        Right reportConfig -> do
+                          issuesTextResult <- readHouseholdSource (householdIssuesPath paths)
+                          case issuesTextResult of
+                            Left errors -> pure (Left errors)
+                            Right issuesText -> case parseHouseholdIssues issuesText of
+                              Left errors -> pure (Left (pure (HouseholdIssuesParseFailed errors)))
+                              Right issues -> case assembleDailyScope
+                                  accountsRegistry
+                                  (householdConfigurationDailyTargetAssets configuration)
+                                  planRootText
+                                  planJournal of
+                                Left errors -> pure (Left errors)
+                                Right dailyScope -> pure (Right HouseholdState
+                                  { householdStateRoot = root
+                                  , householdStatePaths = paths
+                                  , householdStateAccountsRegistry = accountsRegistry
+                                  , householdStateActualJournal = actualJournal
+                                  , householdStatePlanJournal = planJournal
+                                  , householdStateBudgetJournal = budgetJournal
+                                  , householdStateBudgetMovements = budgetMovements
+                                  , householdStateBudgetPolicy = budgetPolicy
+                                  , householdStateConfiguration = configuration
+                                  , householdStatePolicy = policy
+                                  , householdStateValidatedPolicy = validatedPolicy
+                                  , householdStateReportConfig = reportConfig
+                                  , householdStateIssues = issues
+                                  , householdStateDailyScope = dailyScope
+                                  })
 
-  case budgetPolicy of
-    Left errs -> pure (Left errs)
-    Right admittedBudgetPolicy -> do
-      -- 6. household.toml
-      policyContent <- TIO.readFile (householdPolicyConfigPath paths)
-      policyResult <- case parseHouseholdPolicy admittedBudgetPolicy policyContent of
-        Left errs -> pure (Left (NonEmpty.singleton (HouseholdPolicyParseFailed errs)))
-        Right hp -> case validateHouseholdPolicyAccounts accountsRegistry hp of
-          Left errs -> pure (Left (NonEmpty.singleton (HouseholdPolicyAccountValidationFailed errs)))
-          Right vp -> pure (Right (hp, vp))
+readHouseholdSource
+  :: FilePath
+  -> IO (Either (NonEmpty HouseholdLoadError) Text)
+readHouseholdSource path = do
+  result <- tryIOError (TIO.readFile path)
+  pure $ case result of
+    Left err -> Left (pure (HouseholdSourceReadFailed path err))
+    Right content -> Right content
 
-      case policyResult of
-        Left errs -> pure (Left errs)
-        Right (householdPolicy, validatedPolicy) -> do
-          -- 7. report.toml
-          reportConfigContent <- TIO.readFile (householdReportConfigPath paths)
-          reportConfig <- case parseReportConfiguration reportConfigContent of
-            Left errs -> pure (Left (NonEmpty.singleton (HouseholdReportConfigParseFailed errs)))
-            Right rc -> pure (Right rc)
-
-          case reportConfig of
-            Left errs -> pure (Left errs)
-            Right admittedReportConfig -> do
-              -- 8. issues.tsv
-              issuesContent <- TIO.readFile (householdIssuesPath paths)
-              issues <- case parseHouseholdIssues issuesContent of
-                Left errs -> pure (Left (NonEmpty.singleton (HouseholdIssuesParseFailed errs)))
-                Right iss -> pure (Right iss)
-
-              case issues of
-                Left errs -> pure (Left errs)
-                Right admittedIssues -> do
-                  dailyScopeResult <- assembleDailyScope paths accountsRegistry planContent planJournal
-                  case dailyScopeResult of
-                    Left errs -> pure (Left errs)
-                    Right dailyScope ->
-                      pure (Right HouseholdState
-                        { householdStateRoot = root
-                        , householdStatePaths = paths
-                        , householdStateAccountsRegistry = accountsRegistry
-                        , householdStateActualJournal = actualJournal
-                        , householdStatePlanJournal = planJournal
-                        , householdStateBudgetJournal = budgetJournal
-                        , householdStateBudgetMovements = budgetMovements
-                        , householdStateBudgetPolicy = admittedBudgetPolicy
-                        , householdStatePolicy = householdPolicy
-                        , householdStateValidatedPolicy = validatedPolicy
-                        , householdStateReportConfig = admittedReportConfig
-                        , householdStateIssues = admittedIssues
-                        , householdStateDailyScope = dailyScope
-                        })
+validateHouseholdAccountPolicy
+  :: AccountRegistry
+  -> Maybe HouseholdAccountPolicy
+  -> Either (NonEmpty HouseholdLoadError) ()
+validateHouseholdAccountPolicy _ Nothing = Right ()
+validateHouseholdAccountPolicy registry (Just policy) =
+  case mismatches of
+    [] -> Right ()
+    label : _ -> Left (pure (HouseholdAccountPolicyRegistryDisagreement label))
+  where
+    allHaveType expected accounts =
+      all ((== Just expected) . (`accountTypeFor` registry)) accounts
+    checks =
+      [ ("asset classification", Asset, Map.keys (householdAssetClassByAccount policy))
+      , ("Budget kind classification", Budget, Map.keys (householdBudgetKindByAccount policy))
+      , ("Budget envelope-role classification", Budget, Map.keys (householdEnvelopeRoleByAccount policy))
+      , ("Budget group classification", Budget, Map.keys (householdBudgetGroupByAccount policy))
+      , ("Expense spend classification", Expense, Map.keys (householdSpendClassByAccount policy))
+      ]
+    mismatches =
+      [ label
+      | (label, expected, accounts) <- checks
+      , not (allHaveType expected accounts)
+      ]
 
 assembleDailyScope
-  :: HouseholdSourcePaths
-  -> AccountRegistry
+  :: AccountRegistry
+  -> [DailyTargetAssetSelection]
   -> Text
   -> PlanJournal
-  -> IO (Either (NonEmpty HouseholdLoadError) DailyTargetScope)
-assembleDailyScope paths registry planContent planJournal = do
-  let assetSelections =
-        [ selectDailyTargetAsset (safeScopeId (accountName acc)) acc
-        | decl <- accountDeclarations registry
-        , let acc = declaredAccount decl
-        , declaredAccountType decl == Asset
-        ]
-  case parseDailyTargetPlanJournalSelections planContent planJournal of
-    Right obligationSelections -> do
-      case admitPlanJournalForScope planJournal of
-        Left err -> pure (Left (NonEmpty.singleton (HouseholdPlanAnalysisFailed err)))
-        Right committedPlans ->
-          case dailyTargetScopeFromSelections registry committedPlans assetSelections obligationSelections of
-            Left errs -> pure (Left (NonEmpty.singleton (HouseholdDailyTargetScopeFailed errs)))
-            Right scope -> pure (Right scope)
-    Left _ -> do
-      let rootDir = takeDirectory (householdAccountsJournalPath paths)
-          legacyPath = rootDir </> "daily_target_scope.tsv"
-      legacyExists <- doesFileExist legacyPath
-      if legacyExists
-        then do
-          tsvText <- TIO.readFile legacyPath
-          case admitPlanJournalForScope planJournal of
-            Left err -> pure (Left (NonEmpty.singleton (HouseholdPlanAnalysisFailed err)))
-            Right committedPlans ->
-              case parseDailyTargetScope registry committedPlans tsvText of
-                Left _ -> pure (Left (NonEmpty.singleton (HouseholdPlanAnalysisFailed "Failed to parse daily_target_scope.tsv")))
-                Right scope -> pure (Right scope)
-        else
-          case admitPlanJournalForScope planJournal of
-            Left err -> pure (Left (NonEmpty.singleton (HouseholdPlanAnalysisFailed err)))
-            Right committedPlans ->
-              case dailyTargetScopeFromSelections registry committedPlans assetSelections [] of
-                Left errs -> pure (Left (NonEmpty.singleton (HouseholdDailyTargetScopeFailed errs)))
-                Right scope -> pure (Right scope)
-
-safeScopeId :: Text -> DailyTargetScopeId
-safeScopeId txt = case mkDailyTargetScopeId txt of
-  Right val -> val
-  Left _ -> case mkDailyTargetScopeId "scope" of
-    Right fallback -> fallback
-    Left _ -> error "unreachable scope id"
-
-admitPlanJournalForScope :: PlanJournal -> Either Text [CommittedOutgoingPlan]
-admitPlanJournalForScope planJournal = case classifyPlanJournal planJournal of
-  Left err -> Left (T.pack (show err))
-  Right classified -> case projectCommittedOutgoingPlans planJournal classified of
-    Left err -> Left (T.pack (show err))
-    Right projected -> Right (map projectedCommittedOutgoingPlan projected)
+  -> Either (NonEmpty HouseholdLoadError) DailyTargetScope
+assembleDailyScope registry assetSelections planRootText planJournal = do
+  admittedPlans <- first (pure . HouseholdPlanProjectionFailed)
+    (admitPlanJournal planJournal)
+  obligationSelections <- first (pure . HouseholdDailyTargetScopeFailed)
+    (parseDailyTargetPlanJournalSelections planRootText planJournal)
+  first (pure . HouseholdDailyTargetScopeFailed)
+    (dailyTargetScopeFromSelections
+      registry
+      (admittedOutgoingPlanValues admittedPlans)
+      assetSelections
+      obligationSelections)
 
 resolveInMemoryJournal
   :: Text
   -> Text
   -> Either (NonEmpty JournalError) Journal
 resolveInMemoryJournal accountsText input = do
-  doc <- parseJournalDocument input
-  accountsDoc <- parseJournalDocument accountsText
-  let resolvedDoc = runIdentity (resolveJournalDocumentIncludes (\_ -> Identity accountsDoc) doc)
-  validateJournalDocument resolvedDoc
+  document <- parseJournalDocument input
+  accountsDocument <- parseJournalDocument accountsText
+  let resolve include
+        | includePath include == "accounts.journal" = Right accountsDocument
+        | otherwise = Left (pure (UnresolvedInclude include))
+  resolved <- resolveJournalDocumentIncludes resolve document
+  validateJournalDocument resolved
 
 -- | Parse pure text of all 8 canonical Household files in memory.
 admitCanonicalHousehold
@@ -447,51 +384,59 @@ admitCanonicalHousehold
   -> Text -- ^ issues.tsv
   -> Either (NonEmpty HouseholdLoadError) HouseholdState
 admitCanonicalHousehold root accountsText actualText planText budgetText budgetPolicyText householdPolicyText reportConfigText issuesText = do
-  paths <- Right (householdSourcePaths root)
-  accountsRegistry <- first (NonEmpty.singleton . HouseholdAccountsParseFailed) (parseAccountJournal accountsText)
+  let paths = householdSourcePaths root
+  accountsRegistry <- first (pure . HouseholdAccountsParseFailed)
+    (parseAccountJournal accountsText)
 
-  resolvedActualJournal <- first (NonEmpty.singleton . HouseholdActualParseFailed . fmap ActualJournalSyntaxError)
+  resolvedActual <- first (pure . HouseholdActualParseFailed . fmap ActualJournalSyntaxError)
     (resolveInMemoryJournal accountsText actualText)
-  actualJournal <- first (NonEmpty.singleton . HouseholdActualParseFailed)
-    (admitActualJournalFromResolvedJournal resolvedActualJournal actualText)
+  actualJournal <- first (pure . HouseholdActualParseFailed)
+    (admitActualJournalFromResolvedJournal resolvedActual actualText)
   let actualRegistry = journalAccountRegistry (actualJournalValue actualJournal)
-  if accountsRegistry /= actualRegistry
-    then Left (NonEmpty.singleton (HouseholdAccountRegistryDisagreement accountsRegistry actualRegistry))
-    else Right ()
+  if accountsRegistry == actualRegistry
+    then Right ()
+    else Left (pure (HouseholdAccountRegistryDisagreement accountsRegistry actualRegistry))
 
-  resolvedPlanJournal <- first (NonEmpty.singleton . HouseholdPlanParseFailed . fmap PlanJournalSyntaxError)
+  resolvedPlan <- first (pure . HouseholdPlanParseFailed . fmap PlanJournalSyntaxError)
     (resolveInMemoryJournal accountsText planText)
-  planJournal <- first (NonEmpty.singleton . HouseholdPlanParseFailed)
-    (admitPlanJournalFromResolvedJournal resolvedPlanJournal planText)
+  planJournal <- first (pure . HouseholdPlanParseFailed)
+    (admitPlanJournalFromResolvedJournal resolvedPlan planText)
   let planRegistry = journalAccountRegistry (planJournalValue planJournal)
-  if accountsRegistry /= planRegistry
-    then Left (NonEmpty.singleton (HouseholdPlanRegistryDisagreement (householdPlanJournalPath paths) "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry"))
-    else Right ()
+  if accountsRegistry == planRegistry
+    then Right ()
+    else Left (pure (HouseholdPlanRegistryDisagreement
+      (householdPlanJournalPath paths)
+      "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry"))
 
-  budgetJournal <- first (NonEmpty.singleton . HouseholdBudgetParseFailed)
+  budgetJournal <- first (pure . HouseholdBudgetParseFailed)
     (resolveInMemoryJournal accountsText budgetText)
-  budgetMovements <- first (NonEmpty.singleton . HouseholdBudgetMovementAdmitFailed)
-    (admitHouseholdBudgetMovementJournal budgetJournal)
   let budgetRegistry = journalAccountRegistry budgetJournal
-  if accountsRegistry /= budgetRegistry
-    then Left (NonEmpty.singleton (HouseholdBudgetRegistryDisagreement (householdBudgetJournalPath paths) "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry"))
-    else Right ()
+  if accountsRegistry == budgetRegistry
+    then Right ()
+    else Left (pure (HouseholdBudgetRegistryDisagreement
+      (householdBudgetJournalPath paths)
+      "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry"))
+  budgetMovements <- first (pure . HouseholdBudgetMovementAdmitFailed)
+    (admitHouseholdBudgetMovementJournal budgetJournal)
 
-  budgetPolicy <- first (NonEmpty.singleton . HouseholdBudgetPolicyParseFailed) (parseBudgetPolicy budgetPolicyText)
-  policy <- first (NonEmpty.singleton . HouseholdPolicyParseFailed) (parseHouseholdPolicy budgetPolicy householdPolicyText)
-  validatedPolicy <- first (NonEmpty.singleton . HouseholdPolicyAccountValidationFailed) (validateHouseholdPolicyAccounts accountsRegistry policy)
-  reportConfig <- first (NonEmpty.singleton . HouseholdReportConfigParseFailed) (parseReportConfiguration reportConfigText)
-  issues <- first (NonEmpty.singleton . HouseholdIssuesParseFailed) (parseHouseholdIssues issuesText)
-
-  committedPlans <- first (NonEmpty.singleton . HouseholdPlanAnalysisFailed) (admitPlanJournalForScope planJournal)
-  let assetSelections =
-        [ selectDailyTargetAsset (safeScopeId (accountName acc)) acc
-        | decl <- accountDeclarations accountsRegistry
-        , let acc = declaredAccount decl
-        , declaredAccountType decl == Asset
-        ]
-  obligationSelections <- first (pure . HouseholdPlanAnalysisFailed . T.pack . show) (parseDailyTargetPlanJournalSelections planText planJournal)
-  dailyScope <- first (NonEmpty.singleton . HouseholdDailyTargetScopeFailed) (dailyTargetScopeFromSelections accountsRegistry committedPlans assetSelections obligationSelections)
+  budgetPolicy <- first (pure . HouseholdBudgetPolicyParseFailed)
+    (parseBudgetPolicy budgetPolicyText)
+  configuration <- first (pure . HouseholdPolicyParseFailed)
+    (parseHouseholdConfiguration budgetPolicy householdPolicyText)
+  let policy = householdConfigurationPolicy configuration
+  validatedPolicy <- first (pure . HouseholdPolicyAccountValidationFailed)
+    (validateHouseholdPolicyAccounts accountsRegistry policy)
+  validateHouseholdAccountPolicy accountsRegistry
+    (householdConfigurationAccountPolicy configuration)
+  reportConfig <- first (pure . HouseholdReportConfigParseFailed)
+    (parseReportConfiguration reportConfigText)
+  issues <- first (pure . HouseholdIssuesParseFailed)
+    (parseHouseholdIssues issuesText)
+  dailyScope <- assembleDailyScope
+    accountsRegistry
+    (householdConfigurationDailyTargetAssets configuration)
+    planText
+    planJournal
 
   pure HouseholdState
     { householdStateRoot = root
@@ -502,6 +447,7 @@ admitCanonicalHousehold root accountsText actualText planText budgetText budgetP
     , householdStateBudgetJournal = budgetJournal
     , householdStateBudgetMovements = budgetMovements
     , householdStateBudgetPolicy = budgetPolicy
+    , householdStateConfiguration = configuration
     , householdStatePolicy = policy
     , householdStateValidatedPolicy = validatedPolicy
     , householdStateReportConfig = reportConfig
@@ -509,198 +455,21 @@ admitCanonicalHousehold root accountsText actualText planText budgetText budgetP
     , householdStateDailyScope = dailyScope
     }
 
--- | Build 'HouseholdReportSurface' directly from the loaded 'HouseholdState'.
+-- | Build the report surface using the shared typed calculation owner.
 buildHouseholdReportSurfaceFromHousehold
   :: Day
   -> HouseholdState
   -> Either (NonEmpty HouseholdLoadError) HouseholdReportSurface
 buildHouseholdReportSurfaceFromHousehold observation state = do
-  let actualJournal = householdStateActualJournal state
-      journal = actualJournalValue actualJournal
-      planJournal = householdStatePlanJournal state
-      policy = householdStatePolicy state
-      validatedPolicy = householdStateValidatedPolicy state
-      budgetMovements = householdStateBudgetMovements state
-      issues = householdStateIssues state
-      dailyScope = householdStateDailyScope state
-      cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
-
-  admittedPlans <- first (NonEmpty.singleton . HouseholdPlanAnalysisFailed . T.pack . show)
-    (admitPlanJournalPure planJournal)
-
-  (current, previous) <- first (NonEmpty.singleton . HouseholdCycleError)
-    (resolveCyclesPure observation journal cycleAccount (admittedIncomingAnchors admittedPlans))
-
-  outgoingDeclarations <- first (NonEmpty.singleton . HouseholdPlanResolutionFailed . T.pack . show)
-    (completionDeclarationsForOutgoingPlansPure admittedPlans (actualJournalCompletionDeclarations actualJournal))
-
-  let outgoingPlans = admittedOutgoingPlans admittedPlans
-
-  openPlanValues <- first (NonEmpty.singleton . HouseholdPlanResolutionFailed . T.pack . show)
-    (resolveOpenCommittedOutgoingPlans
-      (map planFactValue outgoingPlans)
-      (actualJournalIdentifiedTransactions actualJournal)
-      outgoingDeclarations)
-
-  budgetObservation <- first (NonEmpty.singleton . HouseholdBudgetObservationFailed)
-    (deriveHouseholdBudgetObservation observation current journal validatedPolicy budgetMovements)
-
-  let admittedPolicy = householdBudgetObservationPolicy budgetObservation
-      consumption = householdBudgetConsumption budgetObservation
-      entitlement = householdBudgetEntitlement budgetObservation
-      remaining = householdBudgetRemaining budgetObservation
-      openPlanIds = Set.fromList (map committedPlanId openPlanValues)
-      openPlans = openPlansInPeriodPure current (journalAccountRegistry journal) openPlanIds outgoingPlans
-      backingPlans =
-        [ HouseholdBackingPlan
-            { householdBackingPlanDestination = planFactTo plan
-            , householdBackingPlanAmount = committedPlanAmount (planFactValue plan)
-            }
-        | plan <- openPlans
-        ]
-      backing = deriveHouseholdBacking
-        observation current journal admittedPolicy
-        budgetMovements entitlement consumption remaining backingPlans
-      target = deriveDailyTarget observation current journal
-        dailyScope (map planFactValue openPlans)
-
-  pure HouseholdReportSurface
-    { householdCycleAccounts = cycleAccounts current previous journal
-    , householdPlannedTransactions = map planFactValue openPlans
-    , householdIssues = issues
-    , householdEnvelopeBacking = backing
-    , householdDailyTarget = target
-    }
-
--- Pure helpers matching HouseholdReport
-
-data IncomingCycleAnchor = IncomingCycleAnchor
-  { incomingAnchorId     :: PlanId
-  , incomingAnchorDate   :: Day
-  , incomingAnchorSource :: Account
-  } deriving (Eq, Show)
-
-data PlanFact = PlanFact
-  { planFactValue :: CommittedOutgoingPlan
-  , planFactFrom  :: Account
-  , planFactTo    :: Account
-  } deriving (Eq, Show)
-
-data AdmittedPlans = AdmittedPlans
-  { admittedIncomingAnchors :: [IncomingCycleAnchor]
-  , admittedOutgoingPlans   :: [PlanFact]
-  } deriving (Eq, Show)
-
-admitPlanJournalPure :: PlanJournal -> Either Text AdmittedPlans
-admitPlanJournalPure planJournal = case classifyPlanJournal planJournal of
-  Left err -> Left (T.pack (show err))
-  Right classified -> case projectIncomingCycleAnchor registry (classifiedIncomingPlanTransactions classified) of
-    Left err -> Left err
-    Right incoming -> case projectCommittedOutgoingPlans planJournal classified of
-      Left err -> Left (T.pack (show err))
-      Right projected -> Right AdmittedPlans
-        { admittedIncomingAnchors = incoming
-        , admittedOutgoingPlans = map projectPlanFact projected
-        }
-  where
-    registry = journalAccountRegistry (planJournalValue planJournal)
-
-projectIncomingCycleAnchor
-  :: AccountRegistry
-  -> [IdentifiedPlanTransaction]
-  -> Either Text [IncomingCycleAnchor]
-projectIncomingCycleAnchor registry identifiedList =
-  traverse projectOne identifiedList
-  where
-    projectOne identified = case Set.toAscList incomeSources of
-      [source] -> Right IncomingCycleAnchor
-        { incomingAnchorId = identifiedPlanId identified
-        , incomingAnchorDate = transactionDate transaction
-        , incomingAnchorSource = source
-        }
-      _ -> Left "incoming cycle anchor requires exactly one Income source Account"
-      where
-        transaction = identifiedPlanTransaction identified
-        incomeSources = Set.fromList
-          [ postingAccount posting
-          | posting <- NonEmpty.toList (transactionPostings transaction)
-          , accountTypeFor (postingAccount posting) registry == Just Income
-          , amountQuantity (postingAmount posting) < zeroQuantity
-          ]
-
-projectPlanFact :: ProjectedCommittedOutgoingPlan -> PlanFact
-projectPlanFact projected = PlanFact
-  { planFactValue = plan
-  , planFactFrom = declaredAccount (declaredPaymentSource direction)
-  , planFactTo = declaredAccount (declaredPaymentDestination direction)
-  }
-  where
-    plan = projectedCommittedOutgoingPlan projected
-    direction = declaredOutgoingPaymentDirection (committedPlanDirection plan)
-
-completionDeclarationsForOutgoingPlansPure
-  :: AdmittedPlans
-  -> [PlanCompletionDeclaration]
-  -> Either Text [PlanCompletionDeclaration]
-completionDeclarationsForOutgoingPlansPure plans declarations =
-  case unknownErrors of
-    _ : _ -> Left (T.pack (show unknownErrors))
-    [] -> Right
-      [ declaration
-      | declaration <- declarations
-      , Set.member (declaredCompletionPlanId declaration) outgoingPlanIds
-      ]
-  where
-    incomingPlanIds = Set.fromList (map incomingAnchorId (admittedIncomingAnchors plans))
-    outgoingPlanIds = Set.fromList (map (committedPlanId . planFactValue) (admittedOutgoingPlans plans))
-    knownPlanIds = Set.union incomingPlanIds outgoingPlanIds
-    unknownErrors =
-      [ "completion relation refers to unknown PlanId " <> planIdText planId
-      | declaration <- declarations
-      , let planId = declaredCompletionPlanId declaration
-      , Set.notMember planId knownPlanIds
-      ]
-
-resolveCyclesPure
-  :: Day
-  -> Journal
-  -> Account
-  -> [IncomingCycleAnchor]
-  -> Either Text (Period, Period)
-resolveCyclesPure observation journal incomeAccount anchors =
-  case (reverse actualAnchors, plannedAnchors) of
-    (currentStart : previousStart : _, currentEnd : _) -> do
-      current <- first (T.pack . show) (mkPeriod currentStart currentEnd)
-      previous <- first (T.pack . show) (mkPeriod previousStart currentStart)
-      Right (current, previous)
-    _ -> Left "income-anchor cycle requires two observed Actual anchors and one future Plan anchor"
-  where
-    actualAnchors = Set.toAscList (Set.fromList
-      [ entryDate entry
-      | entry <- journalEntries journal
-      , entryDate entry <= observation
-      , entryAccount entry == incomeAccount
-      , amountQuantity (entryAmount entry) < zeroQuantity
-      ])
-    plannedAnchors = Set.toAscList (Set.fromList
-      [ incomingAnchorDate anchor
-      | anchor <- anchors
-      , incomingAnchorSource anchor == incomeAccount
-      , incomingAnchorDate anchor > observation
-      ])
-
-openPlansInPeriodPure
-  :: Period
-  -> AccountRegistry
-  -> Set.Set PlanId
-  -> [PlanFact]
-  -> [PlanFact]
-openPlansInPeriodPure period registry openPlanIds =
-  sortOn (committedPlanDate . planFactValue)
-    . filter eligible
-  where
-    eligible plan =
-      Set.member (committedPlanId (planFactValue plan)) openPlanIds
-        && periodContains period (committedPlanDate (planFactValue plan))
-        && accountTypeFor (planFactFrom plan) registry == Just Asset
-        && accountTypeFor (planFactTo plan) registry `elem` [Just Expense, Just Liability]
+  admittedPlans <- first (pure . HouseholdPlanProjectionFailed)
+    (admitPlanJournal (householdStatePlanJournal state))
+  first (pure . HouseholdReportCalculationFailed)
+    (buildHouseholdReportSurfaceFromAdmitted
+      observation
+      (householdStateActualJournal state)
+      (householdStatePolicy state)
+      (householdStateValidatedPolicy state)
+      admittedPlans
+      (householdStateBudgetMovements state)
+      (householdStateIssues state)
+      (householdStateDailyScope state))
