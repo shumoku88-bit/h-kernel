@@ -30,7 +30,7 @@ require_data_dir() {
 usage() {
   cat <<'EOF'
 Usage:
-  tools/hk [--base DIR]
+  tools/hk [--base DIR]                         Open the Actual workspace.
   tools/hk [--base DIR] report [REPORT_ARGS...]
   tools/hk [--base DIR] actual-add [ACTUAL_JOURNAL]
   tools/hk [--base DIR] actual-multi [ARGS...]
@@ -45,7 +45,7 @@ Usage:
 
 Commands:
   report          Run the existing Haskell report entrypoint.
-  actual-add      Run the existing Actual add TUI (supports 2-posting add and fund transfer).
+  actual-add      Open the Actual workspace for an explicit journal path.
   actual-multi    Route multi-posting Actual transaction append directly to h-kernel-editor-cli.
   actual-reverse  Route an explicit Actual reversal intent directly to h-kernel-editor-cli.
   account         Route Account declaration directly to h-kernel-editor-cli.
@@ -58,53 +58,15 @@ Commands:
 EOF
 }
 
-prompt_choice() {
-  header=$1; shift
-  if command -v gum >/dev/null 2>&1; then printf '%s\n' "$@" | gum choose --header "$header"
-  elif command -v fzf >/dev/null 2>&1; then printf '%s\n' "$@" | fzf --header="$header" --height=15 --reverse
-  else
-    printf '%s\n' "$header" >&2
-    i=1; for opt in "$@"; do printf '  %d) %s\n' "$i" "$opt" >&2; i=$((i + 1)); done
-    while true; do
-      printf 'Select option [1-%d]: ' "$#" >&2
-      read -r choice || return 1
-      case "$choice" in ''|*[!0-9]*) continue ;; esac
-      if [ "$choice" -ge 1 ] && [ "$choice" -le "$#" ]; then eval "echo \"\${$choice}\""; return 0; fi
-    done
-  fi
-}
-
-run_interactive_menu() {
-  dir=$(get_data_dir || true)
-  if [ -n "$dir" ]; then printf 'Ledger Data Directory: %s\n\n' "$dir" >&2
-  else printf 'Ledger Data Directory: (not set)\n\n' >&2; fi
-
-  choice=$(prompt_choice "Select Operation:" \
-    "Report" "Actual add / transfer" "Actual multi-posting" "Actual reverse" \
-    "Account declaration" "Plan operations" "Budget movement" "Issue operations" "Check" "Exit")
-
-  case "$choice" in
-    "Report") [ -n "$dir" ] && export HKERNEL_LEDGER_DATA_DIR="$dir"; exec "$REPORT" ;;
-    "Actual add / transfer") data_dir=$(require_data_dir); cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-tui -- "$data_dir/actual.journal" ;;
-    "Actual multi-posting") printf 'Usage: tools/hk actual-multi ARGS...\n' >&2 ;;
-    "Actual reverse") printf 'Usage: tools/hk actual-reverse ARGS...\n' >&2 ;;
-    "Account declaration") printf 'Usage: tools/hk account ARGS...\n' >&2 ;;
-    "Plan operations") printf 'Usage: tools/hk plan ARGS...\n' >&2 ;;
-    "Budget movement") printf 'Usage: tools/hk budget ARGS...\n' >&2 ;;
-    "Issue operations") printf 'Usage: tools/hk issue ARGS...\n' >&2 ;;
-    "Check") cd "$ROOT"; "$CABAL" build all; "$CABAL" test all; exec "$CABAL" run exe:repository-audit ;;
-    "Exit"|*) exit 0 ;;
-  esac
-}
-
 if [ "$#" -eq 0 ]; then
   if [ ! -t 0 ] || [ ! -t 1 ]; then
-    printf 'tools/hk interactive menu requires a TTY. Use subcommands in non-interactive environments.\n' >&2
+    printf 'tools/hk workspace requires a TTY. Use subcommands in non-interactive environments.\n' >&2
     usage >&2
     exit 2
   fi
-  run_interactive_menu
-  exit 0
+  data_dir=$(require_data_dir)
+  cd "$ROOT"
+  exec "$CABAL" run exe:h-kernel-editor-tui -- "$data_dir/actual.journal"
 fi
 
 command=$1
