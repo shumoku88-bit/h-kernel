@@ -40,6 +40,7 @@ import HKernel.Editor.ActualAppend
   , ActualAddWriteOutcome(..)
   , classifyActualAddWriteResult
   , emptyActualAddInput
+  , prepareActualAddPreview
   )
 import HKernel.Editor.ActualWorkspace (transactionsForAccount)
 import HKernel.Editor.ActualWriter (publishActualBlock)
@@ -48,6 +49,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualAddAction(..)
   , ActualAddMode(..)
   , ActualAddState(..)
+  , enterActualAddPreview
   , transitionActualAdd
   )
 import HKernel.Journal
@@ -504,14 +506,13 @@ handleInputEvent context form event = case event of
   VtyEvent (V.EvKey V.KEsc []) ->
     put (AppWrapper context Workspace)
   VtyEvent (V.EvKey V.KEnter []) -> do
-    let pureState =
-          transitionActualAdd
-            (contextSource context)
-            RequestActualAddPreview
-            (ActualAddState (formState form) EditingActualAdd)
+    let input = formState form
+        preview = prepareActualAddPreview (contextSource context) input
+        pureState =
+          enterActualAddPreview preview (ActualAddState input EditingActualAdd)
     case actualAddMode pureState of
-      ShowingActualAddPreview preview ->
-        put (AppWrapper context (ShowPreview preview form))
+      ShowingActualAddPreview shownPreview ->
+        put (AppWrapper context (ShowPreview shownPreview form))
       _ -> put (AppWrapper context (InputForm form))
   VtyEvent (V.EvKey (V.KFun 2) []) ->
     openAccountSelection context SelectFromAccount form
@@ -552,7 +553,6 @@ handleAccountSelection context target accountList form event = case event of
       Just (_, account) -> do
         let state =
               transitionActualAdd
-                (contextSource context)
                 (ChooseAccount account)
                 (ActualAddState
                   (formState form)
@@ -593,7 +593,6 @@ requestConfirmation
 requestConfirmation context preview form = do
   let state =
         transitionActualAdd
-          (contextSource context)
           RequestActualAddConfirmation
           (ActualAddState
             (formState form)
@@ -627,7 +626,6 @@ cancelConfirmation
 cancelConfirmation context block form = do
   let state =
         transitionActualAdd
-          (contextSource context)
           CancelActualAddConfirmation
           (ActualAddState (formState form) (ConfirmingActualAdd block))
   case actualAddMode state of
@@ -643,7 +641,6 @@ acceptConfirmation
 acceptConfirmation context block form = do
   let state =
         transitionActualAdd
-          (contextSource context)
           ConfirmActualAdd
           (ActualAddState (formState form) (ConfirmingActualAdd block))
   case actualAddMode state of
