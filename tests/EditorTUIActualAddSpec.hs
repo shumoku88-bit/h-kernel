@@ -35,7 +35,7 @@ import HKernel.Editor.Interaction.ActualAdd
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Journal (journalAccountRegistry, parseJournal)
-import HKernel.Money (commodityCode, intentAmountCommodity, renderQuantity)
+import HKernel.Money (commodityCode, renderQuantity)
 
 main :: IO ()
 main = do
@@ -124,7 +124,7 @@ testDefaultCommodityInference source =
               && showCommodity sourcePosting == "JPY"
           _ -> False
   where
-    showCommodity = maybe "" commodityCode . intentAmountCommodity
+    showCommodity = maybe "" commodityCode . intentCommodity
 
 testConflictingDefaults :: Bool
 testConflictingDefaults =
