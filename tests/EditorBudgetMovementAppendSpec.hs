@@ -12,7 +12,9 @@ import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (mkAccount)
 import HKernel.Editor.ActualWriter
-  ( WriteIntent(..)
+  ( CandidateSource(..)
+  , ExpectedSource(..)
+  , WriteIntent(..)
   , WriterFileSystem(..)
   , defaultWriterFileSystem
   , publishWithAdmission
@@ -78,8 +80,8 @@ testBudgetMovementCommit = do
         parseHouseholdBudgetMovements
         WriteIntent
           { targetFilePath = path
-          , expectedOldBytes = fixtureSource
-          , candidateNewBytes = candidateCompleteSource preview
+          , expectedOldBytes = ExpectedSource fixtureSource
+          , candidateNewBytes = CandidateSource (candidateCompleteSource preview)
           }
       case writeResult of
         Left err -> print err >> pure False
