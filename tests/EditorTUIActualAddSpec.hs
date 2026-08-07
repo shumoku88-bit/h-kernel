@@ -5,6 +5,7 @@ module Main (main) where
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import Data.Time.Calendar (addDays, fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (accountName, mkAccount)
@@ -16,6 +17,7 @@ import HKernel.Editor.ActualAppend
   , ActualAddWriteOutcome(..)
   , ActualEditIntent(..)
   , buildActualAddIntent
+  , buildActualAddIntentWithRegistry
   , classifyActualAddWriteResult
   , prepareActualAddPreview
   )
@@ -27,10 +29,13 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualAddState(..)
   , enterActualAddPreview
   , initialActualAddState
+  , initialActualAddStateForDay
+  , setActualAddDate
   , transitionActualAdd
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
-import HKernel.Money (renderQuantity)
+import HKernel.Journal (journalAccountRegistry, parseJournal)
+import HKernel.Money (commodityCode, intentAmountCommodity, renderQuantity)
 
 main :: IO ()
 main = do
@@ -39,7 +44,12 @@ main = do
         [ ("positive magnitude builds balanced typed intent", testPositiveMagnitude)
         , ("negative magnitude is rejected", testNegativeMagnitude)
         , ("zero magnitude is rejected", testZeroMagnitude)
-        , ("amount shape is explicit", testAmountShape)
+        , ("amount shape is explicit without registry", testAmountShape)
+        , ("daily amount infers canonical default commodity", testDefaultCommodityInference source)
+        , ("conflicting defaults fail before candidate creation", testConflictingDefaults)
+        , ("missing defaults fail before candidate creation", testMissingDefaults)
+        , ("daily entry starts on supplied day", testInitialDay)
+        , ("daily entry can switch to yesterday", testYesterday)
         , ("from Account selection updates input", testFromSelection)
         , ("cancelled selection preserves input", testCancelSelection)
         , ("preview transition retains candidate block only", testPreviewTransition source)
@@ -98,6 +108,77 @@ testAmountShape :: Bool
 testAmountShape =
   buildActualAddIntent (validInput { addAmountText = "100" })
     == Left ActualAddInvalidAmountShape
+
+testDefaultCommodityInference :: T.Text -> Bool
+testDefaultCommodityInference source =
+  case parseJournal source of
+    Left _ -> False
+    Right journal ->
+      case buildActualAddIntentWithRegistry
+          (journalAccountRegistry journal)
+          (validInput { addAmountText = "100" }) of
+        Left _ -> False
+        Right intent -> case NonEmpty.toList (intentPostings intent) of
+          [destination, sourcePosting] ->
+            showCommodity destination == "JPY"
+              && showCommodity sourcePosting == "JPY"
+          _ -> False
+  where
+    showCommodity = maybe "" commodityCode . intentAmountCommodity
+
+testConflictingDefaults :: Bool
+testConflictingDefaults =
+  case parseJournal conflictingDefaultSource of
+    Left _ -> False
+    Right journal ->
+      buildActualAddIntentWithRegistry
+        (journalAccountRegistry journal)
+        (validInput { addAmountText = "100" })
+        == Left ActualAddConflictingDefaultCommodity
+
+testMissingDefaults :: Bool
+testMissingDefaults =
+  case parseJournal missingDefaultSource of
+    Left _ -> False
+    Right journal ->
+      buildActualAddIntentWithRegistry
+        (journalAccountRegistry journal)
+        (validInput { addAmountText = "100" })
+        == Left ActualAddMissingDefaultCommodity
+
+conflictingDefaultSource :: T.Text
+conflictingDefaultSource = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: USD"
+  ]
+
+missingDefaultSource :: T.Text
+missingDefaultSource = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "account expenses:food"
+  , "  type: Expense"
+  ]
+
+testInitialDay :: Bool
+testInitialDay =
+  let today = fromGregorian 2026 8 8
+      state = initialActualAddStateForDay today
+  in addDateText (actualAddInput state) == "2026-08-08"
+      && actualAddMode state == EditingActualAdd
+
+testYesterday :: Bool
+testYesterday =
+  let today = fromGregorian 2026 8 8
+      yesterday = addDays (-1) today
+      initial = initialActualAddStateForDay today
+      changed = setActualAddDate yesterday initial
+  in addDateText (actualAddInput changed) == "2026-08-07"
+      && actualAddMode changed == EditingActualAdd
 
 testFromSelection :: Bool
 testFromSelection = case mkAccount "assets:cash" of
