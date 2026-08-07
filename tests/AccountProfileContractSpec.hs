@@ -5,12 +5,18 @@ module Main (main) where
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
+import qualified Data.Text as T
 import HKernel.Account
 import HKernel.Budget
   ( EnvelopeIdError(..)
   , envelopeIdText
   )
+import HKernel.Budget.Config (parseBudgetPolicy)
 import HKernel.Household.AccountProfile
+import HKernel.Household.Config
+  ( householdConfigurationAccountPolicy
+  , parseHouseholdConfiguration
+  )
 import HKernel.Money
 import System.Exit (exitFailure)
 
@@ -121,6 +127,132 @@ main = do
     (classifyRetainedAccountProfile expenseDeclaration
       (Map.fromList [("fixed", "yes")]))
 
+  characterizeNativeAccountPolicy jpy assetProfile
+
+characterizeNativeAccountPolicy :: Commodity -> RetainedAccountProfile -> IO ()
+characterizeNativeAccountPolicy jpy profileWithUnknownMetadata = do
+  let asset = migrationProfile "assets:cash" Asset
+        [("type", "liquid")]
+      opening = migrationProfile "budget:opening" Budget
+        [("kind", "opening"), ("budget_group", "reserve")]
+      unassigned = migrationProfile "budget:unassigned" Budget
+        [ ("kind", "unassigned")
+        , ("envelope_role", "unassigned")
+        , ("budget_group", "reserve")
+        ]
+      envelope = migrationProfile "budget:daily" Budget
+        [ ("kind", "envelope")
+        , ("budget", "Daily")
+        , ("envelope_role", "dynamic")
+        , ("budget_group", "daily")
+        ]
+      expense = migrationProfile "expenses:food" Expense
+        [ ("budget", "Daily")
+        , ("fixed", "1")
+        , ("spend_class", "fixed")
+        ]
+      retained = Map.fromList
+        [ (declaredAccount (retainedAccountDeclaration value), value)
+        | value <- [asset, opening, unassigned, envelope, expense]
+        ]
+      projected = mustRight (projectRetainedHouseholdAccountPolicy retained)
+      budgetPolicy = mustRight (parseBudgetPolicy nativeBudgetConfig)
+      nativeConfiguration = mustRight
+        (parseHouseholdConfiguration budgetPolicy nativeHouseholdConfig)
+
+  assertEqual
+    "semantic TOML axes reproduce retained Account household policy"
+    (Just projected)
+    (householdConfigurationAccountPolicy nativeConfiguration)
+
+  case projectRetainedHouseholdAccountPolicy
+      (Map.singleton
+        (declaredAccount (retainedAccountDeclaration profileWithUnknownMetadata))
+        profileWithUnknownMetadata) of
+    Left errors
+      | RetainedAccountMetadataRemainsUnclassified `elem` NonEmpty.toList errors ->
+          putStrLn "  [PASS] native migration refuses unclassified retained metadata"
+      | otherwise -> failTest
+          "native migration refuses unclassified retained metadata"
+          ("unexpected errors: " ++ show errors)
+    Right value -> failTest
+      "native migration refuses unclassified retained metadata"
+      ("unexpectedly projected: " ++ show value)
+
+  let conflictingFixed = migrationProfile "expenses:conflict" Expense
+        [("fixed", "1"), ("spend_class", "variable")]
+  case projectRetainedHouseholdAccountPolicy
+      (Map.singleton
+        (declaredAccount (retainedAccountDeclaration conflictingFixed))
+        conflictingFixed) of
+    Left errors
+      | RetainedFixedMarkerConflictsWithSpendClass `elem` NonEmpty.toList errors ->
+          putStrLn "  [PASS] duplicate fixed marker may be retired only after parity"
+      | otherwise -> failTest
+          "duplicate fixed marker may be retired only after parity"
+          ("unexpected errors: " ++ show errors)
+    Right value -> failTest
+      "duplicate fixed marker may be retired only after parity"
+      ("unexpectedly projected: " ++ show value)
+  where
+    migrationProfile name role metadata = mustRight
+      (classifyRetainedAccountProfile
+        (declaration name role jpy)
+        (Map.fromList metadata))
+
+nativeBudgetConfig :: T.Text
+nativeBudgetConfig = T.unlines
+  [ "[[backing-pools]]"
+  , "id = \"operating\""
+  , "asset-accounts = [\"assets:cash\"]"
+  , ""
+  , "[[envelopes]]"
+  , "id = \"Daily\""
+  , "label = \"Daily\""
+  , "pacing = \"daily\""
+  , "backing-pool = \"operating\""
+  , "expense-accounts = [\"expenses:food\"]"
+  ]
+
+nativeHouseholdConfig :: T.Text
+nativeHouseholdConfig = T.unlines
+  [ "[cycle]"
+  , "mode = \"income-anchor\""
+  , "income-account = \"income:benefit\""
+  , ""
+  , "[budget]"
+  , "unassigned-accounts = [\"budget:unassigned\"]"
+  , ""
+  , "[[budget.envelopes]]"
+  , "id = \"Daily\""
+  , "allocation-account = \"budget:daily\""
+  , ""
+  , "[account-policy.assets]"
+  , "liquid = [\"assets:cash\"]"
+  , "savings = []"
+  , "investment = []"
+  , ""
+  , "[account-policy.budget.kind]"
+  , "opening = [\"budget:opening\"]"
+  , "unassigned = [\"budget:unassigned\"]"
+  , "spent = []"
+  , "envelope = [\"budget:daily\"]"
+  , ""
+  , "[account-policy.budget.envelope-role]"
+  , "unassigned = [\"budget:unassigned\"]"
+  , "dynamic = [\"budget:daily\"]"
+  , "execution = []"
+  , ""
+  , "[account-policy.budget.group]"
+  , "daily = [\"budget:daily\"]"
+  , "flex = []"
+  , "reserve = [\"budget:opening\", \"budget:unassigned\"]"
+  , ""
+  , "[account-policy.expenses]"
+  , "fixed = [\"expenses:food\"]"
+  , "variable = []"
+  ]
+
 declaration :: Text -> AccountType -> Commodity -> AccountDeclaration
 declaration name accountType commodity =
   declareAccountWithDefaultCommodity
@@ -149,8 +281,11 @@ assertLeftEqual label expected result = case result of
 assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
 assertEqual label expected actual
   | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure
+  | otherwise = failTest label
+      ("expected: " ++ show expected ++ ", but got: " ++ show actual)
+
+failTest :: String -> String -> IO ()
+failTest label detail = do
+  putStrLn ("  [FAIL] " ++ label)
+  putStrLn ("    " ++ detail)
+  exitFailure

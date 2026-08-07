@@ -1,17 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Source-independent semantic contract for retained Account metadata.
+-- | Source-independent semantic contract for household Account classifications
+-- and the retained @accounts.tsv@ evidence from which they are being migrated.
 --
 -- Physical @accounts.tsv@ admission belongs to
 -- 'HKernel.Household.AccountProfile.TSV'. This module owns the value boundary
--- produced after admission: canonical Account declaration, general
--- Budget-policy evidence, household-only policy evidence, and metadata whose
--- meaning is not yet classified.
---
--- A key is consumed only when its meaning is valid for the declared
--- 'AccountType'. The same textual key on another Account type remains visible
--- in 'retainedAccountUnclassifiedMetadata' instead of being forced into the
--- wrong policy owner.
+-- produced after admission and the native policy value that can be carried by
+-- @household.toml@ without preserving TSV row shape.
 module HKernel.Household.AccountProfile
   ( RetainedAssetClass(..)
   , RetainedBudgetAccountKind(..)
@@ -23,6 +18,15 @@ module HKernel.Household.AccountProfile
   , RetainedAccountProfile(..)
   , AccountProfileError(..)
   , classifyRetainedAccountProfile
+  , HouseholdAccountPolicy
+  , householdAssetClassByAccount
+  , householdBudgetKindByAccount
+  , householdEnvelopeRoleByAccount
+  , householdBudgetGroupByAccount
+  , householdSpendClassByAccount
+  , HouseholdAccountPolicyError(..)
+  , mkHouseholdAccountPolicy
+  , projectRetainedHouseholdAccountPolicy
   ) where
 
 import Data.List.NonEmpty (NonEmpty)
@@ -32,7 +36,8 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import HKernel.Account
-  ( AccountDeclaration
+  ( Account
+  , AccountDeclaration
   , AccountType(..)
   , declaredAccountType
   )
@@ -47,7 +52,7 @@ data RetainedAssetClass
   = RetainedLiquidAsset
   | RetainedSavingsAsset
   | RetainedInvestmentAsset
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | Retained structural role for a Budget Account.
 data RetainedBudgetAccountKind
@@ -55,30 +60,30 @@ data RetainedBudgetAccountKind
   | RetainedUnassignedBudgetAccount
   | RetainedSpentBudgetAccount
   | RetainedEnvelopeBudgetAccount
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | Retained household execution role for an Envelope allocation Account.
 data RetainedEnvelopeRole
   = RetainedUnassignedEnvelopeRole
   | RetainedDynamicEnvelopeRole
   | RetainedExecutionEnvelopeRole
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | Retained household group evidence.
 --
 -- This is deliberately not 'HKernel.Budget.Pacing': @reserve@ is a separate
--- legacy coordinate, so collapsing both values would lose evidence.
+-- coordinate, so collapsing both values would lose evidence.
 data RetainedBudgetGroup
   = RetainedDailyBudgetGroup
   | RetainedFlexBudgetGroup
   | RetainedReserveBudgetGroup
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | Retained expense classification evidence.
 data RetainedSpendClass
   = RetainedFixedSpend
   | RetainedVariableSpend
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | Evidence whose stable semantic owner is the general 'BudgetPolicy'.
 --
@@ -90,9 +95,6 @@ data AccountBudgetPolicyEvidence = AccountBudgetPolicyEvidence
 
 -- | Evidence whose stable semantic owner is household policy or a future named
 -- household overlay.
---
--- These coordinates are retained separately from 'AccountDeclaration'. They do
--- not change Account identity, accounting type, or default Commodity.
 data AccountHouseholdPolicyEvidence = AccountHouseholdPolicyEvidence
   { accountAssetClassEvidence              :: Maybe RetainedAssetClass
   , accountPlanDestinationEnvelopeEvidence :: Maybe EnvelopeId
@@ -106,9 +108,9 @@ data AccountHouseholdPolicyEvidence = AccountHouseholdPolicyEvidence
 
 -- | One retained Account profile after semantic separation.
 data RetainedAccountProfile = RetainedAccountProfile
-  { retainedAccountDeclaration        :: AccountDeclaration
-  , retainedAccountBudgetEvidence     :: AccountBudgetPolicyEvidence
-  , retainedAccountHouseholdEvidence  :: AccountHouseholdPolicyEvidence
+  { retainedAccountDeclaration          :: AccountDeclaration
+  , retainedAccountBudgetEvidence       :: AccountBudgetPolicyEvidence
+  , retainedAccountHouseholdEvidence    :: AccountHouseholdPolicyEvidence
   , retainedAccountUnclassifiedMetadata :: Map Text Text
   } deriving (Eq, Show)
 
@@ -195,6 +197,137 @@ classifyRetainedAccountProfile declaration metadata =
       Expense -> ["budget", "fixed", "spend_class"]
       Budget  -> ["kind", "budget", "envelope_role", "budget_group"]
       _       -> []
+
+-- | Native household policy axes formerly mixed into @accounts.tsv@ rows.
+--
+-- Account identity, AccountType, and default Commodity do not appear here;
+-- those belong to @accounts.journal@. Expense-to-Envelope assignment and Plan
+-- destination relations also remain in their already named Budget/Household
+-- policy owners.
+data HouseholdAccountPolicy = HouseholdAccountPolicy
+  { householdAssetClassByAccount    :: Map Account RetainedAssetClass
+  , householdBudgetKindByAccount    :: Map Account RetainedBudgetAccountKind
+  , householdEnvelopeRoleByAccount  :: Map Account RetainedEnvelopeRole
+  , householdBudgetGroupByAccount   :: Map Account RetainedBudgetGroup
+  , householdSpendClassByAccount    :: Map Account RetainedSpendClass
+  } deriving (Eq, Show)
+
+-- | Errors are deliberately coordinate-class only. They do not retain private
+-- Account identities or metadata values.
+data HouseholdAccountPolicyError
+  = DuplicateHouseholdAssetClassCoordinate
+  | DuplicateHouseholdBudgetKindCoordinate
+  | DuplicateHouseholdEnvelopeRoleCoordinate
+  | DuplicateHouseholdBudgetGroupCoordinate
+  | DuplicateHouseholdSpendClassCoordinate
+  | RetainedFixedMarkerHasNoSpendClass
+  | RetainedFixedMarkerConflictsWithSpendClass
+  | RetainedAccountMetadataRemainsUnclassified
+  deriving (Eq, Show)
+
+-- | Build native policy from semantic axes rather than from a physical row
+-- format. Independent duplicate axes are accumulated.
+mkHouseholdAccountPolicy
+  :: [(Account, RetainedAssetClass)]
+  -> [(Account, RetainedBudgetAccountKind)]
+  -> [(Account, RetainedEnvelopeRole)]
+  -> [(Account, RetainedBudgetGroup)]
+  -> [(Account, RetainedSpendClass)]
+  -> Either (NonEmpty HouseholdAccountPolicyError) HouseholdAccountPolicy
+mkHouseholdAccountPolicy assetClasses budgetKinds envelopeRoles budgetGroups spendClasses =
+  case NonEmpty.nonEmpty errors of
+    Just values -> Left values
+    Nothing -> Right HouseholdAccountPolicy
+      { householdAssetClassByAccount = Map.fromList assetClasses
+      , householdBudgetKindByAccount = Map.fromList budgetKinds
+      , householdEnvelopeRoleByAccount = Map.fromList envelopeRoles
+      , householdBudgetGroupByAccount = Map.fromList budgetGroups
+      , householdSpendClassByAccount = Map.fromList spendClasses
+      }
+  where
+    errors = concat
+      [ duplicateError DuplicateHouseholdAssetClassCoordinate assetClasses
+      , duplicateError DuplicateHouseholdBudgetKindCoordinate budgetKinds
+      , duplicateError DuplicateHouseholdEnvelopeRoleCoordinate envelopeRoles
+      , duplicateError DuplicateHouseholdBudgetGroupCoordinate budgetGroups
+      , duplicateError DuplicateHouseholdSpendClassCoordinate spendClasses
+      ]
+
+-- | Project admitted retained profiles into the native semantic axes.
+--
+-- The legacy @fixed@ marker is intentionally not a native axis. Migration is
+-- allowed only when every retained marker agrees with the already explicit
+-- spend class, proving it is duplicate compatibility evidence rather than a
+-- second policy coordinate. Unknown metadata blocks projection entirely.
+projectRetainedHouseholdAccountPolicy
+  :: Map Account RetainedAccountProfile
+  -> Either (NonEmpty HouseholdAccountPolicyError) HouseholdAccountPolicy
+projectRetainedHouseholdAccountPolicy profiles =
+  case NonEmpty.nonEmpty migrationErrors of
+    Just errors -> Left errors
+    Nothing -> mkHouseholdAccountPolicy
+      assetClasses budgetKinds envelopeRoles budgetGroups spendClasses
+  where
+    entries = Map.toAscList profiles
+    assetClasses = mapMaybeEvidence
+      (accountAssetClassEvidence . retainedAccountHouseholdEvidence)
+      entries
+    budgetKinds = mapMaybeEvidence
+      (accountBudgetAccountKindEvidence . retainedAccountHouseholdEvidence)
+      entries
+    envelopeRoles = mapMaybeEvidence
+      (accountEnvelopeRoleEvidence . retainedAccountHouseholdEvidence)
+      entries
+    budgetGroups = mapMaybeEvidence
+      (accountBudgetGroupEvidence . retainedAccountHouseholdEvidence)
+      entries
+    spendClasses = mapMaybeEvidence
+      (accountSpendClassEvidence . retainedAccountHouseholdEvidence)
+      entries
+    migrationErrors = concatMap profileMigrationErrors entries
+
+profileMigrationErrors
+  :: (Account, RetainedAccountProfile)
+  -> [HouseholdAccountPolicyError]
+profileMigrationErrors (_, profile) = unclassifiedError ++ fixedErrors
+  where
+    evidence = retainedAccountHouseholdEvidence profile
+    unclassifiedError =
+      [ RetainedAccountMetadataRemainsUnclassified
+      | not (Map.null (retainedAccountUnclassifiedMetadata profile))
+      ]
+    fixedErrors = case
+        ( accountFixedExpenseEvidence evidence
+        , accountSpendClassEvidence evidence
+        ) of
+      (Nothing, _) -> []
+      (Just _, Nothing) -> [RetainedFixedMarkerHasNoSpendClass]
+      (Just True, Just RetainedFixedSpend) -> []
+      (Just False, Just RetainedVariableSpend) -> []
+      (Just _, Just _) -> [RetainedFixedMarkerConflictsWithSpendClass]
+
+mapMaybeEvidence
+  :: (RetainedAccountProfile -> Maybe value)
+  -> [(Account, RetainedAccountProfile)]
+  -> [(Account, value)]
+mapMaybeEvidence field = foldr add []
+  where
+    add (account, profile) values = case field profile of
+      Nothing -> values
+      Just value -> (account, value) : values
+
+duplicateError
+  :: HouseholdAccountPolicyError
+  -> [(Account, value)]
+  -> [HouseholdAccountPolicyError]
+duplicateError err values =
+  [ err
+  | hasDuplicateAccounts values
+  ]
+
+hasDuplicateAccounts :: [(Account, value)] -> Bool
+hasDuplicateAccounts values =
+  length values /= Map.size (Map.fromList [(account, ()) | (account, _) <- values])
 
 parseWhen
   :: Bool

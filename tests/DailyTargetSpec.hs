@@ -7,12 +7,18 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Account
+import HKernel.Budget.Config (parseBudgetPolicy)
+import HKernel.Household.Config
+  ( householdConfigurationDailyTargetAssets
+  , parseHouseholdConfiguration
+  )
 import HKernel.Household.DailyTarget
 import HKernel.Household.DailyTarget.TSV
 import HKernel.Journal
 import HKernel.Money
 import HKernel.Period
 import HKernel.Plan
+import HKernel.Plan.Journal (parsePlanJournal)
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -68,6 +74,64 @@ main = do
   assertLeftContaining "physical scope identities remain unique"
     "duplicate scope_id"
     (parseDailyTargetScope registry [plan] duplicateScopeId)
+
+  characterizeNativeSourceParity registry plan scope
+
+characterizeNativeSourceParity
+  :: AccountRegistry
+  -> CommittedOutgoingPlan
+  -> DailyTargetScope
+  -> IO ()
+characterizeNativeSourceParity registry plan retainedScope = do
+  let budgetPolicy = mustRight (parseBudgetPolicy nativeBudgetConfig)
+      householdConfiguration = mustRight
+        (parseHouseholdConfiguration budgetPolicy nativeHouseholdConfig)
+      planJournal = mustRight (parsePlanJournal nativePlanJournal)
+      obligationSelections = mustRight
+        (parseDailyTargetPlanJournalSelections nativePlanJournal planJournal)
+      nativeScope = mustRight
+        (dailyTargetScopeFromSelections
+          registry
+          [plan]
+          (householdConfigurationDailyTargetAssets householdConfiguration)
+          obligationSelections)
+
+  assertEqual
+    "household.toml + plan.journal reproduce retained Daily Target semantics"
+    retainedScope
+    nativeScope
+
+  assertEqual
+    "Plan Journal selection identity is retained outside core Plan identity"
+    [mustRight (mkDailyTargetScopeId "wifi")]
+    (map dailyTargetObligationSelectionId obligationSelections)
+
+  case parseDailyTargetPlanJournalSelections partialReservationPlanJournal
+      (mustRight (parsePlanJournal partialReservationPlanJournal)) of
+    Left errors
+      | IncompleteDailyTargetReservation 1 `elem` NonEmpty.toList errors ->
+          putStrLn "  [PASS] native Plan metadata rejects partial reservation evidence"
+      | otherwise -> failTest
+          "native Plan metadata rejects partial reservation evidence"
+          ("unexpected errors: " ++ show errors)
+    Right value -> failTest
+      "native Plan metadata rejects partial reservation evidence"
+      ("unexpectedly accepted: " ++ show value)
+
+  let duplicateId = mustRight (mkDailyTargetScopeId "wifi")
+      duplicateAsset = selectDailyTargetAsset duplicateId
+        (mustRight (mkAccount "assets:cash"))
+  case dailyTargetScopeFromSelections
+      registry [plan] [duplicateAsset] obligationSelections of
+    Left errors
+      | DuplicateDailyTargetScopeId duplicateId `elem` NonEmpty.toList errors ->
+          putStrLn "  [PASS] native sources preserve cross-owner selection identity uniqueness"
+      | otherwise -> failTest
+          "native sources preserve cross-owner selection identity uniqueness"
+          ("unexpected errors: " ++ show errors)
+    Right value -> failTest
+      "native sources preserve cross-owner selection identity uniqueness"
+      ("unexpectedly accepted: " ++ show value)
 
 journalText :: T.Text
 journalText = T.unlines
@@ -146,6 +210,73 @@ header :: T.Text
 header =
   "kind\tscope_id\taccount_key\tplan_id\texcluded_amount\tcurrency\treservation_ref"
 
+nativeBudgetConfig :: T.Text
+nativeBudgetConfig = T.unlines
+  [ "[[backing-pools]]"
+  , "id = \"operating\""
+  , "asset-accounts = [\"assets:cash\"]"
+  , ""
+  , "[[envelopes]]"
+  , "id = \"daily\""
+  , "label = \"Daily\""
+  , "pacing = \"daily\""
+  , "backing-pool = \"operating\""
+  , "expense-accounts = [\"expenses:wifi\"]"
+  ]
+
+nativeHouseholdConfig :: T.Text
+nativeHouseholdConfig = T.unlines
+  [ "[cycle]"
+  , "mode = \"income-anchor\""
+  , "income-account = \"income:benefit\""
+  , ""
+  , "[budget]"
+  , "unassigned-accounts = [\"budget:unassigned\"]"
+  , ""
+  , "[[budget.envelopes]]"
+  , "id = \"daily\""
+  , "allocation-account = \"budget:daily\""
+  , ""
+  , "[daily-target]"
+  , ""
+  , "[[daily-target.assets]]"
+  , "id = \"cash\""
+  , "account = \"assets:cash\""
+  ]
+
+nativePlanJournal :: T.Text
+nativePlanJournal = planDeclarations <> T.unlines
+  [ "2026-08-08 Wi-Fi"
+  , "    ; plan-id: plan-wifi"
+  , "    ; daily-target-id: wifi"
+  , "    ; reservation-id: reservation:wifi"
+  , "    ; reservation-amount: 50"
+  , "    ; reservation-commodity: JPY"
+  , "    assets:cash    -200 JPY"
+  , "    expenses:wifi   200 JPY"
+  ]
+
+partialReservationPlanJournal :: T.Text
+partialReservationPlanJournal = planDeclarations <> T.unlines
+  [ "2026-08-08 Wi-Fi"
+  , "    ; plan-id: plan-wifi"
+  , "    ; daily-target-id: wifi"
+  , "    ; reservation-id: reservation:wifi"
+  , "    ; reservation-amount: 50"
+  , "    assets:cash    -200 JPY"
+  , "    expenses:wifi   200 JPY"
+  ]
+
+planDeclarations :: T.Text
+planDeclarations = T.unlines
+  [ "account assets:cash"
+  , "    type: asset"
+  , "    commodity: JPY"
+  , "account expenses:wifi"
+  , "    type: expense"
+  , "    commodity: JPY"
+  ]
+
 one :: Commodity -> Integer -> Balance
 one commodity value =
   singletonBalance (mkAmount commodity (quantityFromInteger value))
@@ -158,11 +289,8 @@ mustRight result = case result of
 assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
 assertEqual label expected actual
   | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure
+  | otherwise = failTest label
+      ("expected: " ++ show expected ++ ", but got: " ++ show actual)
 
 assertLeftContaining
   :: Show success
@@ -174,14 +302,16 @@ assertLeftContaining label expected result = case result of
   Left errors
     | expected `T.isInfixOf` rendered ->
         putStrLn ("  [PASS] " ++ label)
-    | otherwise -> do
-        putStrLn ("  [FAIL] " ++ label)
-        putStrLn ("    expected diagnostic containing: " ++ T.unpack expected)
-        putStrLn ("    but got: " ++ T.unpack rendered)
-        exitFailure
+    | otherwise -> failTest label
+        ("expected diagnostic containing: " ++ T.unpack expected
+          ++ ", but got: " ++ T.unpack rendered)
     where
       rendered = T.unlines
         (map dailyTargetTSVErrorMessage (NonEmpty.toList errors))
-  Right value -> do
-    putStrLn ("  [FAIL] " ++ label ++ ": accepted " ++ show value)
-    exitFailure
+  Right value -> failTest label ("accepted: " ++ show value)
+
+failTest :: String -> String -> IO ()
+failTest label detail = do
+  putStrLn ("  [FAIL] " ++ label)
+  putStrLn ("    " ++ detail)
+  exitFailure
