@@ -15,12 +15,20 @@ import System.Exit (exitFailure)
 main :: IO ()
 main = do
   let configuration = mustRight (parseReportConfiguration validConfig)
+      rendered = renderReportConfiguration configuration
+      reparsed = mustRight (parseReportConfiguration rendered)
       plan = reportConfigurationPlan configuration
       presentation = reportConfigurationPresentation configuration
       journal = mustRight (parseJournal journalInput)
       latest = fromGregorian 2026 8 1
       resolved = mustRight (resolveReportPlan latest journal plan)
 
+  assertEqual "canonical report TOML re-admits the exact same configuration"
+    configuration
+    reparsed
+  assertEqual "canonical report TOML is idempotent after re-admission"
+    rendered
+    (renderReportConfiguration reparsed)
   assertEqual "trial balance resolves latest once"
     latest
     (resolvedTrialBalanceAsOf resolved)
@@ -157,7 +165,7 @@ assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
 assertEqual label expected actual
   | expected == actual = putStrLn ("  [PASS] " ++ label)
   | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure
+    putStrLn ("  [FAIL] " ++ label)
+    putStrLn ("    expected: " ++ show expected)
+    putStrLn ("    but got:  " ++ show actual)
+    exitFailure
