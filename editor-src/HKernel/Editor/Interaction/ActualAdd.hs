@@ -16,6 +16,7 @@ module HKernel.Editor.Interaction.ActualAdd
   , initialActualAddStateForDay
   , setActualAddDate
   , dailyAccountCandidates
+  , filterDailyAccountCandidates
   , enterActualAddPreview
   , transitionActualAdd
   ) where
@@ -124,6 +125,15 @@ dailyAccountCandidates registry transactions target =
         ]
     recentSet = Set.fromList recentMatching
     remaining = filter (`Set.notMember` recentSet) allMatching
+
+-- | Case-insensitive substring search over Account names. Empty search preserves
+-- the recent-first order from 'dailyAccountCandidates'.
+filterDailyAccountCandidates :: Text -> [Account] -> [Account]
+filterDailyAccountCandidates query
+  | T.null normalizedQuery = id
+  | otherwise = filter (T.isInfixOf normalizedQuery . T.toCaseFold . accountName)
+  where
+    normalizedQuery = T.toCaseFold (T.strip query)
 
 matchesDailyRole
   :: AccountRegistry
