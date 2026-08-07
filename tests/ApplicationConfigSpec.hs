@@ -9,9 +9,43 @@ import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
+  let root = mustRight (mkHouseholdRoot "private/household")
+      sources = householdSourcePaths root
+
+  assertEqual "Household root retains one normalized application coordinate"
+    "private/household"
+    (householdRootPath root)
+  assertEqual "Account declarations resolve from the canonical root"
+    "private/household/accounts.journal"
+    (householdAccountsJournalPath sources)
+  assertEqual "Actual facts resolve from the canonical root"
+    "private/household/actual.journal"
+    (householdActualJournalPath sources)
+  assertEqual "Plan facts resolve from the canonical root"
+    "private/household/plan.journal"
+    (householdPlanJournalPath sources)
+  assertEqual "Budget movements resolve from the canonical root"
+    "private/household/budget.journal"
+    (householdBudgetJournalPath sources)
+  assertEqual "Budget policy resolves from the canonical root"
+    "private/household/budget.toml"
+    (householdBudgetConfigPath sources)
+  assertEqual "Household policy resolves from the canonical root"
+    "private/household/household.toml"
+    (householdPolicyConfigPath sources)
+  assertEqual "Report application policy resolves from the canonical root"
+    "private/household/report.toml"
+    (householdReportConfigPath sources)
+  assertEqual "Household notebook resolves from the canonical root"
+    "private/household/issues.tsv"
+    (householdIssuesPath sources)
+  assertEqual "an empty bootstrap path is not a Household root"
+    (Left EmptyHouseholdRootPath)
+    (mkHouseholdRoot "")
+
   let canonical = mustRight (parseApplicationConfig
         "# retained profile\nDEFAULT_CURRENCY=JPY\nACTUAL_JOURNAL_FILE=actual.journal\n")
-  assertEqual "the selected Actual Journal remains typed"
+  assertEqual "the retained selected Actual Journal remains typed"
     "actual.journal"
     (applicationActualJournalFile canonical)
 
@@ -35,12 +69,12 @@ main = do
     (parseApplicationConfig
       "# comment\n\nbroken\nACTUAL_JOURNAL_FILE=actual.journal\n")
 
-  assertLeft "the source selection remains required"
+  assertLeft "the retained source selection remains required"
     0
     "ACTUAL_JOURNAL_FILE is required"
     (parseApplicationConfig "DEFAULT_CURRENCY=JPY\n")
 
-  assertLeft "another Actual Journal path is rejected"
+  assertLeft "another retained Actual Journal path is rejected"
     0
     "ACTUAL_JOURNAL_FILE must be actual.journal, got private.journal"
     (parseApplicationConfig "ACTUAL_JOURNAL_FILE=private.journal\n")
@@ -88,7 +122,7 @@ assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
 assertEqual label expected actual
   | expected == actual = putStrLn ("  [PASS] " ++ label)
   | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure
+    putStrLn ("  [FAIL] " ++ label)
+    putStrLn ("    expected: " ++ show expected)
+    putStrLn ("    but got:  " ++ show actual)
+    exitFailure
