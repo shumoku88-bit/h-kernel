@@ -16,23 +16,28 @@ import Lens.Micro.Mtl ()
 
 import Control.Exception (try)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Time.Calendar (Day)
+import Data.Time.Calendar (Day, addDays)
 import Data.Time.LocalTime (getZonedTime, localDay, zonedTimeToLocalTime)
 import qualified Data.Vector as Vec
+import System.Directory (doesDirectoryExist)
 import System.Environment (getArgs)
 import System.Exit (die)
 import System.FilePath ((</>), takeDirectory)
 import System.IO.Error (tryIOError)
+import Text.Read (readMaybe)
 
 import HKernel.Account
   ( Account
   , AccountDeclaration
+  , AccountType(..)
   , accountDeclarations
   , accountName
+  , accountTypeFor
   , declaredAccount
   , declaredAccountDefaultCommodity
   , declaredAccountType
@@ -47,17 +52,18 @@ import HKernel.Editor.ActualAppend
   , ActualAddWriteFailure(..)
   , ActualAddWriteOutcome(..)
   , classifyActualAddWriteResult
-  , emptyActualAddInput
-  , prepareActualAddPreview
+  , prepareActualAddPreviewFromResolvedJournal
   )
 import HKernel.Editor.ActualWorkspace (transactionsForAccount)
-import HKernel.Editor.ActualWriter (publishActualBlock)
+import HKernel.Editor.ActualWriter (publishActualBlockFromResolvedJournal)
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
   , ActualAddAction(..)
   , ActualAddMode(..)
   , ActualAddState(..)
   , enterActualAddPreview
+  , initialActualAddStateForDay
+  , setActualAddDate
   , transitionActualAdd
   )
 import HKernel.Household.Application
@@ -199,6 +205,7 @@ data AppContext = AppContext
   , contextCurrentSection       :: HouseholdSection
   , contextSelectedReport       :: ReportChoice
   , contextObservationDay       :: Day
+  , contextEntryDay             :: Day
   , contextAccounts             :: [Account]
   , contextWorkspaceAccounts    :: L.List Name (Maybe Account)
   , contextAllTransactions      :: [Transaction]
@@ -218,17 +225,22 @@ mkForm =
         padBottom (Pad 1)
           ((vLimit 1 (hLimit 20 (str labelText <+> fill ' '))) <+> widget)
   in newForm
-      [ label "Date (YYYY-MM-DD):"
-          @@= editTextField addDateTextL DateField (Just 1)
+      [ label "Amount:"
+          @@= editTextField addAmountTextL AmountField (Just 1)
       , label "Description:"
           @@= editTextField addDescriptionTextL DescriptionField (Just 1)
-      , label "From Account:"
-          @@= editTextField addFromAccountTextL FromAccountField (Just 1)
-      , label "To Account:"
+      , label "Category:"
           @@= editTextField addToAccountTextL ToAccountField (Just 1)
-      , label "Positive Amount:"
-          @@= editTextField addAmountTextL AmountField (Just 1)
+      , label "Pay from:"
+          @@= editTextField addFromAccountTextL FromAccountField (Just 1)
+      , label "Date (other):"
+          @@= editTextField addDateTextL DateField (Just 1)
       ]
+
+mkDailyForm :: Day -> Form ActualAddInput event Name
+mkDailyForm day =
+  setFormFocus AmountField
+    (mkForm (actualAddInput (initialActualAddStateForDay day)))
 
 zoomForm :: Traversal' AppWrapper (Form ActualAddInput AppEvent Name)
 zoomForm f (AppWrapper context (InputForm form)) =
@@ -262,23 +274,29 @@ zoomWorkspaceList _ wrapper = pure wrapper
 drawUI :: AppWrapper -> [Widget Name]
 drawUI (AppWrapper context Workspace) =
   [ drawHouseholdShell context ]
-drawUI (AppWrapper _ (InputForm form)) =
+drawUI (AppWrapper context (InputForm form)) =
   [ center
-      (borderWithLabel (str "Add actual")
+      (borderWithLabel (str "Daily Actual")
         (padAll 1
           (vBox
-            [ renderForm form
+            [ txt ("Date: " <> entryDateSummary context (formState form))
+            , str "Amount accepts a quantity only when Account defaults determine the commodity."
             , str " "
-            , str "[Esc] Workspace | [Enter] Preview | [Ctrl-F] From | [Ctrl-T] To"
+            , renderForm form
+            , str " "
+            , str "[Ctrl-T] Today | [Ctrl-Y] Yesterday | [Ctrl-D] Other date"
+            , str "[F2/Ctrl-F] Payment account | [F3/Ctrl-E] Expense category"
+            , str "[Esc] Workspace | [Enter] Preview"
             ])))
   ]
 drawUI (AppWrapper _ (SelectAccount target accountList _)) =
   [ center
       (borderWithLabel (str (selectionLabel target))
-        (hLimit 48
+        (hLimit 56
           (vLimit 15
             (L.renderList renderAccount True accountList
               <=> str " "
+              <=> str "Recent matching Accounts are shown first."
               <=> str "[Enter] Select | [Esc] Cancel"))))
   ]
 drawUI (AppWrapper _ (ShowPreview preview _)) =
@@ -321,6 +339,17 @@ drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
               , str "[Esc/Q] Quit"
               ]))))
   ]
+
+entryDateSummary :: AppContext -> ActualAddInput -> Text
+entryDateSummary context input
+  | addDateText input == T.pack (show today) =
+      "Today  " <> addDateText input
+  | addDateText input == T.pack (show yesterday) =
+      "Yesterday  " <> addDateText input
+  | otherwise = "Other  " <> addDateText input
+  where
+    today = contextObservationDay context
+    yesterday = addDays (-1) today
 
 drawHouseholdShell :: AppContext -> Widget Name
 drawHouseholdShell context =
@@ -391,7 +420,7 @@ drawWorkspace context =
     , borderWithLabel (str "Selected transaction")
         (padAll 1 (renderWorkspaceSelection context))
     , txt ("Filter: " <> workspaceFilterText context)
-    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [a] Add Actual   [q] Quit"
+    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [a] Daily Actual   [q] Quit"
     ]
 
 drawPlansView :: AppContext -> Widget Name
@@ -619,8 +648,8 @@ renderWorkspacePosting posting =
     amount = postingAmount posting
 
 selectionLabel :: AccountSelectionTarget -> String
-selectionLabel SelectFromAccount = "Select From Account"
-selectionLabel SelectToAccount = "Select To Account"
+selectionLabel SelectFromAccount = "Select Payment Account"
+selectionLabel SelectToAccount = "Select Expense Category"
 
 renderAccount :: Bool -> Account -> Widget Name
 renderAccount selected account
@@ -715,7 +744,6 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
 
-  -- Section Navigation Shortcuts
   VtyEvent (V.EvKey (V.KChar '1') []) -> put (AppWrapper (context { contextCurrentSection = ActualSection }) Workspace)
   VtyEvent (V.EvKey (V.KChar '2') []) -> put (AppWrapper (context { contextCurrentSection = PlansSection }) Workspace)
   VtyEvent (V.EvKey (V.KChar '3') []) -> put (AppWrapper (context { contextCurrentSection = BudgetSection }) Workspace)
@@ -724,15 +752,13 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey (V.KChar '6') []) -> put (AppWrapper (context { contextCurrentSection = ReportsSection }) Workspace)
   VtyEvent (V.EvKey (V.KChar '7') []) -> put (AppWrapper (context { contextCurrentSection = SettingsSection }) Workspace)
 
-  -- Report Cycling in Reports section
   VtyEvent (V.EvKey (V.KChar 'r') []) | contextCurrentSection context == ReportsSection ->
     put (AppWrapper (context { contextSelectedReport = cycleReport (contextSelectedReport context) }) Workspace)
 
-  -- Workspace-specific actions
   VtyEvent (V.EvKey (V.KChar 'a') []) | contextCurrentSection context == ActualSection ->
-    put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
+    put (AppWrapper context (InputForm (mkDailyForm (contextEntryDay context))))
   VtyEvent (V.EvKey (V.KChar 'A') []) | contextCurrentSection context == ActualSection ->
-    put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
+    put (AppWrapper context (InputForm (mkDailyForm (contextEntryDay context))))
   VtyEvent (V.EvKey (V.KChar '\t') []) | contextCurrentSection context == ActualSection ->
     put (AppWrapper (toggleWorkspaceFocus context) Workspace)
   VtyEvent (V.EvKey V.KLeft []) | contextCurrentSection context == ActualSection ->
@@ -796,22 +822,42 @@ handleInputEvent context form event = case event of
     put (AppWrapper context Workspace)
   VtyEvent (V.EvKey V.KEnter []) -> do
     let input = formState form
-        preview = prepareActualAddPreview (contextSource context) input
+        resolvedJournal = actualJournalValue (householdStateActualJournal (contextHouseholdState context))
+        preview = prepareActualAddPreviewFromResolvedJournal resolvedJournal (contextSource context) input
         pureState =
           enterActualAddPreview preview (ActualAddState input EditingActualAdd)
     case actualAddMode pureState of
       ShowingActualAddPreview shownPreview ->
         put (AppWrapper context (ShowPreview shownPreview form))
       _ -> put (AppWrapper context (InputForm form))
+  VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl]) ->
+    setDailyFormDay context (contextObservationDay context) form
+  VtyEvent (V.EvKey (V.KChar 'y') [V.MCtrl]) ->
+    setDailyFormDay context (addDays (-1) (contextObservationDay context)) form
+  VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl]) ->
+    put (AppWrapper context (InputForm (setFormFocus DateField form)))
   VtyEvent (V.EvKey (V.KFun 2) []) ->
     openAccountSelection context SelectFromAccount form
   VtyEvent (V.EvKey (V.KChar 'f') [V.MCtrl]) ->
     openAccountSelection context SelectFromAccount form
   VtyEvent (V.EvKey (V.KFun 3) []) ->
     openAccountSelection context SelectToAccount form
-  VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl]) ->
+  VtyEvent (V.EvKey (V.KChar 'e') [V.MCtrl]) ->
     openAccountSelection context SelectToAccount form
   _ -> zoom zoomForm (handleFormEvent event)
+
+setDailyFormDay
+  :: AppContext
+  -> Day
+  -> Form ActualAddInput AppEvent Name
+  -> EventM Name AppWrapper ()
+setDailyFormDay context day form = do
+  let changed =
+        setActualAddDate day
+          (ActualAddState (formState form) EditingActualAdd)
+  put
+    (AppWrapper context
+      (InputForm (updateFormState (actualAddInput changed) form)))
 
 openAccountSelection
   :: AppContext
@@ -823,8 +869,49 @@ openAccountSelection context target form =
     (AppWrapper context
       (SelectAccount
         target
-        (L.list AccountList (Vec.fromList (contextAccounts context)) 1)
+        (L.list AccountList (Vec.fromList (dailyAccountCandidates context target)) 1)
         form))
+
+dailyAccountCandidates
+  :: AppContext
+  -> AccountSelectionTarget
+  -> [Account]
+dailyAccountCandidates context target =
+  recentMatching <> remaining
+  where
+    registry = householdStateAccountsRegistry (contextHouseholdState context)
+    matching = filter (matchesDailyRole registry target) (contextAccounts context)
+    matchingSet = Set.fromList matching
+    recentMatching =
+      uniqueAccounts
+        [ account
+        | transaction <- reverse (contextAllTransactions context)
+        , posting <- NonEmpty.toList (transactionPostings transaction)
+        , let account = postingAccount posting
+        , Set.member account matchingSet
+        ]
+    recentSet = Set.fromList recentMatching
+    remaining = filter (`Set.notMember` recentSet) matching
+
+matchesDailyRole
+  :: HKernel.Account.AccountRegistry
+  -> AccountSelectionTarget
+  -> Account
+  -> Bool
+matchesDailyRole registry target account =
+  case (target, accountTypeFor account registry) of
+    (SelectToAccount, Just Expense) -> True
+    (SelectFromAccount, Just Asset) -> True
+    (SelectFromAccount, Just Liability) -> True
+    _ -> False
+
+uniqueAccounts :: [Account] -> [Account]
+uniqueAccounts = go Set.empty
+  where
+    go _ [] = []
+    go seen (account : rest)
+      | Set.member account seen = go seen rest
+      | otherwise = account : go (Set.insert account seen) rest
 
 handleAccountSelection
   :: AppContext
@@ -932,11 +1019,16 @@ acceptConfirmation context block form = do
         transitionActualAdd
           ConfirmActualAdd
           (ActualAddState (formState form) (ConfirmingActualAdd block))
+      stickyDay =
+        fromMaybe
+          (contextEntryDay context)
+          (readMaybe (T.unpack (addDateText (formState form))))
+      stickyContext = context { contextEntryDay = stickyDay }
   case actualAddMode state of
     ActualAddConfirmed confirmedBlock -> do
       writeResult <-
         suspendAndResume'
-          (publishActualBlock
+          (publishActualBlockFromResolvedJournal
             (contextSourcePath context)
             (contextSource context)
             confirmedBlock)
@@ -944,7 +1036,7 @@ acceptConfirmation context block form = do
       case writeOutcome of
         ActualAddWriteSucceeded -> do
           reloadedContext <-
-            suspendAndResume' (reloadWorkspaceContext context)
+            suspendAndResume' (reloadWorkspaceContext stickyContext)
           case reloadedContext of
             Nothing ->
               put (AppWrapper context ShowWorkspaceReloadFailure)
@@ -965,7 +1057,15 @@ reloadWorkspaceContext context = do
       case readResult of
         Left (_ :: IOError) -> pure Nothing
         Right freshSource ->
-          pure (Just (makeWorkspaceContext True (contextObservationDay context) (contextSourcePath context) freshSource freshState))
+          pure
+            (Just
+              ((makeWorkspaceContext
+                  True
+                  (contextObservationDay context)
+                  (contextSourcePath context)
+                  freshSource
+                  freshState)
+                { contextEntryDay = contextEntryDay context }))
 
 handleWriteOutcomeEvent
   :: ActualAddWriteOutcome
@@ -995,6 +1095,7 @@ makeWorkspaceContext focusLatest today journalFile source state =
     state
     ActualSection
     ReportTrialBalance
+    today
     today
     accounts
     workspaceAccounts
@@ -1043,7 +1144,10 @@ main = do
   arguments <- getArgs
   case arguments of
     [path] -> do
-      let rootDir = takeDirectory path
+      pathIsDirectory <- doesDirectoryExist path
+      let rootDir
+            | pathIsDirectory = path
+            | otherwise = takeDirectory path
           rootPath = if rootDir == "" then "." else rootDir
       root <- case mkHouseholdRoot rootPath of
         Left err -> die ("Invalid household root: " <> show err)
