@@ -7,6 +7,7 @@ import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.HouseholdIssue
+import HKernel.Journal (parseJournal)
 import HKernel.Money
 import HKernel.Period
 import HKernel.Plan
@@ -27,6 +28,12 @@ main = do
         (buildHouseholdReportSurfaceFromPlanJournal observation actual
           accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
           issuesTSV dailyScopeTSV)
+      budgetJournal = mustRight
+        (parseJournal (declarations <> budgetJournalTransactions))
+      nativeBudgetSurface = mustRight
+        (buildHouseholdReportSurfaceFromPlanJournalAndBudgetJournal observation actual
+          accountsTSV budgetJournal budgetPolicyTOML householdTOML planJournal
+          issuesTSV dailyScopeTSV)
       cycleReport = householdCycleAccounts surface
       backing = householdEnvelopeBacking surface
       target = householdDailyTarget surface
@@ -36,6 +43,10 @@ main = do
         (filter ((== Open) . householdIssueStatus) (householdIssues surface))
       jpy = mustRight (mkCommodity "JPY")
 
+  assertEqual
+    "native Budget Journal preserves the complete Household Report surface"
+    surface
+    nativeBudgetSurface
   assertEqual "current income-anchor cycle is resolved from Actual and Plan Journal"
     (fromGregorian 2026 6 15, fromGregorian 2026 8 14)
     ( periodStart (cycleAccountsCurrentPeriod cycleReport)
@@ -190,6 +201,19 @@ main = do
       accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
       issuesTSV duplicateReservationDailyScopeTSV)
 
+  let budgetJournalWithExtraDeclaration = mustRight (parseJournal
+        (T.unlines
+          [ "account assets:extra"
+          , "    type: asset"
+          , "    commodity: JPY"
+          ] <> declarations <> budgetJournalTransactions))
+  assertLeftContaining
+    "native Budget Journal requires canonical Account registry parity"
+    "Account registry does not exactly match actual.journal declarations"
+    (buildHouseholdReportSurfaceFromPlanJournalAndBudgetJournal observation actual
+      accountsTSV budgetJournalWithExtraDeclaration budgetPolicyTOML
+      householdTOML planJournal issuesTSV dailyScopeTSV)
+
 one :: Commodity -> Integer -> Balance
 one commodity value =
   singletonBalance (mkAmount commodity (quantityFromInteger value))
@@ -300,6 +324,17 @@ budgetTSV :: T.Text
 budgetTSV = T.unlines
   [ "2026-06-15\tallocate\tbudget:opening\tbudget:food\t1000\tcurrency=JPY"
   , "2026-06-15\tunassigned\tbudget:opening\tbudget:unassigned\t50\tcurrency=JPY"
+  ]
+
+budgetJournalTransactions :: T.Text
+budgetJournalTransactions = T.unlines
+  [ "2026-06-15 allocate"
+  , "    budget:opening    -1000 JPY"
+  , "    budget:food        1000 JPY"
+  , ""
+  , "2026-06-15 unassigned"
+  , "    budget:opening       -50 JPY"
+  , "    budget:unassigned     50 JPY"
   ]
 
 budgetPolicyTOML :: T.Text
