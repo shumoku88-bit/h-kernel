@@ -11,7 +11,9 @@ import Data.Time.Calendar (fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Editor.ActualWriter
-  ( WriteIntent(..)
+  ( CandidateSource(..)
+  , ExpectedSource(..)
+  , WriteIntent(..)
   , WriterFileSystem(..)
   , defaultWriterFileSystem
   , publishWithAdmission
@@ -179,8 +181,8 @@ commitAndVerify path source intent verify = do
         parseHouseholdIssues
         WriteIntent
           { targetFilePath = path
-          , expectedOldBytes = source
-          , candidateNewBytes = candidateCompleteSource preview
+          , expectedOldBytes = ExpectedSource source
+          , candidateNewBytes = CandidateSource (candidateCompleteSource preview)
           }
       case writeResult of
         Left err -> print err >> pure False
