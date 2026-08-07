@@ -36,12 +36,6 @@ import HKernel.Actual.Journal
   , actualJournalIdentifiedTransactions
   , actualJournalValue
   )
-import HKernel.Application.Config
-  ( ApplicationConfigError
-  , applicationConfigErrorLine
-  , applicationConfigErrorMessage
-  , parseApplicationConfig
-  )
 import HKernel.Budget.Config (parseBudgetPolicy)
 import HKernel.Engine
   ( LedgerEntry(..)
@@ -161,15 +155,12 @@ buildHouseholdReportSurfaceFromPlanJournal
   -> PlanJournal
   -> Text
   -> Text
-  -> Text
   -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
-buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsText budgetText budgetPolicyText householdPolicyText planJournal configText issuesText dailyScopeText = do
+buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsText budgetText budgetPolicyText householdPolicyText planJournal issuesText dailyScopeText = do
   _ <- mapLeft accountProfileSourceErrors
     (admitRetainedAccountProfiles
       (journalAccountRegistry journal)
       accountsText)
-  _ <- mapLeft applicationConfigSourceErrors
-    (parseApplicationConfig configText)
   budgetPolicy <- mapLeft budgetPolicySourceErrors
     (parseBudgetPolicy budgetPolicyText)
   policy <- mapLeft policySourceErrors
@@ -350,16 +341,6 @@ policySourceErrors errors = case NonEmpty.nonEmpty mapped of
     "unknown Household policy admission failure" NonEmpty.:| []
   where
     mapped = map (sourceError "household.toml" 0) errors
-
-applicationConfigSourceErrors
-  :: NonEmpty ApplicationConfigError
-  -> NonEmpty HouseholdSourceError
-applicationConfigSourceErrors = fmap toSourceError
-  where
-    toSourceError err = sourceError
-      "config.tsv"
-      (applicationConfigErrorLine err)
-      (applicationConfigErrorMessage err)
 
 accountProfileSourceErrors
   :: NonEmpty AccountProfileTSVError
