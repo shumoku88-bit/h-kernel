@@ -11,7 +11,8 @@ import qualified Data.Text as T
 
 import HKernel.Account (accountName)
 import HKernel.Ledger
-  ( Transaction
+  ( Posting
+  , Transaction
   , postingAccount
   , postingAmount
   , transactionDate
@@ -40,7 +41,6 @@ data ActualWorkspaceRow = ActualWorkspaceRow
 buildActualWorkspaceRows :: [Transaction] -> [ActualWorkspaceRow]
 buildActualWorkspaceRows = map toWorkspaceRow
 
-
 toWorkspaceRow :: Transaction -> ActualWorkspaceRow
 toWorkspaceRow transaction = ActualWorkspaceRow
   { workspaceRowTransaction = transaction
@@ -52,7 +52,7 @@ toWorkspaceRow transaction = ActualWorkspaceRow
       map renderPosting (NonEmpty.toList (transactionPostings transaction))
   }
 
-renderPosting :: HKernel.Ledger.Posting -> Text
+renderPosting :: Posting -> Text
 renderPosting posting =
   accountName (postingAccount posting)
     <> "  "
