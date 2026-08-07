@@ -85,7 +85,10 @@ expectPublished
 expectPublished path admit oldBytes newBytes =
   withFixture path oldBytes $ \fixturePath -> do
     result <- publishWithAdmission admit
-      (WriteIntent fixturePath oldBytes newBytes)
+      (WriteIntent
+        fixturePath
+        (ExpectedSource oldBytes)
+        (CandidateSource newBytes))
     case result of
       Right () -> (== newBytes) <$> TIO.readFile fixturePath
       Left err -> print err >> pure False
@@ -95,8 +98,8 @@ testStaleReject =
   withFixture "tests/fixtures/test_writer_stale.journal" "original" $ \path -> do
     let intent = WriteIntent
           { targetFilePath = path
-          , expectedOldBytes = "different"
-          , candidateNewBytes = "new"
+          , expectedOldBytes = ExpectedSource "different"
+          , candidateNewBytes = CandidateSource "new"
           }
     result <- publishActualAppend intent
     pure $ case result of
@@ -125,7 +128,10 @@ testPostAdmissionFailure =
     let invalidBytes = actualOld
           <> "\n2026-08-05 invalid\n"
           <> "  assets:unknown  100 JPY\n"
-        intent = WriteIntent path actualOld invalidBytes
+        intent = WriteIntent
+          path
+          (ExpectedSource actualOld)
+          (CandidateSource invalidBytes)
     result <- publishWithAdmission parseActualJournal intent
     case result of
       Left (PostAdmissionFailed _ True) ->
@@ -144,7 +150,10 @@ testPostPublishReadFailureRestores =
             else throwIO (userError "simulated post-publish read failure")
         faultingFileSystem = normalFileSystem
           { readTextFile = failSecondRead }
-        intent = WriteIntent path actualOld actualNew
+        intent = WriteIntent
+          path
+          (ExpectedSource actualOld)
+          (CandidateSource actualNew)
     result <- publishWithAdmissionUsing
       faultingFileSystem
       parseActualJournal
