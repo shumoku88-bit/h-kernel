@@ -5,6 +5,7 @@ module Main (main) where
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
+import HKernel.Account.Journal (parseAccountJournal)
 import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.HouseholdIssue
 import HKernel.Money
@@ -27,6 +28,12 @@ main = do
         (buildHouseholdReportSurfaceFromPlanJournal observation actual
           accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
           issuesTSV dailyScopeTSV)
+      nativeAccountRegistry = mustRight (parseAccountJournal declarations)
+      nativePlanJournal = mustRight (parsePlanJournal nativePlanJournalText)
+      nativeSurface = mustRight
+        (buildHouseholdReportSurfaceFromNativeHouseholdSources observation actual
+          nativeAccountRegistry budgetTSV budgetPolicyTOML nativeHouseholdTOML
+          nativePlanJournalText nativePlanJournal issuesTSV)
       cycleReport = householdCycleAccounts surface
       backing = householdEnvelopeBacking surface
       target = householdDailyTarget surface
@@ -36,6 +43,10 @@ main = do
         (filter ((== Open) . householdIssueStatus) (householdIssues surface))
       jpy = mustRight (mkCommodity "JPY")
 
+  assertEqual
+    "native Account/Daily sources preserve the complete Household Report surface"
+    surface
+    nativeSurface
   assertEqual "current income-anchor cycle is resolved from Actual and Plan Journal"
     (fromGregorian 2026 6 15, fromGregorian 2026 8 14)
     ( periodStart (cycleAccountsCurrentPeriod cycleReport)
@@ -190,6 +201,27 @@ main = do
       accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
       issuesTSV duplicateReservationDailyScopeTSV)
 
+  let extraNativeRegistry = mustRight (parseAccountJournal
+        (declarations <> T.unlines
+          [ "account assets:extra"
+          , "    type: asset"
+          , "    commodity: JPY"
+          ]))
+  assertLeftContaining
+    "native Account registry parity fails closed without Account details"
+    "Account registry does not exactly match actual.journal declarations"
+    (buildHouseholdReportSurfaceFromNativeHouseholdSources observation actual
+      extraNativeRegistry budgetTSV budgetPolicyTOML nativeHouseholdTOML
+      nativePlanJournalText nativePlanJournal issuesTSV)
+
+  assertLeftContaining
+    "native Account policy validates accounting roles against accounts.journal"
+    "account-policy.assets contains an Account with the wrong accounting type"
+    (buildHouseholdReportSurfaceFromNativeHouseholdSources observation actual
+      nativeAccountRegistry budgetTSV budgetPolicyTOML
+      nativeHouseholdRoleMismatchTOML nativePlanJournalText nativePlanJournal
+      issuesTSV)
+
 one :: Commodity -> Integer -> Balance
 one commodity value =
   singletonBalance (mkAmount commodity (quantityFromInteger value))
@@ -330,6 +362,47 @@ householdTOML = T.unlines
   , "allocation-account = \"budget:food\""
   ]
 
+nativeHouseholdTOML :: T.Text
+nativeHouseholdTOML = householdTOML <> T.unlines
+  [ ""
+  , "[daily-target]"
+  , ""
+  , "[[daily-target.assets]]"
+  , "id = \"cash\""
+  , "account = \"assets:cash\""
+  , ""
+  , "[account-policy.assets]"
+  , "liquid = [\"assets:cash\"]"
+  , "savings = [\"assets:savings\"]"
+  , "investment = []"
+  , ""
+  , "[account-policy.budget.kind]"
+  , "opening = [\"budget:opening\"]"
+  , "unassigned = [\"budget:unassigned\"]"
+  , "spent = []"
+  , "envelope = [\"budget:food\"]"
+  , ""
+  , "[account-policy.budget.envelope-role]"
+  , "unassigned = []"
+  , "dynamic = []"
+  , "execution = []"
+  , ""
+  , "[account-policy.budget.group]"
+  , "daily = []"
+  , "flex = []"
+  , "reserve = []"
+  , ""
+  , "[account-policy.expenses]"
+  , "fixed = []"
+  , "variable = []"
+  ]
+
+nativeHouseholdRoleMismatchTOML :: T.Text
+nativeHouseholdRoleMismatchTOML = T.replace
+  "liquid = [\"assets:cash\"]"
+  "liquid = [\"expenses:food\"]"
+  nativeHouseholdTOML
+
 cycleRoleMismatchTOML :: T.Text
 cycleRoleMismatchTOML = T.replace
   "income-account = \"income:pension\""
@@ -364,6 +437,18 @@ planJournalText = declarations <> T.unlines
   , "    income:pension  -1000 JPY"
   , "    assets:cash      1000 JPY"
   ]
+
+nativePlanJournalText :: T.Text
+nativePlanJournalText = T.replace
+  "    ; plan-id: plan-wifi\n"
+  (T.unlines
+    [ "    ; plan-id: plan-wifi"
+    , "    ; daily-target-id: wifi"
+    , "    ; reservation-id: reservation:wifi"
+    , "    ; reservation-amount: 50"
+    , "    ; reservation-commodity: JPY"
+    ])
+  planJournalText
 
 unsupportedPlanJournalText :: T.Text
 unsupportedPlanJournalText = planJournalText <> T.unlines
