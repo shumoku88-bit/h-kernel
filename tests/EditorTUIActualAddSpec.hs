@@ -27,6 +27,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualAddAction(..)
   , ActualAddMode(..)
   , ActualAddState(..)
+  , dailyAccountCandidates
   , enterActualAddPreview
   , initialActualAddState
   , initialActualAddStateForDay
@@ -34,7 +35,11 @@ import HKernel.Editor.Interaction.ActualAdd
   , transitionActualAdd
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
-import HKernel.Journal (journalAccountRegistry, parseJournal)
+import HKernel.Journal
+  ( journalAccountRegistry
+  , journalTransactions
+  , parseJournal
+  )
 import HKernel.Money (commodityCode, renderQuantity)
 
 main :: IO ()
@@ -50,6 +55,8 @@ main = do
         , ("missing defaults fail before candidate creation", testMissingDefaults)
         , ("daily entry starts on supplied day", testInitialDay)
         , ("daily entry can switch to yesterday", testYesterday)
+        , ("expense candidates are typed and recent-first", testExpenseCandidates)
+        , ("payment candidates are typed, recent-first, and retain unused Accounts", testPaymentCandidates)
         , ("from Account selection updates input", testFromSelection)
         , ("cancelled selection preserves input", testCancelSelection)
         , ("preview transition retains candidate block only", testPreviewTransition source)
@@ -179,6 +186,60 @@ testYesterday =
       changed = setActualAddDate yesterday initial
   in addDateText (actualAddInput changed) == "2026-08-07"
       && actualAddMode changed == EditingActualAdd
+
+testExpenseCandidates :: Bool
+testExpenseCandidates =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      map accountName
+        (dailyAccountCandidates
+          (journalAccountRegistry journal)
+          (journalTransactions journal)
+          SelectToAccount)
+        == ["expenses:books", "expenses:food"]
+
+testPaymentCandidates :: Bool
+testPaymentCandidates =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      map accountName
+        (dailyAccountCandidates
+          (journalAccountRegistry journal)
+          (journalTransactions journal)
+          SelectFromAccount)
+        == ["liabilities:card", "assets:cash", "assets:bank"]
+
+candidateSource :: T.Text
+candidateSource = T.unlines
+  [ "account assets:bank"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account liabilities:card"
+  , "  type: Liability"
+  , "  commodity: JPY"
+  , "account expenses:books"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , "account income:pension"
+  , "  type: Income"
+  , "  commodity: JPY"
+  , ""
+  , "2026-08-06 groceries"
+  , "  expenses:food  100 JPY"
+  , "  assets:cash  -100 JPY"
+  , ""
+  , "2026-08-07 books"
+  , "  expenses:books  200 JPY"
+  , "  liabilities:card  -200 JPY"
+  ]
 
 testFromSelection :: Bool
 testFromSelection = case mkAccount "assets:cash" of
