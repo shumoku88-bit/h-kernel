@@ -1,12 +1,13 @@
-# Actual Journal writer cutover 001
+# Actual Journal writer contract
 
-ステータス: 承認済みcutover contract  
-Owner: `actual.journal` writer authority、daily Actual add operation、rollback boundary  
-承認日: 2026-08-06
+ステータス: 承認済みcurrent contract  
+Owner: `actual.journal` writer authority、daily Actual write operation、rollback boundary  
+承認日: 2026-08-06  
+更新日: 2026-08-07
 
-## 1. Decision
+## 1. Current authority
 
-private canonical source set全体を一度に移行せず、`actual.journal`のwriter authorityだけを`bqn-ledger`から`h-kernel`へ移す。
+private canonical source set全体を一度に移行せず、`actual.journal`のwriter authorityだけを`bqn-ledger`から`h-kernel`へ移している。
 
 ```text
 actual.journal
@@ -14,88 +15,75 @@ actual.journal
   readers           h-kernel and bqn-ledger
 
 other canonical source files
-  writer authority  unchanged by this cutover
+  writer authority  unchanged by this Actual-only cutover
 ```
 
-このcutover後、`bqn-ledger`をreaderまたはReport engineとして使うことはできる。ただし、canonical `actual.journal`を変更する`bqn-ledger` operationは使用しない。
+`bqn-ledger`をreaderまたはReport engineとして使うことはできる。ただし、canonical `actual.journal`を変更する`bqn-ledger` operationは使用しない。
 
-同じphysical directoryにある別sourceのwriter authorityは、この決定から推測して移動しない。
+同じphysical directoryにある別sourceのwriter authorityは、この決定から推測して移さない。
 
-## 2. Initial daily operation set
+## 2. Current daily operation
 
-最初の日常operation setは小さく保つ。
-
-- ordinary Actual addは`h-kernel-editor-tui`を使う
-- 日常入口は`tools/hk actual-add <ACTUAL_JOURNAL>`とする
-- Reportは既存`tools/hk`または`tools/hk report ...`を使う
-- correctionが必要な場合は元Transactionを編集せず、`h-kernel`のActual reverse contractを使う
-- Account declarationまたはPlan finishが必要な場合は、canonical `actual.journal`へ書く唯一のwriterとして`h-kernel` editor operationを使う
-
-Budget movement、Issue、Plan sourceそのもののwriter authorityはこのcutoverで変更しない。
-
-## 3. Evidence
-
-### 3.1 Public synthetic evidence
-
-`main`のsafe writer testは、independent synthetic sourceを使って少なくとも次を観察する。
-
-- ordinary publication success
-- stale source rejection
-- post-admission failure後のbackup restore
-- post-publish read failure後のbackup restore
-- confirmed Actual block publication
-- confirmed Actual block stale rejection
-- invalid confirmed Actual blockのrestore
-
-command hub verifierは、argument preservation、exit status、unknown command rejectionをsynthetic stubで観察する。このcutover sliceはActual add TUI routingとpath arity rejectionを追加する。
-
-### 3.2 Private non-canonical rehearsal
-
-作者が2026-08-06に、private canonical sourceの明示的なcopyだけを対象として次をlocalに確認した。
+TTYの日常入口はworkspace-first `tools/hk`である。
 
 ```text
-source resolution: success
-copy isolation: success
-preview: success
-preview left copy unchanged: yes
-commit: success
-post-write admission: success
-writer temporary artifacts: absent
-canonical source unchanged: yes
-repository files changed: no
-canonical writer authority changed during rehearsal: no
+tools/hk
+  no args         -> Actual workspace
+  actual-add PATH -> same Actual workspace with an explicit Journal path
+  actual-reverse  -> h-kernel editor reverse operation
+  account         -> h-kernel editor Account declaration operation
+  edit            -> explicit editor CLI route
 ```
 
-これは作者から報告されたsanitized operational evidenceである。Account、date、Quantity、Commodity、description、path、hash、source本文はpublic repositoryへ記録しない。
+`--base DIR`、`HKERNEL_LEDGER_DATA_DIR`、またはGit管理外の`ledger-data.local`がprivate source directoryを解決する。
 
-### 3.3 Semantic boundary
+ordinary Actual addは次の流れを使う。
 
-既存のActual semantic comparison evidenceは、BQN candidateとHaskell candidateをstrict admission後のTransaction、identity、reversal provenanceで比較する。
-
-ordinary Actual addのsemantic parityと、Haskell-native reversalが持つexplicit provenance differenceを混同しない。
-
-## 4. Activation procedure
-
-このcontractを含むPRがmergeされた後、operatorは次の順序でactivationする。
-
-1. `bqn-ledger`による進行中のcanonical write operationがないことを確認する
-2. `h-kernel`のlocal `main`を最新merge SHAへfast-forwardする
-3. private source directoryを`HKERNEL_LEDGER_DATA_DIR`またはGit管理外の`ledger-data.local`で明示する
-4. canonical sourceをread-onlyでReport admissionし、失敗時はwriteを開始しない
-5. `actual.journal`の最初のwriteを次のentrypointからpreviewする
-6. previewを確認し、TUIの別confirmation段階で明示承認する
-7. publicationとpost-admission successを確認する
-8. 以後、canonical `actual.journal`へ`bqn-ledger` writerを向けない
-
-```sh
-./tools/hk actual-add "$HKERNEL_LEDGER_DATA_DIR/actual.journal"
+```text
+workspace
+  -> typed Account selection or free-form input
+  -> candidate preparation
+  -> complete-source admission
+  -> preview
+  -> explicit confirmation
+  -> safe writer
+  -> post-admission
+  -> fresh source reload
+  -> workspace
 ```
 
-`tools/hk`はsource selection、candidate preparation、admission、publicationを再実装しない。explicit pathを既存TUIへ渡すだけである。
+`tools/hk`、Brick、CLIはAccount、Money、Transaction、Actual admission、source publication ruleを再実装しない。
 
-## 5. Single-writer law
+Actual reverseは元Transactionを変更せず、新しいdurable `event-id`とexplicit `reverses` relationを持つinverse Transactionをappendする。詳細なidentity contractは[`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)が所有する。
 
-cutover後のlawは次である。
+Budget movement、Issue、Plan sourceそのもののwriter authorityはこのcontractで変更しない。
+
+## 3. Safe writer law
+
+canonical Actual writeは既存safe writer boundaryを使う。
+
+```text
+expected old bytes
+  + validated candidate bytes
+  -> stale rejection
+  -> backup
+  -> sibling temporary file
+  -> atomic publication
+  -> post-admission
+  -> success or restore-capable failure
+```
+
+次を守る。
+
+- preview後にsourceが変わっていればwriteしない
+- candidate complete sourceがstable admissionを通らなければwriteしない
+- publication後のadmission failureをsuccessとして扱わない
+- backup restore失敗時は通常operationを継続しない
+- private source、backup、temporary artifact、path、hash、diagnostic本文をpublic Gitへ置かない
+
+single-user operationではcross-process shared lockを必須にしない。代わりに、一つのcanonical writerだけを使い、stale checkでpreview後の変更を拒否する。
+
+## 4. Single-writer law
 
 ```text
 canonical actual.journal writer = h-kernel editor
@@ -104,11 +92,9 @@ alternating dual write           = prohibited
 reader compatibility             = separate concern
 ```
 
-single-user operationではcross-process shared lockを必須にしない。代わりに、旧writerを使わないというoperation boundaryを明示し、各write前にcurrent sourceを読み直す。
+writer authorityは「その実装にwrite capabilityがあるか」とは別である。BQN側にwrite commandが残っていてもcanonical Actualには向けない。
 
-TUI preview後にsourceが変わった場合、safe writerはstaleとして拒否する。stale outcomeの後はTUIを終了し、current sourceを読み直してpreviewからやり直す。
-
-## 6. Stop and recovery
+## 5. Stop and recovery
 
 次の場合は通常operationを止める。
 
@@ -121,9 +107,7 @@ TUI preview後にsourceが変わった場合、safe writerはstaleとして拒�
 
 restore-capable failureでbackupが復元された場合も、原因を確認するまで次のwriteを行わない。restore失敗時はsourceを手動編集せず、canonical repositoryの現在値、backup、writer artifactを保全して調査する。
 
-private source、backup、temporary artifact、path、hash、diagnostic本文をpublic GitHubへ置かない。
-
-## 7. Rollback
+## 6. Rollback
 
 rollbackは`bqn-ledger`への自動fallbackではない。
 
@@ -136,6 +120,14 @@ rollbackは`bqn-ledger`への自動fallbackではない。
 
 source rollbackとwriter authority rollbackを暗黙に同時実行しない。
 
+## 7. Reader compatibility
+
+writer cutoverとreader compatibilityは別の問いである。
+
+ordinary Actual addは既存Journal意味を保つ。Haskell-native reversalはexplicit `reverses` provenanceを持つため、BQN readerを同じcanonical sourceへ向け続ける場合は、そのadmission対応を別sliceとして確認する。
+
+reader compatibilityのためにHaskell writerのidentity contractを弱めない。
+
 ## 8. Non-goals
 
 - private source format migration
@@ -146,11 +138,9 @@ source rollbackとwriter authority rollbackを暗黙に同時実行しない。
 - private evidenceのpublic upload
 - source本文を使うpublic fixture作成
 
-## 9. Completion condition
+## 9. Related owners
 
-このcutoverは、PR mergeだけではlocal machine上でactivationされない。
-
-次の両方が成立した時点でoperation上の切替完了とする。
-
-- このcontractとdaily entrypointが`main`へmergeされている
-- operatorがactivation procedureを実施し、最初のcanonical Actual addでpublicationとpost-admission successを確認している
+- [`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md): current Editor capability、workspace、next finite slice
+- [`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md): private source topologyとsource別writer authority
+- [`ARCHITECTURE.md`](ARCHITECTURE.md): componentとeffect boundary
+- [`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md): reversal identity contract
