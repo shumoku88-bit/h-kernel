@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | TOML admission for household coordinates layered on an admitted
 -- 'BudgetPolicy'.
@@ -171,8 +172,6 @@ instance FromValue RawExpensePolicy where
       <$> reqKey "fixed"
       <*> reqKey "variable")
 
--- | Decode @household.toml@ into stable household policy plus native
--- source-independent selections/classifications. Unknown keys are rejected.
 parseHouseholdConfiguration
   :: BudgetPolicy
   -> Text
@@ -184,7 +183,6 @@ parseHouseholdConfiguration budgetPolicy input =
       | null warnings -> rawToHouseholdConfiguration budgetPolicy raw
       | otherwise -> Left (map T.pack warnings)
 
--- | Compatibility projection for callers that only need household policy.
 parseHouseholdPolicy
   :: BudgetPolicy
   -> Text
