@@ -4,6 +4,7 @@
 module Main (main) where
 
 import Control.Exception (IOException, catch)
+import Data.List.NonEmpty (NonEmpty(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -14,10 +15,12 @@ import HKernel.Account (mkAccount)
 import HKernel.Editor.ActualWriter
   ( CandidateSource(..)
   , ExpectedSource(..)
+  , WriteError(..)
   , WriteIntent(..)
   , WriterFileSystem(..)
   , defaultWriterFileSystem
   , publishWithAdmission
+  , publishWithPathAdmission
   )
 import HKernel.Editor.BudgetMovementAppend
   ( BudgetMovementAppendPreview(..)
@@ -26,6 +29,7 @@ import HKernel.Editor.BudgetMovementAppend
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.BudgetMovement.TSV
   ( parseHouseholdBudgetMovements )
+import HKernel.Loader (loadJournal)
 import HKernel.Money (mkAmount, mkCommodity, quantityFromInteger)
 
 main :: IO ()
@@ -33,6 +37,8 @@ main = do
   let tests =
         [ ("testValidBudgetMovement", pure testValidBudgetMovement)
         , ("testBudgetMovementCommit", testBudgetMovementCommit)
+        , ("testPathAwareJournalCommit", testPathAwareJournalCommit)
+        , ("testPathAwareJournalFailureRestores", testPathAwareJournalFailureRestores)
         ]
   results <- sequence [action | (_, action) <- tests]
   let namedResults = zip (map fst tests) results
@@ -89,6 +95,87 @@ testBudgetMovementCommit = do
           (== candidateCompleteSource preview) <$> TIO.readFile path
   cleanup path
   pure result
+
+-- The root source is intentionally just an include before the candidate is
+-- appended. Pure Text admission cannot prove this graph; the path-aware writer
+-- can load the sibling Account declarations after publication.
+testPathAwareJournalCommit :: IO Bool
+testPathAwareJournalCommit = do
+  let rootPath = "tests/fixtures/test_editor_path_budget.journal"
+      accountsPath = "tests/fixtures/test_editor_path_accounts.journal"
+  cleanup rootPath
+  cleanup accountsPath
+  TIO.writeFile accountsPath pathAwareAccounts
+  TIO.writeFile rootPath pathAwareRoot
+  result <- publishWithPathAdmission admitJournalPath
+    WriteIntent
+      { targetFilePath = rootPath
+      , expectedOldBytes = ExpectedSource pathAwareRoot
+      , candidateNewBytes = CandidateSource pathAwareCandidate
+      }
+  current <- TIO.readFile rootPath
+  cleanup rootPath
+  cleanup accountsPath
+  pure (result == Right () && current == pathAwareCandidate)
+
+testPathAwareJournalFailureRestores :: IO Bool
+testPathAwareJournalFailureRestores = do
+  let rootPath = "tests/fixtures/test_editor_path_reject.journal"
+      accountsPath = "tests/fixtures/test_editor_path_accounts.journal"
+  cleanup rootPath
+  cleanup accountsPath
+  TIO.writeFile accountsPath pathAwareAccounts
+  TIO.writeFile rootPath pathAwareRoot
+  result <- publishWithPathAdmission admitJournalPath
+    WriteIntent
+      { targetFilePath = rootPath
+      , expectedOldBytes = ExpectedSource pathAwareRoot
+      , candidateNewBytes = CandidateSource pathAwareInvalidCandidate
+      }
+  current <- TIO.readFile rootPath
+  cleanup rootPath
+  cleanup accountsPath
+  pure $ case result of
+    Left (PostAdmissionFailed _ True) -> current == pathAwareRoot
+    _ -> False
+
+data PathAdmissionError = PathAdmissionError
+  deriving (Eq, Show)
+
+admitJournalPath path = do
+  result <- loadJournal path
+  pure $ case result of
+    Left _ -> Left (PathAdmissionError :| [])
+    Right journal -> Right journal
+
+pathAwareAccounts :: Text
+pathAwareAccounts = T.unlines
+  [ "account budget:from"
+  , "    type: budget"
+  , "    commodity: JPY"
+  , "account budget:to"
+  , "    type: budget"
+  , "    commodity: JPY"
+  ]
+
+pathAwareRoot :: Text
+pathAwareRoot = "include test_editor_path_accounts.journal\n"
+
+pathAwareCandidate :: Text
+pathAwareCandidate = pathAwareRoot <> T.unlines
+  [ ""
+  , "2026-08-04 transfer"
+  , "    budget:from    -500 JPY"
+  , "    budget:to       500 JPY"
+  ]
+
+pathAwareInvalidCandidate :: Text
+pathAwareInvalidCandidate = pathAwareRoot <> T.unlines
+  [ ""
+  , "2026-08-04 invalid transfer"
+  , "    budget:from       -500 JPY"
+  , "    budget:unknown     500 JPY"
+  ]
 
 cleanup :: FilePath -> IO ()
 cleanup path = do
