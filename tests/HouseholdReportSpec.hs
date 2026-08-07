@@ -26,7 +26,7 @@ main = do
       surface = mustRight
         (buildHouseholdReportSurfaceFromPlanJournal observation actual
           accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
-          configTSV issuesTSV dailyScopeTSV)
+          issuesTSV dailyScopeTSV)
       cycleReport = householdCycleAccounts surface
       backing = householdEnvelopeBacking surface
       target = householdDailyTarget surface
@@ -111,8 +111,7 @@ main = do
       bidirectionalRegistryFailure =
         buildHouseholdReportSurfaceFromPlanJournal observation
           actualWithExtraAccount accountsWithExtraAccountTSV budgetTSV
-          budgetPolicyTOML householdTOML planJournal configTSV issuesTSV
-          dailyScopeTSV
+          budgetPolicyTOML householdTOML planJournal issuesTSV dailyScopeTSV
   assertLeftContaining
     "Account reconciliation rejects source-only Accounts"
     "accounts.tsv Account is not declared in actual.journal: assets:source-only"
@@ -126,37 +125,37 @@ main = do
     "Account type disagrees between accounts.tsv and actual.journal for assets:cash: accounts.tsv=Liability, actual.journal=Asset"
     (buildHouseholdReportSurfaceFromPlanJournal observation actual
       roleMismatchAccountsTSV budgetTSV budgetPolicyTOML householdTOML
-      planJournal configTSV issuesTSV dailyScopeTSV)
+      planJournal issuesTSV dailyScopeTSV)
   assertLeftContaining
     "Account metadata rejects fields without key=value syntax"
     "malformed metadata field broken; expected non-empty key=value"
     (buildHouseholdReportSurfaceFromPlanJournal observation actual
       malformedAccountsTSV budgetTSV budgetPolicyTOML householdTOML
-      planJournal configTSV issuesTSV dailyScopeTSV)
+      planJournal issuesTSV dailyScopeTSV)
   assertLeftContaining
     "Account metadata rejects empty values"
     "malformed metadata field type=; expected non-empty key=value"
     (buildHouseholdReportSurfaceFromPlanJournal observation actual
       emptyValueAccountsTSV budgetTSV budgetPolicyTOML householdTOML
-      planJournal configTSV issuesTSV dailyScopeTSV)
+      planJournal issuesTSV dailyScopeTSV)
   assertLeftContaining
     "Account metadata rejects duplicate keys before overwrite"
     "duplicate metadata key role"
     (buildHouseholdReportSurfaceFromPlanJournal observation actual
       duplicateRoleAccountsTSV budgetTSV budgetPolicyTOML householdTOML
-      planJournal configTSV issuesTSV dailyScopeTSV)
+      planJournal issuesTSV dailyScopeTSV)
   assertLeftContaining
     "Household cycle Account must be declared Income"
     "HouseholdCycleIncomeAccountNotIncome"
     (buildHouseholdReportSurfaceFromPlanJournal observation actual
       accountsTSV budgetTSV budgetPolicyTOML cycleRoleMismatchTOML
-      planJournal configTSV issuesTSV dailyScopeTSV)
+      planJournal issuesTSV dailyScopeTSV)
   assertLeftContaining
     "Household allocation Account must be declared Budget"
     "HouseholdAllocationAccountNotBudget"
     (buildHouseholdReportSurfaceFromPlanJournal observation actual
       accountsTSV budgetTSV budgetPolicyTOML allocationRoleMismatchTOML
-      planJournal configTSV issuesTSV dailyScopeTSV)
+      planJournal issuesTSV dailyScopeTSV)
 
   let unsupportedPlanJournal =
         mustRight (parsePlanJournal unsupportedPlanJournalText)
@@ -164,32 +163,32 @@ main = do
     "UnsupportedPlanRoleFlow"
     (buildHouseholdReportSurfaceFromPlanJournal observation actual
       accountsTSV budgetTSV budgetPolicyTOML householdTOML
-      unsupportedPlanJournal configTSV issuesTSV dailyScopeTSV)
+      unsupportedPlanJournal issuesTSV dailyScopeTSV)
 
   let unknownActual = mustRight (parseActualJournal unknownPlanActualJournal)
   assertLeftContaining "unknown completion Plan references fail closed"
     "unknown PlanId"
     (buildHouseholdReportSurfaceFromPlanJournal observation unknownActual
       accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
-      configTSV issuesTSV dailyScopeTSV)
+      issuesTSV dailyScopeTSV)
 
   assertLeftContaining "Daily Target rejects reservation above the Plan amount"
     "ReservationExceedsPlanAmount"
     (buildHouseholdReportSurfaceFromPlanJournal observation actual
       accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
-      configTSV issuesTSV overReservedDailyScopeTSV)
+      issuesTSV overReservedDailyScopeTSV)
 
   assertLeftContaining "Daily Target rejects cross-Commodity reservation"
     "ReservationCommodityMismatch"
     (buildHouseholdReportSurfaceFromPlanJournal observation actual
       accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
-      configTSV issuesTSV crossCommodityDailyScopeTSV)
+      issuesTSV crossCommodityDailyScopeTSV)
 
   assertLeftContaining "Daily Target rejects duplicate reservation identity"
     "DuplicateReservationId"
     (buildHouseholdReportSurfaceFromPlanJournal observation actual
       accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
-      configTSV issuesTSV duplicateReservationDailyScopeTSV)
+      issuesTSV duplicateReservationDailyScopeTSV)
 
 one :: Commodity -> Integer -> Balance
 one commodity value =
@@ -374,9 +373,6 @@ unsupportedPlanJournalText = planJournalText <> T.unlines
   , "    assets:savings   10 JPY"
   , "    assets:cash     -10 JPY"
   ]
-
-configTSV :: T.Text
-configTSV = "ACTUAL_JOURNAL_FILE=actual.journal\nDEFAULT_CURRENCY=JPY\n"
 
 issuesTSV :: T.Text
 issuesTSV = T.unlines
