@@ -7,6 +7,8 @@
 -- lifecycle, tax, or filing semantics.
 module HKernel.Spike.HouseholdReport.Render
   ( IssueVisibility(..)
+  , HouseholdReportSection(..)
+  , renderHouseholdReportSection
   , renderHouseholdReportSections
   , renderHouseholdReportSectionsWithIssueVisibility
   , renderHouseholdIssues
@@ -42,6 +44,28 @@ data IssueVisibility
   | AllIssues
   deriving (Eq, Show)
 
+-- | One typed Household report section available to application adapters.
+--
+-- This is deliberately a report selection, not a CLI command name. TUI, CLI,
+-- or another delivery adapter can select the same value and reuse the same pure
+-- renderer without reconstructing Household report semantics.
+data HouseholdReportSection
+  = HouseholdCycleAccounts
+  | HouseholdDailyTarget
+  | HouseholdPlannedTransactions
+  | HouseholdIssues IssueVisibility
+  | HouseholdEnvelopeBacking
+  deriving (Eq, Show)
+
+-- | Render exactly one Household report section from an already typed surface.
+renderHouseholdReportSection
+  :: PresentationConfig
+  -> HouseholdReportSection
+  -> HouseholdReportSurface
+  -> Text
+renderHouseholdReportSection =
+  renderHouseholdReportSectionWithCycle renderCycleAccountsWithPresentation
+
 renderHouseholdReportSections
   :: (PresentationConfig -> CycleAccounts -> Text)
   -> PresentationConfig
@@ -58,12 +82,35 @@ renderHouseholdReportSectionsWithIssueVisibility
   -> Text
 renderHouseholdReportSectionsWithIssueVisibility visibility renderCycle presentation surface =
   T.intercalate "\n"
-    [ renderCycle presentation (householdCycleAccounts surface)
-    , renderDailyTarget presentation (householdDailyTarget surface)
-    , renderPlans (householdPlannedTransactions surface)
-    , renderHouseholdIssues visibility (householdIssues surface)
-    , renderEnvelope presentation (householdEnvelopeBacking surface)
+    [ renderHouseholdReportSectionWithCycle
+        renderCycle presentation section surface
+    | section <-
+        [ HouseholdCycleAccounts
+        , HouseholdDailyTarget
+        , HouseholdPlannedTransactions
+        , HouseholdIssues visibility
+        , HouseholdEnvelopeBacking
+        ]
     ]
+
+renderHouseholdReportSectionWithCycle
+  :: (PresentationConfig -> CycleAccounts -> Text)
+  -> PresentationConfig
+  -> HouseholdReportSection
+  -> HouseholdReportSurface
+  -> Text
+renderHouseholdReportSectionWithCycle renderCycle presentation section surface =
+  case section of
+    HouseholdCycleAccounts ->
+      renderCycle presentation (householdCycleAccounts surface)
+    HouseholdDailyTarget ->
+      renderDailyTarget presentation (householdDailyTarget surface)
+    HouseholdPlannedTransactions ->
+      renderPlans (householdPlannedTransactions surface)
+    HouseholdIssues visibility ->
+      renderHouseholdIssues visibility (householdIssues surface)
+    HouseholdEnvelopeBacking ->
+      renderEnvelope presentation (householdEnvelopeBacking surface)
 
 renderDailyTarget :: PresentationConfig -> DailyTarget -> Text
 renderDailyTarget presentation report = T.intercalate "\n"
