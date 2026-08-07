@@ -23,7 +23,8 @@ import System.Environment (getArgs)
 import System.Exit (die)
 
 import HKernel.Account
-  ( accountDeclarations
+  ( Account
+  , accountDeclarations
   , accountName
   , declaredAccount
   )
@@ -32,6 +33,7 @@ import HKernel.Actual.Journal
   , actualJournalValue
   , parseActualJournal
   )
+import HKernel.Editor.ActualWorkspace (transactionsForAccount)
 import HKernel.Editor.ActualWriter (publishActualBlock)
 import HKernel.Editor.TUI.ActualAdd
   ( AccountSelectionTarget(..)
@@ -126,7 +128,7 @@ data UIState event
 
 data AppContext = AppContext
   { contextAccounts             :: [Text]
-  , contextWorkspaceAccounts    :: L.List Name (Maybe Text)
+  , contextWorkspaceAccounts    :: L.List Name (Maybe Account)
   , contextAllTransactions      :: [Transaction]
   , contextWorkspaceList        :: L.List Name Transaction
   , contextWorkspaceFocus       :: WorkspaceFocus
@@ -167,7 +169,7 @@ zoomList f (AppWrapper context (SelectAccount target accountList form)) =
     <$> f accountList
 zoomList _ wrapper = pure wrapper
 
-zoomWorkspaceAccounts :: Traversal' AppWrapper (L.List Name (Maybe Text))
+zoomWorkspaceAccounts :: Traversal' AppWrapper (L.List Name (Maybe Account))
 zoomWorkspaceAccounts f (AppWrapper context Workspace) =
   (\updated ->
       AppWrapper
@@ -286,22 +288,22 @@ workspacePaneLabel context pane labelText
   | contextWorkspaceFocus context == pane = str (labelText <> " *")
   | otherwise = str labelText
 
-renderWorkspaceAccount :: Bool -> Maybe Text -> Widget Name
+renderWorkspaceAccount :: Bool -> Maybe Account -> Widget Name
 renderWorkspaceAccount selected maybeAccount
   | selected = withAttr L.listSelectedAttr row
   | otherwise = row
   where
     row = case maybeAccount of
       Nothing -> str "All accounts"
-      Just accountText -> txt accountText
+      Just account -> txt (accountName account)
 
 workspaceFilterText :: AppContext -> Text
 workspaceFilterText context =
   case selectedWorkspaceAccount context of
     Nothing -> "All accounts"
-    Just accountText -> accountText
+    Just account -> accountName account
 
-selectedWorkspaceAccount :: AppContext -> Maybe Text
+selectedWorkspaceAccount :: AppContext -> Maybe Account
 selectedWorkspaceAccount context =
   case L.listSelectedElement (contextWorkspaceAccounts context) of
     Nothing -> Nothing
@@ -488,15 +490,6 @@ applyWorkspaceAccountFilter context =
       transactionsForAccount
         (selectedWorkspaceAccount context)
         (contextAllTransactions context)
-
-transactionsForAccount :: Maybe Text -> [Transaction] -> [Transaction]
-transactionsForAccount Nothing = id
-transactionsForAccount (Just selectedAccount) =
-  filter
-    (any
-      ((== selectedAccount) . accountName . postingAccount)
-      . NonEmpty.toList
-      . transactionPostings)
 
 handleInputEvent
   :: AppContext
@@ -728,7 +721,7 @@ makeWorkspaceContext focusLatest journalFile source journal =
     workspaceAccounts =
       L.list
         WorkspaceAccountList
-        (Vec.fromList (Nothing : map Just accounts))
+        (Vec.fromList (Nothing : map (Just . declaredAccount) declarations))
         1
     initialWorkspaceList =
       L.list WorkspaceTransactionList (Vec.fromList transactions) 1
