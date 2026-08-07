@@ -15,7 +15,7 @@ if [ -z "$DATA_DIR" ]; then
   exit 2
 fi
 
-for source in actual.journal accounts.tsv budget_alloc.tsv budget.toml household.toml plan.journal config.tsv issues.tsv daily_target_scope.tsv; do
+for source in actual.journal accounts.tsv budget_alloc.tsv budget.toml household.toml plan.journal issues.tsv daily_target_scope.tsv; do
   if [ ! -f "$DATA_DIR/$source" ]; then
     printf 'required household source is missing: %s\n' "$source" >&2
     exit 1
