@@ -68,6 +68,7 @@ import HKernel.Household.Config
   )
 import HKernel.Household.DailyTarget
   ( DailyTargetAssetSelection
+  , DailyTargetPlanJournalError
   , DailyTargetScope
   , DailyTargetSelectionError
   , dailyTargetScopeFromSelections
@@ -153,6 +154,7 @@ data HouseholdLoadError
   | HouseholdAccountPolicyRegistryDisagreement Text
   | HouseholdReportConfigParseFailed [Text]
   | HouseholdIssuesParseFailed (NonEmpty HouseholdIssueTSVError)
+  | HouseholdDailyTargetPlanMetadataFailed (NonEmpty DailyTargetPlanJournalError)
   | HouseholdDailyTargetScopeFailed (NonEmpty DailyTargetSelectionError)
   | HouseholdPlanProjectionFailed (NonEmpty HouseholdSourceError)
   | HouseholdReportCalculationFailed (NonEmpty HouseholdSourceError)
@@ -349,7 +351,7 @@ assembleDailyScope
 assembleDailyScope registry assetSelections planRootText planJournal = do
   admittedPlans <- first (pure . HouseholdPlanProjectionFailed)
     (admitPlanJournal planJournal)
-  obligationSelections <- first (pure . HouseholdDailyTargetScopeFailed)
+  obligationSelections <- first (pure . HouseholdDailyTargetPlanMetadataFailed)
     (parseDailyTargetPlanJournalSelections planRootText planJournal)
   first (pure . HouseholdDailyTargetScopeFailed)
     (dailyTargetScopeFromSelections
