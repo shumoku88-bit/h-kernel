@@ -5,9 +5,13 @@
 --
 -- General envelope, pacing, Expense assignment, and backing-pool syntax belongs
 -- to 'HKernel.Budget.Config'. This module parses only household-specific
--- coordinates and combines both values immediately into 'HouseholdPolicy'.
+-- coordinates and combines both values immediately into typed configuration.
 module HKernel.Household.Config
-  ( parseHouseholdPolicy
+  ( HouseholdConfiguration
+  , householdConfigurationPolicy
+  , householdConfigurationDailyTargetAssets
+  , parseHouseholdConfiguration
+  , parseHouseholdPolicy
   , renderHouseholdPolicyErrors
   ) where
 
@@ -29,6 +33,12 @@ import HKernel.Budget
   , mkEnvelopeId
   )
 import HKernel.Budget.Policy (BudgetPolicy)
+import HKernel.Household.DailyTarget
+  ( DailyTargetAssetSelection
+  , DailyTargetScopeIdError(..)
+  , mkDailyTargetScopeId
+  , selectDailyTargetAsset
+  )
 import HKernel.Household.Policy
 import Toml (decode)
 import Toml.Schema
@@ -39,7 +49,15 @@ import Toml.Schema
   , reqKey
   )
 
-data RawHouseholdPolicy = RawHouseholdPolicy RawCycle RawHouseholdBudget
+data HouseholdConfiguration = HouseholdConfiguration
+  { householdConfigurationPolicy            :: HouseholdPolicy
+  , householdConfigurationDailyTargetAssets :: [DailyTargetAssetSelection]
+  } deriving (Eq, Show)
+
+data RawHouseholdPolicy = RawHouseholdPolicy
+  RawCycle
+  RawHouseholdBudget
+  (Maybe RawDailyTarget)
 
 data RawCycle = RawCycle Text Text
 
@@ -52,11 +70,16 @@ data RawEnvelopeCoordinates = RawEnvelopeCoordinates
   Text
   (Maybe [Text])
 
+data RawDailyTarget = RawDailyTarget [RawDailyTargetAsset]
+
+data RawDailyTargetAsset = RawDailyTargetAsset Text Text
+
 instance FromValue RawHouseholdPolicy where
   fromValue = parseTableFromValue
     (RawHouseholdPolicy
       <$> reqKey "cycle"
-      <*> reqKey "budget")
+      <*> reqKey "budget"
+      <*> optKey "daily-target")
 
 instance FromValue RawCycle where
   fromValue = parseTableFromValue
@@ -77,29 +100,66 @@ instance FromValue RawEnvelopeCoordinates where
       <*> reqKey "allocation-account"
       <*> optKey "plan-destination-accounts")
 
--- | Decode @household.toml@ and layer its coordinates over an already admitted
--- general Budget policy. Unknown keys are rejected rather than retained as
--- warnings.
+instance FromValue RawDailyTarget where
+  fromValue = parseTableFromValue
+    (RawDailyTarget <$> reqKey "assets")
+
+instance FromValue RawDailyTargetAsset where
+  fromValue = parseTableFromValue
+    (RawDailyTargetAsset
+      <$> reqKey "id"
+      <*> reqKey "account")
+
+-- | Decode @household.toml@ into stable household policy plus source-independent
+-- Daily Target Asset selections. Unknown keys are rejected rather than retained
+-- as warnings.
+parseHouseholdConfiguration
+  :: BudgetPolicy
+  -> Text
+  -> Either [Text] HouseholdConfiguration
+parseHouseholdConfiguration budgetPolicy input =
+  case (decode input :: Result String RawHouseholdPolicy) of
+    Failure errors -> Left (map T.pack errors)
+    Success warnings raw
+      | null warnings -> rawToHouseholdConfiguration budgetPolicy raw
+      | otherwise -> Left (map T.pack warnings)
+
+-- | Compatibility projection for callers that only need household policy.
 parseHouseholdPolicy
   :: BudgetPolicy
   -> Text
   -> Either [Text] HouseholdPolicy
-parseHouseholdPolicy budgetPolicy input =
-  case (decode input :: Result String RawHouseholdPolicy) of
-    Failure errors -> Left (map T.pack errors)
-    Success warnings raw
-      | null warnings -> rawToHouseholdPolicy budgetPolicy raw
-      | otherwise -> Left (map T.pack warnings)
+parseHouseholdPolicy budgetPolicy =
+  fmap householdConfigurationPolicy . parseHouseholdConfiguration budgetPolicy
 
 renderHouseholdPolicyErrors :: [Text] -> Text
 renderHouseholdPolicyErrors = T.unlines . map ("  " <>)
 
-rawToHouseholdPolicy
+rawToHouseholdConfiguration
   :: BudgetPolicy
   -> RawHouseholdPolicy
+  -> Either [Text] HouseholdConfiguration
+rawToHouseholdConfiguration budgetPolicy
+    (RawHouseholdPolicy rawCycle rawHouseholdBudget rawDailyTarget) = do
+  policy <- rawToHouseholdPolicy budgetPolicy rawCycle rawHouseholdBudget
+  case partitionEithers
+      (zipWith parseRawDailyTargetAsset [0 :: Int ..] rawAssets) of
+    ([], selections) -> Right HouseholdConfiguration
+      { householdConfigurationPolicy = policy
+      , householdConfigurationDailyTargetAssets = selections
+      }
+    (errorGroups, _) -> Left (concat errorGroups)
+  where
+    rawAssets = case rawDailyTarget of
+      Nothing -> []
+      Just (RawDailyTarget values) -> values
+
+rawToHouseholdPolicy
+  :: BudgetPolicy
+  -> RawCycle
+  -> RawHouseholdBudget
   -> Either [Text] HouseholdPolicy
-rawToHouseholdPolicy budgetPolicy
-    (RawHouseholdPolicy rawCycle rawHouseholdBudget) = do
+rawToHouseholdPolicy budgetPolicy rawCycle rawHouseholdBudget = do
   cyclePolicy <- parseRawCycle rawCycle
   case rawHouseholdBudget of
     RawHouseholdBudget rawEnvelopes rawUnassigned ->
@@ -155,6 +215,29 @@ parseRawEnvelopeCoordinates index
           allocationResult
         ++ planErrors
 
+parseRawDailyTargetAsset
+  :: Int
+  -> RawDailyTargetAsset
+  -> Either [Text] DailyTargetAssetSelection
+parseRawDailyTargetAsset index (RawDailyTargetAsset rawId rawAccount) =
+  case (idResult, accountResult, errors) of
+    (Right scopeId, Right account, []) ->
+      Right (selectDailyTargetAsset scopeId account)
+    _ -> Left errors
+  where
+    path = indexedPath "daily-target.assets" index
+    idResult = mkDailyTargetScopeId rawId
+    accountResult = mkAccount rawAccount
+    errors =
+      either
+        (pure . renderDailyTargetScopeIdError (path <> ".id"))
+        (const [])
+        idResult
+        ++ either
+          (pure . renderAccountError (path <> ".account"))
+          (const [])
+          accountResult
+
 parseAccounts :: Text -> [Text] -> ([Text], [Account])
 parseAccounts path = finish . foldl' add ([], []) . zip [0 :: Int ..]
   where
@@ -195,8 +278,7 @@ renderHouseholdPolicyError err = case err of
     "budget.unassigned-accounts: duplicate Account "
       <> quoted (accountName account)
   AllocationAccountAlsoUnassigned account envelope ->
-    "budget.unassigned-accounts: allocation Account "
-      <> quoted (accountName account)
+    "budget.unassigned-accounts: allocation Account " <> quoted (accountName account)
       <> " for envelope " <> quoted (envelopeIdText envelope)
       <> " cannot also be unassigned"
 
@@ -211,6 +293,10 @@ renderEnvelopeIdError path err = path <> ": " <> case err of
     "whitespace is not allowed; got " <> quoted value
   ReservedEnvelopeId value ->
     quoted value <> " is derived and cannot be a spendable envelope identity"
+
+renderDailyTargetScopeIdError :: Text -> DailyTargetScopeIdError -> Text
+renderDailyTargetScopeIdError path err = path <> ": " <> case err of
+  EmptyDailyTargetScopeId -> "expected a non-empty Daily Target selection identity"
 
 renderAccountError :: Text -> AccountError -> Text
 renderAccountError path err = path <> ": " <> case err of
