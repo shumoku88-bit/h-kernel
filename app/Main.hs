@@ -9,6 +9,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (Day)
 import Data.Time.LocalTime (getZonedTime, localDay, zonedTimeToLocalTime)
+import HKernel.Account.Journal (parseAccountJournal)
 import HKernel.Actual.Journal
   ( actualJournalValue
   , parseActualJournal
@@ -197,7 +198,12 @@ loadHouseholdReportSurface directory observation journal = do
     then pure ()
     else dieText
       "actual.journal changed between accounting load and completion admission"
-  accountsText <- readHouseholdSource directory "accounts.tsv"
+  accountText <- readHouseholdSource directory "accounts.journal"
+  accountRegistry <- case parseAccountJournal accountText of
+    Left errors -> dieText
+      ("accounts.journal admission failed:\n"
+        <> renderAdmissionErrors errors)
+    Right value -> pure value
   budgetText <- readHouseholdSource directory "budget_alloc.tsv"
   budgetPolicyText <- readHouseholdSource directory "budget.toml"
   householdPolicyText <- readHouseholdSource directory "household.toml"
@@ -208,10 +214,9 @@ loadHouseholdReportSurface directory observation journal = do
         <> renderAdmissionErrors errors)
     Right value -> pure value
   issuesText <- readHouseholdSource directory "issues.tsv"
-  dailyScopeText <- readHouseholdSource directory "daily_target_scope.tsv"
-  case buildHouseholdReportSurfaceFromPlanJournal observation actual
-      accountsText budgetText budgetPolicyText householdPolicyText planJournal
-      issuesText dailyScopeText of
+  case buildHouseholdReportSurfaceFromNativeHouseholdSources observation actual
+      accountRegistry budgetText budgetPolicyText householdPolicyText planText
+      planJournal issuesText of
     Left errors -> dieText
       ("household source admission failed:\n"
         <> renderHouseholdSourceErrors errors)
