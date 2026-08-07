@@ -28,16 +28,11 @@ import HKernel.Period
 import HKernel.Plan (CommittedOutgoingPlan)
 import HKernel.Plan.Render (renderCommittedOutgoingPlanLine)
 import HKernel.Render
-  ( renderBalanceSheetWithPresentation
-  , renderCycleAccountsWithPresentation
-  , renderDailyFlowWithPresentation
-  , renderMonthlyAccountsWithPresentation
-  , renderProfitAndLossWithPresentation
-  , renderRecentTransactionsWithPresentation
-  , renderTrialBalanceWithPresentation
+  ( renderCycleAccountsWithPresentation
+  , renderReportBookCoreWithPresentation
   )
 import HKernel.Render.TerminalStyle
-import HKernel.Report (ReportBook(..))
+import HKernel.Report (ReportBook)
 import HKernel.Report.CycleAccounts (CycleAccounts)
 import HKernel.Report.Presentation
 import HKernel.Spike.HouseholdReport
@@ -296,22 +291,10 @@ renderReportBookWithHouseholdPresentation
   -> Text
 renderReportBookWithHouseholdPresentation presentation report household =
   T.intercalate "\n"
-    [ renderReportBookCoreLocal presentation report
+    [ renderReportBookCoreWithPresentation presentation report
     , renderHouseholdReportSections
         renderCycleAccountsWithPresentation presentation household
     ]
-
-renderReportBookCoreLocal :: PresentationConfig -> ReportBook -> Text
-renderReportBookCoreLocal presentation
-  (ReportBook trialBalance balanceSheet profitAndLossReport dailyFlowReport recentTransactionsReport monthlyAccountsReport) =
-    T.intercalate "\n"
-      [ renderTrialBalanceWithPresentation presentation trialBalance
-      , renderBalanceSheetWithPresentation presentation balanceSheet
-      , renderProfitAndLossWithPresentation presentation profitAndLossReport
-      , renderDailyFlowWithPresentation presentation dailyFlowReport
-      , renderRecentTransactionsWithPresentation presentation recentTransactionsReport
-      , renderMonthlyAccountsWithPresentation presentation monthlyAccountsReport
-      ]
 
 tshow :: Show value => value -> Text
 tshow = T.pack . show
