@@ -1,15 +1,15 @@
 # h-kernel TODO
 
-このファイルは、作者とpitが同じ優先順位で作業するための単一の入口である。
+このファイルは、作者とcoding assistantが同じ優先順位で作業するための単一の入口である。
 
-- pitは作業開始時にこのファイルを最初に読み、最上位の未完了項目から一つの有限sliceを選ぶ。
+- coding assistantは作業開始時にこのファイルを最初に読み、最上位の未完了項目から一つの有限sliceを選ぶ。
 - 実装の正確な契約は各owner文書とcode/testが所有する。このファイルへ設計詳細や作業日誌を増やさない。
 - 完了は、操作例、focused test、必要な正データの非破壊確認で観察できた場合だけチェックする。
 - 新しい計画文書を追加せず、必要なら既存文書を置換・統合・削除する。
 
 ## 目標
 
-正データを直接編集するより、`h-kernel`のCLI/TUIから操作する方が速く、分かりやすく、安全な状態にする。正データと互換性を失った`bqn-ledger`のwriterへ日常操作を依存させない。
+正データを直接編集するより、`h-kernel`のCLI/TUIから操作する方が速く、分かりやすく、安全な状態にする。現在の運用では`bqn-ledger`へreader、writer、fallbackとして依存しない。将来は同じcanonical Household sourceへのnative対応を進め、`bqn-ledger`のreader/writer機能を追いつかせられるが、それを現在のh-kernel完成条件にはしない。
 
 ## P0: コマンドを信用できる状態にする
 
@@ -49,7 +49,7 @@ UIの完了条件は「screenが存在する」ことではない。作者が正
 
 ## P2: 正データの全writerをh-kernelへ移す
 
-`bqn-ledger`は正データとの互換性を失っており、reader、writer、fallbackとして使わない。未対応operationは明示的な手編集として扱い、sourceごとにpreview、complete-source admission、backup、atomic publication、post-admissionを確認してh-kernelへ移す。
+現在の運用では`bqn-ledger`を正データのreader、writer、fallbackとして使わない。未対応operationは明示的な手編集として扱い、sourceごとにpreview、complete-source admission、backup、atomic publication、post-admissionを確認してh-kernelへ移す。将来の`bqn-ledger` native writer対応は別projectのcatch-upであり、このP2をブロックしない。
 
 - [ ] 現在の正データsourceごとに「読める / 書ける / 日常操作がある / 手編集が必要」を内容非公開で確認する。
 - [ ] Account metadata writerをh-kernelへ移す。
@@ -57,7 +57,7 @@ UIの完了条件は「screenが存在する」ことではない。作者が正
 - [ ] Budget movementとBudget policy writerをh-kernelへ移す。
 - [ ] Issue writerをh-kernelへ移す。
 - [ ] Household / Report / application configurationのtyped writerを用意する。
-- [ ] 各cutover後に、該当する`bqn-ledger` writer依存と互換説明を削除する。
+- [ ] 各cutover後に、現在の運用から不要になったlegacy writer依存と互換説明を削除する。
 
 ## P3: 文書を圧縮する
 
@@ -68,9 +68,21 @@ UIの完了条件は「screenが存在する」ことではない。作者が正
 - [ ] 残るdomain/report文書は、対象codeを変更するsliceで重複部分を継続的に削る。
 - [ ] 文書削減後も`repository-audit`でリンク、index、正規ownerを検証する。
 
+## 将来: bqn-ledger catch-up
+
+h-kernelの正規運用を完成させた後、余裕ができたら`bqn-ledger`を同じcanonical Household sourceへ追いつかせる。
+
+- native Journal / TOML sourceを直接admitする
+- h-kernelと同じidentity / provenance / exact arithmetic semanticsを保持する
+- Actual、Plan、Budget、Issue、configurationのwrite operationをsourceごとに実装・検証する
+- dual writeせず、同じ正データに対する別applicationとして切り替えて使える状態を目指す
+
+この将来項目のためにh-kernel側へBQN compatibility layerやgeneric argument shapeを持ち込まない。
+
 ## 作業順
 
 1. P0で壊れた・分かりにくいcommandを再現可能にする。
 2. commandの安全性をtestで固定してからP1のUIへ接続する。
 3. P2はsourceごとに有限sliceで進める。
 4. P3は実装と別sliceで行い、以後の文書増殖を止める。
+5. h-kernelの正規運用が安定してから、必要に応じてbqn-ledger catch-upを再開する。
