@@ -4,6 +4,7 @@ module HKernel.Editor.TransactionBlock
   ( TransactionBlockIntent(..)
   , IntentPosting(..)
   , TransactionBlockError(..)
+  , PreparedTransactionBlock(..)
   , prepareTransactionBlock
   ) where
 
@@ -69,14 +70,28 @@ data TransactionBlockError
   | BlockValidationError TransactionError
   deriving (Eq, Show)
 
+-- | One validated transaction together with its source representation.
+--
+-- Keeping both coordinates lets an editor validate Actual-owned metadata
+-- against a candidate resolved Journal without reparsing an unresolved root
+-- source in isolation.
+data PreparedTransactionBlock = PreparedTransactionBlock
+  { preparedTransactionBlock :: Text
+  , preparedTransaction      :: Transaction
+  } deriving (Eq, Show)
+
 prepareTransactionBlock
   :: AccountRegistry
   -> TransactionBlockIntent
-  -> Either (NonEmpty TransactionBlockError) Text
+  -> Either (NonEmpty TransactionBlockError) PreparedTransactionBlock
 prepareTransactionBlock registry intent = do
   postings <- resolvePostings registry (blockPostings intent)
   transaction <- buildTransaction intent postings
-  pure (renderTransaction (blockMetadata intent) transaction)
+  pure PreparedTransactionBlock
+    { preparedTransactionBlock =
+        renderTransaction (blockMetadata intent) transaction
+    , preparedTransaction = transaction
+    }
 
 resolvePostings
   :: AccountRegistry

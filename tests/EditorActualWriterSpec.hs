@@ -49,6 +49,10 @@ main = do
         , ("testActualSemanticReverseGap", testActualSemanticReverseGap)
         , ("testActualSemanticPrefixReject", testActualSemanticPrefixReject)
         , ("testActualSemanticSanitizedCode", testActualSemanticSanitizedCode)
+        , ("testResolvedActualWrite", testResolvedActualWrite)
+        , ("testResolvedActualStaleReject", testResolvedActualStaleReject)
+        , ("testResolvedActualPostAdmissionRollback", testResolvedActualPostAdmissionRollback)
+        , ("testResolvedAccountTypeMismatch", testResolvedAccountTypeMismatch)
         ]
   rs <- sequence [action | (_, action) <- results]
   let namedResults = zip (map fst results) rs
@@ -70,6 +74,22 @@ cleanupFixture path = do
   removeIfPresent path
   removeIfPresent (path <> ".backup.tmp")
   removeIfPresent (path <> ".new.tmp")
+
+withResolvedFixture
+  :: FilePath
+  -> Text
+  -> (FilePath -> IO Bool)
+  -> IO Bool
+withResolvedFixture rootPath rootSource action = do
+  let accountPath = "tests/fixtures/resolved-writer-accounts.journal"
+  cleanupFixture rootPath
+  removeIfPresent accountPath
+  TIO.writeFile accountPath resolvedWriterAccounts
+  TIO.writeFile rootPath rootSource
+  result <- action rootPath `catch` (\(_ :: IOException) -> pure False)
+  cleanupFixture rootPath
+  removeIfPresent accountPath
+  pure result
 
 removeIfPresent :: FilePath -> IO ()
 removeIfPresent path =
@@ -198,6 +218,61 @@ testActualBlockPostAdmissionFailureRestores =
         Left (PostAdmissionFailed _ True) -> currentSource == actualOld
         _ -> False)
 
+testResolvedActualWrite :: IO Bool
+testResolvedActualWrite =
+  withResolvedFixture
+    "tests/fixtures/resolved-writer-actual.journal"
+    resolvedWriterOld
+    (\path -> do
+      result <- publishActualBlockFromResolvedJournal
+        path
+        resolvedWriterOld
+        resolvedWriterBlock
+      case result of
+        Right () -> (== resolvedWriterNew) <$> TIO.readFile path
+        Left err -> print err >> pure False)
+
+testResolvedActualStaleReject :: IO Bool
+testResolvedActualStaleReject =
+  withResolvedFixture
+    "tests/fixtures/resolved-writer-stale.journal"
+    resolvedWriterOld
+    (\path -> do
+      result <- publishActualAppendFromResolvedJournal
+        (WriteIntent path
+          (ExpectedSource (resolvedWriterOld <> "\n"))
+          (CandidateSource resolvedWriterNew))
+      current <- TIO.readFile path
+      pure $ case result of
+        Left StaleFile -> current == resolvedWriterOld
+        _ -> False)
+
+testResolvedActualPostAdmissionRollback :: IO Bool
+testResolvedActualPostAdmissionRollback =
+  withResolvedFixture
+    "tests/fixtures/resolved-writer-rollback.journal"
+    resolvedWriterOld
+    (\path -> do
+      result <- publishActualAppendFromResolvedJournal
+        (WriteIntent path
+          (ExpectedSource resolvedWriterOld)
+          (CandidateSource resolvedWriterInvalid))
+      current <- TIO.readFile path
+      pure $ case result of
+        Left (PostAdmissionFailed _ True) -> current == resolvedWriterOld
+        _ -> False)
+
+testResolvedAccountTypeMismatch :: IO Bool
+testResolvedAccountTypeMismatch =
+  withResolvedFixture
+    "tests/fixtures/resolved-writer-type-mismatch.journal"
+    resolvedWriterTypeMismatch
+    (\path -> do
+      result <- admitActualJournalPath path
+      pure $ case result of
+        Left (ActualSourceLoadError _ NonEmpty.:| []) -> True
+        _ -> False)
+
 testActualSemanticAddParity :: IO Bool
 testActualSemanticAddParity =
   pure $
@@ -240,6 +315,60 @@ testActualSemanticSanitizedCode =
       map renderActualComparisonErrorCode (NonEmpty.toList errors)
         == ["bqn_candidate_source_rejected"]
     Right _ -> False
+
+resolvedWriterAccounts :: Text
+resolvedWriterAccounts = Text.unlines
+  [ "account assets:bank"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  ]
+
+resolvedWriterOld :: Text
+resolvedWriterOld = Text.unlines
+  [ "include resolved-writer-accounts.journal"
+  , ""
+  , "2026-08-04 existing"
+  , "  ; event-id: existing-event"
+  , "  assets:bank  -100 JPY"
+  , "  expenses:food  100 JPY"
+  ]
+
+resolvedWriterBlock :: Text
+resolvedWriterBlock = Text.unlines
+  [ "2026-08-05 appended"
+  , "  ; event-id: appended-event"
+  , "  assets:bank  -50 JPY"
+  , "  expenses:food  50 JPY"
+  ]
+
+resolvedWriterNew :: Text
+resolvedWriterNew = resolvedWriterOld <> "\n" <> resolvedWriterBlock
+
+resolvedWriterInvalid :: Text
+resolvedWriterInvalid = resolvedWriterOld <> Text.unlines
+  [ ""
+  , "2026-08-05 invalid"
+  , "  ; event-id: invalid-event"
+  , "  assets:unknown  -50 JPY"
+  , "  expenses:food  50 JPY"
+  ]
+
+resolvedWriterTypeMismatch :: Text
+resolvedWriterTypeMismatch = Text.unlines
+  [ "include resolved-writer-accounts.journal"
+  , ""
+  , "account assets:bank"
+  , "  type: Liability"
+  , "  commodity: JPY"
+  , ""
+  , "2026-08-04 existing"
+  , "  ; event-id: existing-event"
+  , "  assets:bank  -100 JPY"
+  , "  expenses:food  100 JPY"
+  ]
 
 actualOld :: Text
 actualOld =

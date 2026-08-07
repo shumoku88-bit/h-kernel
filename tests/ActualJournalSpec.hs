@@ -7,7 +7,7 @@ import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Account
 import HKernel.Actual.Journal
-import HKernel.Journal (journalTransactions)
+import HKernel.Journal (journalTransactions, parseJournal)
 import HKernel.Ledger (transactionDescription)
 import HKernel.Money
 import HKernel.Plan
@@ -17,6 +17,8 @@ import System.Exit (exitFailure)
 main :: IO ()
 main = do
   characterizeCompletionMetadataAdmission
+  characterizeResolvedJournalAdmission
+  rejectResolvedJournalTransactionDrift
   characterizeExplicitCompletionResolution
   characterizePlanReferenceWithoutEventIdentity
   characterizeReversalMetadataAdmission
@@ -49,6 +51,30 @@ characterizeCompletionMetadataAdmission = do
       )
     | declaration <- declarations
     ]
+
+characterizeResolvedJournalAdmission :: IO ()
+characterizeResolvedJournalAdmission = do
+  let resolvedJournal = mustRight (parseJournal resolvedAccountingJournal)
+      admitted = mustRight
+        (admitActualJournalFromResolvedJournal resolvedJournal resolvedActualRoot)
+      direct = mustRight (parseActualJournal resolvedAccountingJournal)
+
+  assertEqual
+    "resolved Account includes preserve the complete Actual semantic projection"
+    direct
+    admitted
+
+rejectResolvedJournalTransactionDrift :: IO ()
+rejectResolvedJournalTransactionDrift =
+  assertLeftSatisfies
+    "resolved admission rejects transactions not represented by the Actual root"
+    (any isAlignmentMismatch . NonEmpty.toList)
+    (admitActualJournalFromResolvedJournal driftedJournal resolvedActualRoot)
+  where
+    driftedJournal = mustRight (parseJournal driftedResolvedAccountingJournal)
+    isAlignmentMismatch err = case err of
+      ActualTransactionMetadataAlignmentMismatch 2 1 -> True
+      _ -> False
 
 characterizeExplicitCompletionResolution :: IO ()
 characterizeExplicitCompletionResolution = do
@@ -201,6 +227,34 @@ validActualJournal = declarations <> T.unlines
   , "  ; plan-id: plan-wifi"
   , "  assets:cash      -300 JPY"
   , "  expenses:wifi    300 JPY"
+  ]
+
+resolvedActualRoot :: T.Text
+resolvedActualRoot = T.unlines
+  [ "include accounts.journal"
+  , ""
+  , "2026-08-03 * completed payment"
+  , "  ; event-id: actual-one"
+  , "  ; plan-id: plan-wifi"
+  , "  assets:cash      -300 JPY"
+  , "  expenses:wifi    300 JPY"
+  ]
+
+resolvedAccountingJournal :: T.Text
+resolvedAccountingJournal = declarations <> T.unlines
+  [ "2026-08-03 * completed payment"
+  , "  ; event-id: actual-one"
+  , "  ; plan-id: plan-wifi"
+  , "  assets:cash      -300 JPY"
+  , "  expenses:wifi    300 JPY"
+  ]
+
+driftedResolvedAccountingJournal :: T.Text
+driftedResolvedAccountingJournal = resolvedAccountingJournal <> T.unlines
+  [ ""
+  , "2026-08-04 * included transaction must not hide here"
+  , "  assets:cash      -100 JPY"
+  , "  expenses:wifi    100 JPY"
   ]
 
 planWithoutEventIdJournal :: T.Text

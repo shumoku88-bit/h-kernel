@@ -12,9 +12,22 @@ import System.Exit (exitFailure, exitSuccess)
 import HKernel.Account (Account, mkAccount)
 import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.Editor.PlanLifecycle
+import HKernel.Journal (Journal, parseJournal)
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Money (Commodity, Quantity, mkCommodity, parseQuantity)
-import HKernel.Plan.Journal (parsePlanJournal)
+import HKernel.Plan (mkPlanId)
+import HKernel.Plan.Journal
+  ( identifiedPlanId
+  , identifiedPlanTransaction
+  , parsePlanJournal
+  , planJournalTransactions
+  )
+import HKernel.Ledger
+  ( postingAmount
+  , transactionDate
+  , transactionPostings
+  )
+import HKernel.Money (amountQuantity)
 
 main :: IO ()
 main = do
@@ -22,10 +35,21 @@ main = do
         [ ("testPlanAddSuccess", testPlanAddSuccess)
         , ("testPlanAddUsesPlanAdmissionOnly", testPlanAddUsesPlanAdmissionOnly)
         , ("testPlanAddInvalidSeries", testPlanAddInvalidSeries)
+        , ("testPlanEditDateAndAmountPreservesMetadata", testPlanEditDateAndAmountPreservesMetadata)
+        , ("testPlanEditDateOnlyPreservesPostingText", testPlanEditDateOnlyPreservesPostingText)
+        , ("testPlanEditAmountOnlyPreservesDate", testPlanEditAmountOnlyPreservesDate)
+        , ("testPlanEditNoOpRejected", testPlanEditNoOpRejected)
+        , ("testPlanEditClosedRejected", testPlanEditClosedRejected)
+        , ("testPlanEditMissingRejected", testPlanEditMissingRejected)
+        , ("testPlanEditNonPositiveAmount", testPlanEditNonPositiveAmount)
         , ("testPlanFinishSuccess", testPlanFinishSuccess)
         , ("testPlanFinishMissingAmount", testPlanFinishMissingAmount)
         , ("testPlanFinishNegativeAmount", testPlanFinishNegativeAmount)
         , ("testPlanFinishZeroAmount", testPlanFinishZeroAmount)
+        , ("testResolvedPlanAdd", testResolvedPlanAdd)
+        , ("testResolvedPlanEditCompletion", testResolvedPlanEditCompletion)
+        , ("testResolvedPlanFinish", testResolvedPlanFinish)
+        , ("testResolvedPlanFinishInvalidId", testResolvedPlanFinishInvalidId)
         ]
   mapM_ print results
   if all snd results
@@ -43,6 +67,28 @@ planFixture = T.unlines
   , ""
   , "2023-01-01 existing plan"
   , "  ; plan-id: plan-2023-01-01-lunch"
+  , "  assets:bank  -500 JPY"
+  , "  expenses:food  500 JPY"
+  ]
+
+metadataRichPlanFixture :: Text
+metadataRichPlanFixture = T.unlines
+  [ "account assets:bank"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , ""
+  , "2023-01-01 existing plan"
+  , "  ; plan-id: plan-2023-01-01-lunch"
+  , "  ; recur: monthly"
+  , "  ; series: lunch-series"
+  , "  ; daily-target-id: lunch-target"
+  , "  ; reservation-id: lunch-reservation"
+  , "  ; reservation-amount: 100"
+  , "  ; reservation-commodity: JPY"
+  , "  ; human note retained verbatim"
   , "  assets:bank  -500 JPY"
   , "  expenses:food  500 JPY"
   ]
@@ -78,6 +124,40 @@ actualFixture = T.unlines
   , "  expenses:food  -1000 JPY"
   ]
 
+actualRootFixture :: Text
+actualRootFixture = T.unlines
+  [ "include accounts.journal"
+  , ""
+  , "2023-01-02 opening"
+  , "  assets:bank  1000 JPY"
+  , "  expenses:food  -1000 JPY"
+  ]
+
+resolvedActualJournal :: Journal
+resolvedActualJournal = either (error . show) id (parseJournal actualFixture)
+
+actualClosedRootFixture :: Text
+actualClosedRootFixture = actualRootFixture <> T.unlines
+  [ ""
+  , "2023-01-03 completed lunch"
+  , "  ; plan-id: plan-2023-01-01-lunch"
+  , "  assets:bank  -500 JPY"
+  , "  expenses:food  500 JPY"
+  ]
+
+resolvedClosedActualJournal :: Journal
+resolvedClosedActualJournal =
+  either (error . show) id (parseJournal actualClosedFixture)
+
+actualClosedFixture :: Text
+actualClosedFixture = actualFixture <> T.unlines
+  [ ""
+  , "2023-01-03 completed lunch"
+  , "  ; plan-id: plan-2023-01-01-lunch"
+  , "  assets:bank  -500 JPY"
+  , "  expenses:food  500 JPY"
+  ]
+
 accBank :: Account
 accBank = either (error "bad account") id (mkAccount "assets:bank")
 
@@ -91,6 +171,11 @@ positiveQty :: Text -> PositivePlanFinishAmount
 positiveQty value =
   either (error "bad positive qty") id
     (mkPositivePlanFinishAmount (qty value))
+
+positiveEditQty :: Text -> PositivePlanEditAmount
+positiveEditQty value =
+  either (error "bad positive edit qty") id
+    (mkPositivePlanEditAmount (qty value))
 
 comm :: Text -> Commodity
 comm = either (error "bad comm") id . mkCommodity
@@ -134,6 +219,121 @@ testPlanAddInvalidSeries =
       Left (AddGeneratedIdError _ :| []) -> True
       _ -> False
 
+testPlanEditDateAndAmountPreservesMetadata :: Bool
+testPlanEditDateAndAmountPreservesMetadata =
+  let intent = PlanEditIntent
+        { editPlanId = "plan-2023-01-01-lunch"
+        , editDate = Just (fromGregorian 2023 1 7)
+        , editAmount = Just (positiveEditQty "650")
+        }
+  in case preparePlanEdit metadataRichPlanFixture actualFixture intent of
+       Left err -> error (show err)
+       Right preview ->
+         let block = editCandidateBlock preview
+             candidate = editCandidateCompleteSource preview
+             metadata =
+               [ "; recur: monthly"
+               , "; series: lunch-series"
+               , "; daily-target-id: lunch-target"
+               , "; reservation-id: lunch-reservation"
+               , "; reservation-amount: 100"
+               , "; reservation-commodity: JPY"
+               , "; human note retained verbatim"
+               ]
+         in "2023-01-07 existing plan" `T.isInfixOf` block
+              && "-650 JPY" `T.isInfixOf` block
+              && "650 JPY" `T.isInfixOf` block
+              && all (`T.isInfixOf` block) metadata
+              && case parsePlanJournal candidate of
+                   Left _ -> False
+                   Right journal -> case planJournalTransactions journal of
+                     [identified] ->
+                       transactionDate (identifiedPlanTransaction identified)
+                         == fromGregorian 2023 1 7
+                     _ -> False
+
+testPlanEditDateOnlyPreservesPostingText :: Bool
+testPlanEditDateOnlyPreservesPostingText =
+  let intent = PlanEditIntent
+        { editPlanId = "plan-2023-01-01-lunch"
+        , editDate = Just (fromGregorian 2023 1 8)
+        , editAmount = Nothing
+        }
+  in case preparePlanEdit metadataRichPlanFixture actualFixture intent of
+       Left err -> error (show err)
+       Right preview ->
+         let original = editOriginalBlock preview
+             candidate = editCandidateBlock preview
+         in "assets:bank  -500 JPY" `T.isInfixOf` original
+              && "assets:bank  -500 JPY" `T.isInfixOf` candidate
+              && "expenses:food  500 JPY" `T.isInfixOf` candidate
+              && "; reservation-id: lunch-reservation" `T.isInfixOf` candidate
+
+testPlanEditAmountOnlyPreservesDate :: Bool
+testPlanEditAmountOnlyPreservesDate =
+  let intent = PlanEditIntent
+        { editPlanId = "plan-2023-01-01-lunch"
+        , editDate = Nothing
+        , editAmount = Just (positiveEditQty "725")
+        }
+  in case preparePlanEdit metadataRichPlanFixture actualFixture intent of
+       Left err -> error (show err)
+       Right preview ->
+         let block = editCandidateBlock preview
+             targetId = either (error "bad plan id") id
+               (mkPlanId "plan-2023-01-01-lunch")
+         in "2023-01-01 existing plan" `T.isInfixOf` block
+              && case parsePlanJournal (editCandidateCompleteSource preview) of
+                   Left _ -> False
+                   Right journal -> case filter ((== targetId) . identifiedPlanId)
+                       (planJournalTransactions journal) of
+                     [identified] ->
+                       map (amountQuantity . postingAmount)
+                         (toList (transactionPostings
+                           (identifiedPlanTransaction identified)))
+                         == [qty "-725", qty "725"]
+                     _ -> False
+
+testPlanEditNoOpRejected :: Bool
+testPlanEditNoOpRejected =
+  let intent = PlanEditIntent
+        { editPlanId = "plan-2023-01-01-lunch"
+        , editDate = Nothing
+        , editAmount = Nothing
+        }
+  in case preparePlanEdit metadataRichPlanFixture actualFixture intent of
+       Left (EditNoChange _ :| []) -> True
+       _ -> False
+
+testPlanEditClosedRejected :: Bool
+testPlanEditClosedRejected =
+  let intent = PlanEditIntent
+        { editPlanId = "plan-2023-01-01-lunch"
+        , editDate = Just (fromGregorian 2023 1 9)
+        , editAmount = Nothing
+        }
+  in case preparePlanEdit metadataRichPlanFixture actualClosedFixture intent of
+       Left (EditPlanAlreadyClosed _ :| []) -> True
+       _ -> False
+
+testPlanEditMissingRejected :: Bool
+testPlanEditMissingRejected =
+  let intent = PlanEditIntent
+        { editPlanId = "plan-2099-01-01-missing"
+        , editDate = Just (fromGregorian 2023 1 9)
+        , editAmount = Nothing
+        }
+  in case preparePlanEdit metadataRichPlanFixture actualFixture intent of
+       Left (EditPlanNotFound _ :| []) -> True
+       _ -> False
+
+testPlanEditNonPositiveAmount :: Bool
+testPlanEditNonPositiveAmount =
+  mkPositivePlanEditAmount (qty "0")
+      == Left (NonPositivePlanEditAmount (qty "0"))
+    && mkPositivePlanEditAmount (qty "-1")
+      == Left (NonPositivePlanEditAmount (qty "-1"))
+
 testPlanFinishSuccess :: Bool
 testPlanFinishSuccess =
   let intent = PlanFinishIntent
@@ -164,6 +364,55 @@ testPlanFinishMissingAmount =
               && "-500 JPY" `T.isInfixOf` block
        Left err -> error (show err)
 
+testResolvedPlanAdd :: Bool
+testResolvedPlanAdd =
+  isRight (preparePlanAddFromResolvedActualJournal
+    resolvedActualJournal
+    planFixture
+    actualRootFixture
+    (planAddIntent Nothing))
+
+testResolvedPlanEditCompletion :: Bool
+testResolvedPlanEditCompletion =
+  let intent = PlanEditIntent
+        { editPlanId = "plan-2023-01-01-lunch"
+        , editDate = Just (fromGregorian 2023 1 9)
+        , editAmount = Nothing
+        }
+  in case preparePlanEditFromResolvedActualJournal
+      resolvedClosedActualJournal
+      metadataRichPlanFixture
+      actualClosedRootFixture
+      intent of
+    Left (EditPlanAlreadyClosed _ :| []) -> True
+    _ -> False
+
+testResolvedPlanFinish :: Bool
+testResolvedPlanFinish =
+  let intent = PlanFinishIntent
+        { finishPlanId = "plan-2023-01-01-lunch"
+        , finishActualDate = fromGregorian 2023 1 4
+        , finishActualAmount = Just (positiveQty "600")
+        }
+  in case preparePlanFinishFromResolvedActualJournal
+      resolvedActualJournal planFixture actualRootFixture intent of
+    Right preview ->
+      "; plan-id: plan-2023-01-01-lunch"
+        `T.isInfixOf` finishCandidateBlock preview
+    Left err -> error (show err)
+
+testResolvedPlanFinishInvalidId :: Bool
+testResolvedPlanFinishInvalidId =
+  let intent = PlanFinishIntent
+        { finishPlanId = "invalid plan id"
+        , finishActualDate = fromGregorian 2023 1 4
+        , finishActualAmount = Nothing
+        }
+  in case preparePlanFinishFromResolvedActualJournal
+      resolvedActualJournal planFixture actualRootFixture intent of
+    Left (FinishInvalidId _ :| []) -> True
+    _ -> False
+
 testPlanFinishNegativeAmount :: Bool
 testPlanFinishNegativeAmount =
   mkPositivePlanFinishAmount (qty "-1")
@@ -173,3 +422,6 @@ testPlanFinishZeroAmount :: Bool
 testPlanFinishZeroAmount =
   mkPositivePlanFinishAmount (qty "0")
     == Left (NonPositivePlanFinishAmount (qty "0"))
+
+toList :: NonEmpty a -> [a]
+toList (x :| xs) = x : xs

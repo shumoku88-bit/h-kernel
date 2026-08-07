@@ -13,6 +13,7 @@ import HKernel.Actual.Journal
   , reversalTransactionId
   )
 import HKernel.Editor.ActualReverse
+import HKernel.Journal (parseJournal)
 import HKernel.Plan.Completion
   ( actualTransactionIdText
   , mkActualTransactionId
@@ -56,6 +57,15 @@ main = do
   assertEqual "render durable reversal identity and provenance"
     expectedBlock
     (candidateBlock preview)
+
+  let resolvedPreview = mustRight
+        (prepareActualReverseFromResolvedJournal
+          (mustRight (parseJournal resolvedFixtureSource))
+          resolvedActualRoot
+          validIntent)
+  assertEqual "reverse using declarations outside the Actual root"
+    expectedBlock
+    (candidateBlock resolvedPreview)
 
   -- 2. Candidate complete source is re-parseable and provenance remains typed.
   case parseActualJournal (candidateCompleteSource preview) of
@@ -114,6 +124,19 @@ main = do
       `T.isInfixOf` candidateBlock reverseOfReversePreview
       && "; reverses: event-123-reversal-1"
         `T.isInfixOf` candidateBlock reverseOfReversePreview)
+
+resolvedActualRoot :: Text
+resolvedActualRoot = T.unlines
+  [ "include accounts.journal"
+  , ""
+  , "2026-08-04 Grocery shopping"
+  , "  ; event-id: event-123"
+  , "  assets:cash  100 JPY"
+  , "  expenses:food  -100 JPY"
+  ]
+
+resolvedFixtureSource :: Text
+resolvedFixtureSource = fixtureSource
 
 fixtureSource :: Text
 fixtureSource = T.unlines

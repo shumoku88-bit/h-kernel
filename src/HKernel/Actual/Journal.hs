@@ -28,6 +28,7 @@ module HKernel.Actual.Journal
   , reversedTransactionId
   , ActualJournalError(..)
   , parseActualJournal
+  , admitActualJournalFromResolvedJournal
   ) where
 
 import Data.Char (isSpace)
@@ -108,33 +109,51 @@ parseActualJournal
   -> Either (NonEmpty ActualJournalError) ActualJournal
 parseActualJournal input = case parseJournal input of
   Left journalErrors -> Left (fmap ActualJournalSyntaxError journalErrors)
-  Right journal
-    | transactionCount /= metadataCount -> Left
-        (ActualTransactionMetadataAlignmentMismatch
-          transactionCount metadataCount NonEmpty.:| [])
-    | otherwise -> case NonEmpty.nonEmpty allErrors of
-        Just errors -> Left errors
-        Nothing -> Right ActualJournal
-          { actualJournalValue = journal
-          , actualJournalIdentifiedTransactions = identifiedTransactions
-          , actualJournalCompletionDeclarations = declarations
-          , actualJournalReversalDeclarations = reversals
-          }
-    where
-      transactions = journalTransactions journal
-      metadataBlocks = transactionMetadataBlocks input
-      transactionCount = length transactions
-      metadataCount = length metadataBlocks
-      admissions = zipWith admitTransactionMetadata transactions metadataBlocks
-      locatedIdentified = mapMaybe admissionIdentified admissions
-      identifiedTransactions =
-        map locatedIdentifiedValue locatedIdentified
-      declarations = mapMaybe admissionDeclaration admissions
-      reversals = mapMaybe admissionReversal admissions
-      allErrors =
-        concatMap admissionErrors admissions
-          ++ duplicateActualIdErrors locatedIdentified
-          ++ reversalIntegrityErrors identifiedTransactions reversals
+  Right journal -> admitActualJournalFromResolvedJournal journal input
+
+-- | Project root-source Actual metadata onto an already validated Journal.
+--
+-- The supplied Journal is expected to be the result of admitting the same root
+-- source after its include graph has been resolved. Accounting declarations,
+-- postings, exact amounts, and transaction validation therefore remain owned by
+-- 'HKernel.Journal'; this function reads only Actual-owned metadata from the
+-- root source text.
+--
+-- The transaction count must match exactly. This permits includes to contribute
+-- declarations such as canonical Account ownership, but fails closed if an
+-- include contributes hidden transactions or if the supplied Journal does not
+-- correspond to the root source shape.
+admitActualJournalFromResolvedJournal
+  :: Journal
+  -> Text
+  -> Either (NonEmpty ActualJournalError) ActualJournal
+admitActualJournalFromResolvedJournal journal input
+  | transactionCount /= metadataCount = Left
+      (ActualTransactionMetadataAlignmentMismatch
+        transactionCount metadataCount NonEmpty.:| [])
+  | otherwise = case NonEmpty.nonEmpty allErrors of
+      Just errors -> Left errors
+      Nothing -> Right ActualJournal
+        { actualJournalValue = journal
+        , actualJournalIdentifiedTransactions = identifiedTransactions
+        , actualJournalCompletionDeclarations = declarations
+        , actualJournalReversalDeclarations = reversals
+        }
+  where
+    transactions = journalTransactions journal
+    metadataBlocks = transactionMetadataBlocks input
+    transactionCount = length transactions
+    metadataCount = length metadataBlocks
+    admissions = zipWith admitTransactionMetadata transactions metadataBlocks
+    locatedIdentified = mapMaybe admissionIdentified admissions
+    identifiedTransactions =
+      map locatedIdentifiedValue locatedIdentified
+    declarations = mapMaybe admissionDeclaration admissions
+    reversals = mapMaybe admissionReversal admissions
+    allErrors =
+      concatMap admissionErrors admissions
+        ++ duplicateActualIdErrors locatedIdentified
+        ++ reversalIntegrityErrors identifiedTransactions reversals
 
 type LocatedLine = (Int, Text)
 

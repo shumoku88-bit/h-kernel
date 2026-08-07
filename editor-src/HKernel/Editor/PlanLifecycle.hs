@@ -5,6 +5,17 @@ module HKernel.Editor.PlanLifecycle
   , PlanAddPreview(..)
   , PlanAddError(..)
   , preparePlanAdd
+  , preparePlanAddFromResolvedActualJournal
+
+  , PositivePlanEditAmount
+  , PlanEditAmountError(..)
+  , mkPositivePlanEditAmount
+  , positivePlanEditAmountQuantity
+  , PlanEditIntent(..)
+  , PlanEditPreview(..)
+  , PlanEditError(..)
+  , preparePlanEdit
+  , preparePlanEditFromResolvedActualJournal
 
   , PositivePlanFinishAmount
   , PlanFinishAmountError(..)
@@ -14,40 +25,62 @@ module HKernel.Editor.PlanLifecycle
   , PlanFinishPreview(..)
   , PlanFinishError(..)
   , preparePlanFinish
+  , preparePlanFinishFromResolvedActualJournal
   ) where
 
 import Data.Bifunctor (first)
-import Data.Char (isAsciiLower, isAsciiUpper, toLower)
+import Data.Char (isAsciiLower, isAsciiUpper, isSpace, toLower)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 
-import HKernel.Actual.Journal (ActualJournalError, parseActualJournal, actualJournalCompletionDeclarations)
+import HKernel.Account (accountName)
+import HKernel.Actual.Journal
+  ( ActualJournal
+  , ActualJournalError
+  , actualJournalCompletionDeclarations
+  , actualJournalValue
+  , admitActualJournalFromResolvedJournal
+  , parseActualJournal
+  )
 import HKernel.Editor.ActualAppend
-  ( ActualEditIntent(..)
+  ( ActualAppendPreview(..)
   , ActualEditError(..)
-  , ActualAppendPreview(..)
-  , prepareActualAppend
+  , ActualEditIntent(..)
+  , prepareActualAppendFromResolvedJournal
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Editor.TransactionBlock
   ( IntentPosting(..)
-  , TransactionBlockIntent(..)
+  , PreparedTransactionBlock(..)
   , TransactionBlockError
+  , TransactionBlockIntent(..)
   , prepareTransactionBlock
   )
-import HKernel.Journal (journalAccountRegistry)
-import HKernel.Ledger (Posting, Transaction, transactionDescription, transactionPostings, postingAccount, postingAmount, mkPosting)
+import HKernel.Journal (Journal, journalAccountRegistry)
+import HKernel.Ledger
+  ( Posting
+  , Transaction
+  , mkPosting
+  , postingAccount
+  , postingAmount
+  , transactionDate
+  , transactionDescription
+  , transactionPostings
+  )
 import HKernel.Money
   ( Quantity
   , amountCommodity
   , amountQuantity
+  , commodityCode
   , mkAmount
   , negateQuantity
   , quantityToRational
+  , renderQuantity
   , zeroQuantity
   )
 import HKernel.Plan
@@ -56,16 +89,16 @@ import HKernel.Plan
   , mkPlanId
   , planIdText
   )
+import HKernel.Plan.Completion (declaredCompletionPlanId)
 import HKernel.Plan.Journal
-  ( PlanJournalError
-  , parsePlanJournal
-  , planJournalValue
-  , planJournalTransactions
+  ( IdentifiedPlanTransaction
+  , PlanJournalError
   , identifiedPlanId
   , identifiedPlanTransaction
-  , IdentifiedPlanTransaction
+  , parsePlanJournal
+  , planJournalTransactions
+  , planJournalValue
   )
-import HKernel.Plan.Completion (declaredCompletionPlanId)
 
 -- Plan Add
 
@@ -133,8 +166,28 @@ preparePlanAdd
   -> PlanAddIntent
   -> Either (NonEmpty PlanAddError) PlanAddPreview
 preparePlanAdd planSource actualSource intent = do
+  actualJ <- first (pure . AddActualJournalSyntaxError)
+    (parseActualJournal actualSource)
+  preparePlanAddFromJournals planSource actualJ intent
+
+preparePlanAddFromResolvedActualJournal
+  :: Journal
+  -> Text
+  -> Text
+  -> PlanAddIntent
+  -> Either (NonEmpty PlanAddError) PlanAddPreview
+preparePlanAddFromResolvedActualJournal resolvedActual planSource actualSource intent = do
+  actualJ <- first (pure . AddActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanAddFromJournals planSource actualJ intent
+
+preparePlanAddFromJournals
+  :: Text
+  -> ActualJournal
+  -> PlanAddIntent
+  -> Either (NonEmpty PlanAddError) PlanAddPreview
+preparePlanAddFromJournals planSource actualJ intent = do
   planJ <- first (pure . AddPlanJournalSyntaxError) (parsePlanJournal planSource)
-  actualJ <- first (pure . AddActualJournalSyntaxError) (parseActualJournal actualSource)
 
   let existingPlanIds = map identifiedPlanId (planJournalTransactions planJ)
                         ++ map declaredCompletionPlanId (actualJournalCompletionDeclarations actualJ)
@@ -159,12 +212,13 @@ preparePlanAdd planSource actualSource intent = do
         , blockMetadata = [("plan-id", planIdText newPlanId)]
         }
 
-  block <- first (pure . AddTransactionBlockError)
+  prepared <- first (pure . AddTransactionBlockError)
     (prepareTransactionBlock
       (journalAccountRegistry (planJournalValue planJ))
       blockIntent)
 
-  let preview = PlanAddPreview
+  let block = preparedTransactionBlock prepared
+      preview = PlanAddPreview
         { addCandidateBlock = block
         , addCandidateCompleteSource =
             appendSourceBlock planSource (SourceBlock block)
@@ -173,6 +227,303 @@ preparePlanAdd planSource actualSource intent = do
   _ <- first (pure . AddCandidateParseError) (parsePlanJournal (addCandidateCompleteSource preview))
 
   pure preview
+
+
+-- Plan Edit
+
+-- | Strictly positive replacement magnitude for a binary Plan edit.
+-- The admitted posting signs remain the owner of direction.
+newtype PositivePlanEditAmount = PositivePlanEditAmount
+  { positivePlanEditAmountQuantity :: Quantity
+  } deriving (Eq, Show)
+
+data PlanEditAmountError
+  = NonPositivePlanEditAmount Quantity
+  deriving (Eq, Show)
+
+mkPositivePlanEditAmount
+  :: Quantity
+  -> Either PlanEditAmountError PositivePlanEditAmount
+mkPositivePlanEditAmount quantity
+  | quantity <= zeroQuantity = Left (NonPositivePlanEditAmount quantity)
+  | otherwise = Right (PositivePlanEditAmount quantity)
+
+data PlanEditIntent = PlanEditIntent
+  { editPlanId :: Text
+  , editDate   :: Maybe Day
+  , editAmount :: Maybe PositivePlanEditAmount
+  } deriving (Eq, Show)
+
+data PlanEditPreview = PlanEditPreview
+  { editOriginalBlock           :: Text
+  , editCandidateBlock          :: Text
+  , editCandidateCompleteSource :: Text
+  } deriving (Eq, Show)
+
+data PlanEditError
+  = EditPlanJournalSyntaxError (NonEmpty PlanJournalError)
+  | EditActualJournalSyntaxError (NonEmpty ActualJournalError)
+  | EditCandidateParseError (NonEmpty PlanJournalError)
+  | EditInvalidId PlanIdError
+  | EditPlanNotFound PlanId
+  | EditPlanAlreadyClosed PlanId
+  | EditNoChange PlanId
+  | EditAmountOnlyForBinaryPlan
+  | EditAmountDirectionUnavailable
+  | EditSourcePlanIdCoordinateMissing PlanId
+  | EditSourcePlanIdCoordinateAmbiguous PlanId Int
+  | EditSourceTransactionHeaderMissing PlanId
+  | EditSourcePostingCoordinateMismatch Int Int
+  | EditCandidateSemanticMismatch PlanId
+  deriving (Eq, Show)
+
+-- | Edit one open Plan by durable Plan identity while retaining source metadata
+-- and unrelated comments verbatim.
+--
+-- The complete Plan and Actual sources are admitted first. Physical source
+-- scanning then locates only the unique block already proven to own the target
+-- @plan-id@. Date edits touch the transaction header date only. Amount edits
+-- replace posting source lines in order while leaving metadata/comment lines in
+-- place. The complete candidate is re-admitted before it can be published.
+preparePlanEdit
+  :: Text
+  -> Text
+  -> PlanEditIntent
+  -> Either (NonEmpty PlanEditError) PlanEditPreview
+preparePlanEdit planSource actualSource intent = do
+  actualJ <- first (pure . EditActualJournalSyntaxError)
+    (parseActualJournal actualSource)
+  preparePlanEditFromJournals planSource actualJ intent
+
+preparePlanEditFromResolvedActualJournal
+  :: Journal
+  -> Text
+  -> Text
+  -> PlanEditIntent
+  -> Either (NonEmpty PlanEditError) PlanEditPreview
+preparePlanEditFromResolvedActualJournal resolvedActual planSource actualSource intent = do
+  actualJ <- first (pure . EditActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanEditFromJournals planSource actualJ intent
+
+preparePlanEditFromJournals
+  :: Text
+  -> ActualJournal
+  -> PlanEditIntent
+  -> Either (NonEmpty PlanEditError) PlanEditPreview
+preparePlanEditFromJournals planSource actualJ intent = do
+  planJ <- first (pure . EditPlanJournalSyntaxError) (parsePlanJournal planSource)
+  pId <- first (pure . EditInvalidId) (mkPlanId (editPlanId intent))
+
+  identified <- case filter ((== pId) . identifiedPlanId)
+      (planJournalTransactions planJ) of
+    [] -> Left (pure (EditPlanNotFound pId))
+    [value] -> Right value
+    values -> Left (pure (EditSourcePlanIdCoordinateAmbiguous pId (length values)))
+
+  if pId `elem` map declaredCompletionPlanId
+      (actualJournalCompletionDeclarations actualJ)
+    then Left (pure (EditPlanAlreadyClosed pId))
+    else Right ()
+
+  let transaction = identifiedPlanTransaction identified
+      originalPostings = transactionPostings transaction
+      targetDate = maybe (transactionDate transaction) id (editDate intent)
+
+  updatedPostings <- editPlanPostings (editAmount intent) originalPostings
+  let dateChanged = targetDate /= transactionDate transaction
+      amountChanged = updatedPostings /= originalPostings
+  if not dateChanged && not amountChanged
+    then Left (pure (EditNoChange pId))
+    else Right ()
+
+  located <- first pure (locatePlanSourceBlock pId transaction planSource)
+  editedBlockLines <- first pure
+    (editLocatedPlanBlock pId targetDate (editAmount intent) updatedPostings located)
+
+  let originalBlock = T.intercalate "\n" (locatedBlockLines located)
+      candidateBlock = T.intercalate "\n" editedBlockLines
+      candidateSource = T.intercalate "\n"
+        (locatedPrefixLines located ++ editedBlockLines ++ locatedSuffixLines located)
+      preview = PlanEditPreview
+        { editOriginalBlock = originalBlock
+        , editCandidateBlock = candidateBlock
+        , editCandidateCompleteSource = candidateSource
+        }
+
+  candidateJournal <- first (pure . EditCandidateParseError)
+    (parsePlanJournal candidateSource)
+  candidateTarget <- case filter ((== pId) . identifiedPlanId)
+      (planJournalTransactions candidateJournal) of
+    [value] -> Right (identifiedPlanTransaction value)
+    _ -> Left (pure (EditCandidateSemanticMismatch pId))
+
+  if transactionDate candidateTarget == targetDate
+      && transactionDescription candidateTarget == transactionDescription transaction
+      && transactionPostings candidateTarget == updatedPostings
+    then Right preview
+    else Left (pure (EditCandidateSemanticMismatch pId))
+
+editPlanPostings
+  :: Maybe PositivePlanEditAmount
+  -> NonEmpty Posting
+  -> Either (NonEmpty PlanEditError) (NonEmpty Posting)
+editPlanPostings Nothing postings = Right postings
+editPlanPostings (Just positiveAmount) postings
+  | length postings /= 2 = Left (pure EditAmountOnlyForBinaryPlan)
+  | any ((== zeroQuantity) . amountQuantity . postingAmount)
+      (NonEmpty.toList postings) = Left (pure EditAmountDirectionUnavailable)
+  | otherwise = Right (fmap replaceAmount postings)
+  where
+    newMagnitude = positivePlanEditAmountQuantity positiveAmount
+    replaceAmount posting =
+      let oldQuantity = amountQuantity (postingAmount posting)
+          newQuantity
+            | quantityToRational oldQuantity < 0 = negateQuantity newMagnitude
+            | otherwise = newMagnitude
+      in mkPosting
+          (postingAccount posting)
+          (mkAmount (amountCommodity (postingAmount posting)) newQuantity)
+
+data LocatedPlanBlock = LocatedPlanBlock
+  { locatedPrefixLines :: [Text]
+  , locatedBlockLines  :: [Text]
+  , locatedSuffixLines :: [Text]
+  }
+
+locatePlanSourceBlock
+  :: PlanId
+  -> Transaction
+  -> Text
+  -> Either PlanEditError LocatedPlanBlock
+locatePlanSourceBlock pId transaction source =
+  case planIdCoordinates of
+    [] -> Left (EditSourcePlanIdCoordinateMissing pId)
+    [metadataIndex] -> do
+      start <- case reverse
+          [ index
+          | (index, line) <- zip [0..metadataIndex] sourceLines
+          , isTopLevelSourceLine line
+          ] of
+        firstStart : _ -> Right firstStart
+        [] -> Left (EditSourceTransactionHeaderMissing pId)
+      let header = sourceLines !! start
+          expectedDatePrefix = renderDay (transactionDate transaction)
+      if not (expectedDatePrefix `T.isPrefixOf` header)
+        then Left (EditSourceTransactionHeaderMissing pId)
+        else
+          let endExclusive = case listToMaybe
+                  [ index
+                  | (index, line) <- zip [0..] sourceLines
+                  , index > start
+                  , isTopLevelSourceLine line
+                  ] of
+                Just index -> index
+                Nothing -> length sourceLines
+          in Right LocatedPlanBlock
+              { locatedPrefixLines = take start sourceLines
+              , locatedBlockLines = take (endExclusive - start)
+                  (drop start sourceLines)
+              , locatedSuffixLines = drop endExclusive sourceLines
+              }
+    coordinates -> Left
+      (EditSourcePlanIdCoordinateAmbiguous pId (length coordinates))
+  where
+    sourceLines = T.splitOn "\n" source
+    planIdCoordinates =
+      [ index
+      | (index, line) <- zip [0..] sourceLines
+      , metadataPlanId line == Just (planIdText pId)
+      ]
+
+metadataPlanId :: Text -> Maybe Text
+metadataPlanId line
+  | not (isIndentedSourceLine line && isCommentSourceLine line) = Nothing
+  | otherwise =
+      let strippedComment = T.dropWhile
+            (\character -> character == ';' || isSpace character)
+            (T.strip line)
+          (rawKey, remainder) = T.breakOn ":" strippedComment
+          key = T.toCaseFold (T.strip rawKey)
+      in if key == "plan-id" && not (T.null remainder)
+          then Just (T.strip (T.drop 1 remainder))
+          else Nothing
+
+isTopLevelSourceLine :: Text -> Bool
+isTopLevelSourceLine line =
+  not (T.null (T.strip line))
+    && not (isIndentedSourceLine line)
+    && not (isCommentSourceLine line)
+
+isIndentedSourceLine :: Text -> Bool
+isIndentedSourceLine line = case T.uncons line of
+  Just (character, _) -> isSpace character
+  Nothing -> False
+
+isCommentSourceLine :: Text -> Bool
+isCommentSourceLine line =
+  ";" `T.isPrefixOf` T.stripStart line
+    || "#" `T.isPrefixOf` T.stripStart line
+
+editLocatedPlanBlock
+  :: PlanId
+  -> Day
+  -> Maybe PositivePlanEditAmount
+  -> NonEmpty Posting
+  -> LocatedPlanBlock
+  -> Either PlanEditError [Text]
+editLocatedPlanBlock pId targetDate amountEdit postings located =
+  case locatedBlockLines located of
+    [] -> Left (EditSourceTransactionHeaderMissing pId)
+    header : rest -> do
+      updatedRest <- case amountEdit of
+        Nothing -> Right rest
+        Just _ -> replacePostingSourceLines
+          rest
+          (map renderPostingLine (NonEmpty.toList postings))
+      pure (replaceHeaderDate targetDate header : updatedRest)
+
+replaceHeaderDate :: Day -> Text -> Text
+replaceHeaderDate day header = renderDay day <> T.drop 10 header
+
+replacePostingSourceLines
+  :: [Text]
+  -> [Text]
+  -> Either PlanEditError [Text]
+replacePostingSourceLines sourceLines replacements = go sourceLines replacements 0
+  where
+    expectedCount = length replacements
+
+    go [] [] _ = Right []
+    go [] remaining replaced = Left
+      (EditSourcePostingCoordinateMismatch expectedCount
+        (replaced + expectedCount - length remaining))
+    go (line : lines) remaining replaced
+      | isPostingSourceLine line = case remaining of
+          replacement : rest ->
+            (replacement :) <$> go lines rest (replaced + 1)
+          [] -> Left
+            (EditSourcePostingCoordinateMismatch expectedCount (replaced + 1))
+      | otherwise = (line :) <$> go lines remaining replaced
+
+isPostingSourceLine :: Text -> Bool
+isPostingSourceLine line =
+  isIndentedSourceLine line
+    && not (T.null stripped)
+    && not (isCommentSourceLine line)
+  where
+    stripped = T.strip line
+
+renderPostingLine :: Posting -> Text
+renderPostingLine posting =
+  "    " <> accountName (postingAccount posting)
+    <> "    " <> renderQuantity (amountQuantity amount)
+    <> " " <> commodityCode (amountCommodity amount)
+  where
+    amount = postingAmount posting
+
+renderDay :: Day -> Text
+renderDay = T.pack . formatTime defaultTimeLocale "%F"
 
 
 -- Plan Finish
@@ -209,7 +560,6 @@ data PlanFinishError
   = FinishPlanJournalSyntaxError (NonEmpty PlanJournalError)
   | FinishActualJournalSyntaxError (NonEmpty ActualJournalError)
   | FinishActualEditError (NonEmpty ActualEditError)
-  | FinishCandidateParseError (NonEmpty ActualJournalError)
   | FinishInvalidId PlanIdError
   | FinishPlanNotFound PlanId
   | FinishPlanAlreadyClosed PlanId
@@ -222,8 +572,29 @@ preparePlanFinish
   -> PlanFinishIntent
   -> Either (NonEmpty PlanFinishError) PlanFinishPreview
 preparePlanFinish planSource actualSource intent = do
+  actualJ <- first (pure . FinishActualJournalSyntaxError)
+    (parseActualJournal actualSource)
+  preparePlanFinishFromJournals planSource actualSource actualJ intent
+
+preparePlanFinishFromResolvedActualJournal
+  :: Journal
+  -> Text
+  -> Text
+  -> PlanFinishIntent
+  -> Either (NonEmpty PlanFinishError) PlanFinishPreview
+preparePlanFinishFromResolvedActualJournal resolvedActual planSource actualSource intent = do
+  actualJ <- first (pure . FinishActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanFinishFromJournals planSource actualSource actualJ intent
+
+preparePlanFinishFromJournals
+  :: Text
+  -> Text
+  -> ActualJournal
+  -> PlanFinishIntent
+  -> Either (NonEmpty PlanFinishError) PlanFinishPreview
+preparePlanFinishFromJournals planSource actualSource actualJ intent = do
   planJ <- first (pure . FinishPlanJournalSyntaxError) (parsePlanJournal planSource)
-  actualJ <- first (pure . FinishActualJournalSyntaxError) (parseActualJournal actualSource)
 
   pId <- first (pure . FinishInvalidId) (mkPlanId (finishPlanId intent))
 
@@ -263,13 +634,15 @@ preparePlanFinish planSource actualSource intent = do
         , intentMetadata = [("plan-id", planIdText pId)]
         }
 
-  actualPreview <- first (pure . FinishActualEditError) (prepareActualAppend actualSource actualIntent)
+  actualPreview <- first (pure . FinishActualEditError)
+    (prepareActualAppendFromResolvedJournal
+      (actualJournalValue actualJ)
+      actualSource
+      actualIntent)
 
   let preview = PlanFinishPreview
         { finishCandidateBlock = candidateBlock actualPreview
         , finishCandidateCompleteSource = candidateCompleteSource actualPreview
         }
-
-  _ <- first (pure . FinishCandidateParseError) (parseActualJournal (finishCandidateCompleteSource preview))
 
   pure preview
