@@ -73,7 +73,16 @@ command=$1
 shift
 
 case "$command" in
-  report) dir=$(get_data_dir || true); [ -n "$dir" ] && export HKERNEL_LEDGER_DATA_DIR="$dir"; exec "$REPORT" "$@" ;;
+  report)
+    dir=$(get_data_dir || true)
+    if [ -n "$dir" ]; then
+      export HKERNEL_LEDGER_DATA_DIR="$dir"
+      if [ -z "${HKERNEL_REPORT_CONFIG:-}" ] && [ -f "$dir/report.toml" ]; then
+        export HKERNEL_REPORT_CONFIG="$dir/report.toml"
+      fi
+    fi
+    exec "$REPORT" "$@"
+    ;;
   actual-add)
     if [ "$#" -eq 1 ]; then journal=$1
     elif [ "$#" -eq 0 ]; then journal=$(require_data_dir)/actual.journal
