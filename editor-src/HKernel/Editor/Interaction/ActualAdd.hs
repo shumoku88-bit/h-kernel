@@ -15,19 +15,33 @@ module HKernel.Editor.Interaction.ActualAdd
   , initialActualAddState
   , initialActualAddStateForDay
   , setActualAddDate
+  , dailyAccountCandidates
   , enterActualAddPreview
   , transitionActualAdd
   ) where
 
+import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 
-import HKernel.Account (Account, accountName)
+import HKernel.Account
+  ( Account
+  , AccountRegistry
+  , AccountType(..)
+  , accountName
+  , accountTypeFor
+  )
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddPreview(..)
   , emptyActualAddInput
+  )
+import HKernel.Ledger
+  ( Transaction
+  , postingAccount
+  , transactionPostings
   )
 
 data AccountSelectionTarget
@@ -81,6 +95,58 @@ setActualAddDate day state =
 
 renderDay :: Day -> Text
 renderDay = T.pack . show
+
+-- | Daily expense entry exposes only meaningful roles and orders them by recent
+-- Actual use. Expense destinations are categories; payment sources are Asset or
+-- Liability Accounts. Remaining matching Accounts retain canonical registry
+-- order after the recent prefix.
+dailyAccountCandidates
+  :: AccountRegistry
+  -> [Transaction]
+  -> AccountSelectionTarget
+  -> [Account]
+dailyAccountCandidates registry transactions target =
+  recentMatching <> remaining
+  where
+    matching =
+      filter (matchesDailyRole registry target)
+        [ account
+        | transaction <- transactions
+        , posting <- NonEmpty.toList (transactionPostings transaction)
+        , let account = postingAccount posting
+        ]
+    allMatching = uniqueAccounts matching
+    matchingSet = Set.fromList allMatching
+    recentMatching =
+      uniqueAccounts
+        [ account
+        | transaction <- reverse transactions
+        , posting <- NonEmpty.toList (transactionPostings transaction)
+        , let account = postingAccount posting
+        , Set.member account matchingSet
+        ]
+    recentSet = Set.fromList recentMatching
+    remaining = filter (`Set.notMember` recentSet) allMatching
+
+matchesDailyRole
+  :: AccountRegistry
+  -> AccountSelectionTarget
+  -> Account
+  -> Bool
+matchesDailyRole registry target account =
+  case (target, accountTypeFor account registry) of
+    (SelectToAccount, Just Expense) -> True
+    (SelectFromAccount, Just Asset) -> True
+    (SelectFromAccount, Just Liability) -> True
+    _ -> False
+
+uniqueAccounts :: [Account] -> [Account]
+uniqueAccounts = go Set.empty
+  where
+    go _ [] = []
+    go seen (account : rest)
+      | Set.member account seen = go seen rest
+      | otherwise = account : go (Set.insert account seen) rest
 
 -- | Enter preview mode with a preview prepared by the Actual operation owner.
 -- Interaction does not need the complete source that produced this value.
