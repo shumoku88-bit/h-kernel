@@ -93,6 +93,7 @@ library h-kernel-editor
                     , HKernel.Editor.ActualWriter
                     , HKernel.Editor.BudgetMovementAppend
                     , HKernel.Editor.CLI
+                    , HKernel.Editor.Interaction.ActualAdd
                     , HKernel.Editor.IssueAppend
                     , HKernel.Editor.PlanLifecycle
                     , HKernel.Editor.TransactionBlock
