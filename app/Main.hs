@@ -207,12 +207,11 @@ loadHouseholdReportSurface directory observation journal = do
       ("plan.journal admission failed:\n"
         <> renderAdmissionErrors errors)
     Right value -> pure value
-  configText <- readHouseholdSource directory "config.tsv"
   issuesText <- readHouseholdSource directory "issues.tsv"
   dailyScopeText <- readHouseholdSource directory "daily_target_scope.tsv"
   case buildHouseholdReportSurfaceFromPlanJournal observation actual
       accountsText budgetText budgetPolicyText householdPolicyText planJournal
-      configText issuesText dailyScopeText of
+      issuesText dailyScopeText of
     Left errors -> dieText
       ("household source admission failed:\n"
         <> renderHouseholdSourceErrors errors)
