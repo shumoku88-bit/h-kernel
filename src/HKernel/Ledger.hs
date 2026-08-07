@@ -39,6 +39,22 @@ data Posting = Posting
 mkPosting :: Account -> Amount -> Posting
 mkPosting = Posting
 
+-- | A validated, non-blank Transaction description.
+-- The constructor stays private so accepted Transactions do not carry a Text
+-- value that can violate the description invariant checked at the boundary.
+newtype TransactionDescription = TransactionDescription Text
+  deriving (Eq, Show)
+
+transactionDescriptionFromText
+  :: Text
+  -> Either TransactionError TransactionDescription
+transactionDescriptionFromText description
+  | T.null (T.strip description) = Left EmptyTransactionDescription
+  | otherwise = Right (TransactionDescription description)
+
+transactionDescriptionText :: TransactionDescription -> Text
+transactionDescriptionText (TransactionDescription description) = description
+
 -- | A structurally non-empty posting collection with at least two entries.
 -- The constructor stays private so every accepted 'Transaction' carries the
 -- double-entry minimum in its representation, not only as a checked runtime
@@ -57,12 +73,12 @@ postingsToNonEmpty (Postings first second rest) =
 
 -- | A validated transaction. The constructor is hidden so an unbalanced
 -- transaction cannot enter the rest of the accounting engine. Its internal
--- 'Postings' value also guarantees that a validated transaction contains at
--- least two postings.
+-- description and 'Postings' values also make the local structural invariants
+-- explicit in the representation.
 data Transaction = Transaction
-  { transactionDate        :: Day
-  , transactionDescription :: Text
-  , transactionPostingSet  :: Postings
+  { transactionDate             :: Day
+  , transactionDescriptionValue :: TransactionDescription
+  , transactionPostingSet       :: Postings
   } deriving (Eq, Show)
 
 data TransactionError
@@ -78,14 +94,18 @@ mkTransaction
   -> Text
   -> NonEmpty Posting
   -> Either TransactionError Transaction
-mkTransaction date description postings
-  | T.null (T.strip description) = Left EmptyTransactionDescription
-  | otherwise = do
-      checkedPostings <- postingsFromNonEmpty postings
-      let balance = postingCollectionBalance (postingsToNonEmpty checkedPostings)
-      if isZeroBalance balance
-        then Right (Transaction date description checkedPostings)
-        else Left (UnbalancedTransaction balance)
+mkTransaction date description postings = do
+  checkedDescription <- transactionDescriptionFromText description
+  checkedPostings <- postingsFromNonEmpty postings
+  let balance = postingCollectionBalance (postingsToNonEmpty checkedPostings)
+  if isZeroBalance balance
+    then Right (Transaction date checkedDescription checkedPostings)
+    else Left (UnbalancedTransaction balance)
+
+-- | Observe the validated description as Text for the public Ledger API.
+transactionDescription :: Transaction -> Text
+transactionDescription =
+  transactionDescriptionText . transactionDescriptionValue
 
 -- | Observe validated postings in their original order. The public projection
 -- remains 'NonEmpty' for compatibility; the 'Transaction' representation is
