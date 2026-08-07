@@ -96,9 +96,15 @@ data RawAccountPolicy = RawAccountPolicy
 data RawAssetPolicy = RawAssetPolicy [Text] [Text] [Text]
 
 data RawBudgetAccountPolicy = RawBudgetAccountPolicy
-  [Text] [Text] [Text] [Text]
-  [Text] [Text]
-  [Text] [Text] [Text]
+  RawBudgetKindPolicy
+  RawEnvelopeRolePolicy
+  RawBudgetGroupPolicy
+
+data RawBudgetKindPolicy = RawBudgetKindPolicy [Text] [Text] [Text] [Text]
+
+data RawEnvelopeRolePolicy = RawEnvelopeRolePolicy [Text] [Text] [Text]
+
+data RawBudgetGroupPolicy = RawBudgetGroupPolicy [Text] [Text] [Text]
 
 data RawExpensePolicy = RawExpensePolicy [Text] [Text]
 
@@ -156,13 +162,29 @@ instance FromValue RawAssetPolicy where
 instance FromValue RawBudgetAccountPolicy where
   fromValue = parseTableFromValue
     (RawBudgetAccountPolicy
+      <$> reqKey "kind"
+      <*> reqKey "envelope-role"
+      <*> reqKey "group")
+
+instance FromValue RawBudgetKindPolicy where
+  fromValue = parseTableFromValue
+    (RawBudgetKindPolicy
       <$> reqKey "opening"
       <*> reqKey "unassigned"
       <*> reqKey "spent"
-      <*> reqKey "envelope"
+      <*> reqKey "envelope")
+
+instance FromValue RawEnvelopeRolePolicy where
+  fromValue = parseTableFromValue
+    (RawEnvelopeRolePolicy
+      <$> reqKey "unassigned"
       <*> reqKey "dynamic"
-      <*> reqKey "execution"
-      <*> reqKey "daily"
+      <*> reqKey "execution")
+
+instance FromValue RawBudgetGroupPolicy where
+  fromValue = parseTableFromValue
+    (RawBudgetGroupPolicy
+      <$> reqKey "daily"
       <*> reqKey "flex"
       <*> reqKey "reserve")
 
@@ -259,8 +281,10 @@ parseRawAccountPolicy
       Right policy -> Right policy
   where
     RawAssetPolicy liquid savings investment = rawAssets
-    RawBudgetAccountPolicy
-      opening unassigned spent envelope dynamic execution daily flex reserve = rawBudget
+    RawBudgetAccountPolicy rawKinds rawRoles rawGroups = rawBudget
+    RawBudgetKindPolicy opening unassigned spent envelope = rawKinds
+    RawEnvelopeRolePolicy roleUnassigned dynamic execution = rawRoles
+    RawBudgetGroupPolicy daily flex reserve = rawGroups
     RawExpensePolicy fixed variable = rawExpenses
 
     (liquidErrors, liquidAccounts) = axisAccounts
@@ -275,33 +299,36 @@ parseRawAccountPolicy
         ++ map (, RetainedInvestmentAsset) investmentAccounts
 
     (openingErrors, openingAccounts) = axisAccounts
-      "account-policy.budget.opening" opening
+      "account-policy.budget.kind.opening" opening
     (unassignedErrors, unassignedAccounts) = axisAccounts
-      "account-policy.budget.unassigned" unassigned
+      "account-policy.budget.kind.unassigned" unassigned
     (spentErrors, spentAccounts) = axisAccounts
-      "account-policy.budget.spent" spent
+      "account-policy.budget.kind.spent" spent
     (envelopeErrors, envelopeAccounts) = axisAccounts
-      "account-policy.budget.envelope" envelope
+      "account-policy.budget.kind.envelope" envelope
     budgetKinds =
       map (, RetainedOpeningBudgetAccount) openingAccounts
         ++ map (, RetainedUnassignedBudgetAccount) unassignedAccounts
         ++ map (, RetainedSpentBudgetAccount) spentAccounts
         ++ map (, RetainedEnvelopeBudgetAccount) envelopeAccounts
 
+    (roleUnassignedErrors, roleUnassignedAccounts) = axisAccounts
+      "account-policy.budget.envelope-role.unassigned" roleUnassigned
     (dynamicErrors, dynamicAccounts) = axisAccounts
-      "account-policy.budget.dynamic" dynamic
+      "account-policy.budget.envelope-role.dynamic" dynamic
     (executionErrors, executionAccounts) = axisAccounts
-      "account-policy.budget.execution" execution
+      "account-policy.budget.envelope-role.execution" execution
     envelopeRoles =
-      map (, RetainedDynamicEnvelopeRole) dynamicAccounts
+      map (, RetainedUnassignedEnvelopeRole) roleUnassignedAccounts
+        ++ map (, RetainedDynamicEnvelopeRole) dynamicAccounts
         ++ map (, RetainedExecutionEnvelopeRole) executionAccounts
 
     (dailyErrors, dailyAccounts) = axisAccounts
-      "account-policy.budget.daily" daily
+      "account-policy.budget.group.daily" daily
     (flexErrors, flexAccounts) = axisAccounts
-      "account-policy.budget.flex" flex
+      "account-policy.budget.group.flex" flex
     (reserveErrors, reserveAccounts) = axisAccounts
-      "account-policy.budget.reserve" reserve
+      "account-policy.budget.group.reserve" reserve
     budgetGroups =
       map (, RetainedDailyBudgetGroup) dailyAccounts
         ++ map (, RetainedFlexBudgetGroup) flexAccounts
@@ -318,7 +345,7 @@ parseRawAccountPolicy
     syntaxErrors = concat
       [ liquidErrors, savingsErrors, investmentErrors
       , openingErrors, unassignedErrors, spentErrors, envelopeErrors
-      , dynamicErrors, executionErrors
+      , roleUnassignedErrors, dynamicErrors, executionErrors
       , dailyErrors, flexErrors, reserveErrors
       , fixedErrors, variableErrors
       ]
@@ -435,11 +462,11 @@ renderHouseholdAccountPolicyError err = case err of
   DuplicateHouseholdAssetClassCoordinate ->
     "account-policy.assets: one Account occurs in more than one Asset class"
   DuplicateHouseholdBudgetKindCoordinate ->
-    "account-policy.budget: one Account occurs in more than one structural kind"
+    "account-policy.budget.kind: one Account occurs in more than one structural kind"
   DuplicateHouseholdEnvelopeRoleCoordinate ->
-    "account-policy.budget: one Account occurs in more than one envelope role"
+    "account-policy.budget.envelope-role: one Account occurs in more than one role"
   DuplicateHouseholdBudgetGroupCoordinate ->
-    "account-policy.budget: one Account occurs in more than one household group"
+    "account-policy.budget.group: one Account occurs in more than one household group"
   DuplicateHouseholdSpendClassCoordinate ->
     "account-policy.expenses: one Account occurs in more than one spend class"
   RetainedFixedMarkerHasNoSpendClass ->
