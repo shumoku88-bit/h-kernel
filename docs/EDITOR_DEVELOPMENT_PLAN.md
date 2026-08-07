@@ -4,13 +4,13 @@
 Owner: h-kernel editor  
 Canonical: yes  
 更新日: 2026-08-07  
-更新条件: editorのmain能力、daily-use入口、writer authority、次の有限sliceが変わるとき
+更新条件: editorのmain能力、daily-use入口、writer authority、次のcoherent editor chapterが変わるとき
 
 ## 1. この文書の役割
 
-この文書は、`h-kernel` editorの現在能力、component境界、write effect、daily-use入口、次に検証する一つの有限sliceを所有する。
+この文書は、`h-kernel` editorの現在能力、component境界、write effect、daily-use入口、次に完成させるcoherent editor chapterを所有する。
 
-過去のE番号、branch、commit、完了PRの履歴はGitが所有する。この文書には、現在mainで使えるもの、まだ使えないもの、次に観察する境界だけを置く。
+過去のE番号、branch、commit、完了PRの履歴はGitが所有する。この文書には、現在mainで使えるもの、まだ使えないもの、次に完成させるdomain capabilityまたはownership chapterだけを置く。
 
 ## 2. CURRENT
 
@@ -132,7 +132,7 @@ CLIやTUIはこの処理を複製しない。
 - backup、temporary file、recovery artifact、private sourceをGitへ入れない
 - focused testとpublic CIはsynthetic sourceだけを使う
 
-UI-independentな`ActualAddState`はcomplete private sourceを保持しない。Brick delivery contextは現在、previewとsafe writerのexpected-old-bytes境界を接続するため、読み込んだsource bytesを保持している。このplacementを変更する場合は、UI cleanupではなくwriter correctness / ownershipの別sliceとして扱う。
+UI-independentな`ActualAddState`はcomplete private sourceを保持しない。Brick delivery contextは現在、previewとsafe writerのexpected-old-bytes境界を接続するため、読み込んだsource bytesを保持している。このplacementを変更する場合は、UI cleanupへ混ぜず、writer correctness / ownershipという別のsemantic rollback boundaryとして扱う。
 
 ### 2.4 Actual workspace TUI
 
@@ -233,11 +233,11 @@ EditorはAccount identity、Money、Transaction balance、Actual / Plan / Budget
 
 Editor固有の責任は、user/application edit intent、candidate fragmentとsource placement、complete-source preview、stale checkとsafe publication、UI-independent interaction contractである。delivery adapterはterminal/process/file effectを接続する。
 
-## 5. NEXT: Actual workspace state ownership audit
+## 5. NEXT: Actual workspace state ownership chapter
 
-次の有限sliceは、Brick workspaceが持つscreen stateとUI-independent `ActualAddState`の関係を観察することである。
+次のcoherent editor chapterは、Brick workspaceが持つscreen stateとUI-independent `ActualAddState`の関係を観察し、重複が確認できた場合は同じchapter内でownership整理と検証まで完成させることである。
 
-有限な問い:
+中心の問い:
 
 > Brickの`UIState`にあるInput / Account selection / Preview / Confirmationのscreen caseと、`ActualAddMode`のinteraction caseは、同じ意味を二重所有しているか。もし重複しているなら、Brick toolkit固有のstateを残したまま、どこまで`ActualAddState`をcanonical interaction stateとして使えるか。
 
@@ -247,8 +247,10 @@ Editor固有の責任は、user/application edit intent、candidate fragmentとs
 - Form、Brick List、cursor、focus、renderingなどtoolkit固有stateを区別する
 - interaction meaning、derived screen state、effect-delivery stateを区別する
 - duplicated state transitionとmanual synchronizationを特定する
-- Haskelineなど別adapterが再利用するべき最小state/action contractを確認する
-- 削除できるcase、branch、conversionが明確な場合だけ次のfinite implementation sliceを切る
+- Haskelineなど別adapterが再利用するべきstate/action contractを確認する
+- 削除できるcase、branch、conversionが明確なら、同じchapterで実装、focused regression、full test、final diff reviewまで行う
+
+観察だけを独立PRへ切り出し、その結果をさらに細いimplementation PRへ送ることをデフォルトにしない。Brick moduleとshared interaction moduleの両方へ変更が必要でも、それらが同じActual workspace capabilityを完成させるなら一つのcoherent changeとして扱う。
 
 ### Non-goals
 
@@ -262,10 +264,12 @@ Editor固有の責任は、user/application edit intent、candidate fragmentとs
 - directoryの見た目だけの再配置
 - Spike卒業
 
+これらはfileやmoduleが違うからではなく、rollback条件とdomain meaningが異なるためchapter境界の外に置く。
+
 ## 6. Remaining decisions
 
 - Brick screen stateとUI-independent interaction stateの重複整理
-- Brick delivery contextのsource-byte retentionとsafe writer ownershipの別audit
+- Brick delivery contextのsource-byte retentionとsafe writer ownershipのseparate ownership chapter
 - Haskelineまたは他adapterを実際に追加する必要が生じた時のdelivery構成
 - Actual multi-postingの日常interaction
 - Actual reverse target selectorとidentity input experience

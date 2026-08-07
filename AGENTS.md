@@ -5,10 +5,10 @@
 ## 作業前
 
 1. remoteの最新`main` SHA、open PR、直近commit、関連branchを確認する。
-2. 対象fileと並行作業の変更fileを比較し、重複を避ける。
+2. 対象fileと並行作業の変更fileを比較し、実在する重複を避ける。並行作業が停止している場合、仮想的な衝突回避を理由に作業を細分化しない。
 3. [`docs/CODE_MAP_AND_DESIGN_SKETCH.md`](docs/CODE_MAP_AND_DESIGN_SKETCH.md)で、リポジトリ全体の現在の編成と設計スケッチを確認する。
 4. 対象領域のpolicy、architecture、contract、source ownership文書を読む。
-5. editorまたはwriter effectへ触れる場合は、[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)でmain能力、NEXT、並行path、cutover gateを確認する。
+5. editorまたはwriter effectへ触れる場合は、[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)でmain能力、次のcoherent domain chapter、並行path、cutover gateを確認する。
 6. private household sourceへ触れる場合は、writer authority、公開境界、実データが維持されることを先に確認する。
 
 ## コードスコアの読み方
@@ -20,11 +20,11 @@
 - `SKETCH`: 未決定の案
 - `QUESTION`: 証拠または判断が不足している問い
 
-`SKETCH`を決定済み仕様として実装しない。component、domain ownership、主要data flow、全体の方向が変わる作業では、実装とコードスコアを同じsliceで同期する。局所変更だけで全体が変わらない場合は、機械的な追記をしない。
+`SKETCH`を決定済み仕様として実装しない。component、domain ownership、主要data flow、全体の方向が変わる作業では、実装とコードスコアを同じcoherent changeで同期する。局所変更だけで全体が変わらない場合は、機械的な追記をしない。
 
 ## 実装前の二重譜読み
 
-Haskell codeを変更するsliceでは、coding assistantは唯一の作曲者として振る舞わない。対象domainの正規owner、作者との合意、現在の型とtestを譜面として読み、その意味をHaskellの形で演奏する。
+Haskell codeを変更するcoherent changeでは、coding assistantは唯一の作曲者として振る舞わない。対象domainの正規owner、作者との合意、現在の型とtestを譜面として読み、その意味をHaskellの形で演奏する。
 
 実装前に、少なくとも次を短く示す。
 
@@ -46,18 +46,28 @@ Evidence:
 
 これは新しいHaskell機能を毎回導入するためのchecklistではない。既存の型と小さな名前付き関数が最もよくdomainを表す場合は、それが採用する音である。逆に、高度な機能がdomain構造を正確に表す場合は、初見であることだけを理由に避けない。
 
-同じdomainの意味には同じownerとlawを使う。異なるdomainまで同じ書法へ機械的に揃えない。実装中に新しい順序、identity、effect、失敗条件が現れた場合は、そのまま編曲を広げず、作者との設計合意へ戻る。
+同じdomainの意味には同じownerとlawを使う。異なるdomainまで同じ書法へ機械的に揃えない。実装中に新しい順序、identity、effect、失敗条件が現れ、rollback boundaryそのものが変わる場合は、そのまま編曲を広げず、作者との設計合意へ戻る。
 
 詳細は[`docs/HASKELL_NATIVE_CODE_POLICY.md`](docs/HASKELL_NATIVE_CODE_POLICY.md)に従う。
 
 ## 作業単位
 
-- 一度に一つの有限な目的だけを扱う。
-- correctness、ownership、algorithm、source format、presentation、writer effect、文書構造の変更を無関係に混ぜない。
+- デフォルトの作業単位は、一つのuser value、domain capability、またはmigration chapterをend-to-endで完成させるcoherent changeとする。
+- function、module、reader/writer、parser/operation、test fileが別であることだけを理由に分割しない。
+- correctness、ownership、algorithm、admission、writer effectが同じdomain capabilityを成立させるため不可分なら、一つのchangeに含めてよい。
+- 分割はsemantic rollback boundaryで判断する。domain semantic change、source format migration、writer authority cutover、destructive retirement、無関係なpresentation redesignは原則として別に扱う。
+- 既存PRの境界を次の設計境界として自動継承しない。必要ならconsolidate、supersede、rebase、reconstructして完成形へ寄せる。
+- 安全性はPRの小ささではなく、domain type、invariant、focused test、full test、CI、ownership audit、final diff reviewで確保する。
 - 既存の事実、policy、導出値、presentationを区別する。
 - Account名、残高、file配置から会計上の意味を推測しない。
 - 未合意の設計案を、抽象の導入理由やcleanupの口実にしない。
-- 変更後に不要になった説明、互換入口、古いスケッチは同じsliceで剪定する。
+- 変更後に不要になった説明、互換入口、古いスケッチは同じcoherent changeで剪定する。
+
+作業を分割する前に、次を問う。
+
+> この分割はdomain architectureを明確にするか。それとも作業管理の都合だけで中間状態を増やすか。
+
+後者なら分割しない。
 
 詳細な運用は[`docs/REPOSITORY_POLICY.md`](docs/REPOSITORY_POLICY.md)に従う。
 
@@ -90,7 +100,7 @@ HKERNEL_LEDGER_DATA_DIR=/absolute/path/to/private-ledger-data ./report all >/dev
 - [`docs/CODE_MAP_AND_DESIGN_SKETCH.md`](docs/CODE_MAP_AND_DESIGN_SKETCH.md): 全体のコードスコアと設計机
 - [`docs/REPOSITORY_POLICY.md`](docs/REPOSITORY_POLICY.md): 作業手順と文書寿命
 - [`docs/HASKELL_NATIVE_CODE_POLICY.md`](docs/HASKELL_NATIVE_CODE_POLICY.md): domainとHaskellの対応、コードの書法と受入条件
-- [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): editorのmain能力、次のslice、安全なwrite effect、writer cutover gate
+- [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): editorのmain能力、次のdomain chapter、安全なwrite effect、writer cutover gate
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): 会計核の不変条件と依存方向
 - [`docs/INDEX.toml`](docs/INDEX.toml): 稼働中の正規文書一覧
 - [`SECURITY.md`](SECURITY.md): 公開データと秘密情報の境界

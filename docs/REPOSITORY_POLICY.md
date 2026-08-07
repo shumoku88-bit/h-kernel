@@ -10,7 +10,7 @@
 開発速度だけでなく、次を同時に守る。
 
 - 会計上の意味を推測で作らない
-- 一度に一つの有限な目的だけを扱う
+- 一度に一つのcoherent domain capabilityまたはmigration chapterを完成させる
 - 作者とAIが同じ現在地と変更理由を把握する
 - コードと文書を現在の実装へ同期させる
 - 過去の文書を積み上げず、リポジトリを身軽に保つ
@@ -20,32 +20,51 @@
 すべての作業は、原則として次の順序で進める。
 
 1. 最新の`main`、open PR、関連する並行branch、対象コード、正規データ、関連文書を確認する。
-2. ロードマップ上の現在地と、今回解決する問題を言葉にする。
-3. 設計の候補、採用する方向、採用しない方向、有限な範囲、非目標、検証方法を作者とAIで合意する。
-4. 一つの目的だけを持つbranchとDraft PRで作業する。
+2. ロードマップ上の現在地と、今回end-to-endで完成させるdomain capabilityまたはmigration chapterを言葉にする。
+3. 設計の候補、採用する方向、採用しない方向、semantic rollback boundary、非目標、検証方法を作者とAIで合意する。
+4. 一つのcoherent changeを持つbranchとDraft PRで作業する。
 5. 実装、focused test、full test、repository audit、必要なreport contract検証を行う。
 6. 最終差分を、合意した範囲と維持すべき意味に照らして確認する。
 7. 作業で変わった現在の契約、現在地、運用方法を文書へ反映する。
 8. 変更によって不要になった文書、節、参照、互換説明を同じ作業内で削除する。
 9. Ready化とmergeの前に、正規データ、他の作業、日本語文書を壊していないことを再確認する。
 
-設計上の前提や作業範囲が途中で変わった場合は、そのまま実装を広げず、作者とAIの合意へ戻る。
+設計上の前提やsemantic rollback boundaryが途中で変わった場合は、そのまま別種のmigrationやauthority changeまで広げず、作者とAIの合意へ戻る。
 
-## 3. 有限な作業単位
+## 3. 作業単位とsemantic rollback boundary
 
-一つのPRへ異なる種類の変更を混ぜない。
+デフォルトの作業単位は、実装詳細ではなく、一つのuser value、domain capability、またはmigration chapterをend-to-endで完成させるcoherent changeである。
 
-特に、次は原則として別のsliceに分ける。
+次の違いだけを理由にPRやbranchを分けない。
 
-- correctness変更
-- domain ownershipの移動
-- algorithm変更
-- source formatやadmissionの変更
-- rendererやUIの変更
-- writerやIO effectの変更
-- 文書構造の整理
+- functionやmoduleが異なる
+- parserとoperationが異なる
+- readerとwriterが異なる
+- pure logicとそのfocused testが異なるfileにある
+- 同じdomain capabilityを成立させるcorrectness、ownership、algorithm、admission、writer effectが複数ownerへまたがる
 
-小さいこと自体を目的にはしない。意味として一つであり、完了条件が有限であることを優先する。
+同じ失敗で一緒にrollbackしたい変更は、原則として同じcoherent changeに含める。
+
+一方、次は意味とrollback条件が異なるため、原則として別のchapterにする。
+
+- domain semantic change
+- source format migration
+- reader cutover。ただしsource migrationと不可分で明示的に同時実施する場合を除く
+- writer authority cutover
+- destructive retirement / deletion
+- 無関係なrenderer / UI redesign
+
+小さいこと自体を目的にはしない。PRの小ささを安全性の代理指標にしない。安全性は、strong domain type、明示的ownership、invariant、focused regression、full test、CI、repository audit、final diff review、rollback clarityで確保する。
+
+既存PRの境界は将来の設計境界ではない。現在の完成形に対して不自然な分割になっている場合は、`consolidate`、`supersede`、`rebase`、`reconstruct`を選んでよい。
+
+並行作業とのconflict avoidanceは、実際に並行作業が存在する場合だけ制約として扱う。停止済みまたは存在しない並行作業を仮定して作業を細分化しない。
+
+作業を分割する前に、次を確認する。
+
+> この分割はdomain architectureまたはrollback boundaryを明確にするか。それとも作業管理の都合だけで短命な中間状態を増やすか。
+
+後者なら分割しない。
 
 ## 4. 文書の言語
 
@@ -88,7 +107,7 @@ Haskellの識別子、module名、型名、関数名、file path、CLI command�
 - source、policy、report contract、writer authorityが変わった場合、その正規文書を更新する
 - ロードマップ上の現在地が移動した場合、現在地を更新する
 - 文書変更が不要な場合は、現在の文書が引き続き正しいことを差分確認で確かめる
-- 古くなった説明を見つけた場合、別のTODOとして積むだけでなく、今回のsliceで安全に削除できる範囲を削除する
+- 古くなった説明を見つけた場合、別のTODOとして積むだけでなく、今回のcoherent changeで安全に削除できる範囲を削除する
 
 文書を増やすことは完了条件ではない。現在の意味を少ない文書で正確に保つことが完了条件である。
 
