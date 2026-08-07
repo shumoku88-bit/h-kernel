@@ -1,220 +1,156 @@
 # Household source admission inventory
 
 ステータス: 現在状態のownership inventory  
-更新日: 2026-08-05
+更新日: 2026-08-07
 
 ## 目的
 
-この文書は、Household Report compositionが読むcurrent-format source admissionを列挙し、それぞれが何を読み、どの型へ変換し、どの意味へ依存し、どこが所有しているかを記録する。
+この文書は、現在のh-kernel Household Reportが実際に読むsourceと、そのadmission ownerを記録する。
 
-これはsource formatの再設計、writer移行、物理file移動の計画ではない。現在のread-only Report結果とsource pathを維持したまま、独立した意味を持つadmissionを一つずつ正しいownerへ移すためのinventoryである。
+private canonical directory全体の目録ではない。source format再設計、writer cutover、物理file削除は[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)が所有する。
 
 ## 現在のcomposition
 
 ```text
-actual.journal / plan.journal
-stable TOML admissions
-stable application config admission
-stable daily_target_scope.tsv admission
-stable issues.tsv admission
-stable budget_alloc.tsv admission
-stable accounts.tsv compatibility admission
+actual.journal
+plan.journal
+accounts.tsv
+budget_alloc.tsv
+budget.toml
+household.toml
+issues.tsv
+daily_target_scope.tsv
+  -> named admission owners
   -> HKernel.Spike.HouseholdReport
   -> HouseholdReportSurface
 ```
 
-Journal、Plan Journal、application source selection、Budget policy、Household policy、Daily Target scope、Household Issue、Household Budget movement、retained Account profileには名前付きadmission ownerがある。
+Household Report compositionは、source syntaxをまとめて扱うgeneric parserを持たない。各sourceを名前付きownerへ渡し、typed valueとsource-local errorを合成する。
 
-`HKernel.Household.AccountProfile.TSV`が`accounts.tsv`のsyntax、semantic classification、Actual Journal registry compatibility parityを所有する。同じownerは、admitted profileからAccount declarationだけをstable orderで`accounts.journal` shadowへ写し、既存`parseAccountJournal`でexact declaration parityを確認するread-only migration boundaryも所有する。
+### h-kernelが現在読まないretained source
 
-Household Report compositionはstable adapterを呼び、`AccountProfileTSVError`を既存`HouseholdSourceError`へ翻訳するだけである。shadow conversionはReport compositionやcurrent readerへ接続されていない。
+次はprivate directoryに残り得るが、Household Reportの入力ではない。
 
-Spike内にはcurrent-format source syntax parserが残っていない。同じTSV系surfaceを一つのgeneric parserとして扱わず、それぞれの意味に対応するownerへ移している。
+- `config.tsv`
+- `cycle.tsv`
+- `plan.tsv`
+
+`HKERNEL_LEDGER_DATA_DIR`利用時のActual sourceは`<directory>/actual.journal`で決まり、`config.tsv`の`ACTUAL_JOURNAL_FILE=actual.journal`を再確認しない。`cycle.tsv`のcycle座標は現在`household.toml`から読み、Planは`plan.journal`から読む。
+
+これはprivate sourceの削除や、bqn-ledger側のreader/writer authority変更を意味しない。
 
 ## Inventory
 
-| Source | 現在の入口 | typed output | 現在の役割 | 隠れた依存 | ownership |
-|---|---|---|---|---|---|
-| `accounts.tsv` | `admitRetainedAccountProfiles` | `Map Account RetainedAccountProfile` | Account declaration、Budget policy evidence、Household policy evidence、unknown metadataを分離し、Actual Journal registryと双方向に照合する。declaration座標だけのdeterministic shadowを生成できる | `AccountRegistry`、AccountType、default Commodity、retained compatibility metadata、`parseAccountJournal` | stable `HKernel.Household.AccountProfile.TSV` |
-| `config.tsv` | `parseApplicationConfig` | `ApplicationConfig` | `ACTUAL_JOURNAL_FILE=actual.journal`という運用上のsource選択を確認する | file path、application startup、未知keyと重複keyの現在挙動 | stable `HKernel.Application.Config` |
-| `budget_alloc.tsv` | `parseHouseholdBudgetMovements` | `[HouseholdBudgetMovement]` | retained allocation rowをEntitlementとBackingが共有するmovement factへ変換する | Account、exact Amount、physical line coordinate | stable `HKernel.Household.BudgetMovement.TSV` |
-| `issues.tsv` | `parseHouseholdIssues` | `[HouseholdIssue]` | user-authored household matterをtyped Issueへadmitする | `HouseholdIssue` smart constructorだけ。Journal、Account registry、Budget policyへ依存しない | stable `HKernel.Household.Issue.TSV` |
+| Source | 現在の入口 | typed output / role | ownership |
+|---|---|---|---|
+| `actual.journal` | `parseActualJournal` | Actual Journal、Account registry、completion evidence | stable `HKernel.Actual.Journal` |
+| `plan.journal` | `parsePlanJournal` + Plan classification | future Plan、cycle anchor、outgoing commitment | stable `HKernel.Plan.Journal` |
+| `accounts.tsv` | `admitRetainedAccountProfiles` | retained Account profile + Actual registry compatibility | stable `HKernel.Household.AccountProfile.TSV` |
+| `budget_alloc.tsv` | `parseHouseholdBudgetMovements` | ordered Budget movement facts | stable `HKernel.Household.BudgetMovement.TSV` |
+| `budget.toml` | `parseBudgetPolicy` | general Budget policy | stable `HKernel.Budget.Config` |
+| `household.toml` | `parseHouseholdPolicy` | cycle、allocation、household-specific policy | stable `HKernel.Household.Config` |
+| `issues.tsv` | `parseHouseholdIssues` | user-authored typed household issues | stable `HKernel.Household.Issue.TSV` |
+| `daily_target_scope.tsv` | `parseDailyTargetScope` | Daily Target selection and reservation evidence | stable `HKernel.Household.DailyTarget.TSV` |
 
 ## `accounts.tsv`
 
-### 現在保持するもの
+一つのrowからAccount identity、`role`、`currency`とretained metadataを読む。stable admissionは`role`と`currency`を`AccountDeclaration`へ変換し、それ以外を`HKernel.Household.AccountProfile`へ渡す。unknown metadataを黙って捨てない。
 
-一つのrowから次を読む。
-
-- Account identity
-- `role`
-- `currency`
-- 任意の`kind`
-- 任意の`type`
-- 任意の`budget`
-- 任意の`budget_group`
-- 任意の`envelope_role`
-- 任意の`fixed`
-- 任意の`spend_class`
-- 未分類の任意metadata
-
-stable admissionは`role`と`currency`を`AccountDeclaration`へ変換し、それ以外のmetadataを`HKernel.Household.AccountProfile`へ渡す。unknown keyとAccountTypeに適用できない既知keyは削除せず、unclassified metadataとして保持する。
-
-stable registry gateは次を確認する。
+registry gateは次を確認する。
 
 - `accounts.tsv`の全Accountが`actual.journal`に宣言されている
 - `actual.journal`の全Accountが`accounts.tsv`に存在する
-- Account roleが一致する
-- Actual Journalがper-Account default Commodityを明示している場合、その値がretained evidenceと一致する
+- AccountTypeが一致する
+- Actual Journalがper-Account default Commodityを明示する場合、retained evidenceと一致する
 
-AccountTypeと明示されたdefault Commodityは別の座標として診断する。Actual側のper-Account defaultが省略されている場合は「別のCommodity」ではなく「このsourceでは未宣言」と扱い、`accounts.tsv`のretained evidenceを失わない。
-
-### CURRENT owner
+Actual側でdefault Commodityが省略されている場合は矛盾ではなく未宣言として扱う。
 
 ```text
 accounts.tsv Text
   -> HKernel.Household.AccountProfile.TSV
   -> AccountDeclaration + retained metadata
-  -> HKernel.Household.AccountProfile
-  -> Map Account RetainedAccountProfile
   -> Actual Journal AccountRegistry compatibility parity
   -> Household Report composition
 ```
 
-source-local errorはprivate rowを保持せず、source名、physical line、messageだけを返す。duplicate Account、duplicate metadata、malformed field、unsupported role、invalid Commodity、semantic classification failureをadmission境界で拒否する。
+### declaration shadow
 
-Household Report compositionはstable errorを`HouseholdSourceError`へ翻訳し、TSV field、role、Commodity、registry reconciliationを再実装しない。Spike-local `AccountFact`、`parseAccounts`、`parseAccountMetadata`、`parseRole`、旧registry gateは削除済みである。
-
-### CURRENT declaration shadow
-
-Account declarationだけのread-only shadow conversionは同じstable ownerに置く。
+同じownerはAccount declarationだけのread-only shadowを生成できる。
 
 ```text
 Map Account RetainedAccountProfile
   -> projectRetainedAccountDeclarations
-  -> Account identityによるstable ordering
+  -> stable Account ordering
   -> renderRetainedAccountJournalShadow
-  -> accounts.journal shadow Text
   -> parseAccountJournal
   -> exact AccountDeclaration parity
 ```
 
-shadowはAccount identity、`AccountType`、optional default Commodityだけを運ぶ。retained sourceにCommodity evidenceがある場合は、各Accountの`commodity:` metadataとして必ず明示する。global `commodity` directiveは生成しない。
-
-rendererはsource row orderや入力`Map`の偶然の内部順序を証拠にせず、Account identityで明示的に並べる。同じadmitted valueは同じTextを生成し、入力TSVのrow orderを変えても同じTextになる。生成Textは既存`parseAccountJournal`で再admitし、Account集合、identity、AccountType、default Commodityのexact equalityを確認する。
-
-shadow parity errorはfailure coordinateまたはparse error件数だけを保持し、Account名、source row、生成Textを保持しない。これはprivate canonical sourceへ内容非表示で追加検証するための境界であり、public testとCIは独立したsynthetic sourceだけを使う。
-
-このshadowはfileへ保存せず、current reader、Report composition、writer、source selectionへ接続しない。`accounts.journal`の正規source採用を意味しない。
-
-## `config.tsv`
-
-### 現在保持するもの
-
-現在applicationが意味として利用するのは、`ACTUAL_JOURNAL_FILE`が正確に`actual.journal`であることだけである。
-
-`DEFAULT_CURRENCY`を含む他のkeyは入力として受け入れるが、typed application factへ昇格させない。未知keyを拒否せず、重複keyを`Map.fromList`のlast-write-winsへ畳む現在挙動もsource redesignなしで維持する。
-
-### CURRENT owner
-
-`HKernel.Application.Config`がsource textから`ApplicationConfig`へのadmissionを所有する。
-
-```text
-config.tsv Text
-  -> parseApplicationConfig
-  -> ApplicationConfig
-```
-
-`ApplicationConfig`のconstructorは公開せず、検証済みのActual Journal選択だけをaccessorから読む。source-local errorはprivate rowを保持せず、physical line coordinateとmessageだけを返す。
-
-Household Report compositionはstable errorを`HouseholdSourceError`へ翻訳するだけであり、KEY=VALUEの形、Map化、source選択規則を再実装しない。この値はHousehold domain factではなく、platform-neutralなapplication source selectionである。
+shadowはfileへ保存せず、current reader、Report composition、writer、source selectionへ接続しない。`accounts.journal`のcanonical adoptionを意味しない。
 
 ## `budget_alloc.tsv`
 
-### 現在保持するもの
-
-一つのrowから次を読む。
-
-- date
-- memo
-- from Account
-- to Account
-- exact quantity
-- `currency`
-
-### CURRENT owner
-
-`HKernel.Household.BudgetMovement.TSV`がsource textから`[HouseholdBudgetMovement]`へのadmissionを所有する。
+`HKernel.Household.BudgetMovement.TSV`がdate、memo、from/to Account、exact quantity、Commodityを`[HouseholdBudgetMovement]`へadmitする。
 
 ```text
-budget_alloc.tsv Text
-  -> parseHouseholdBudgetMovements
+budget_alloc.tsv
   -> [HouseholdBudgetMovement]
        -> Entitlement history
        -> Household Backing
 ```
 
-row admissionは`traverse`でsourceの順序を保つ。Account、Quantity、Commodityの意味検証はそれぞれの既存admissionへ委ね、source-local errorはprivate rowを保持せずline coordinateとmessageだけを返す。
+EntitlementとBackingは同じmovement factを別々に解釈する。compositionはTSV列を再解釈しない。
 
-EntitlementとBackingは同じmovement factを別々に解釈する。Household Report compositionはstable errorを`HouseholdSourceError`へ翻訳し、TSV列を再解釈しない。
+## `budget.toml` / `household.toml`
+
+一般Budget policyとhousehold-specific coordinateを分けて読む。
+
+```text
+budget.toml
+  -> BudgetPolicy
+household.toml + BudgetPolicy
+  -> HouseholdPolicy
+```
+
+`household.toml`は現在、income-anchor cycleとHousehold envelope coordinatesを所有する。旧`cycle.tsv`をReport compositionへ併読して同期しない。
+
+## `plan.journal`
+
+Plan Journalはcurrent Plan sourceである。Household ReportはActual JournalとのAccount declaration parityを確認した後、incoming cycle anchorとoutgoing commitmentをtypedに分類する。
+
+legacy `plan.tsv`はHousehold Report入力ではない。
 
 ## `issues.tsv`
 
-### 現在保持するもの
+`HKernel.Household.Issue.TSV`がstrict headerとrowを`[HouseholdIssue]`へadmitする。Issue identity、status、recorded date、category、title、exact Amount、detailsを保持し、due dateを推測しない。
 
-厳密なheaderと8列rowから次を読む。
+Issueは会計factやBudget policyを暗黙生成しない。
 
-- stable `IssueId`
-- `open`または`resolved` status
-- recorded date
-- category
-- title
-- exact Amount
-- details
+## `daily_target_scope.tsv`
 
-current surfaceではdue dateを推測せず`DueUndetermined`とし、categoryはdetailsの先頭へ`[category]`として保持する。collection内のIssue identityは一意でなければならない。
+`HKernel.Household.DailyTarget.TSV`がeligible Asset selectionとPlan reservation evidenceをadmitする。Account registryとPlan identityを明示的に検証し、reservation amountやCommodityを推測しない。
 
-### CURRENT owner
+このsourceをderived projectionへ置き換える場合は、別sliceで同じselectionとreservation evidenceを再生成できることを証明する。
 
-`HKernel.Household.Issue.TSV`がsource textから`[HouseholdIssue]`へのadmissionを所有する。
+## 現在のmigration boundary
 
-```text
-issues.tsv Text
-  -> parseHouseholdIssues
-  -> [HouseholdIssue]
-  -> HouseholdReport composition
-```
+Account declaration shadow conversionは存在するが、current source adoptionとは分離する。
 
-row admissionは`traverse`でsourceの形と順序を保つ。`IssueId`、`Amount`、`HouseholdIssue`の意味検証はそれぞれのsmart constructorへ委ねる。header、status、date、row width、collection identityのfailureは、private rowを保持しない`HouseholdIssueTSVError`としてline coordinateとmessageを返す。
+次のsource migration decisionでは、少なくとも次を別々に扱う。
 
-Spikeはこのerrorを既存の`HouseholdSourceError`へ翻訳し、Report compositionへtyped Issueを渡すだけである。Issue domain型、source path、writer authority、rendering、Report結果は変更していない。
+1. semantic parityの観察
+2. native source adoption
+3. current reader切替
+4. writer cutover
+5. retained source retirement
 
-## 次の依存順
-
-current-format source admissionのownership移動と、Account declarationだけのdeterministic shadow conversionは完了した。Household Report compositionは全sourceを名前付きstable admissionから受け取り、Spikeはtyped compositionとerror translationだけを行う。
-
-```text
-retained accounts.tsv
-  -> stable Account profile admission
-  -> AccountDeclaration projection
-  -> deterministic accounts.journal shadow
-  -> parseAccountJournal
-  -> exact declaration parity
-```
-
-compatibility readerではActualの省略されたper-Account Commodityを矛盾とみなさない。一方、shadow `accounts.journal`にはretained Commodity evidenceを明示し、その生成物を再admitした`AccountDeclaration`とprojectionをexact equalityで照合する。current compatibility parityとnative target parityは別の条件として維持する。
-
-次のAccount migration decisionは、private canonical sourceを内容非表示で同じgateへ通すrehearsalと、その証拠を受けたnative source adoptionの可否である。rehearsalはshadow Textを保存せず、成功・失敗と秘密を含まない件数だけを扱う。source adoption、reader切替、writer cutoverはそれぞれ別の明示sliceとする。
-
-Account declaration shadow conversionと、retained Budget/Household policy evidenceのTOML移行を混ぜない。writer authority、private source format、current Report値は別の明示gateまで変更しない。
-
-これは全体ロードマップではない。新しい証拠や設計合意に応じて更新する。
+一つの成功から別sourceのwriter authority移動を推測しない。
 
 ## 維持する境界
 
-- 外部private sourceのpath、内容、writer authorityを変更しない
-- bqn-ledgerのwriter authorityを変更しない
+- external private sourceのpath、内容、writer authorityを変更しない
+- bqn-ledgerのreader/writer authorityをこのinventoryから変更しない
 - current Report値と表示を変更しない
-- source名、行番号、private rowを丸ごと出さないdiagnostic境界を維持する
+- private rowを丸ごとdiagnosticへ保持しない
 - admission移動とsource format redesignを同じsliceへ混ぜない
 - generic TSV frameworkを先に作らない
