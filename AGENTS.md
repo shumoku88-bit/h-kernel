@@ -1,6 +1,6 @@
 # h-kernel 作業入口
 
-このファイルは、h-kernelで作業するpitの共通入口である。
+このファイルは、h-kernelで作業するcoding assistantの共通入口である。
 
 ## 作業前
 
@@ -9,7 +9,7 @@
 3. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)と対象domainのcontractだけを読む。
 4. Editorまたは正データへ触れる場合は[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)、[`docs/SOURCE_DATA_MIGRATION_PLAN.md`](docs/SOURCE_DATA_MIGRATION_PLAN.md)、[`SECURITY.md`](SECURITY.md)を読む。
 
-`bqn-ledger`は現在の正規データに対するreader、writer、fallbackとして使わない。未対応operationはh-kernelで完成させ、互換性のない旧applicationへ戻さない。
+現在の正規データ運用は`h-kernel`へ一本化する。`bqn-ledger`は現時点では正規データのreader、writer、fallbackとして使わず、未対応operationはh-kernelで完成させる。将来`bqn-ledger`を同じcanonical Household sourceへnative対応させ、reader/writer機能を追いつかせることは妨げない。この将来対応を現在のh-kernel migration gateにはしない。
 
 ## 作業単位
 
