@@ -48,18 +48,6 @@ path = "docs/EDITOR_DEVELOPMENT_PLAN.md"
 role = "architecture"
 
 [[documents]]
-path = "docs/EDITOR_CUTOVER_READINESS_AUDIT_001.md"
-role = "observation"
-
-[[documents]]
-path = "docs/EDITOR_OPERATION_PARITY_INVENTORY_001.md"
-role = "observation"
-
-[[documents]]
-path = "docs/ACTUAL_EDITOR_SEMANTIC_COMPARISON_001.md"
-role = "observation"
-
-[[documents]]
 path = "docs/ACTUAL_REVERSE_PROVENANCE_DECISION_001.md"
 role = "contract"
 
@@ -118,10 +106,6 @@ role = "observation"
 [[documents]]
 path = "docs/REPORT_VERIFICATION.md"
 role = "contract"
-
-[[documents]]
-path = "docs/ACTUAL_ADD_TUI_REHEARSAL_EVIDENCE_001.md"
-role = "observation"
 
 [[documents]]
 path = "docs/SOURCE_DATA_MIGRATION_PLAN.md"
