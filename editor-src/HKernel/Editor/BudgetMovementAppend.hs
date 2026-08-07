@@ -13,7 +13,7 @@ import qualified Data.Text as T
 import Data.Time.Format (defaultTimeLocale, formatTime)
 
 import HKernel.Account (accountName)
-import HKernel.Editor.SourceAppend (appendSourceBlock)
+import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Household.BudgetMovement
   ( HouseholdBudgetMovement(..)
   )
@@ -43,7 +43,8 @@ prepareBudgetMovementAppend existingSource movement = do
   let block = renderHouseholdBudgetMovement movement
       preview = BudgetMovementAppendPreview
         { candidateBlock = block
-        , candidateCompleteSource = appendSourceBlock existingSource block
+        , candidateCompleteSource =
+            appendSourceBlock existingSource (SourceBlock block)
         }
 
   _ <- first (pure . CandidateSourceParseError)
