@@ -5,7 +5,6 @@ module Main (main) where
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Time.Calendar (addDays, fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (accountName, mkAccount)
@@ -176,15 +175,15 @@ missingDefaultSource = T.unlines
 
 testInitialDay :: Bool
 testInitialDay =
-  let today = fromGregorian 2026 8 8
+  let today = read "2026-08-08"
       state = initialActualAddStateForDay today
   in addDateText (actualAddInput state) == "2026-08-08"
       && actualAddMode state == EditingActualAdd
 
 testYesterday :: Bool
 testYesterday =
-  let today = fromGregorian 2026 8 8
-      yesterday = addDays (-1) today
+  let today = read "2026-08-08"
+      yesterday = read "2026-08-07"
       initial = initialActualAddStateForDay today
       changed = setActualAddDate yesterday initial
   in addDateText (actualAddInput changed) == "2026-08-07"
