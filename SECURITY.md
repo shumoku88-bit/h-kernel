@@ -17,11 +17,11 @@
 
 synthetic fixtureは正規sourceの値を匿名化・変形して作らず、独立して設計する。
 
-## Writer authority
+## Writer safety
 
-正規sourceには一度に一つのwriter authorityだけを置く。現在のwriterは`bqn-ledger` editorであり、`h-kernel`は明示設定された同じdirectoryを読む。repository間のcopy同期とdual writeは禁止する。
+現在の正規データは`h-kernel`だけで扱い、互換性のない旧applicationをreader、writer、fallbackとして使用しない。repository間のcopy同期とdual writeは禁止する。
 
-`h-kernel` editorへauthorityを移す場合は、validation、stale check、atomic publish、backup、restore、運用rehearsalを満たした明示的なcutoverで行う。
+h-kernelのwrite operationはvalidation、preview、stale check、atomic publish、backup、post-admission、restoreを迂回しない。未実装operationは暗黙fallbackせず、必要な場合だけ明示的に手編集する。
 
 ## ローカル運用
 

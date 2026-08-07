@@ -109,7 +109,7 @@ Backingは、policy指定AssetのFunding Balance、Envelope claim、unassigned B
 
 `accounts.tsv`の`type`、`kind`、`budget`、`budget_group` metadataから、Report経路がBudget、Backing、Daily Target policyを再構成することはない。`HKernel.Household.AccountProfile.TSV`がAccount declarationとretained metadataをadmitし、Report経路はAccount identity、role、Commodityの互換確認を利用するだけである。
 
-`cycle.tsv`はBQN互換sourceとして残るが、h-kernelのReport経路は参照しない。
+`cycle.tsv`はlegacy migration inputとして残るが、h-kernelのReport経路は参照しない。
 
 ## 残る暫定責任
 

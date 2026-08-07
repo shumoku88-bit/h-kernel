@@ -148,7 +148,7 @@ one Asset(-) Posting
 世帯レポートは、`plan.tsv` を解析しなくなり、実行時またはその特性評価スイートで TSV と計画ジャーナルのサーフェスを比較しなくなりました。
 
 
-private canonical directoryの`plan.tsv`は、現在のbqn-ledger writerが引き続き必要とするため残ります。これが存在しても、h-kernel Report入力にはなりません。ファイルのretireは、このadmission契約ではなく、後のsource migration sliceに属します。
+private canonical directoryの`plan.tsv`はlegacy migration inputとして残ります。h-kernel Report入力ではなく、semantic parityを確認したsource migration sliceでretireします。
 
 
 ## 8. 検証
@@ -181,15 +181,15 @@ private canonical directoryの`plan.tsv`は、現在のbqn-ledger writerが引�
 
 - 繰り返し、シリーズ、キャンセル、または置換を定義します。
 
-- プラン作成者または編集者を定義します。
+- Plan editの日常interactionを完成させます。
 
 - 完了メタデータにグラフを含めるようにします。
 
 - `budget.journal` を紹介します。
 
-- 書き込み権限を bqn-ledger から h-kernel に転送します。
+- h-kernel Plan commandのend-to-end日常動作を検証します。
 
-- ライターが所有する `plan.tsv` ファイルの削除を承認します。
+- legacy `plan.tsv`のsemantic parityと削除を確認します。
 
 
 Journal ソースは、1 つのレポート投影よりも広い範囲を維持する必要があります。狭い消費者は、ソースを強制的に狭くするのではなく、まだ公開できない内容を明示する必要があります。

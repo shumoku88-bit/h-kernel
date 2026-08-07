@@ -1,7 +1,4 @@
-# repository-audit 用の正規ドキュメント一覧。
-#
-# role は、そのドキュメントが稼働中のリポジトリに属する理由を示す。
-# ライフサイクルと詳細なステータスは各ドキュメント内に残し、ここでは重複させない。
+# 稼働中の正規文書だけを列挙する。過去のreviewと移行記録はGit履歴が所有する。
 
 [[documents]]
 path = "docs/REPOSITORY_POLICY.md"
@@ -12,36 +9,32 @@ path = "docs/ARCHITECTURE.md"
 role = "architecture"
 
 [[documents]]
+path = "docs/HASKELL_NATIVE_CODE_POLICY.md"
+role = "policy"
+
+[[documents]]
 path = "docs/BALANCE_ALGEBRA.md"
 role = "contract"
-
-[[documents]]
-path = "docs/BUDGET_BACKING_OBSERVATION.md"
-role = "observation"
-
-[[documents]]
-path = "docs/BUDGET_MODEL_OBSERVATION.md"
-role = "observation"
-
-[[documents]]
-path = "docs/BUDGET_PLAN_COMMITMENT_OBSERVATION.md"
-role = "observation"
-
-[[documents]]
-path = "docs/CODE_MAP_AND_DESIGN_SKETCH.md"
-role = "architecture"
 
 [[documents]]
 path = "docs/DAILY_TARGET_POLICY.md"
 role = "contract"
 
 [[documents]]
-path = "docs/FACT_POLICY_PROJECTION_BOUNDARY.md"
+path = "docs/HOUSEHOLD_BACKING.md"
+role = "contract"
+
+[[documents]]
+path = "docs/HOUSEHOLD_CANONICAL_TARGET.md"
 role = "architecture"
 
 [[documents]]
-path = "docs/EDITOR_CORRECTNESS_REVIEW.md"
-role = "observation"
+path = "docs/HOUSEHOLD_REPORT_SPIKE_REVIEW.md"
+role = "architecture"
+
+[[documents]]
+path = "docs/PLAN_JOURNAL_ADMISSION.md"
+role = "contract"
 
 [[documents]]
 path = "docs/EDITOR_DEVELOPMENT_PLAN.md"
@@ -50,42 +43,6 @@ role = "architecture"
 [[documents]]
 path = "docs/ACTUAL_REVERSE_PROVENANCE_DECISION_001.md"
 role = "contract"
-
-[[documents]]
-path = "docs/ACTUAL_WRITER_CUTOVER_001.md"
-role = "contract"
-
-[[documents]]
-path = "docs/HASKELL_NATIVE_CODE_POLICY.md"
-role = "policy"
-
-[[documents]]
-path = "docs/HOUSEHOLD_BACKING.md"
-role = "contract"
-
-[[documents]]
-path = "docs/HOUSEHOLD_REPORT_SPIKE_REVIEW.md"
-role = "architecture"
-
-[[documents]]
-path = "docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md"
-role = "architecture"
-
-[[documents]]
-path = "docs/HOUSEHOLD_CANONICAL_TARGET.md"
-role = "architecture"
-
-[[documents]]
-path = "docs/LIABILITY_POSITION_DESIGN_SKETCH.md"
-role = "architecture"
-
-[[documents]]
-path = "docs/PLAN_JOURNAL_ADMISSION.md"
-role = "architecture"
-
-[[documents]]
-path = "docs/PLATFORM_NEUTRAL_APPLICATION_POLICY.md"
-role = "policy"
 
 [[documents]]
 path = "docs/REPORT_CONFIGURATION.md"
@@ -104,21 +61,9 @@ path = "docs/REPORT_PIPELINE_POLICY.md"
 role = "policy"
 
 [[documents]]
-path = "docs/REPORT_QUERY_PLAN_OBSERVATION.md"
-role = "observation"
-
-[[documents]]
 path = "docs/REPORT_VERIFICATION.md"
 role = "contract"
 
 [[documents]]
 path = "docs/SOURCE_DATA_MIGRATION_PLAN.md"
-role = "architecture"
-
-[[documents]]
-path = "docs/ARCHITECTURE_CODE_QUALITY_REVIEW.md"
-role = "observation"
-
-[[documents]]
-path = "docs/EDITOR_TUI_HUB_DESIGN.md"
 role = "architecture"

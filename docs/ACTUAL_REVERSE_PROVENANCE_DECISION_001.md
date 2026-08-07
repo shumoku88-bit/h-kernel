@@ -1,144 +1,56 @@
-# Actual reverse durable provenance decision 001
+# Actual reversal contract
 
-ステータス: 承認済みのcurrent contract  
-Owner: Actual reversal identity and provenance  
-更新日: 2026-08-06
+ステータス: アクティブ
+Owner: Actual reversalのidentity、relation、admission
 
-## 1. Decision
+## Contract
 
-Actual reverseのcanonical source contractは、元Transactionを変更または削除せず、Actual Journalへ一つの新しいTransactionを追加する形とする。
-
-1. 元Transactionの全Postingを、順序とCommodityを保ったままexactに反転する。
-2. reversal Transactionは新しいdurable `event-id`を持つ。
-3. reversal Transactionは`reverses` metadataでtargetのdurable Actual identityを明示する。
-4. unknown target、self-reference、duplicate reversal identityを拒否する。
-5. 同じtargetを直接二回reverseしない。
-6. reversal Transaction自身を、別の新しいTransactionでreverseすることは許可する。
-7. description、amount、date、Account shapeからtarget relationを推測しない。
-
-最小source shapeは次である。
+Actual reversalは元Transactionを変更または削除せず、新しいinverse Transactionをappendする。
 
 ```journal
-YYYY-MM-DD description
+YYYY-MM-DD reversal description
   ; event-id: NEW-REVERSAL-ID
   ; reverses: TARGET-ACTUAL-ID
   account:a  INVERSE-AMOUNT COMMODITY
   account:b  INVERSE-AMOUNT COMMODITY
 ```
 
-raw indentationとstatus markerはsemantic identityではない。`event-id`、`reverses`、admitted Transactionが意味を所有する。
+- reversal自身が新しいdurable `event-id`を持つ
+- `reverses`でtarget identityを明示する
+- Postingの順序とCommodityを保持してQuantityだけを反転する
+- unknown target、self-reference、duplicate direct reversalを拒否する
+- reverse-of-reverseは新しいexplicit edgeとして許可する
+- description、日付、amount、Posting shapeからtargetを推測しない
 
-## 2. Why explicit provenance
+## Owner
 
-reversalは「反対符号の似た取引」ではなく、「どのActual factを否定したか」というexplicit provenance edgeである。
+`HKernel.Actual.Journal`がActual identityとrelationをadmitする。`HKernel.Editor.ActualReverse`はtyped intentからcandidateを準備し、共通safe writerへ渡す。
 
-このrelationにより、source admissionは次を検証できる。
+CLI/TUIはidentity、inverse calculation、duplicate判定を再実装しない。
 
-- target identityが存在する
-- reversal identityが一意である
-- targetとreversalが同一identityではない
-- direct duplicate reversalがない
-- reverse-of-reverseが別のexplicit edgeとして表現される
-- description変更や同額Transactionの存在に依存しない
+## Daily operation
 
-`[reverse]` prefixだけではoperator intentは示せても、typed target relationを再構築できない。
+現在のCLIはtarget identityを明示入力する。
 
-## 3. Current implementation
-
-`HKernel.Editor.ActualReverse`はこのcontractを実装している。
-
-- explicit new Actual identityを要求する
-- explicit target Actual identityを要求する
-- target not foundを拒否する
-- duplicate reversal identityを拒否する
-- direct duplicate reversalを拒否する
-- inverse postingsを生成する
-- candidate complete sourceをstrict parse-backする
-
-`HKernel.Actual.Journal`は`event-id`と`reverses`をtyped projectionとしてadmitし、unknown target、self-reference、duplicate target relationを拒否する。
-
-このdecisionはHaskell behaviorを弱めず、readerとwriterが共有するsource contractとして固定する。
-
-## 4. Current BQN compatibility
-
-current BQN reverse pathはinverse postingsと`[reverse]` descriptionを追加するが、新しいdurable `event-id`とexplicit `reverses` relationを生成しない。
-
-また、current BQN Journal profileが`reverses`をrecognized metadataとしてadmitしない場合、h-kernel形式のreversalを含むcomplete sourceをBQN readerへそのまま渡せるとは扱わない。
-
-これはraw formatting差ではなく、identity、provenance、reader admissionのcontract gapである。
-
-BQN reader/editorをこのcontractへ対応させる場合は、少なくとも次が必要である。
-
-1. `reverses`をrecognized metadataとしてadmitする。
-2. target identityの存在とuniquenessを検証する。
-3. reversal自身のdurable `event-id`を要求する。
-4. self-referenceとduplicate direct reversalを拒否する。
-5. BQN reverse writerがnew identityとtarget relationを書く。
-6. semantic comparisonでidentityとreversal targetが一致する。
-
-このadaptationはbqn-ledger側の別sliceであり、この文書は実装を所有しない。
-
-## 5. Single-user writer law
-
-このprojectのcanonical editorは一人のoperatorが順番に使う。
-
-```text
-before h-kernel writer cutover
-  canonical reverse writer = bqn-ledger
-  h-kernel reverse = synthetic / explicit non-canonical rehearsal only
-
-after explicit h-kernel writer cutover
-  canonical reverse writer = h-kernel
-  bqn-ledger writer is not used against canonical source
+```bash
+./tools/hk actual-reverse \
+  [--commit] \
+  /absolute/path/to/actual.journal \
+  NEW-EVENT-ID \
+  TARGET-EVENT-ID \
+  2026-08-06 \
+  "correction description"
 ```
 
-cross-process shared lock、dual-editor alternating canonical write、lock contention testはcutover要件にしない。
+日常TUIではTransaction一覧からtargetを選び、新しいidentityを安全に生成できることを目標とする。完成まではCLIまたは明示的な正データ操作を使う。
 
-operatorがwriterを切り替えるときは、旧editorのoperationを終え、新しいeditorでlatest sourceを読み直す。preview後にsourceが変わった場合はcurrent stale-source rejectionがwriteを拒否する。
+## Writer law
 
-reader compatibilityはwriter serializationとは別問題である。cutover後もBQN reportまたはreaderをcanonical sourceへ向けるなら、BQN Journal admissionが`reverses`を読める必要がある。BQNをcanonical readerとして使わないなら、そのadaptationはcutover後の互換sliceへ送れる。
-
-## 6. Daily-use command status
-
-日常利用を`bqn-ledger`から`h-kernel`へ切り替えるためのcommand hubはmainへ導入済みである。
+reversalも通常のEditor write境界を迂回しない。
 
 ```text
-tools/hk
-  -> report
-  -> edit
-  -> check
-  -> help
+intent -> candidate -> complete-source admission -> preview
+       -> explicit commit -> stale-safe publication -> post-admission
 ```
 
-command hubは会計計算、source admission、source mutation、repository audit ruleを再実装しない。既存report launcher、`h-kernel-editor-cli`、repository checksへ引数とexit statusを渡すだけのdoorwayである。
-
-したがって、この文書に以前置かれていた「次はcommand hubを実装する」という作業案は完了済みであり、current contractから削除する。
-
-## 7. Remaining before canonical cutover
-
-reverse implementationとcommand hubが存在することだけではwriter authorityは移らない。
-
-残る条件は次である。
-
-- explicit private non-canonical copyでh-kernel reverseを一度確認する
-- daily-use operation setをnon-canonical copyで確認する
-- canonical sourceがuntouchedであることを確認する
-- cutover後もBQN readerを使うか決める
-- readerを残す場合は`reverses` admissionへ対応させる
-- h-kernel source selection、rollback時の唯一writer、restore failure時のstop procedureを決める
-- 作者がcutoverを明示的に承認する
-
-次の有限sliceは[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)が所有する。
-
-## 8. Migration boundary
-
-このdecisionが変更しないもの:
-
-- current canonical writer authority
-- private canonical source
-- existing historical reversal block
-- Account、Plan、Budget、Issue、policy source topology
-- source format migration
-- UI implementation
-
-既存のidentity-free reversalを自動rewriteしない。historical cleanupは、別の明示的なprovenance migrationとしてだけ検討する。
+`bqn-ledger`は現在の正規データに対するreader、writer、fallbackとして使用しない。互換adaptationや旧writerへのrollbackはこのcontractの対象にしない。

@@ -7,7 +7,7 @@
 
 この文書は、`h-kernel`の安定したcomponent境界、依存方向、会計上の不変条件、effectの置き場所を所有する。
 
-全体の現在地と未決定案は[`CODE_MAP_AND_DESIGN_SKETCH.md`](CODE_MAP_AND_DESIGN_SKETCH.md)、Haskellの書法は[`HASKELL_NATIVE_CODE_POLICY.md`](HASKELL_NATIVE_CODE_POLICY.md)、writer authorityは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)と[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
+優先順位は[`../TODO.md`](../TODO.md)、Haskellの書法は[`HASKELL_NATIVE_CODE_POLICY.md`](HASKELL_NATIVE_CODE_POLICY.md)、正規sourceとwriterの現在地は[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)が所有する。
 
 ## 2. Functional coreと明示的なeffect boundary
 
@@ -196,10 +196,10 @@ tools/hk                        -> existing report launcher / editor CLI / edito
 - UI toolkit型のshared interaction ownerへの流入
 - spike-local parserによるstable admissionの再実装
 
-## 8. Writer authority
+## 8. 正規application
 
-componentにwrite capabilityが存在することと、canonical writer authorityは別である。
+`h-kernel`が現在の正規データを扱う唯一のapplication targetである。`bqn-ledger`は互換性がないためreader、writer、fallbackとして使用しない。
 
-2026-08-06の明示的なcutoverにより、canonical `actual.journal`のwriter authorityは`h-kernel` editorが持つ。`bqn-ledger`は同じsourceをreaderとして使えるが、canonical `actual.journal`を変更するoperationには使わない。
+`actual.journal`はh-kernel editorが読み書きする。他sourceはh-kernel operationをsourceごとに完成させる。未対応operationは暗黙fallbackせず停止し、必要な場合だけ明示的な手編集を行う。
 
-他のprivate source fileのwriter authorityは、このActual-only cutoverでは変更しない。source別authority、activation、single-writer law、stop、rollbackは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)、[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)、[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
+write capability、安全なpublication、日常利用の完成は区別する。現在地と移行順は[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)、Editor境界は[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)が所有する。

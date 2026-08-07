@@ -215,7 +215,7 @@ count = 5
 
 ## Legacy Report manifestとの関係
 
-private canonical sourceの`report_all_human.tsv`、`report_all_compact.tsv`、`report_manifests.tsv`は、bqn-ledger daily workflowのlegacy execution configurationである。現在の`report.toml` schemaへそのままcopyするsourceではない。
+private canonical sourceの`report_all_human.tsv`、`report_all_compact.tsv`、`report_manifests.tsv`はlegacy execution configurationである。現在の`report.toml` schemaへそのままcopyするsourceではない。
 
 | legacy coordinate | owner |
 |---|---|

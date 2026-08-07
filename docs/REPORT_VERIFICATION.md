@@ -56,7 +56,7 @@ sh ./report-verify --corpus
 ### 外部private正規世帯観察
 
 
-明示設定されたprivate BQN互換source setは、ローカルでread-onlyに観察できます。
+明示設定されたprivate正規source setは、h-kernelでローカルにread-only観察できます。
 
 
 ```sh

@@ -7,7 +7,7 @@ Owner: household canonical source shape、source role boundary、migration desti
 
 private `household-ledger-data` repositoryのrootを、h-kernelが最終的に扱うHousehold rootとして固定する。
 
-この文書はmigration destinationを定義する。retained compatibility sourceの即時削除、reader cutover、writer cutoverを許可しない。それらはsemantic parityを確認した個別sliceで行う。
+この文書はmigration destinationを定義する。legacy sourceはsemantic parityを確認した個別sliceで移し、役目を終えた時点で削除する。
 
 ## Target root
 
@@ -90,14 +90,15 @@ h-kernel-native `report.toml` schemaをtargetのReport application configとし�
 
 legacy manifest rowをgeneric argument arrayとして`report.toml`へコピーしない。
 
-## Writer authority
+## Writer
 
-canonical repositoryが一つであることとwriter authorityが一つであることを同一視しない。
+`h-kernel`を全target sourceのreader/writerとして完成させる。`bqn-ledger`は正規データと互換性がないため運用しない。
 
-- `actual.journal`: canonical writerはh-kernel editor
-- その他のretained source: source-specific cutoverまで現在のwriter authorityを維持する
-- target sourceの新設だけではwriter authorityは移動しない
-- dual write、alternating writerを行わない
+- `actual.journal`はh-kernel editorが読み書きする
+- その他のsourceはh-kernel operationをsourceごとに実装・検証する
+- 未実装operationは旧applicationへfallbackしない
+- target fileを作るだけで完成扱いにせず、previewとsafe publicationを確認する
+- dual writeを行わない
 
 ## Migration order
 
@@ -110,7 +111,7 @@ canonical repositoryが一つであることとwriter authorityが一つであ�
 5. retained policy/config fieldsをtyped ownerへ移し、`config.tsv`、`cycle.tsv`をretire
 6. Daily Target sourceをsemantic ownerへ分解する
 7. legacy Report manifestの残りReportをtyped `report.toml`へ移す
-8. compatibility sourceをreader/writer authorityごとにretireする
+8. legacy sourceをsemantic parity確認後にretireする
 9. 実運用後、同じownerであることが確認できたtarget fileだけをさらに統合する
 
 ファイル数そのものを最小化することはこのmigrationの目的ではない。まずownershipを明瞭にし、その後に根拠のある引き算を行う。
@@ -118,7 +119,7 @@ canonical repositoryが一つであることとwriter authorityが一つであ�
 ## Non-goals
 
 - private source内容をpublic fixtureへ複製しない
-- source format migrationとwriter cutoverを同じsliceへ混ぜない
+- source format migrationと無関係なUI変更を同じsliceへ混ぜない
 - TUIのためにdomain ownershipをUIへ移さない
 - BQN compatibility argument shapeを新しいcanonical configへ保存しない
 - target shapeを将来変更不能な永久形式として扱わない
