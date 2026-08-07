@@ -1,11 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | A synthetic semantic contract for the retained @accounts.tsv@ metadata.
+-- | Source-independent semantic contract for retained Account metadata.
 --
--- The physical TSV admission still belongs to the Household Report Spike. This
--- module fixes the value boundary that admission can target later: canonical
--- Account declaration, general Budget-policy evidence, household-only policy
--- evidence, and metadata whose meaning is not yet classified.
+-- Physical @accounts.tsv@ admission belongs to
+-- 'HKernel.Household.AccountProfile.TSV'. This module owns the value boundary
+-- produced after admission: canonical Account declaration, general
+-- Budget-policy evidence, household-only policy evidence, and metadata whose
+-- meaning is not yet classified.
 --
 -- A key is consumed only when its meaning is valid for the declared
 -- 'AccountType'. The same textual key on another Account type remains visible
