@@ -90,15 +90,17 @@ h-kernel-native `report.toml` schemaをtargetのReport application configとし�
 
 legacy manifest rowをgeneric argument arrayとして`report.toml`へコピーしない。
 
-## Writer
+## Current application and future peers
 
-`h-kernel`を全target sourceのreader/writerとして完成させる。`bqn-ledger`は正規データと互換性がないため運用しない。
+現在は`h-kernel`を全target sourceのcanonical applicationとして完成させる。`bqn-ledger`は現時点では正規データのreader、writer、fallbackとして運用しない。
 
 - `actual.journal`はh-kernel editorが読み書きする
 - その他のsourceはh-kernel operationをsourceごとに実装・検証する
 - 未実装operationは旧applicationへfallbackしない
 - target fileを作るだけで完成扱いにせず、previewとsafe publicationを確認する
 - dual writeを行わない
+
+将来余裕ができたら、`bqn-ledger`をこの同じtarget contractへnative対応させ、reader/writer機能を追いつかせられる。その場合もh-kernel側へBQN専用formatを追加せず、bqn-ledger自身がcanonical source contractへ適合する。将来のcatch-upは現在のh-kernel migrationをブロックしない。
 
 ## Migration order
 
@@ -122,4 +124,5 @@ legacy manifest rowをgeneric argument arrayとして`report.toml`へコピー�
 - source format migrationと無関係なUI変更を同じsliceへ混ぜない
 - TUIのためにdomain ownershipをUIへ移さない
 - BQN compatibility argument shapeを新しいcanonical configへ保存しない
+- 将来のbqn-ledger catch-upのためにh-kernel migrationを止めない
 - target shapeを将来変更不能な永久形式として扱わない
