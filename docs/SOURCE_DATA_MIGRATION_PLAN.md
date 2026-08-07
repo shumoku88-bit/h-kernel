@@ -11,7 +11,7 @@ Owner: household source topology、source別writer authority、native source mig
 canonical location        separate private data repository
 actual.journal writer     h-kernel editor
 other retained writers    unchanged by Actual cutover
-current readers           bqn-ledger and h-kernel
+current readers           source-specific; bqn-ledger and h-kernel
 public h-kernel           code, docs, synthetic evidence only
 ```
 
@@ -32,10 +32,12 @@ public h-kernel           code, docs, synthetic evidence only
 | `budget_alloc.tsv` | ordered Budget movement fact | bqn-ledger / both engines |
 | `budget.toml` | general Budget policy | user / h-kernel |
 | `household.toml` | household-specific policy | user / h-kernel |
-| `cycle.tsv`、`config.tsv` | retained compatibility policy/config | bqn-ledger / both engines |
+| `cycle.tsv`、`config.tsv` | retained compatibility policy/config | bqn-ledger / bqn-ledger |
 | `daily_target_scope.tsv` | retained Daily Target selection and reservation declaration | bqn-ledger / both engines |
 | `issues.tsv` | household notebook source | bqn-ledger / both engines |
 | report manifest files | retained bqn-ledger execution configuration | bqn-ledger |
+
+`h-kernel`のcurrent Household Reportは`config.tsv`、`cycle.tsv`、`plan.tsv`を読まない。Actual source selectionとcycle policyとPlan sourceは、それぞれ現在のnative ownerから得る。このcurrent reader状態は[`HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md)が実装目録として所有し、bqn-ledger側のreader/writer authorityやprivate sourceのretentionを変更しない。
 
 同じphysical directoryにあることは、fact、policy、projection、execution configが同じdomain ownerまたはwriter authorityを持つことを意味しない。
 
