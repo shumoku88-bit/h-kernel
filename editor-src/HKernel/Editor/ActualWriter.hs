@@ -12,7 +12,10 @@ module HKernel.Editor.ActualWriter
   , publishWithAdmissionUsing
   , publishWithPathAdmission
   , publishWithPathAdmissionUsing
+  , ActualSourceAdmissionError(..)
+  , admitActualJournalPath
   , publishActualAppend
+  , publishActualAppendFromResolvedJournal
   , publishActualBlock
   ) where
 
@@ -23,10 +26,13 @@ import qualified Data.Text.IO as TextIO
 import System.Directory (renameFile, removeFile)
 
 import HKernel.Actual.Journal
-  ( ActualJournalError
+  ( ActualJournal
+  , ActualJournalError
+  , admitActualJournalFromResolvedJournal
   , parseActualJournal
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
+import HKernel.Loader (LoadError, loadJournal)
 
 -- | The complete source snapshot that the caller observed before preview.
 --
@@ -123,10 +129,37 @@ publishWithPathAdmissionUsing fileSystem admit =
   where
     admission path _ = fmap (fmap (const ())) (admit path)
 
+data ActualSourceAdmissionError
+  = ActualSourceLoadError LoadError
+  | ActualSourceJournalError ActualJournalError
+  deriving (Show)
+
+-- | Admit an Actual root through its filesystem-resolved Journal graph.
+-- Accounting declarations and transactions come from the resolved Journal;
+-- Actual-owned metadata comes from the root source bytes.
+admitActualJournalPath
+  :: FilePath
+  -> IO (Either (NonEmpty ActualSourceAdmissionError) ActualJournal)
+admitActualJournalPath sourceFile = do
+  source <- TextIO.readFile sourceFile
+  resolved <- loadJournal sourceFile
+  pure $ case resolved of
+    Left loadError -> Left (pure (ActualSourceLoadError loadError))
+    Right journal -> case admitActualJournalFromResolvedJournal journal source of
+      Left errors -> Left (fmap ActualSourceJournalError errors)
+      Right actualJournal -> Right actualJournal
+
 publishActualAppend
   :: WriteIntent
   -> IO (Either (WriteError ActualJournalError) ())
 publishActualAppend = publishWithAdmission parseActualJournal
+
+-- | Publish an Actual root and re-admit the complete resolved source graph.
+publishActualAppendFromResolvedJournal
+  :: WriteIntent
+  -> IO (Either (WriteError ActualSourceAdmissionError) ())
+publishActualAppendFromResolvedJournal =
+  publishWithPathAdmission admitActualJournalPath
 
 -- | Place an already validated Actual transaction block and delegate all file
 -- safety behavior to the existing Actual writer.

@@ -21,6 +21,8 @@ import qualified HKernel.Editor.PlanLifecycle as PlanLifecycle
 import HKernel.Household.BudgetMovement.TSV
   ( parseHouseholdBudgetMovements )
 import HKernel.Household.Issue.TSV (parseHouseholdIssues)
+import HKernel.Journal (Journal)
+import HKernel.Loader (loadJournal)
 import HKernel.Plan.Journal (parsePlanJournal)
 
 die :: String -> IO a
@@ -42,11 +44,13 @@ executeCommand :: CommitMode -> EditorCommand -> IO ()
 executeCommand commitMode command = case command of
   AppendCmd journalFile intent -> do
     existingSource <- TIO.readFile journalFile
-    case ActualAppend.prepareActualAppend existingSource intent of
+    resolvedJournal <- loadResolvedActualJournal journalFile
+    case ActualAppend.prepareActualAppendFromResolvedJournal
+        resolvedJournal existingSource intent of
       Left errors -> validationFailed errors
       Right preview ->
         executePreview
-          parseActualJournal
+          publishActualAppendFromResolvedJournal
           journalFile
           existingSource
           (ActualAppend.candidateBlock preview)
@@ -55,11 +59,13 @@ executeCommand commitMode command = case command of
 
   ReverseCmd journalFile intent -> do
     existingSource <- TIO.readFile journalFile
-    case ActualReverse.prepareActualReverse existingSource intent of
+    resolvedJournal <- loadResolvedActualJournal journalFile
+    case ActualReverse.prepareActualReverseFromResolvedJournal
+        resolvedJournal existingSource intent of
       Left errors -> validationFailed errors
       Right preview ->
         executePreview
-          parseActualJournal
+          publishActualAppendFromResolvedJournal
           journalFile
           existingSource
           (ActualReverse.candidateBlock preview)
@@ -72,7 +78,7 @@ executeCommand commitMode command = case command of
       Left errors -> validationFailed errors
       Right preview ->
         executePreview
-          parseActualJournal
+          (publishWithAdmission parseActualJournal)
           journalFile
           existingSource
           (ActualAccountAppend.candidateBlock preview)
@@ -85,7 +91,7 @@ executeCommand commitMode command = case command of
       Left errors -> validationFailed errors
       Right preview ->
         executePreview
-          parseHouseholdBudgetMovements
+          (publishWithAdmission parseHouseholdBudgetMovements)
           tsvFile
           existingSource
           (BudgetMovementAppend.candidateBlock preview)
@@ -98,7 +104,7 @@ executeCommand commitMode command = case command of
       Left errors -> validationFailed errors
       Right preview ->
         executePreview
-          parseHouseholdIssues
+          (publishWithAdmission parseHouseholdIssues)
           tsvFile
           existingSource
           (IssueAppend.candidateBlock preview)
@@ -108,11 +114,13 @@ executeCommand commitMode command = case command of
   PlanAddCmd planFile actualFile intent -> do
     planSource <- TIO.readFile planFile
     actualSource <- TIO.readFile actualFile
-    case PlanLifecycle.preparePlanAdd planSource actualSource intent of
+    resolvedActual <- loadResolvedActualJournal actualFile
+    case PlanLifecycle.preparePlanAddFromResolvedActualJournal
+        resolvedActual planSource actualSource intent of
       Left errors -> validationFailed errors
       Right preview ->
         executePreview
-          parsePlanJournal
+          (publishWithAdmission parsePlanJournal)
           planFile
           planSource
           (PlanLifecycle.addCandidateBlock preview)
@@ -122,16 +130,25 @@ executeCommand commitMode command = case command of
   PlanFinishCmd planFile actualFile intent -> do
     planSource <- TIO.readFile planFile
     actualSource <- TIO.readFile actualFile
-    case PlanLifecycle.preparePlanFinish planSource actualSource intent of
+    resolvedActual <- loadResolvedActualJournal actualFile
+    case PlanLifecycle.preparePlanFinishFromResolvedActualJournal
+        resolvedActual planSource actualSource intent of
       Left errors -> validationFailed errors
       Right preview ->
         executePreview
-          parseActualJournal
+          publishActualAppendFromResolvedJournal
           actualFile
           actualSource
           (PlanLifecycle.finishCandidateBlock preview)
           (PlanLifecycle.finishCandidateCompleteSource preview)
           commitMode
+
+loadResolvedActualJournal :: FilePath -> IO Journal
+loadResolvedActualJournal sourceFile = do
+  result <- loadJournal sourceFile
+  case result of
+    Left loadError -> die ("Actual Journal load failed: " <> show loadError)
+    Right journal -> pure journal
 
 validationFailed :: Show error => NonEmpty.NonEmpty error -> IO a
 validationFailed errors =
@@ -141,14 +158,14 @@ validationFailed errors =
 
 executePreview
   :: Show sourceError
-  => (Text -> Either (NonEmpty.NonEmpty sourceError) admitted)
+  => (WriteIntent -> IO (Either (WriteError sourceError) ()))
   -> FilePath
   -> Text
   -> Text
   -> Text
   -> CommitMode
   -> IO ()
-executePreview admit sourceFile existingSource block completeSource commitMode = do
+executePreview publish sourceFile existingSource block completeSource commitMode = do
   TIO.putStrLn "--- Preview ---"
   TIO.putStr block
   TIO.putStrLn "---------------"
@@ -163,7 +180,7 @@ executePreview admit sourceFile existingSource block completeSource commitMode =
             , expectedOldBytes = ExpectedSource existingSource
             , candidateNewBytes = CandidateSource completeSource
             }
-      writeResult <- publishWithAdmission admit writeIntent
+      writeResult <- publish writeIntent
       case writeResult of
         Right () -> TIO.putStrLn "Successfully updated source."
         Left writeError -> die ("Write failed: " <> show writeError)

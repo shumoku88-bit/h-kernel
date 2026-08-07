@@ -5,6 +5,7 @@ module HKernel.Editor.PlanLifecycle
   , PlanAddPreview(..)
   , PlanAddError(..)
   , preparePlanAdd
+  , preparePlanAddFromResolvedActualJournal
 
   , PositivePlanEditAmount
   , PlanEditAmountError(..)
@@ -14,6 +15,7 @@ module HKernel.Editor.PlanLifecycle
   , PlanEditPreview(..)
   , PlanEditError(..)
   , preparePlanEdit
+  , preparePlanEditFromResolvedActualJournal
 
   , PositivePlanFinishAmount
   , PlanFinishAmountError(..)
@@ -23,6 +25,7 @@ module HKernel.Editor.PlanLifecycle
   , PlanFinishPreview(..)
   , PlanFinishError(..)
   , preparePlanFinish
+  , preparePlanFinishFromResolvedActualJournal
   ) where
 
 import Data.Bifunctor (first)
@@ -37,24 +40,28 @@ import Data.Time.Format (defaultTimeLocale, formatTime)
 
 import HKernel.Account (accountName)
 import HKernel.Actual.Journal
-  ( ActualJournalError
+  ( ActualJournal
+  , ActualJournalError
   , actualJournalCompletionDeclarations
+  , actualJournalValue
+  , admitActualJournalFromResolvedJournal
   , parseActualJournal
   )
 import HKernel.Editor.ActualAppend
   ( ActualAppendPreview(..)
   , ActualEditError(..)
   , ActualEditIntent(..)
-  , prepareActualAppend
+  , prepareActualAppendFromResolvedJournal
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Editor.TransactionBlock
   ( IntentPosting(..)
+  , PreparedTransactionBlock(..)
   , TransactionBlockError
   , TransactionBlockIntent(..)
   , prepareTransactionBlock
   )
-import HKernel.Journal (journalAccountRegistry)
+import HKernel.Journal (Journal, journalAccountRegistry)
 import HKernel.Ledger
   ( Posting
   , Transaction
@@ -159,8 +166,28 @@ preparePlanAdd
   -> PlanAddIntent
   -> Either (NonEmpty PlanAddError) PlanAddPreview
 preparePlanAdd planSource actualSource intent = do
+  actualJ <- first (pure . AddActualJournalSyntaxError)
+    (parseActualJournal actualSource)
+  preparePlanAddFromJournals planSource actualJ intent
+
+preparePlanAddFromResolvedActualJournal
+  :: Journal
+  -> Text
+  -> Text
+  -> PlanAddIntent
+  -> Either (NonEmpty PlanAddError) PlanAddPreview
+preparePlanAddFromResolvedActualJournal resolvedActual planSource actualSource intent = do
+  actualJ <- first (pure . AddActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanAddFromJournals planSource actualJ intent
+
+preparePlanAddFromJournals
+  :: Text
+  -> ActualJournal
+  -> PlanAddIntent
+  -> Either (NonEmpty PlanAddError) PlanAddPreview
+preparePlanAddFromJournals planSource actualJ intent = do
   planJ <- first (pure . AddPlanJournalSyntaxError) (parsePlanJournal planSource)
-  actualJ <- first (pure . AddActualJournalSyntaxError) (parseActualJournal actualSource)
 
   let existingPlanIds = map identifiedPlanId (planJournalTransactions planJ)
                         ++ map declaredCompletionPlanId (actualJournalCompletionDeclarations actualJ)
@@ -185,12 +212,13 @@ preparePlanAdd planSource actualSource intent = do
         , blockMetadata = [("plan-id", planIdText newPlanId)]
         }
 
-  block <- first (pure . AddTransactionBlockError)
+  prepared <- first (pure . AddTransactionBlockError)
     (prepareTransactionBlock
       (journalAccountRegistry (planJournalValue planJ))
       blockIntent)
 
-  let preview = PlanAddPreview
+  let block = preparedTransactionBlock prepared
+      preview = PlanAddPreview
         { addCandidateBlock = block
         , addCandidateCompleteSource =
             appendSourceBlock planSource (SourceBlock block)
@@ -263,8 +291,28 @@ preparePlanEdit
   -> PlanEditIntent
   -> Either (NonEmpty PlanEditError) PlanEditPreview
 preparePlanEdit planSource actualSource intent = do
+  actualJ <- first (pure . EditActualJournalSyntaxError)
+    (parseActualJournal actualSource)
+  preparePlanEditFromJournals planSource actualJ intent
+
+preparePlanEditFromResolvedActualJournal
+  :: Journal
+  -> Text
+  -> Text
+  -> PlanEditIntent
+  -> Either (NonEmpty PlanEditError) PlanEditPreview
+preparePlanEditFromResolvedActualJournal resolvedActual planSource actualSource intent = do
+  actualJ <- first (pure . EditActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanEditFromJournals planSource actualJ intent
+
+preparePlanEditFromJournals
+  :: Text
+  -> ActualJournal
+  -> PlanEditIntent
+  -> Either (NonEmpty PlanEditError) PlanEditPreview
+preparePlanEditFromJournals planSource actualJ intent = do
   planJ <- first (pure . EditPlanJournalSyntaxError) (parsePlanJournal planSource)
-  actualJ <- first (pure . EditActualJournalSyntaxError) (parseActualJournal actualSource)
   pId <- first (pure . EditInvalidId) (mkPlanId (editPlanId intent))
 
   identified <- case filter ((== pId) . identifiedPlanId)
@@ -512,7 +560,6 @@ data PlanFinishError
   = FinishPlanJournalSyntaxError (NonEmpty PlanJournalError)
   | FinishActualJournalSyntaxError (NonEmpty ActualJournalError)
   | FinishActualEditError (NonEmpty ActualEditError)
-  | FinishCandidateParseError (NonEmpty ActualJournalError)
   | FinishInvalidId PlanIdError
   | FinishPlanNotFound PlanId
   | FinishPlanAlreadyClosed PlanId
@@ -525,8 +572,29 @@ preparePlanFinish
   -> PlanFinishIntent
   -> Either (NonEmpty PlanFinishError) PlanFinishPreview
 preparePlanFinish planSource actualSource intent = do
+  actualJ <- first (pure . FinishActualJournalSyntaxError)
+    (parseActualJournal actualSource)
+  preparePlanFinishFromJournals planSource actualSource actualJ intent
+
+preparePlanFinishFromResolvedActualJournal
+  :: Journal
+  -> Text
+  -> Text
+  -> PlanFinishIntent
+  -> Either (NonEmpty PlanFinishError) PlanFinishPreview
+preparePlanFinishFromResolvedActualJournal resolvedActual planSource actualSource intent = do
+  actualJ <- first (pure . FinishActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanFinishFromJournals planSource actualSource actualJ intent
+
+preparePlanFinishFromJournals
+  :: Text
+  -> Text
+  -> ActualJournal
+  -> PlanFinishIntent
+  -> Either (NonEmpty PlanFinishError) PlanFinishPreview
+preparePlanFinishFromJournals planSource actualSource actualJ intent = do
   planJ <- first (pure . FinishPlanJournalSyntaxError) (parsePlanJournal planSource)
-  actualJ <- first (pure . FinishActualJournalSyntaxError) (parseActualJournal actualSource)
 
   pId <- first (pure . FinishInvalidId) (mkPlanId (finishPlanId intent))
 
@@ -566,13 +634,15 @@ preparePlanFinish planSource actualSource intent = do
         , intentMetadata = [("plan-id", planIdText pId)]
         }
 
-  actualPreview <- first (pure . FinishActualEditError) (prepareActualAppend actualSource actualIntent)
+  actualPreview <- first (pure . FinishActualEditError)
+    (prepareActualAppendFromResolvedJournal
+      (actualJournalValue actualJ)
+      actualSource
+      actualIntent)
 
   let preview = PlanFinishPreview
         { finishCandidateBlock = candidateBlock actualPreview
         , finishCandidateCompleteSource = candidateCompleteSource actualPreview
         }
-
-  _ <- first (pure . FinishCandidateParseError) (parseActualJournal (finishCandidateCompleteSource preview))
 
   pure preview

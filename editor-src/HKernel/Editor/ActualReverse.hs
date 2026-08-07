@@ -5,6 +5,7 @@ module HKernel.Editor.ActualReverse
   , ActualReverseError(..)
   , ActualReversePreview(..)
   , prepareActualReverse
+  , prepareActualReverseFromResolvedJournal
   ) where
 
 import Data.Bifunctor (first)
@@ -22,11 +23,14 @@ import HKernel.Actual.Journal
   , ActualJournalError
   , actualJournalIdentifiedTransactions
   , actualJournalReversalDeclarations
+  , actualJournalValue
+  , admitActualJournalFromResolvedJournal
   , parseActualJournal
   , reversedTransactionId
   , reversalTransactionId
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
+import HKernel.Journal (Journal, appendJournalTransaction)
 import HKernel.Ledger
   ( Posting
   , Transaction
@@ -81,15 +85,40 @@ prepareActualReverse
   -> Either (NonEmpty ActualReverseError) ActualReversePreview
 prepareActualReverse existingSource intent = do
   journal <- parseSource existingSource
+  prepareActualReverseFromJournal journal existingSource intent
+
+-- | Prepare a reversal against the resolved Actual Journal. Durable identity
+-- and reversal provenance remain owned by Actual root metadata.
+prepareActualReverseFromResolvedJournal
+  :: Journal
+  -> Text
+  -> ActualReverseIntent
+  -> Either (NonEmpty ActualReverseError) ActualReversePreview
+prepareActualReverseFromResolvedJournal resolvedJournal existingSource intent = do
+  journal <- first (pure . SourceParseError)
+    (admitActualJournalFromResolvedJournal resolvedJournal existingSource)
+  prepareActualReverseFromJournal journal existingSource intent
+
+prepareActualReverseFromJournal
+  :: ActualJournal
+  -> Text
+  -> ActualReverseIntent
+  -> Either (NonEmpty ActualReverseError) ActualReversePreview
+prepareActualReverseFromJournal journal existingSource intent = do
   ensureNewIdentity (reverseEventId intent) journal
   targetTxn <- findTargetTransaction (reverseTargetId intent) journal
   ensureTargetNotReversed (reverseTargetId intent) journal
   newTxn <- reverseTransaction intent targetTxn
 
   let preview = buildPreview existingSource newTxn intent
+      candidateJournal = appendJournalTransaction
+        newTxn
+        (actualJournalValue journal)
 
   _ <- first (pure . CandidateSourceParseError)
-    (parseActualJournal (candidateCompleteSource preview))
+    (admitActualJournalFromResolvedJournal
+      candidateJournal
+      (candidateCompleteSource preview))
   pure preview
 
 parseSource :: Text -> Either (NonEmpty ActualReverseError) ActualJournal

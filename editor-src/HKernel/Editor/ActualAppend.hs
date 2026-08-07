@@ -5,6 +5,7 @@ module HKernel.Editor.ActualAppend
   , ActualEditError(..)
   , ActualAppendPreview(..)
   , prepareActualAppend
+  , prepareActualAppendFromResolvedJournal
   , ActualAddInput(..)
   , ActualAddInputError(..)
   , ActualAddPreview(..)
@@ -28,17 +29,23 @@ import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError
   , actualJournalValue
+  , admitActualJournalFromResolvedJournal
   , parseActualJournal
   )
 import HKernel.Editor.ActualWriter (WriteError(..))
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Editor.TransactionBlock
   ( IntentPosting(..)
+  , PreparedTransactionBlock(..)
   , TransactionBlockError(..)
   , TransactionBlockIntent(..)
   , prepareTransactionBlock
   )
-import HKernel.Journal (journalAccountRegistry)
+import HKernel.Journal
+  ( Journal
+  , appendJournalTransaction
+  , journalAccountRegistry
+  )
 import HKernel.Ledger (TransactionError)
 import HKernel.Money
   ( mkCommodity
@@ -75,19 +82,45 @@ prepareActualAppend
   -> Either (NonEmpty ActualEditError) ActualAppendPreview
 prepareActualAppend existingSource intent = do
   journal <- parseSource existingSource
-  block <- first (fmap toActualEditError)
+  prepareActualAppendFromJournal journal existingSource intent
+
+-- | Prepare an Actual append using declarations and transactions from the
+-- resolved Journal while retaining Actual-owned metadata from the root source.
+prepareActualAppendFromResolvedJournal
+  :: Journal
+  -> Text
+  -> ActualEditIntent
+  -> Either (NonEmpty ActualEditError) ActualAppendPreview
+prepareActualAppendFromResolvedJournal resolvedJournal existingSource intent = do
+  journal <- first (pure . SourceParseError)
+    (admitActualJournalFromResolvedJournal resolvedJournal existingSource)
+  prepareActualAppendFromJournal journal existingSource intent
+
+prepareActualAppendFromJournal
+  :: ActualJournal
+  -> Text
+  -> ActualEditIntent
+  -> Either (NonEmpty ActualEditError) ActualAppendPreview
+prepareActualAppendFromJournal journal existingSource intent = do
+  prepared <- first (fmap toActualEditError)
     (prepareTransactionBlock
       (journalAccountRegistry (actualJournalValue journal))
       (toTransactionBlockIntent intent))
 
-  let preview = ActualAppendPreview
+  let block = preparedTransactionBlock prepared
+      preview = ActualAppendPreview
         { candidateBlock = block
         , candidateCompleteSource =
             appendSourceBlock existingSource (SourceBlock block)
         }
+      candidateJournal = appendJournalTransaction
+        (preparedTransaction prepared)
+        (actualJournalValue journal)
 
   _ <- first (pure . CandidateSourceParseError)
-    (parseActualJournal (candidateCompleteSource preview))
+    (admitActualJournalFromResolvedJournal
+      candidateJournal
+      (candidateCompleteSource preview))
   pure preview
 
 parseSource :: Text -> Either (NonEmpty ActualEditError) ActualJournal

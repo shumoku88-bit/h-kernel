@@ -16,6 +16,7 @@ module HKernel.Journal
   , validateJournalDocument
   , Journal
   , journalFromTransactions
+  , appendJournalTransaction
   , journalAccountRegistry
   , journalTransactions
   , JournalError(..)
@@ -90,6 +91,13 @@ data Journal = Journal
 
 journalFromTransactions :: Foldable collection => collection Transaction -> Journal
 journalFromTransactions = Journal emptyAccountRegistry . Foldable.toList
+
+-- | Append one already validated transaction while retaining the declaration
+-- registry of a resolved Journal.
+appendJournalTransaction :: Transaction -> Journal -> Journal
+appendJournalTransaction transaction journal = journal
+  { journalTransactions = journalTransactions journal ++ [transaction]
+  }
 
 data JournalError = JournalError
   { journalErrorLine   :: Int
