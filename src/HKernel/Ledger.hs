@@ -23,8 +23,7 @@ module HKernel.Ledger
   , transactionBalance
   ) where
 
-import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NonEmpty
+import Data.List.NonEmpty (NonEmpty((:|)))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -40,12 +39,30 @@ data Posting = Posting
 mkPosting :: Account -> Amount -> Posting
 mkPosting = Posting
 
+-- | A structurally non-empty posting collection with at least two entries.
+-- The constructor stays private so every accepted 'Transaction' carries the
+-- double-entry minimum in its representation, not only as a checked runtime
+-- condition.
+data Postings = Postings Posting Posting [Posting]
+  deriving (Eq, Show)
+
+postingsFromNonEmpty :: NonEmpty Posting -> Either TransactionError Postings
+postingsFromNonEmpty (_ :| []) = Left (TooFewPostings 1)
+postingsFromNonEmpty (first :| second : rest) =
+  Right (Postings first second rest)
+
+postingsToNonEmpty :: Postings -> NonEmpty Posting
+postingsToNonEmpty (Postings first second rest) =
+  first :| (second : rest)
+
 -- | A validated transaction. The constructor is hidden so an unbalanced
--- transaction cannot enter the rest of the accounting engine.
+-- transaction cannot enter the rest of the accounting engine. Its internal
+-- 'Postings' value also guarantees that a validated transaction contains at
+-- least two postings.
 data Transaction = Transaction
   { transactionDate        :: Day
   , transactionDescription :: Text
-  , transactionPostings    :: NonEmpty Posting
+  , transactionPostingSet  :: Postings
   } deriving (Eq, Show)
 
 data TransactionError
@@ -63,12 +80,18 @@ mkTransaction
   -> Either TransactionError Transaction
 mkTransaction date description postings
   | T.null (T.strip description) = Left EmptyTransactionDescription
-  | postingCount < 2             = Left (TooFewPostings postingCount)
-  | not (isZeroBalance balance)  = Left (UnbalancedTransaction balance)
-  | otherwise                    = Right (Transaction date description postings)
-  where
-    postingCount = NonEmpty.length postings
-    balance = postingCollectionBalance postings
+  | otherwise = do
+      checkedPostings <- postingsFromNonEmpty postings
+      let balance = postingCollectionBalance (postingsToNonEmpty checkedPostings)
+      if isZeroBalance balance
+        then Right (Transaction date description checkedPostings)
+        else Left (UnbalancedTransaction balance)
+
+-- | Observe validated postings in their original order. The public projection
+-- remains 'NonEmpty' for compatibility; the 'Transaction' representation is
+-- stronger and always contains at least two entries.
+transactionPostings :: Transaction -> NonEmpty Posting
+transactionPostings = postingsToNonEmpty . transactionPostingSet
 
 -- | Recalculate the per-commodity balance of a validated transaction.
 -- This is always zero, but exposing the calculation is useful for auditing and
