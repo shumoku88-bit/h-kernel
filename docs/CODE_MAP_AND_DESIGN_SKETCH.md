@@ -103,7 +103,7 @@ graph TD
     CanonicalPlan["private canonical plan.journal"]
     AccountProfileSource["retained accounts.tsv"]
     BudgetMovementSource["retained budget_alloc.tsv"]
-    ConfigSources["budget.toml / household.toml / config.tsv / daily_target_scope.tsv"]
+    ConfigSources["budget.toml / household.toml / daily_target_scope.tsv"]
     RehearsalTarget["explicit synthetic / non-canonical target"]
 
     CoreAdmission["Journal / Actual / Plan admission"]
@@ -196,7 +196,7 @@ fact、selected policy、validated policy、derived resultを別の声部とし�
 
 **CURRENT**
 
-- application config、Account profile admission、Household policy、Daily Target、Backing、Budget movement admissionはstable componentにある
+- Account profile admission、Household policy、Daily Target、Backing、Budget movement admissionはstable componentにある
 - `HKernel.Spike.HouseholdReport`はstable ownerの値を一つのsurfaceへ合成する
 - Spike-local Account parserとmetadata classifierは削除済みである
 - Actual writer authorityはh-kernelへ移ったが、Report pathは引き続きread-onlyである
