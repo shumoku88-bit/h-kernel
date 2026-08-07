@@ -33,19 +33,21 @@ import HKernel.Actual.Journal
   , actualJournalValue
   , parseActualJournal
   )
+import HKernel.Editor.ActualAppend
+  ( ActualAddInput(..)
+  , ActualAddPreview(..)
+  , ActualAddWriteFailure(..)
+  , ActualAddWriteOutcome(..)
+  , classifyActualAddWriteResult
+  , emptyActualAddInput
+  )
 import HKernel.Editor.ActualWorkspace (transactionsForAccount)
 import HKernel.Editor.ActualWriter (publishActualBlock)
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
   , ActualAddAction(..)
-  , ActualAddInput(..)
   , ActualAddMode(..)
-  , ActualAddPreview(..)
   , ActualAddState(..)
-  , ActualAddWriteFailure(..)
-  , ActualAddWriteOutcome(..)
-  , classifyActualAddWriteResult
-  , emptyActualAddInput
   , transitionActualAdd
   )
 import HKernel.Journal

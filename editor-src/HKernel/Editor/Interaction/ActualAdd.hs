@@ -3,36 +3,24 @@
 -- | UI-independent interaction state for the ordinary Actual add workflow.
 --
 -- Brick, Haskeline, or another delivery adapter may map its own events and
--- widgets onto these actions and states. This module owns no terminal toolkit,
--- cursor, widget, filesystem effect, or publication loop.
+-- widgets onto these actions and states. Candidate preparation and write
+-- outcome meaning remain owned by 'HKernel.Editor.ActualAppend'. This module
+-- owns no terminal toolkit, cursor, widget, filesystem effect, or publication
+-- loop.
 module HKernel.Editor.Interaction.ActualAdd
-  ( ActualAddInput(..)
-  , ActualAddInputError(..)
-  , ActualAddPreview(..)
-  , AccountSelectionTarget(..)
+  ( AccountSelectionTarget(..)
   , ActualAddMode(..)
   , ActualAddState(..)
   , ActualAddAction(..)
-  , ActualAddWriteFailure(..)
-  , ActualAddWriteOutcome(..)
-  , emptyActualAddInput
   , initialActualAddState
-  , buildActualAddIntent
-  , prepareActualAddPreview
   , transitionActualAdd
-  , classifyActualAddWriteResult
   ) where
 
 import Data.Text (Text)
 
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
-  , ActualAddInputError(..)
   , ActualAddPreview(..)
-  , ActualAddWriteFailure(..)
-  , ActualAddWriteOutcome(..)
-  , buildActualAddIntent
-  , classifyActualAddWriteResult
   , emptyActualAddInput
   , prepareActualAddPreview
   )
