@@ -198,7 +198,11 @@ loadHouseholdReportSurface directory observation journal = do
     else dieText
       "actual.journal changed between accounting load and completion admission"
   accountsText <- readHouseholdSource directory "accounts.tsv"
-  budgetText <- readHouseholdSource directory "budget_alloc.tsv"
+  budgetLoad <- loadJournal (directory </> "budget.journal")
+  budgetJournal <- case budgetLoad of
+    Left err -> dieText
+      ("budget.journal admission failed:\n" <> renderLoadError err)
+    Right value -> pure value
   budgetPolicyText <- readHouseholdSource directory "budget.toml"
   householdPolicyText <- readHouseholdSource directory "household.toml"
   planText <- readHouseholdSource directory "plan.journal"
@@ -209,8 +213,8 @@ loadHouseholdReportSurface directory observation journal = do
     Right value -> pure value
   issuesText <- readHouseholdSource directory "issues.tsv"
   dailyScopeText <- readHouseholdSource directory "daily_target_scope.tsv"
-  case buildHouseholdReportSurfaceFromPlanJournal observation actual
-      accountsText budgetText budgetPolicyText householdPolicyText planJournal
+  case buildHouseholdReportSurfaceFromPlanJournalAndBudgetJournal observation actual
+      accountsText budgetJournal budgetPolicyText householdPolicyText planJournal
       issuesText dailyScopeText of
     Left errors -> dieText
       ("household source admission failed:\n"
