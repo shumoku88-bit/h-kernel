@@ -60,6 +60,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualAddMode(..)
   , ActualAddState(..)
   , dailyAccountCandidates
+  , filterDailyAccountCandidates
   , enterActualAddPreview
   , initialActualAddStateForDay
   , setActualAddDate
@@ -186,6 +187,7 @@ data UIState event
   | InputForm (Form ActualAddInput event Name)
   | SelectAccount
       AccountSelectionTarget
+      Text
       (L.List Name Account)
       (Form ActualAddInput event Name)
   | ShowPreview
@@ -205,7 +207,6 @@ data AppContext = AppContext
   , contextSelectedReport       :: ReportChoice
   , contextObservationDay       :: Day
   , contextEntryDay             :: Day
-  , contextAccounts             :: [Account]
   , contextWorkspaceAccounts    :: L.List Name (Maybe Account)
   , contextAllTransactions      :: [Transaction]
   , contextWorkspaceList        :: L.List Name Transaction
@@ -247,8 +248,8 @@ zoomForm f (AppWrapper context (InputForm form)) =
 zoomForm _ wrapper = pure wrapper
 
 zoomList :: Traversal' AppWrapper (L.List Name Account)
-zoomList f (AppWrapper context (SelectAccount target accountList form)) =
-  (\updated -> AppWrapper context (SelectAccount target updated form))
+zoomList f (AppWrapper context (SelectAccount target query accountList form)) =
+  (\updated -> AppWrapper context (SelectAccount target query updated form))
     <$> f accountList
 zoomList _ wrapper = pure wrapper
 
@@ -288,15 +289,18 @@ drawUI (AppWrapper context (InputForm form)) =
             , str "[Esc] Workspace | [Enter] Preview"
             ])))
   ]
-drawUI (AppWrapper _ (SelectAccount target accountList _)) =
+drawUI (AppWrapper _ (SelectAccount target query accountList _)) =
   [ center
       (borderWithLabel (str (selectionLabel target))
-        (hLimit 56
-          (vLimit 15
-            (L.renderList renderAccount True accountList
+        (hLimit 64
+          (vLimit 17
+            ( txt ("Search: " <> query)
+              <=> str "Type to filter; Backspace edits; Ctrl-U clears."
+              <=> str " "
+              <=> L.renderList renderAccount True accountList
               <=> str " "
               <=> str "Recent matching Accounts are shown first."
-              <=> str "[Enter] Select | [Esc] Cancel"))))
+              <=> str "[Up/Down] Move | [Enter] Select | [Esc] Cancel"))))
   ]
 drawUI (AppWrapper _ (ShowPreview preview _)) =
   [ center
@@ -723,8 +727,8 @@ appEvent event = do
   case state of
     Workspace -> handleWorkspaceEvent context event
     InputForm form -> handleInputEvent context form event
-    SelectAccount target accountList form ->
-      handleAccountSelection context target accountList form event
+    SelectAccount target query accountList form ->
+      handleAccountSelection context target query accountList form event
     ShowPreview preview form ->
       handlePreviewEvent context preview form event
     ShowConfirmation block form ->
@@ -866,31 +870,39 @@ openAccountSelection
 openAccountSelection context target form =
   put
     (AppWrapper context
-      (SelectAccount
-        target
-        (L.list
-          AccountList
-          (Vec.fromList
-            (dailyAccountCandidates
-              (householdStateAccountsRegistry (contextHouseholdState context))
-              (contextAllTransactions context)
-              target))
-          1)
-        form))
+      (SelectAccount target "" (accountSelectionList context target "") form))
+
+accountSelectionList
+  :: AppContext
+  -> AccountSelectionTarget
+  -> Text
+  -> L.List Name Account
+accountSelectionList context target query =
+  L.list
+    AccountList
+    (Vec.fromList
+      (filterDailyAccountCandidates
+        query
+        (dailyAccountCandidates
+          (householdStateAccountsRegistry (contextHouseholdState context))
+          (contextAllTransactions context)
+          target)))
+    1
 
 handleAccountSelection
   :: AppContext
   -> AccountSelectionTarget
+  -> Text
   -> L.List Name Account
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleAccountSelection context target accountList form event = case event of
+handleAccountSelection context target query accountList form event = case event of
   VtyEvent (V.EvKey V.KEsc []) ->
     put (AppWrapper context (InputForm form))
   VtyEvent (V.EvKey V.KEnter []) ->
     case L.listSelectedElement accountList of
-      Nothing -> put (AppWrapper context (InputForm form))
+      Nothing -> pure ()
       Just (_, account) -> do
         let state =
               transitionActualAdd
@@ -901,9 +913,26 @@ handleAccountSelection context target accountList form event = case event of
         put
           (AppWrapper context
             (InputForm (updateFormState (actualAddInput state) form)))
+  VtyEvent (V.EvKey V.KBS []) ->
+    replaceAccountSearch context target (T.dropEnd 1 query) form
+  VtyEvent (V.EvKey (V.KChar 'u') [V.MCtrl]) ->
+    replaceAccountSearch context target "" form
+  VtyEvent (V.EvKey (V.KChar character) []) ->
+    replaceAccountSearch context target (query <> T.singleton character) form
   VtyEvent vtyEvent ->
-    zoom zoomList (L.handleListEventVi L.handleListEvent vtyEvent)
+    zoom zoomList (L.handleListEvent vtyEvent)
   _ -> pure ()
+
+replaceAccountSearch
+  :: AppContext
+  -> AccountSelectionTarget
+  -> Text
+  -> Form ActualAddInput AppEvent Name
+  -> EventM Name AppWrapper ()
+replaceAccountSearch context target query form =
+  put
+    (AppWrapper context
+      (SelectAccount target query (accountSelectionList context target query) form))
 
 handlePreviewEvent
   :: AppContext
@@ -1062,7 +1091,6 @@ makeWorkspaceContext focusLatest today journalFile source state =
     ReportTrialBalance
     today
     today
-    accounts
     workspaceAccounts
     transactions
     workspaceList
@@ -1073,7 +1101,6 @@ makeWorkspaceContext focusLatest today journalFile source state =
     actualJournal = actualJournalValue (householdStateActualJournal state)
     declarations =
       accountDeclarations (householdStateAccountsRegistry state)
-    accounts = map declaredAccount declarations
     transactions = journalTransactions actualJournal
     workspaceAccounts =
       L.list
