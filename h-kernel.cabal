@@ -641,7 +641,6 @@ executable h-kernel-editor-cli
 
 executable h-kernel-editor-tui
     main-is:          Main.hs
-    other-modules:    HKernel.Editor.TUI.ActualAdd
     build-depends:    base >= 4.14 && < 5
                     , text >= 1.2 && < 2.2
                     , brick >= 1.0
