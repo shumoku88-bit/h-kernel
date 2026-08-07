@@ -19,6 +19,10 @@ module HKernel.Spike.HouseholdReport
   , DailyTarget(..)
   , dailyTargetCapacity
   , dailyTargetRate
+  , AdmittedPlans
+  , admitPlanJournal
+  , admittedOutgoingPlanValues
+  , buildHouseholdReportSurfaceFromAdmitted
   , buildHouseholdReportSurfaceFromPlanJournal
   ) where
 
@@ -60,6 +64,7 @@ import HKernel.Household.Backing
   , envelopeReconciliationDelta
   , deriveHouseholdBacking
   )
+import HKernel.Household.BudgetMovement (HouseholdBudgetMovement)
 import HKernel.Household.BudgetMovement.TSV
 import HKernel.Household.Config
   ( parseHouseholdPolicy
@@ -68,7 +73,9 @@ import HKernel.Household.DailyTarget
 import HKernel.Household.DailyTarget.TSV
 import HKernel.Household.Issue.TSV
 import HKernel.Household.Policy
-  ( householdCycleIncomeAccount
+  ( AccountValidatedHouseholdPolicy
+  , HouseholdPolicy
+  , householdCycleIncomeAccount
   , householdPolicyCycle
   , validateHouseholdPolicyAccounts
   )
@@ -170,12 +177,44 @@ buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsTex
     (validateHouseholdPolicyAccounts (journalAccountRegistry journal) policy)
   validatePlanJournalRegistry journal planJournal
   admittedPlans <- admitPlanJournal planJournal
-  let cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
-  (current, previous) <- resolveCycles observation journal cycleAccount
-    (admittedIncomingAnchors admittedPlans)
   budget <- mapLeft budgetMovementSourceErrors
     (parseHouseholdBudgetMovements budgetText)
   issues <- mapLeft issueSourceErrors (parseHouseholdIssues issuesText)
+  dailyScope <- mapLeft dailyTargetSourceErrors
+    (parseDailyTargetScope
+      (journalAccountRegistry journal)
+      (admittedOutgoingPlanValues admittedPlans)
+      dailyScopeText)
+  buildHouseholdReportSurfaceFromAdmitted
+    observation
+    actualJournal
+    policy
+    validatedPolicy
+    admittedPlans
+    budget
+    issues
+    dailyScope
+  where
+    journal = actualJournalValue actualJournal
+
+-- | Calculate the Household report surface from already admitted typed values.
+-- Admission adapters may differ, but cycle, Plan completion, Budget observation,
+-- backing, and Daily Target calculation have one semantic owner here.
+buildHouseholdReportSurfaceFromAdmitted
+  :: Day
+  -> ActualJournal
+  -> HouseholdPolicy
+  -> AccountValidatedHouseholdPolicy
+  -> AdmittedPlans
+  -> [HouseholdBudgetMovement]
+  -> [HouseholdIssue]
+  -> DailyTargetScope
+  -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
+buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validatedPolicy admittedPlans budget issues dailyScope = do
+  let journal = actualJournalValue actualJournal
+      cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
+  (current, previous) <- resolveCycles observation journal cycleAccount
+    (admittedIncomingAnchors admittedPlans)
   let outgoingPlans = admittedOutgoingPlans admittedPlans
   outgoingDeclarations <- completionDeclarationsForOutgoingPlans admittedPlans
     (actualJournalCompletionDeclarations actualJournal)
@@ -185,13 +224,8 @@ buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsTex
       (map planFactValue outgoingPlans)
       (actualJournalIdentifiedTransactions actualJournal)
       outgoingDeclarations)
-  dailyScope <- mapLeft dailyTargetSourceErrors
-    (parseDailyTargetScope
-      (journalAccountRegistry journal)
-      (map planFactValue outgoingPlans)
-      dailyScopeText)
   budgetObservation <- mapLeft
-    (fmap (sourceError "budget_alloc.tsv" 0 . tshow))
+    (fmap (sourceError "budget.journal" 0 . tshow))
     (deriveHouseholdBudgetObservation observation current journal
       validatedPolicy budget)
   let admittedPolicy = householdBudgetObservationPolicy budgetObservation
@@ -220,8 +254,6 @@ buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsTex
     , householdEnvelopeBacking = backing
     , householdDailyTarget = target
     }
-  where
-    journal = actualJournalValue actualJournal
 
 validatePlanJournalRegistry
   :: Journal
@@ -263,6 +295,9 @@ admitPlanJournal planJournal = do
     }
   where
     registry = journalAccountRegistry (planJournalValue planJournal)
+
+admittedOutgoingPlanValues :: AdmittedPlans -> [CommittedOutgoingPlan]
+admittedOutgoingPlanValues = map planFactValue . admittedOutgoingPlans
 
 projectIncomingCycleAnchor
   :: AccountRegistry
