@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Stable Daily Target policy and projection for one household.
 --
 -- Eligible Asset Accounts are long-lived household policy. Selected outgoing
@@ -5,7 +7,21 @@
 -- Keeping those meanings apart prevents one current-format source from becoming
 -- one undifferentiated record in the domain model.
 module HKernel.Household.DailyTarget
-  ( DailyTargetPolicy
+  ( DailyTargetScopeId
+  , DailyTargetScopeIdError(..)
+  , mkDailyTargetScopeId
+  , dailyTargetScopeIdText
+  , DailyTargetAssetSelection
+  , selectDailyTargetAsset
+  , dailyTargetAssetSelectionId
+  , dailyTargetAssetSelectionAccount
+  , DailyTargetObligationSelection
+  , selectDailyTargetObligation
+  , dailyTargetObligationSelectionId
+  , dailyTargetObligationSelectionDeclaration
+  , DailyTargetSelectionError(..)
+  , dailyTargetScopeFromSelections
+  , DailyTargetPolicy
   , DailyTargetPolicyError(..)
   , mkDailyTargetPolicy
   , dailyTargetEligibleAccounts
@@ -34,6 +50,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Text (Text)
 import Data.Time.Calendar (Day, diffDays)
 import HKernel.Account
   ( Account
@@ -51,6 +68,91 @@ import HKernel.Money
 import HKernel.Period
 import HKernel.Plan
 import HKernel.Plan.Reservation
+
+-- | Source-independent identity for one Daily Target selection declaration.
+--
+-- The retained TSV required only non-emptiness. Native sources preserve that
+-- exact semantic boundary instead of silently tightening accepted identities
+-- during migration.
+newtype DailyTargetScopeId = DailyTargetScopeId
+  { dailyTargetScopeIdText :: Text
+  } deriving (Eq, Ord, Show)
+
+data DailyTargetScopeIdError = EmptyDailyTargetScopeId
+  deriving (Eq, Show)
+
+mkDailyTargetScopeId :: Text -> Either DailyTargetScopeIdError DailyTargetScopeId
+mkDailyTargetScopeId value
+  | value == "" = Left EmptyDailyTargetScopeId
+  | otherwise = Right (DailyTargetScopeId value)
+
+-- | Long-lived selection of one Asset Account for Daily Target capacity.
+data DailyTargetAssetSelection = DailyTargetAssetSelection
+  { dailyTargetAssetSelectionId      :: DailyTargetScopeId
+  , dailyTargetAssetSelectionAccount :: Account
+  } deriving (Eq, Show)
+
+selectDailyTargetAsset
+  :: DailyTargetScopeId
+  -> Account
+  -> DailyTargetAssetSelection
+selectDailyTargetAsset = DailyTargetAssetSelection
+
+-- | Current-cycle selection of one Plan, retaining its selection identity and
+-- optional reservation declaration.
+data DailyTargetObligationSelection = DailyTargetObligationSelection
+  { dailyTargetObligationSelectionId          :: DailyTargetScopeId
+  , dailyTargetObligationSelectionDeclaration :: DailyTargetObligationDeclaration
+  } deriving (Eq, Show)
+
+selectDailyTargetObligation
+  :: DailyTargetScopeId
+  -> DailyTargetObligationDeclaration
+  -> DailyTargetObligationSelection
+selectDailyTargetObligation = DailyTargetObligationSelection
+
+-- | Cross-source semantic failures after individual source syntax has already
+-- been admitted.
+data DailyTargetSelectionError
+  = DuplicateDailyTargetScopeId DailyTargetScopeId
+  | DailyTargetPolicySelectionError DailyTargetPolicyError
+  | DailyTargetObligationSelectionError DailyTargetObligationError
+  deriving (Eq, Show)
+
+-- | Assemble the same stable 'DailyTargetScope' from source-independent
+-- selections regardless of whether they came from retained TSV or the native
+-- household.toml + plan.journal pair.
+dailyTargetScopeFromSelections
+  :: AccountRegistry
+  -> [CommittedOutgoingPlan]
+  -> [DailyTargetAssetSelection]
+  -> [DailyTargetObligationSelection]
+  -> Either (NonEmpty DailyTargetSelectionError) DailyTargetScope
+dailyTargetScopeFromSelections registry plans assetSelections obligationSelections =
+  case NonEmpty.nonEmpty allErrors of
+    Just errors -> Left errors
+    Nothing -> case (policyResult, obligationResult) of
+      (Right policy, Right obligations) -> Right (dailyTargetScope policy obligations)
+      _ -> error "Daily Target selection assembly lost a reported error"
+  where
+    allSelections =
+      map dailyTargetAssetSelectionId assetSelections
+        ++ map dailyTargetObligationSelectionId obligationSelections
+    duplicateErrors =
+      map DuplicateDailyTargetScopeId (duplicates allSelections)
+    policyResult = mkDailyTargetPolicy registry
+      (map dailyTargetAssetSelectionAccount assetSelections)
+    policyErrors = either
+      (map DailyTargetPolicySelectionError . NonEmpty.toList)
+      (const [])
+      policyResult
+    obligationResult = resolveDailyTargetObligationScope plans
+      (map dailyTargetObligationSelectionDeclaration obligationSelections)
+    obligationErrors = either
+      (map DailyTargetObligationSelectionError . NonEmpty.toList)
+      (const [])
+      obligationResult
+    allErrors = duplicateErrors ++ policyErrors ++ obligationErrors
 
 -- | Household policy selecting the Asset Accounts that may fund ordinary
 -- day-to-day spending.
@@ -187,7 +289,7 @@ dailyTargetReservationFor
 dailyTargetReservationFor planId scope =
   Map.lookup planId (dailyTargetObligations scope) >>= id
 
--- | Stable typed input assembled by the current-format admission owner.
+-- | Stable typed input assembled by source admission owners.
 data DailyTargetScope = DailyTargetScope
   { dailyTargetScopePolicy      :: DailyTargetPolicy
   , dailyTargetScopeObligations :: DailyTargetObligationScope
