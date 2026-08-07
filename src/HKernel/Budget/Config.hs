@@ -1,11 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | TOML admission for stable household budget policy.
+-- | TOML admission and canonical rendering for stable household budget policy.
 --
 -- Syntax is converted immediately into 'BudgetPolicy'. Later calculations never
--- depend on raw TOML values.
+-- depend on raw TOML values. Rendering publishes one deterministic TOML shape
+-- from the already admitted policy instead of preserving incidental formatting.
 module HKernel.Budget.Config
   ( parseBudgetPolicy
+  , renderBudgetPolicy
   , renderBudgetPolicyErrors
   ) where
 
@@ -75,6 +77,59 @@ parseBudgetPolicy input = case (decode input :: Result String RawBudgetPolicy) o
   Success warnings raw
     | null warnings -> rawToBudgetPolicy raw
     | otherwise -> Left (map T.pack warnings)
+
+-- | Render one admitted policy as deterministic canonical TOML.
+--
+-- Source comments, table order, and whitespace are not policy coordinates and
+-- are therefore not preserved. Re-admission of this text is expected to recover
+-- the exact same 'BudgetPolicy'.
+renderBudgetPolicy :: BudgetPolicy -> Text
+renderBudgetPolicy policy =
+  T.intercalate "\n"
+    (map renderBackingPoolDefinition
+      (budgetPolicyBackingPoolDefinitions policy)
+      ++ map renderEnvelopeDefinition
+        (budgetPolicyEnvelopeDefinitions policy))
+  <> "\n"
+
+renderBackingPoolDefinition :: BackingPoolDefinition -> Text
+renderBackingPoolDefinition definition = T.unlines
+  [ "[[backing-pools]]"
+  , "id = " <> tomlString
+      (backingPoolIdText (backingPoolDefinitionId definition))
+  , "asset-accounts = " <> renderAccountArray
+      (backingPoolDefinitionAssetAccounts definition)
+  ]
+
+renderEnvelopeDefinition :: EnvelopeDefinition -> Text
+renderEnvelopeDefinition definition = T.unlines
+  [ "[[envelopes]]"
+  , "id = " <> tomlString
+      (envelopeIdText (envelopeDefinitionId definition))
+  , "label = " <> tomlString
+      (envelopeLabelText (envelopeDefinitionLabel definition))
+  , "pacing = " <> tomlString
+      (renderPacing (envelopeDefinitionPacing definition))
+  , "backing-pool = " <> tomlString
+      (backingPoolIdText (envelopeDefinitionBackingPool definition))
+  , "expense-accounts = " <> renderAccountArray
+      (envelopeDefinitionExpenseAccounts definition)
+  ]
+
+renderPacing :: Pacing -> Text
+renderPacing Daily = "daily"
+renderPacing Flex = "flex"
+
+renderAccountArray :: [Account] -> Text
+renderAccountArray accounts =
+  "[" <> T.intercalate ", " (map (tomlString . accountName) accounts) <> "]"
+
+tomlString :: Text -> Text
+tomlString value = "\"" <> T.concatMap escape value <> "\""
+  where
+    escape '\\' = "\\\\"
+    escape '"' = "\\\""
+    escape character = T.singleton character
 
 renderBudgetPolicyErrors :: [Text] -> Text
 renderBudgetPolicyErrors = T.unlines . map ("  " <>)
