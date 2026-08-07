@@ -28,6 +28,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualAddMode(..)
   , ActualAddState(..)
   , dailyAccountCandidates
+  , filterDailyAccountCandidates
   , enterActualAddPreview
   , initialActualAddState
   , initialActualAddStateForDay
@@ -57,6 +58,8 @@ main = do
         , ("daily entry can switch to yesterday", testYesterday)
         , ("expense candidates are typed and recent-first", testExpenseCandidates)
         , ("payment candidates are typed, recent-first, and retain unused Accounts", testPaymentCandidates)
+        , ("candidate search is case-insensitive and order-preserving", testCandidateSearch)
+        , ("empty candidate search preserves recent-first list", testEmptyCandidateSearch)
         , ("from Account selection updates input", testFromSelection)
         , ("cancelled selection preserves input", testCancelSelection)
         , ("preview transition retains candidate block only", testPreviewTransition source)
@@ -210,6 +213,31 @@ testPaymentCandidates =
           (journalTransactions journal)
           SelectFromAccount)
         == ["liabilities:card", "assets:cash", "assets:bank"]
+
+testCandidateSearch :: Bool
+testCandidateSearch =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates =
+            dailyAccountCandidates
+              (journalAccountRegistry journal)
+              (journalTransactions journal)
+              SelectToAccount
+      in map accountName (filterDailyAccountCandidates "BOOK" candidates)
+          == ["expenses:books"]
+
+testEmptyCandidateSearch :: Bool
+testEmptyCandidateSearch =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates =
+            dailyAccountCandidates
+              (journalAccountRegistry journal)
+              (journalTransactions journal)
+              SelectFromAccount
+      in filterDailyAccountCandidates "  " candidates == candidates
 
 candidateSource :: T.Text
 candidateSource = T.unlines
