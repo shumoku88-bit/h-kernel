@@ -4,6 +4,7 @@ module Main (main) where
 
 import Data.List (find)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Text (Text)
 import qualified Data.Text.IO as TIO
 import System.Exit (exitFailure, exitSuccess)
 
@@ -49,7 +50,7 @@ main = do
       mapM_ print results
       if all snd results then exitSuccess else exitFailure
 
-matchesAllFor :: String -> [Account] -> [Transaction] -> Bool
+matchesAllFor :: Text -> [Account] -> [Transaction] -> Bool
 matchesAllFor expectedName accounts transactions =
   case accountNamed expectedName accounts of
     Nothing -> False
@@ -57,15 +58,12 @@ matchesAllFor expectedName accounts transactions =
       length (transactionsForAccount (Just account) transactions)
         == length transactions
 
-matchesNoneFor :: String -> [Account] -> [Transaction] -> Bool
+matchesNoneFor :: Text -> [Account] -> [Transaction] -> Bool
 matchesNoneFor expectedName accounts transactions =
   case accountNamed expectedName accounts of
     Nothing -> False
     Just account -> null (transactionsForAccount (Just account) transactions)
 
-accountNamed :: String -> [Account] -> Maybe Account
+accountNamed :: Text -> [Account] -> Maybe Account
 accountNamed expectedName =
-  find ((== expectedName) . showAccountName)
-
-showAccountName :: Account -> String
-showAccountName = show . accountName
+  find ((== expectedName) . accountName)
