@@ -3,8 +3,9 @@
 -- | Read-only observation adapter for the current household source set.
 --
 -- General Budget policy, Household policy, and Daily Target meaning are owned
--- by stable components. This module composes their typed values with retained
--- compatibility sources; it does not write, migrate, or generate any source.
+-- by stable components. This module composes their typed values with either
+-- retained or native Budget movement admission; it does not write or migrate
+-- any source.
 module HKernel.Spike.HouseholdReport
   ( HouseholdSourceError(..)
   , HouseholdReportSurface(..)
@@ -20,6 +21,7 @@ module HKernel.Spike.HouseholdReport
   , dailyTargetCapacity
   , dailyTargetRate
   , buildHouseholdReportSurfaceFromPlanJournal
+  , buildHouseholdReportSurfaceFromPlanJournalAndBudgetJournal
   ) where
 
 import Data.List (sortOn)
@@ -59,6 +61,11 @@ import HKernel.Household.Backing
   , envelopeBackingSurplus
   , envelopeReconciliationDelta
   , deriveHouseholdBacking
+  )
+import HKernel.Household.BudgetMovement
+  ( HouseholdBudgetMovement
+  , HouseholdBudgetMovementJournalError
+  , admitHouseholdBudgetMovementJournal
   )
 import HKernel.Household.BudgetMovement.TSV
 import HKernel.Household.Config
@@ -145,6 +152,8 @@ data HouseholdReportSurface = HouseholdReportSurface
   , householdDailyTarget         :: DailyTarget
   } deriving (Eq, Show)
 
+-- | Retained compatibility entrypoint. The TSV source remains usable as parity
+-- evidence while the ordinary HouseholdRoot reader moves to @budget.journal@.
 buildHouseholdReportSurfaceFromPlanJournal
   :: Day
   -> ActualJournal
@@ -157,6 +166,65 @@ buildHouseholdReportSurfaceFromPlanJournal
   -> Text
   -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
 buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsText budgetText budgetPolicyText householdPolicyText planJournal issuesText dailyScopeText = do
+  budget <- mapLeft budgetMovementSourceErrors
+    (parseHouseholdBudgetMovements budgetText)
+  buildHouseholdReportSurfaceWithBudget
+    "budget_alloc.tsv"
+    observation
+    actualJournal
+    accountsText
+    budget
+    budgetPolicyText
+    householdPolicyText
+    planJournal
+    issuesText
+    dailyScopeText
+
+-- | Native Budget movement entrypoint. The accounting Journal owns syntax and
+-- balancing; this adapter requires the same canonical Account registry as
+-- @actual.journal@ before projecting exactly-two-posting Budget movements.
+buildHouseholdReportSurfaceFromPlanJournalAndBudgetJournal
+  :: Day
+  -> ActualJournal
+  -> Text
+  -> Journal
+  -> Text
+  -> Text
+  -> PlanJournal
+  -> Text
+  -> Text
+  -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
+buildHouseholdReportSurfaceFromPlanJournalAndBudgetJournal observation actualJournal accountsText budgetJournal budgetPolicyText householdPolicyText planJournal issuesText dailyScopeText = do
+  validateBudgetJournalRegistry journal budgetJournal
+  budget <- mapLeft budgetMovementJournalSourceErrors
+    (admitHouseholdBudgetMovementJournal budgetJournal)
+  buildHouseholdReportSurfaceWithBudget
+    "budget.journal"
+    observation
+    actualJournal
+    accountsText
+    budget
+    budgetPolicyText
+    householdPolicyText
+    planJournal
+    issuesText
+    dailyScopeText
+  where
+    journal = actualJournalValue actualJournal
+
+buildHouseholdReportSurfaceWithBudget
+  :: Text
+  -> Day
+  -> ActualJournal
+  -> Text
+  -> [HouseholdBudgetMovement]
+  -> Text
+  -> Text
+  -> PlanJournal
+  -> Text
+  -> Text
+  -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
+buildHouseholdReportSurfaceWithBudget budgetSourceName observation actualJournal accountsText budget budgetPolicyText householdPolicyText planJournal issuesText dailyScopeText = do
   _ <- mapLeft accountProfileSourceErrors
     (admitRetainedAccountProfiles
       (journalAccountRegistry journal)
@@ -173,8 +241,6 @@ buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsTex
   let cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
   (current, previous) <- resolveCycles observation journal cycleAccount
     (admittedIncomingAnchors admittedPlans)
-  budget <- mapLeft budgetMovementSourceErrors
-    (parseHouseholdBudgetMovements budgetText)
   issues <- mapLeft issueSourceErrors (parseHouseholdIssues issuesText)
   let outgoingPlans = admittedOutgoingPlans admittedPlans
   outgoingDeclarations <- completionDeclarationsForOutgoingPlans admittedPlans
@@ -191,7 +257,7 @@ buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsTex
       (map planFactValue outgoingPlans)
       dailyScopeText)
   budgetObservation <- mapLeft
-    (fmap (sourceError "budget_alloc.tsv" 0 . tshow))
+    (fmap (sourceError budgetSourceName 0 . tshow))
     (deriveHouseholdBudgetObservation observation current journal
       validatedPolicy budget)
   let admittedPolicy = householdBudgetObservationPolicy budgetObservation
@@ -222,6 +288,17 @@ buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsTex
     }
   where
     journal = actualJournalValue actualJournal
+
+validateBudgetJournalRegistry
+  :: Journal
+  -> Journal
+  -> Either (NonEmpty HouseholdSourceError) ()
+validateBudgetJournalRegistry actual budget
+  | journalAccountRegistry actual == journalAccountRegistry budget = Right ()
+  | otherwise = Left
+      (sourceError "budget.journal" 0
+        "Account registry does not exactly match actual.journal declarations"
+        NonEmpty.:| [])
 
 validatePlanJournalRegistry
   :: Journal
@@ -371,6 +448,12 @@ budgetMovementSourceErrors = fmap toSourceError
       "budget_alloc.tsv"
       (householdBudgetMovementTSVErrorLine err)
       (householdBudgetMovementTSVErrorMessage err)
+
+budgetMovementJournalSourceErrors
+  :: NonEmpty HouseholdBudgetMovementJournalError
+  -> NonEmpty HouseholdSourceError
+budgetMovementJournalSourceErrors =
+  fmap (sourceError "budget.journal" 0 . tshow)
 
 issueSourceErrors
   :: NonEmpty HouseholdIssueTSVError
