@@ -2,21 +2,25 @@
 
 型で不正な状態を減らし、exact multi-commodity arithmeticを保つHaskellの複式簿記・家計applicationです。
 
-現在の正規データ運用は`h-kernel`へ一本化します。`actual.journal`は現在h-kernelで読み書きでき、残るsourceも順次移行します。`bqn-ledger`は現時点では正規データのreader、writer、fallbackとして使用しません。h-kernelのcanonical contract安定後、同じsource、operation、Report semanticsへ追従させます。この将来対応は現在のh-kernel migration gateではありません。
+現在の正規データ運用は`h-kernel`へ一本化します。`actual.journal`は現在h-kernelで読み書きでき、残るsource / configuration / daily operationも順次h-kernelへ移行します。`bqn-ledger`は現時点のreader、writer、fallbackとしては使用しませんが廃止はせず、h-kernelの運用が安定した後に同じcanonical Household sourceへnative対応させて追いつかせます。
+
+目標はReportだけではありません。canonical Household rootの全source/configを読み書きでき、Actual、Account、Plan、Budget、Issue、configurationのdaily operationと全ReportをCLI/TUIから扱える一つのHousehold applicationにします。
 
 ## 現在の構成
 
 ```text
-private household source
+private Household root
   -> source-specific admission
-  -> exact accounting / policy / projection
-  -> Report
+  -> typed Household / policy / report config
+  -> typed operation / typed report request
+  -> CLI or TUI
 
-user intent
+write intent
   -> typed candidate
   -> complete-source admission
   -> preview
   -> explicit stale-safe publication
+  -> fresh Household reload
 ```
 
 - `src/`: Account、Money、Ledger、Journal、Actual、Plan、Budget、Report
@@ -24,12 +28,27 @@ user intent
 - `editor-src/`: edit intent、candidate、safe writer
 - `app/`: Report CLI
 - `editor-app/`: Editor CLI
-- `editor-tui-app/`: Actual workspace TUI
+- `editor-tui-app/`: Household TUIへ育てるBrick application
 - `tools/hk`: 日常入口とrouting
 
-開発優先順位は[`TODO.md`](TODO.md)、構造は[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、正データの現在地は[`docs/SOURCE_DATA_MIGRATION_PLAN.md`](docs/SOURCE_DATA_MIGRATION_PLAN.md)を参照してください。
+TUIはBQN時代のcommand hubをHaskellで再現しません。Account / Actual / Plan / Budget / Issue / Configurationのtyped operationとtyped Report requestを使う薄いapplication surfaceにします。
 
-## Setup
+開発優先順位と完成条件は[`TODO.md`](TODO.md)、構造は[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、正データの現在地は[`docs/SOURCE_DATA_MIGRATION_PLAN.md`](docs/SOURCE_DATA_MIGRATION_PLAN.md)を参照してください。
+
+## Canonical Household root
+
+目標shapeは次です。
+
+```text
+accounts.journal
+actual.journal
+plan.journal
+budget.journal
+budget.toml
+household.toml
+report.toml
+issues.tsv
+```
 
 正規データはpublic repositoryの外に置き、次のいずれかでdirectoryを指定します。
 
@@ -43,6 +62,8 @@ printf '%s\n' /absolute/path/to/private-ledger-data > ledger-data.local
 public fixtureとして`examples/sample.journal`と`tests/corpus/synthetic-v1/`を使用できます。private sourceをfixtureへcopyしません。
 
 ## Daily commands
+
+現在利用できる入口です。source pathを日常操作から外す作業やcommand completenessは[`TODO.md`](TODO.md)で追跡します。
 
 ```bash
 # Actual workspace TUI
@@ -87,11 +108,8 @@ public fixtureとして`examples/sample.journal`と`tests/corpus/synthetic-v1/`�
 ./tools/hk budget ...
 ./tools/hk issue ...
 
-# daily routerのhelp
 ./tools/hk help
 ```
-
-`actual-multi`のjournal pathは現在必須です。path省略と完全なhelp例は[`TODO.md`](TODO.md)のP0で修正します。READMEの例が実装より先に「利用可能」と主張しないようにします。
 
 ## Build and verification
 
@@ -100,7 +118,6 @@ cabal build all
 cabal test all
 cabal run exe:repository-audit
 
-# 同じ標準検証
 ./tools/hk check
 ```
 
@@ -112,22 +129,25 @@ Reportへ影響する変更では次も実行します。
 ./report-verify --corpus
 ```
 
-## Report CLI
+## Report portfolio
 
-```bash
-./report
-./report bs
-./report all
-./report-snapshot
+TUI/CLIから最終的に`All reports`と各Reportを個別に扱います。現在のh-kernel projectionと旧daily portfolioで保持していたReport questionをtyped ownerへ統合します。
 
-cabal run exe:h-kernel -- examples/sample.journal check
-cabal run exe:h-kernel -- examples/sample.journal trial-balance 2026-01-31
-cabal run exe:h-kernel -- examples/sample.journal balance-sheet 2026-01-31
-cabal run exe:h-kernel -- examples/sample.journal profit-and-loss 2026-01-01 2026-01-31
-cabal run exe:h-kernel -- examples/sample.journal daily-flow 2026-01-01 2026-01-31
-cabal run exe:h-kernel -- examples/sample.journal monthly-accounts 2026-01-01 2026-01-31
-cabal run exe:h-kernel -- examples/sample.journal recent-transactions 2026-01-31
-```
+- Envelope & Backing
+- Account Balances
+- Trial Balance
+- Balance Sheet
+- Profit & Loss
+- Recent Transactions / Recent Journal
+- Planned Payments
+- Cycle Accounts
+- Cycle Comparison
+- Monthly Accounts
+- Daily Flow
+- Daily Target
+- Issues
+
+Report TUIは計算を再実装せず、typed `ReportRequest`から既存/新規のtyped resultを作り、rendererへ渡します。query defaultとpresentationは`report.toml`が所有します。
 
 ## Journal format
 
@@ -159,7 +179,7 @@ account expenses:food
 
 ## Editor safety
 
-すべてのwriteは次の経路を通します。
+すべてのwriteは次の経路を共有します。
 
 ```text
 typed intent
@@ -170,11 +190,11 @@ typed intent
   -> stale rejection / backup / atomic publication / post-admission
 ```
 
-正データの内容、path、backup、temporary file、recovery artifactをpublic Git、CI、Issue、logへ出しません。詳細は[`SECURITY.md`](SECURITY.md)を参照してください。
+CLI/TUIごとに別writerを作りません。正データの内容、path、backup、temporary file、recovery artifactをpublic Git、CI、Issue、logへ出しません。詳細は[`SECURITY.md`](SECURITY.md)を参照してください。
 
 ## Documentation
 
-- [`TODO.md`](TODO.md): 作者とcoding assistantが共有する優先順位
+- [`TODO.md`](TODO.md): 完成条件と作業順
 - [`AGENTS.md`](AGENTS.md): coding assistantの作業入口
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): component、依存方向、invariant
 - [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): Editorの現在能力と安全境界
