@@ -7,15 +7,11 @@
 
 `HKernel.Spike.HouseholdReport`は、型付きdomain ownerと現在の互換sourceを合成し、`HouseholdReportSurface`を作るread-only adapterである。
 
-application config、一般Budget policy、Household policy、Daily Target、Household Backing、Budget movement admission、retained Account profile admissionは、すでにSpikeの外へ移った。Spikeが引き続き所有するのは、stable admission ownerが作る値をHousehold Reportへ合成するprovisional compositionと、source-local diagnosticへの翻訳であり、恒久的なapplication policy、domain policy、物理source parser、計算そのものではない。
+一般Budget policy、Household policy、Daily Target、Household Backing、Budget movement admission、retained Account profile admissionは、すでにSpikeの外へ移った。Spikeが引き続き所有するのは、stable admission ownerが作る値をHousehold Reportへ合成するprovisional compositionと、source-local diagnosticへの翻訳であり、恒久的なapplication policy、domain policy、物理source parser、計算そのものではない。
 
 ## 現在の変換
 
 ```text
-config.tsv
-  -> HKernel.Application.Config
-  -> ApplicationConfig
-
 accounts.tsv
   -> HKernel.Household.AccountProfile.TSV
   -> RetainedAccountProfile
@@ -52,7 +48,6 @@ Actual Journal + Plan Journal
 
 現在、次の意味は名前付きownerへ委譲されている。
 
-- application source selection: `HKernel.Application.Config`
 - retained Account profile classification: `HKernel.Household.AccountProfile`
 - retained `accounts.tsv` admission and Actual registry parity: `HKernel.Household.AccountProfile.TSV`
 - Plan identityと分類: `HKernel.Plan.Journal`
@@ -71,7 +66,7 @@ Actual Journal + Plan Journal
 - Entitlement: `HKernel.Budget.Entitlement`
 - Remaining: `HKernel.Budget.Remaining`
 
-`config.tsv`のうち、現在application factへ昇格するのは検証済みのActual Journal選択だけである。未知keyとlast-write-winsの重複挙動はsource redesignなしで維持するが、Household ReportはKEY=VALUEやMap形状を解釈せず、stable errorを既存diagnosticへ翻訳するだけである。
+`config.tsv`は現在のHousehold Report入力ではない。`HKERNEL_LEDGER_DATA_DIR`から受け取ったdirectoryの`actual.journal`をActual sourceとして読み、`ACTUAL_JOURNAL_FILE`をReport compositionで再確認しない。`HKernel.Application.Config`はcurrent Report boundaryから外れており、そのmodule、専用test、Cabal登録のretirementは別のcleanup sliceとして扱う。
 
 ## Policyの現在地
 
@@ -147,6 +142,6 @@ Backingは、policy指定AssetのFunding Balance、Envelope claim、unassigned B
 3. Reportがfixed obligation、saving、investment、reservation funding locationを必要とする場合、その意味が明示的なpolicyとして存在する
 4. Report input境界がstable typed valuesとして説明でき、compatibility sourceの物理形状をdomain contractにしない
 
-application config、Account profile admission、Daily Target policy、Household Backing、Budget movement admissionが名前付きownerを持つ条件は満たされた。Report composition自体のstable component移動は、上の残条件を満たす別sliceとして扱う。
+Account profile admission、Daily Target policy、Household Backing、Budget movement admissionが名前付きownerを持つ条件は満たされた。Report composition自体のstable component移動は、上の残条件を満たす別sliceとして扱う。
 
 writer cutoverは別の境界である。Spikeの卒業だけでは、h-kernelへ正規データの書込み権限を与えない。
