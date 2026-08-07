@@ -115,7 +115,7 @@ data UIState event
   | InputForm (Form ActualAddInput event Name)
   | SelectAccount
       AccountSelectionTarget
-      (L.List Name Text)
+      (L.List Name Account)
       (Form ActualAddInput event Name)
   | ShowPreview
       ActualAddPreview
@@ -129,7 +129,7 @@ data UIState event
   | ShowWorkspaceReloadFailure
 
 data AppContext = AppContext
-  { contextAccounts             :: [Text]
+  { contextAccounts             :: [Account]
   , contextWorkspaceAccounts    :: L.List Name (Maybe Account)
   , contextAllTransactions      :: [Transaction]
   , contextWorkspaceList        :: L.List Name Transaction
@@ -165,7 +165,7 @@ zoomForm f (AppWrapper context (InputForm form)) =
   (\updated -> AppWrapper context (InputForm updated)) <$> f form
 zoomForm _ wrapper = pure wrapper
 
-zoomList :: Traversal' AppWrapper (L.List Name Text)
+zoomList :: Traversal' AppWrapper (L.List Name Account)
 zoomList f (AppWrapper context (SelectAccount target accountList form)) =
   (\updated -> AppWrapper context (SelectAccount target updated form))
     <$> f accountList
@@ -351,10 +351,12 @@ selectionLabel :: AccountSelectionTarget -> String
 selectionLabel SelectFromAccount = "Select From Account"
 selectionLabel SelectToAccount = "Select To Account"
 
-renderAccount :: Bool -> Text -> Widget Name
-renderAccount selected accountText
-  | selected = withAttr L.listSelectedAttr (txt accountText)
-  | otherwise = txt accountText
+renderAccount :: Bool -> Account -> Widget Name
+renderAccount selected account
+  | selected = withAttr L.listSelectedAttr row
+  | otherwise = row
+  where
+    row = txt (accountName account)
 
 renderPreview :: ActualAddPreview -> Widget Name
 renderPreview preview = case preview of
@@ -537,7 +539,7 @@ openAccountSelection context target form =
 handleAccountSelection
   :: AppContext
   -> AccountSelectionTarget
-  -> L.List Name Text
+  -> L.List Name Account
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
@@ -547,11 +549,11 @@ handleAccountSelection context target accountList form event = case event of
   VtyEvent (V.EvKey V.KEnter []) ->
     case L.listSelectedElement accountList of
       Nothing -> put (AppWrapper context (InputForm form))
-      Just (_, accountText) -> do
+      Just (_, account) -> do
         let state =
               transitionActualAdd
                 (contextSource context)
-                (ChooseAccount accountText)
+                (ChooseAccount account)
                 (ActualAddState
                   (formState form)
                   (SelectingActualAccount target))
@@ -718,7 +720,7 @@ makeWorkspaceContext focusLatest journalFile source journal =
     actualJournal = actualJournalValue journal
     declarations =
       accountDeclarations (journalAccountRegistry actualJournal)
-    accounts = map (accountName . declaredAccount) declarations
+    accounts = map declaredAccount declarations
     transactions = journalTransactions actualJournal
     workspaceAccounts =
       L.list
