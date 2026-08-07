@@ -9,28 +9,29 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (Day)
 import Data.Time.LocalTime (getZonedTime, localDay, zonedTimeToLocalTime)
-import HKernel.Actual.Journal
-  ( actualJournalValue
-  , parseActualJournal
-  )
+import HKernel.Actual.Journal (actualJournalValue)
+import HKernel.Application.Config (mkHouseholdRoot)
 import HKernel.CLI
 import HKernel.Engine (DateRange, rangeEnd)
 import HKernel.Envelope
 import HKernel.Envelope.Render
-import HKernel.Spike.HouseholdReport
-import HKernel.Spike.HouseholdReport.Render
-  ( renderHouseholdSourceErrors
-  , renderReportBookWithHouseholdPresentation
+import HKernel.Household.Application
+  ( HouseholdState(..)
+  , buildHouseholdReportSurfaceFromHousehold
+  , loadCanonicalHousehold
   )
 import HKernel.Journal
 import HKernel.Loader (loadJournal)
-import HKernel.Plan.Journal (parsePlanJournal)
 import HKernel.Render
 import HKernel.Report
 import HKernel.Report.Config
 import HKernel.Report.CycleAccounts (cycleAccounts)
 import HKernel.Report.Plan
 import HKernel.Report.Presentation
+import HKernel.Spike.HouseholdReport
+import HKernel.Spike.HouseholdReport.Render
+  ( renderReportBookWithHouseholdPresentation
+  )
 import System.Directory (doesFileExist)
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitFailure)
@@ -187,48 +188,24 @@ loadHouseholdReportSurface
   -> Journal
   -> IO HouseholdReportSurface
 loadHouseholdReportSurface directory observation journal = do
-  actualText <- readHouseholdSource directory "actual.journal"
-  actual <- case parseActualJournal actualText of
+  root <- case mkHouseholdRoot directory of
+    Left _ -> dieText "invalid Household root directory"
+    Right r -> pure r
+  householdResult <- loadCanonicalHousehold root
+  state <- case householdResult of
     Left errors -> dieText
-      ("actual.journal completion admission failed:\n"
-        <> renderAdmissionErrors errors)
-    Right value -> pure value
-  if actualJournalValue actual == journal
+      ("canonical household loading failed:\n"
+        <> T.unlines (map (("  - " <>) . tshow) (NonEmpty.toList errors)))
+    Right s -> pure s
+  if actualJournalValue (householdStateActualJournal state) == journal
     then pure ()
     else dieText
       "actual.journal changed between accounting load and completion admission"
-  accountsText <- readHouseholdSource directory "accounts.tsv"
-  budgetText <- readHouseholdSource directory "budget_alloc.tsv"
-  budgetPolicyText <- readHouseholdSource directory "budget.toml"
-  householdPolicyText <- readHouseholdSource directory "household.toml"
-  planText <- readHouseholdSource directory "plan.journal"
-  planJournal <- case parsePlanJournal planText of
+  case buildHouseholdReportSurfaceFromHousehold observation state of
     Left errors -> dieText
-      ("plan.journal admission failed:\n"
-        <> renderAdmissionErrors errors)
-    Right value -> pure value
-  issuesText <- readHouseholdSource directory "issues.tsv"
-  dailyScopeText <- readHouseholdSource directory "daily_target_scope.tsv"
-  case buildHouseholdReportSurfaceFromPlanJournal observation actual
-      accountsText budgetText budgetPolicyText householdPolicyText planJournal
-      issuesText dailyScopeText of
-    Left errors -> dieText
-      ("household source admission failed:\n"
-        <> renderHouseholdSourceErrors errors)
+      ("household report surface calculation failed:\n"
+        <> T.unlines (map (("  - " <>) . tshow) (NonEmpty.toList errors)))
     Right surface -> pure surface
-
-renderAdmissionErrors :: Show error => NonEmpty.NonEmpty error -> Text
-renderAdmissionErrors =
-  T.unlines . map (("  - " <>) . tshow) . NonEmpty.toList
-
-readHouseholdSource :: FilePath -> FilePath -> IO Text
-readHouseholdSource directory name = do
-  let path = directory </> name
-  result <- tryIOError (TIO.readFile path)
-  case result of
-    Left err -> dieText
-      ("cannot read household source ‘" <> T.pack name <> "’: " <> tshow err)
-    Right value -> pure value
 
 resolveReportConfigPath :: IO (Maybe FilePath)
 resolveReportConfigPath = do
