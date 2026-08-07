@@ -13,11 +13,15 @@ module HKernel.Editor.Interaction.ActualAdd
   , ActualAddState(..)
   , ActualAddAction(..)
   , initialActualAddState
+  , initialActualAddStateForDay
+  , setActualAddDate
   , enterActualAddPreview
   , transitionActualAdd
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Time.Calendar (Day)
 
 import HKernel.Account (Account, accountName)
 import HKernel.Editor.ActualAppend
@@ -56,6 +60,27 @@ data ActualAddAction
 
 initialActualAddState :: ActualAddState
 initialActualAddState = ActualAddState emptyActualAddInput EditingActualAdd
+
+-- | Start a daily entry with its ordinary day already chosen. Delivery adapters
+-- can use today's local Day without turning "today" into persisted metadata.
+initialActualAddStateForDay :: Day -> ActualAddState
+initialActualAddStateForDay day =
+  ActualAddState
+    (emptyActualAddInput { addDateText = renderDay day })
+    EditingActualAdd
+
+-- | Replace only the chosen accounting day. Today/yesterday shortcuts remain
+-- a delivery concern; this function keeps the resulting input transformation
+-- toolkit-independent.
+setActualAddDate :: Day -> ActualAddState -> ActualAddState
+setActualAddDate day state =
+  state
+    { actualAddInput =
+        (actualAddInput state) { addDateText = renderDay day }
+    }
+
+renderDay :: Day -> Text
+renderDay = T.pack . show
 
 -- | Enter preview mode with a preview prepared by the Actual operation owner.
 -- Interaction does not need the complete source that produced this value.
