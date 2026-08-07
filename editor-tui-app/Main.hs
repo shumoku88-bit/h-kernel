@@ -74,8 +74,14 @@ data Name
   | ToAccountField
   | AmountField
   | AccountList
+  | WorkspaceAccountList
   | WorkspaceTransactionList
   deriving (Eq, Ord, Show)
+
+data WorkspaceFocus
+  = AccountsFocus
+  | TransactionsFocus
+  deriving (Eq, Show)
 
 addDateTextL :: Lens' ActualAddInput Text
 addDateTextL f input =
@@ -119,10 +125,13 @@ data UIState event
   | ShowWorkspaceReloadFailure
 
 data AppContext = AppContext
-  { contextAccounts      :: [Text]
-  , contextWorkspaceList :: L.List Name Transaction
-  , contextSourcePath    :: FilePath
-  , contextSource        :: Text
+  { contextAccounts             :: [Text]
+  , contextWorkspaceAccounts    :: L.List Name (Maybe Text)
+  , contextAllTransactions      :: [Transaction]
+  , contextWorkspaceList        :: L.List Name Transaction
+  , contextWorkspaceFocus       :: WorkspaceFocus
+  , contextSourcePath           :: FilePath
+  , contextSource               :: Text
   }
 
 data AppWrapper = AppWrapper AppContext (UIState AppEvent)
@@ -157,6 +166,15 @@ zoomList f (AppWrapper context (SelectAccount target accountList form)) =
   (\updated -> AppWrapper context (SelectAccount target updated form))
     <$> f accountList
 zoomList _ wrapper = pure wrapper
+
+zoomWorkspaceAccounts :: Traversal' AppWrapper (L.List Name (Maybe Text))
+zoomWorkspaceAccounts f (AppWrapper context Workspace) =
+  (\updated ->
+      AppWrapper
+        (context { contextWorkspaceAccounts = updated })
+        Workspace)
+    <$> f (contextWorkspaceAccounts context)
+zoomWorkspaceAccounts _ wrapper = pure wrapper
 
 zoomWorkspaceList :: Traversal' AppWrapper (L.List Name Transaction)
 zoomWorkspaceList f (AppWrapper context Workspace) =
@@ -236,23 +254,58 @@ drawWorkspace context =
     [ borderWithLabel (str "h-kernel · Actual workspace")
         (hBox
           [ hLimit 30
-              (borderWithLabel (str "Accounts")
-                (padAll 1
-                  (vLimit 16
-                    (vBox (map txt (contextAccounts context))))))
+              (borderWithLabel
+                (workspacePaneLabel context AccountsFocus "Accounts")
+                (vLimit 16
+                  (L.renderList
+                    renderWorkspaceAccount
+                    (contextWorkspaceFocus context == AccountsFocus)
+                    (contextWorkspaceAccounts context))))
           , padLeft (Pad 1)
               (padRight Max
-                (borderWithLabel (str "Transactions")
+                (borderWithLabel
+                  (workspacePaneLabel context TransactionsFocus "Transactions")
                   (vLimit 16
                     (L.renderList
                       renderWorkspaceTransaction
-                      True
+                      (contextWorkspaceFocus context == TransactionsFocus)
                       (contextWorkspaceList context)))))
           ])
     , borderWithLabel (str "Selected transaction")
         (padAll 1 (renderWorkspaceSelection context))
-    , str "[j/k or arrows] Select   [a] Add actual   [q] Quit"
+    , txt ("Filter: " <> workspaceFilterText context)
+    , str "[Tab/left/right] Focus   [j/k or arrows] Select   [a] Add actual   [q] Quit"
     ]
+
+workspacePaneLabel
+  :: AppContext
+  -> WorkspaceFocus
+  -> String
+  -> Widget Name
+workspacePaneLabel context pane labelText
+  | contextWorkspaceFocus context == pane = str (labelText <> " *")
+  | otherwise = str labelText
+
+renderWorkspaceAccount :: Bool -> Maybe Text -> Widget Name
+renderWorkspaceAccount selected maybeAccount
+  | selected = withAttr L.listSelectedAttr row
+  | otherwise = row
+  where
+    row = case maybeAccount of
+      Nothing -> str "All accounts"
+      Just accountText -> txt accountText
+
+workspaceFilterText :: AppContext -> Text
+workspaceFilterText context =
+  case selectedWorkspaceAccount context of
+    Nothing -> "All accounts"
+    Just accountText -> accountText
+
+selectedWorkspaceAccount :: AppContext -> Maybe Text
+selectedWorkspaceAccount context =
+  case L.listSelectedElement (contextWorkspaceAccounts context) of
+    Nothing -> Nothing
+    Just (_, maybeAccount) -> maybeAccount
 
 renderWorkspaceTransaction :: Bool -> Transaction -> Widget Name
 renderWorkspaceTransaction selected transaction
@@ -267,7 +320,7 @@ renderWorkspaceTransaction selected transaction
 renderWorkspaceSelection :: AppContext -> Widget Name
 renderWorkspaceSelection context =
   case L.listSelectedElement (contextWorkspaceList context) of
-    Nothing -> str "No Actual transactions."
+    Nothing -> str "No Actual transactions for this account."
     Just (_, transaction) ->
       vBox
         ( txt
@@ -389,9 +442,61 @@ handleWorkspaceEvent context event = case event of
     put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
   VtyEvent (V.EvKey (V.KChar 'A') []) ->
     put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
-  VtyEvent vtyEvent ->
-    zoom zoomWorkspaceList (L.handleListEventVi L.handleListEvent vtyEvent)
+  VtyEvent (V.EvKey (V.KChar '\t') []) ->
+    put (AppWrapper (toggleWorkspaceFocus context) Workspace)
+  VtyEvent (V.EvKey V.KLeft []) ->
+    put (AppWrapper (context { contextWorkspaceFocus = AccountsFocus }) Workspace)
+  VtyEvent (V.EvKey V.KRight []) ->
+    put (AppWrapper (context { contextWorkspaceFocus = TransactionsFocus }) Workspace)
+  VtyEvent vtyEvent -> handleWorkspaceListEvent context vtyEvent
   _ -> pure ()
+
+toggleWorkspaceFocus :: AppContext -> AppContext
+toggleWorkspaceFocus context =
+  context
+    { contextWorkspaceFocus = case contextWorkspaceFocus context of
+        AccountsFocus -> TransactionsFocus
+        TransactionsFocus -> AccountsFocus
+    }
+
+handleWorkspaceListEvent
+  :: AppContext
+  -> V.Event
+  -> EventM Name AppWrapper ()
+handleWorkspaceListEvent context vtyEvent =
+  case contextWorkspaceFocus context of
+    AccountsFocus -> do
+      zoom zoomWorkspaceAccounts
+        (L.handleListEventVi L.handleListEvent vtyEvent)
+      AppWrapper updatedContext _ <- get
+      put (AppWrapper (applyWorkspaceAccountFilter updatedContext) Workspace)
+    TransactionsFocus ->
+      zoom zoomWorkspaceList
+        (L.handleListEventVi L.handleListEvent vtyEvent)
+
+applyWorkspaceAccountFilter :: AppContext -> AppContext
+applyWorkspaceAccountFilter context =
+  context
+    { contextWorkspaceList =
+        L.list
+          WorkspaceTransactionList
+          (Vec.fromList filteredTransactions)
+          1
+    }
+  where
+    filteredTransactions =
+      transactionsForAccount
+        (selectedWorkspaceAccount context)
+        (contextAllTransactions context)
+
+transactionsForAccount :: Maybe Text -> [Transaction] -> [Transaction]
+transactionsForAccount Nothing = id
+transactionsForAccount (Just selectedAccount) =
+  filter
+    (any
+      ((== selectedAccount) . accountName . postingAccount)
+      . NonEmpty.toList
+      . transactionPostings)
 
 handleInputEvent
   :: AppContext
@@ -606,13 +711,25 @@ makeWorkspaceContext
   -> ActualJournal
   -> AppContext
 makeWorkspaceContext focusLatest journalFile source journal =
-  AppContext accounts workspaceList journalFile source
+  AppContext
+    accounts
+    workspaceAccounts
+    transactions
+    workspaceList
+    TransactionsFocus
+    journalFile
+    source
   where
     actualJournal = actualJournalValue journal
     declarations =
       accountDeclarations (journalAccountRegistry actualJournal)
     accounts = map (accountName . declaredAccount) declarations
     transactions = journalTransactions actualJournal
+    workspaceAccounts =
+      L.list
+        WorkspaceAccountList
+        (Vec.fromList (Nothing : map Just accounts))
+        1
     initialWorkspaceList =
       L.list WorkspaceTransactionList (Vec.fromList transactions) 1
     workspaceList
