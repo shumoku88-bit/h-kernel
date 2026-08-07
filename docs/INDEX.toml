@@ -110,3 +110,7 @@ role = "contract"
 [[documents]]
 path = "docs/SOURCE_DATA_MIGRATION_PLAN.md"
 role = "architecture"
+
+[[documents]]
+path = "docs/ARCHITECTURE_CODE_QUALITY_REVIEW.md"
+role = "observation"
