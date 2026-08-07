@@ -108,7 +108,7 @@ shadow parity errorはparse rejection件数または不一致座標の種類だ�
 | `POLICY_BUDGET_STYLE`、`POLICY_RISK_STYLE`、`POLICY_INCOME_CADENCE` | Household policy selection | Household policy。未使用labelなら明記してretire |
 | `EXECUTION_PLANNED_PAYMENTS_ENVELOPE` | planned payment execution policy | Household policy |
 | `DEFAULT_CURRENCY` | command/editor input default | Application config。既存Amountへ暗黙適用しない |
-| `ACTUAL_JOURNAL_FILE` | Actual source selection | `HKernel.Application.Config` |
+| `ACTUAL_JOURNAL_FILE` | Actual source selection | bqn-ledger application configとしてretain。h-kernel targetなし |
 
 一つのTOML tableへ機械変換せず、Household policy、application config、役目を終えたcompatibility keyへ分ける。
 
