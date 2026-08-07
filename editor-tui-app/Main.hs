@@ -13,6 +13,7 @@ import Graphics.Vty.CrossPlatform (mkVty)
 import Lens.Micro (Lens', Traversal')
 import Lens.Micro.Mtl ()
 
+import Control.Exception (IOException, try)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -27,7 +28,8 @@ import HKernel.Account
   , declaredAccount
   )
 import HKernel.Actual.Journal
-  ( actualJournalValue
+  ( ActualJournal
+  , actualJournalValue
   , parseActualJournal
   )
 import HKernel.Editor.ActualWriter (publishActualBlock)
@@ -114,6 +116,7 @@ data UIState event
   | ShowWriteOutcome
       ActualAddWriteOutcome
       (Form ActualAddInput event Name)
+  | ShowWorkspaceReloadFailure
 
 data AppContext = AppContext
   { contextAccounts      :: [Text]
@@ -159,7 +162,7 @@ zoomWorkspaceList :: Traversal' AppWrapper (L.List Name Transaction)
 zoomWorkspaceList f (AppWrapper context Workspace) =
   (\updated ->
       AppWrapper
-        context { contextWorkspaceList = updated }
+        (context { contextWorkspaceList = updated })
         Workspace)
     <$> f (contextWorkspaceList context)
 zoomWorkspaceList _ wrapper = pure wrapper
@@ -212,6 +215,19 @@ drawUI (AppWrapper _ (ShowWriteOutcome outcome _)) =
           (renderWriteOutcome outcome
             <=> str " "
             <=> str "[Esc/Q] Quit")))
+  ]
+drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
+  [ center
+      (borderWithLabel (str "Actual workspace reload")
+        (padAll 1
+          (withAttr (attrName "error")
+            (vBox
+              [ str "The Actual write succeeded, but the workspace could not reload the source."
+              , str "No source-local error detail is retained in the TUI state."
+              , str "Restart the TUI before continuing."
+              , str " "
+              , str "[Esc/Q] Quit"
+              ]))))
   ]
 
 drawWorkspace :: AppContext -> Widget Name
@@ -358,6 +374,8 @@ appEvent event = do
       handleConfirmationEvent context block form event
     ShowWriteOutcome outcome form ->
       handleWriteOutcomeEvent outcome form event
+    ShowWorkspaceReloadFailure ->
+      handleExitOnlyEvent event
 
 handleWorkspaceEvent
   :: AppContext
@@ -534,23 +552,73 @@ acceptConfirmation context block form = do
             (contextSourcePath context)
             (contextSource context)
             confirmedBlock)
-      put
-        (AppWrapper context
-          (ShowWriteOutcome
-            (classifyActualAddWriteResult writeResult)
-            form))
+      let writeOutcome = classifyActualAddWriteResult writeResult
+      case writeOutcome of
+        ActualAddWriteSucceeded -> do
+          reloadedContext <-
+            suspendAndResume' (reloadWorkspaceContext context)
+          case reloadedContext of
+            Nothing ->
+              put (AppWrapper context ShowWorkspaceReloadFailure)
+            Just freshContext ->
+              put (AppWrapper freshContext Workspace)
+        _ ->
+          put (AppWrapper context (ShowWriteOutcome writeOutcome form))
     _ -> put (AppWrapper context (ShowConfirmation block form))
+
+reloadWorkspaceContext :: AppContext -> IO (Maybe AppContext)
+reloadWorkspaceContext context = do
+  readResult <-
+    try (TIO.readFile (contextSourcePath context)) :: IO (Either IOException Text)
+  case readResult of
+    Left _ -> pure Nothing
+    Right freshSource -> case parseActualJournal freshSource of
+      Left _ -> pure Nothing
+      Right journal ->
+        pure
+          (Just
+            (makeWorkspaceContext
+              True
+              (contextSourcePath context)
+              freshSource
+              journal))
 
 handleWriteOutcomeEvent
   :: ActualAddWriteOutcome
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleWriteOutcomeEvent _ _ event = case event of
+handleWriteOutcomeEvent _ _ = handleExitOnlyEvent
+
+handleExitOnlyEvent
+  :: BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleExitOnlyEvent event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> halt
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
   _ -> pure ()
+
+makeWorkspaceContext
+  :: Bool
+  -> FilePath
+  -> Text
+  -> ActualJournal
+  -> AppContext
+makeWorkspaceContext focusLatest journalFile source journal =
+  AppContext accounts workspaceList journalFile source
+  where
+    actualJournal = actualJournalValue journal
+    declarations =
+      accountDeclarations (journalAccountRegistry actualJournal)
+    accounts = map (accountName . declaredAccount) declarations
+    transactions = journalTransactions actualJournal
+    initialWorkspaceList =
+      L.list WorkspaceTransactionList (Vec.fromList transactions) 1
+    workspaceList
+      | focusLatest && not (null transactions) =
+          L.listMoveTo (length transactions - 1) initialWorkspaceList
+      | otherwise = initialWorkspaceList
 
 app :: App AppWrapper AppEvent Name
 app = App
@@ -579,14 +647,7 @@ main = do
             ("Failed to parse journal:\n"
               <> unlines (map show (NonEmpty.toList sourceErrors)))
         Right admittedJournal -> pure admittedJournal
-      let actualJournal = actualJournalValue journal
-          declarations =
-            accountDeclarations (journalAccountRegistry actualJournal)
-          accounts = map (accountName . declaredAccount) declarations
-          transactions = journalTransactions actualJournal
-          workspaceList =
-            L.list WorkspaceTransactionList (Vec.fromList transactions) 1
-          context = AppContext accounts workspaceList journalFile source
+      let context = makeWorkspaceContext False journalFile source journal
           initialState = AppWrapper context Workspace
           buildVty = mkVty V.defaultConfig
       initialVty <- buildVty
