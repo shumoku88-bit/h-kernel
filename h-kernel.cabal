@@ -90,6 +90,7 @@ library h-kernel-editor
     exposed-modules:  HKernel.Editor.ActualAppend
                     , HKernel.Editor.ActualAccountAppend
                     , HKernel.Editor.ActualReverse
+                    , HKernel.Editor.ActualWorkspace
                     , HKernel.Editor.ActualWriter
                     , HKernel.Editor.BudgetMovementAppend
                     , HKernel.Editor.CLI
@@ -163,6 +164,17 @@ test-suite h-kernel-editor-actual-append-test
                     , text
                     , time
                     , QuickCheck
+    hs-source-dirs:   tests
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-editor-actual-workspace-test
+    type:             exitcode-stdio-1.0
+    main-is:          EditorActualWorkspaceSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-editor
+                    , text
     hs-source-dirs:   tests
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
