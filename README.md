@@ -25,7 +25,7 @@ edit intent
 - `h-kernel-household`: Account profile admission、Household policy、Daily Target、Backing、Budget movement、Issue admission
 - `h-kernel-editor`: edit intent、candidate preparation、source placement、safe writer
 - `h-kernel-spike-household-report`: provisional Household Report composition
-- report CLI、editor CLI、Actual add TUI、daily command hub
+- report CLI、editor CLI、Actual workspace TUI、daily entrypoint
 
 全体の編成と未決定案は[`docs/CODE_MAP_AND_DESIGN_SKETCH.md`](docs/CODE_MAP_AND_DESIGN_SKETCH.md)にあります。
 
@@ -47,24 +47,24 @@ edit intent
 - raw textとstyled textを分けるCJK-aware terminal rendering
 - Actual、Account、Budget movement、Issue、Plan lifecycleのtyped editor operations
 - preview、strict complete-source admission、stale rejection、backup、atomic publication、post-admission、restore-capable failure
-- report、actual-add/transfer、actual-multi、actual-reverse、account、plan、budget、issue、edit、check、helpをまとめるthin `tools/hk`
+- workspace-first daily entrypointと、report、actual-add/transfer、actual-multi、actual-reverse、account、plan、budget、issue、edit、check、helpのthin `tools/hk` routing
 
-## Daily command hub
+## Daily workspace entrypoint
 
-日常入口は`tools/hk`です。引数なし（TTY）で起動した場合、対話型メニューが開きます。
+日常入口は`tools/hk`です。引数なし（TTY）で起動した場合、HaskellのActual workspaceへ直接入ります。明示subcommandはautomationや特定operationの入口として残します。
 
 ```bash
-# 対話型日常メニューを起動 (TTY環境)
+# Actual workspaceを起動 (TTY環境)
 ./tools/hk
 
-# --base DIR で private ledger directory を明示指定
+# --base DIR で private ledger directory を明示指定してworkspaceを起動
 ./tools/hk --base /path/to/private-ledger-data
 
 # report commandへ委譲
 ./tools/hk report bs
 ./tools/hk report all
 
-# ordinary Actual add / transfer (2-posting add) TUIを起動
+# explicit journal pathでActual workspaceを起動
 ./tools/hk actual-add [/absolute/path/to/actual.journal]
 
 # Actual multi-posting (append) CLIへ委譲
@@ -280,7 +280,7 @@ current CLI operation:
 
 Plan editはcurrent CLI operationではありません。
 
-Actual add TUIはexisting candidate preparationとsafe writerを使うdelivery adapterです。complete private sourceやwriter authorityをUI stateへ持ち込みません。cutover後のordinary canonical Actual addは、このTUIを`tools/hk actual-add <ACTUAL_JOURNAL>`から起動します。
+Actual workspace TUIはexisting candidate preparationとsafe writerを使うdelivery adapterです。complete private sourceやwriter authorityをUI stateへ持ち込みません。cutover後のordinary canonical Actual addは、日常入口の`tools/hk`引数なし、またはexplicit `tools/hk actual-add <ACTUAL_JOURNAL>`から同じworkspaceを起動します。
 
 Actual reverseのdaily routeは既存CLIへ`reverse` leafと残りの引数を委譲するだけです。candidate preparation、admission、publication、provenanceは既存のnamed ownerから動かしません。
 
@@ -293,7 +293,7 @@ editor-src/      editor intent, candidate, safe writer
 spike-src/       provisional Household Report composition
 app/             report CLI adapter
 editor-app/      editor CLI adapter
-editor-tui-app/  Actual add TUI adapter
+editor-tui-app/  Actual workspace TUI adapter
 tools/hk         daily routing-only doorway
 tests/           focused, property, integration and ownership evidence
 ```
