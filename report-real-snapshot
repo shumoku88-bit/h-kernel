@@ -4,6 +4,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DATA_DIR=${HKERNEL_LEDGER_DATA_DIR:-}
 BIN_DIR=${HKERNEL_REPORT_BIN_DIR:-"$ROOT/.report-bin"}
+PYTHON=${PYTHON:-python3}
 ARTIFACT_DIR="$ROOT/.report-artifacts/real-household-report"
 
 if [ -z "$DATA_DIR" ] && [ -f "$ROOT/ledger-data.local" ]; then
@@ -27,8 +28,9 @@ mkdir -p "$ARTIFACT_DIR"
   cd "$ROOT"
   HKERNEL_LEDGER_DATA_DIR="$DATA_DIR" "$BIN_DIR/h-kernel"
 ) >"$ARTIFACT_DIR/report.ansi.txt"
-sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g' \
-  "$ARTIFACT_DIR/report.ansi.txt" >"$ARTIFACT_DIR/report.txt"
+"$PYTHON" "$ROOT/tools/report_sections.py" strip \
+  "$ARTIFACT_DIR/report.ansi.txt" \
+  "$ARTIFACT_DIR/report.txt"
 
 printf 'canonical household report written under ignored local artifacts:\n'
 printf '  %s\n' "$ARTIFACT_DIR/report.ansi.txt"
