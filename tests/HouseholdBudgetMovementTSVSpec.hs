@@ -8,6 +8,7 @@ import Data.Time.Calendar (fromGregorian)
 import HKernel.Account (mkAccount)
 import HKernel.Household.BudgetMovement
 import HKernel.Household.BudgetMovement.TSV
+import HKernel.Journal (parseJournal)
 import HKernel.Money
 import System.Exit (exitFailure)
 
@@ -15,6 +16,8 @@ main :: IO ()
 main = do
   characterizeAcceptedMovements
   characterizeSourceFailures
+  characterizeNativeJournalRoundTrip
+  characterizeNativeJournalFailures
 
 characterizeAcceptedMovements :: IO ()
 characterizeAcceptedMovements = do
@@ -71,12 +74,106 @@ characterizeSourceFailures = do
     1
     (parseHouseholdBudgetMovements invalidCommodityBudget)
 
+characterizeNativeJournalRoundTrip :: IO ()
+characterizeNativeJournalRoundTrip = do
+  let retained = mustRight (parseHouseholdBudgetMovements signedBudget)
+      rendered = mustRight (renderHouseholdBudgetMovementTransactions retained)
+      journal = mustRight (parseJournal (budgetDeclarations <> "\n" <> rendered))
+      native = mustRight (admitHouseholdBudgetMovementJournal journal)
+
+  assertEqual
+    "retained TSV movement values round-trip exactly through native Journal"
+    retained
+    native
+  assertEqual
+    "native Journal preserves movement source order"
+    (map householdBudgetMovementMemo retained)
+    (map householdBudgetMovementMemo native)
+
+characterizeNativeJournalFailures :: IO ()
+characterizeNativeJournalFailures = do
+  assertEqual
+    "native Journal rejects a non-Budget posting without retaining Account text"
+    (Left (BudgetMovementJournalPostingNotBudget 1 1 NonEmpty.:| []))
+    (admitHouseholdBudgetMovementJournal
+      (mustRight (parseJournal nonBudgetJournal)))
+
+  assertEqual
+    "native Journal rejects a movement with more than two postings"
+    (Left (BudgetMovementJournalRequiresBinaryTransaction 1 3 NonEmpty.:| []))
+    (admitHouseholdBudgetMovementJournal
+      (mustRight (parseJournal threePostingJournal)))
+
+  assertEqual
+    "native Journal requires exact opposite Amounts including Commodity"
+    (Left
+      (BudgetMovementJournalPostingsNotExactOpposites 1 NonEmpty.:| []))
+    (admitHouseholdBudgetMovementJournal
+      (mustRight (parseJournal crossCommodityZeroJournal)))
+
+  let jpy = mustRight (mkCommodity "JPY")
+      opening = mustRight (mkAccount "budget:opening")
+      food = mustRight (mkAccount "budget:food")
+      unrepresentable = householdBudgetMovement
+        (fromGregorian 2026 6 15)
+        "line one\nline two"
+        opening
+        food
+        (mkAmount jpy (quantityFromInteger 1))
+  assertEqual
+    "renderer rejects source text that cannot round-trip as one transaction"
+    (Left (BudgetMovementJournalUnrepresentableTransaction 1 NonEmpty.:| []))
+    (renderHouseholdBudgetMovementTransactions [unrepresentable])
+
 validBudget :: T.Text
 validBudget = T.unlines
   [ "# retained household allocation evidence"
   , "2026-06-15\tallocate\tbudget:opening\tbudget:food\t1000\tcurrency=JPY\tnote=ignored"
   , ""
   , "2026-06-16\treturn\tbudget:food\tbudget:unassigned\t250\tcurrency=JPY"
+  ]
+
+signedBudget :: T.Text
+signedBudget = T.unlines
+  [ "2026-06-15\tallocate\tbudget:opening\tbudget:food\t1000\tcurrency=JPY"
+  , "2026-06-16\tsigned-adjustment\tbudget:food\tbudget:unassigned\t-25\tcurrency=JPY"
+  , "2026-06-17\tzero-evidence\tbudget:unassigned\tbudget:food\t0\tcurrency=JPY"
+  ]
+
+budgetDeclarations :: T.Text
+budgetDeclarations = T.unlines
+  [ "account budget:opening"
+  , "  type: budget"
+  , "account budget:food"
+  , "  type: budget"
+  , "account budget:unassigned"
+  , "  type: budget"
+  , "account budget:reserve"
+  , "  type: budget"
+  , "account assets:cash"
+  , "  type: asset"
+  ]
+
+nonBudgetJournal :: T.Text
+nonBudgetJournal = budgetDeclarations <> T.unlines
+  [ "2026-06-15 invalid-role"
+  , "    assets:cash    -10 JPY"
+  , "    budget:food     10 JPY"
+  ]
+
+threePostingJournal :: T.Text
+threePostingJournal = budgetDeclarations <> T.unlines
+  [ "2026-06-15 split"
+  , "    budget:opening    -100 JPY"
+  , "    budget:food         50 JPY"
+  , "    budget:reserve      50 JPY"
+  ]
+
+crossCommodityZeroJournal :: T.Text
+crossCommodityZeroJournal = budgetDeclarations <> T.unlines
+  [ "2026-06-15 zero-cross-commodity"
+  , "    budget:opening    0 JPY"
+  , "    budget:food       0 USD"
   ]
 
 invalidDateBudget :: T.Text
