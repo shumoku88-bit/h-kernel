@@ -15,7 +15,10 @@ import HKernel.Account
   , lookupAccountDeclaration
   , mkAccount
   )
-import HKernel.Account.Journal (AccountDeclarationRenderError(..))
+import HKernel.Account.Journal
+  ( AccountDeclarationRenderError(..)
+  , parseAccountJournal
+  )
 import HKernel.Actual.Journal
   ( actualJournalValue
   , parseActualJournal
@@ -27,7 +30,10 @@ import HKernel.Money (Commodity, mkCommodity)
 main :: IO ()
 main = do
   let results =
-        [ ("testValidAccountNoCommodity", testValidAccountNoCommodity)
+        [ ("testCanonicalAccountJournalAppend", testCanonicalAccountJournalAppend)
+        , ("testCanonicalAccountJournalDuplicate", testCanonicalAccountJournalDuplicate)
+        , ("testCanonicalAccountJournalRejectsActualSource", testCanonicalAccountJournalRejectsActualSource)
+        , ("testValidAccountNoCommodity", testValidAccountNoCommodity)
         , ("testValidAccountWithCommodity", testValidAccountWithCommodity)
         , ("testDuplicateAccount", testDuplicateAccount)
         , ("testAllAccountTypesRoundTrip", testAllAccountTypesRoundTrip)
@@ -38,15 +44,19 @@ main = do
     then exitSuccess
     else exitFailure
 
-fixtureSource :: Text
-fixtureSource = T.unlines
+accountJournalSource :: Text
+accountJournalSource = T.unlines
   [ "account equity:opening"
   , "  type: Equity"
   , ""
   , "account assets:cash"
   , "  type: Asset"
   , "  commodity: JPY"
-  , ""
+  ]
+
+fixtureSource :: Text
+fixtureSource = accountJournalSource <> T.unlines
+  [ ""
   , "2026-08-01 opening"
   , "  assets:cash     1000 JPY"
   , "  equity:opening  -1000 JPY"
@@ -60,6 +70,35 @@ accExisting = mustAccount "assets:cash"
 
 commJPY :: Commodity
 commJPY = either (error "bad comm") id (mkCommodity "JPY")
+
+testCanonicalAccountJournalAppend :: Bool
+testCanonicalAccountJournalAppend =
+  let declaration =
+        declareAccountWithDefaultCommodity accNew Expense commJPY
+  in case prepareAccountJournalAppend accountJournalSource declaration of
+       Left _ -> False
+       Right preview ->
+         accountCandidateBlock preview
+           == "account expenses:food\n  type: Expense\n  commodity: JPY\n"
+         && case parseAccountJournal (accountCandidateCompleteSource preview) of
+              Left _ -> False
+              Right registry ->
+                lookupAccountDeclaration accNew registry == Just declaration
+
+testCanonicalAccountJournalDuplicate :: Bool
+testCanonicalAccountJournalDuplicate =
+  let declaration = declareAccount accExisting Asset
+  in case prepareAccountJournalAppend accountJournalSource declaration of
+       Left (AccountJournalDuplicateDeclaration account :| []) ->
+         account == accExisting
+       _ -> False
+
+testCanonicalAccountJournalRejectsActualSource :: Bool
+testCanonicalAccountJournalRejectsActualSource =
+  let declaration = declareAccount accNew Expense
+  in case prepareAccountJournalAppend fixtureSource declaration of
+       Left (AccountJournalSourceParseError _ :| []) -> True
+       _ -> False
 
 testValidAccountNoCommodity :: Bool
 testValidAccountNoCommodity =
