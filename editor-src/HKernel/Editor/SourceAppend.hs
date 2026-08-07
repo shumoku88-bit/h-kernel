@@ -13,9 +13,8 @@ import qualified Data.Text as T
 -- This is a semantic coordinate rather than a validation claim: the producer
 -- still owns block syntax and admission. Distinguishing it from complete source
 -- text prevents the placement boundary from accepting those roles interchangeably.
-newtype SourceBlock = SourceBlock
-  { sourceBlockText :: Text
-  } deriving (Eq, Show)
+newtype SourceBlock = SourceBlock Text
+  deriving (Eq, Show)
 
 -- | Append one already-rendered source block with a single blank separator.
 --
