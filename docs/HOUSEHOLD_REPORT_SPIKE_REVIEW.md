@@ -1,13 +1,13 @@
 # Household Report スパイク境界
 
 ステータス: アクティブな暫定境界  
-更新日: 2026-08-04
+更新日: 2026-08-07
 
 ## 目的
 
 `HKernel.Spike.HouseholdReport`は、型付きdomain ownerと現在の互換sourceを合成し、`HouseholdReportSurface`を作るread-only adapterである。
 
-application config、一般Budget policy、Household policy、Daily Target、Household Backing、Budget movement admissionは、すでにSpikeの外へ移った。Spikeが引き続き所有するのは、`accounts.tsv`のcurrent source admissionとReport compositionであり、恒久的なapplication policy、domain policy、計算そのものではない。
+application config、一般Budget policy、Household policy、Daily Target、Household Backing、Budget movement admission、retained Account profile admissionは、すでにSpikeの外へ移った。Spikeが引き続き所有するのは、stable admission ownerが作る値をHousehold Reportへ合成するprovisional compositionと、source-local diagnosticへの翻訳であり、恒久的なapplication policy、domain policy、物理source parser、計算そのものではない。
 
 ## 現在の変換
 
@@ -15,6 +15,11 @@ application config、一般Budget policy、Household policy、Daily Target、Hou
 config.tsv
   -> HKernel.Application.Config
   -> ApplicationConfig
+
+accounts.tsv
+  -> HKernel.Household.AccountProfile.TSV
+  -> RetainedAccountProfile
+  -> Actual AccountRegistry parity
 
 budget.toml
   -> HKernel.Budget.Config
@@ -48,6 +53,8 @@ Actual Journal + Plan Journal
 現在、次の意味は名前付きownerへ委譲されている。
 
 - application source selection: `HKernel.Application.Config`
+- retained Account profile classification: `HKernel.Household.AccountProfile`
+- retained `accounts.tsv` admission and Actual registry parity: `HKernel.Household.AccountProfile.TSV`
 - Plan identityと分類: `HKernel.Plan.Journal`
 - Plan完了: `HKernel.Plan.Completion`
 - 予約証拠: `HKernel.Plan.Reservation`
@@ -105,18 +112,17 @@ Daily Targetは、物理sourceのrow形状とは別に次の意味へ分かれ�
 
 Backingは、policy指定AssetのFunding Balance、Envelope claim、unassigned Budget evidence、open Plan reserveを別の座標として保持する。詳細は[`HOUSEHOLD_BACKING.md`](HOUSEHOLD_BACKING.md)が所有する。
 
-`accounts.tsv`の`type`、`kind`、`budget`、`budget_group` metadataから、Report経路がBudget、Backing、Daily Target policyを再構成することはない。現在はAccount identity、role、Commodityの互換確認だけに残る。
+`accounts.tsv`の`type`、`kind`、`budget`、`budget_group` metadataから、Report経路がBudget、Backing、Daily Target policyを再構成することはない。`HKernel.Household.AccountProfile.TSV`がAccount declarationとretained metadataをadmitし、Report経路はAccount identity、role、Commodityの互換確認を利用するだけである。
 
 `cycle.tsv`はBQN互換sourceとして残るが、h-kernelのReport経路は参照しない。
 
 ## 残る暫定責任
 
-- `accounts.tsv`のcurrent-format admission
-- stable admission ownerへtyped sourceを渡すIO composition
-- AccountごとのCommodity policyの明示的な照合
-- fixed obligation、saving、investment、reservation funding locationの恒久policy
-- `accounts.tsv` parsingの名前付きadmission ownerへの移動
-- Report compositionのstable Household componentへの移動
+- stable admission ownerが作る値を一つのHousehold Report surfaceへ合成すること
+- AccountごとのCommodity policyの明示的な照合をReport compositionへ接続すること
+- fixed obligation、saving、investment、reservation funding locationの恒久policyが未決定である状態を、既存source metadataから推測せず保つこと
+- retained compatibility source群からstable Report inputへの境界をさらに狭めること
+- Report compositionをstable Household componentへ移す条件を満たしたかを明示的に判定すること
 
 これらが未解決の間、Report adapterは`Spike`名前空間を維持する。
 
@@ -128,6 +134,7 @@ Backingは、policy指定AssetのFunding Balance、Envelope claim、unassigned B
 - application source selectionをHousehold factへ混ぜない
 - stable policy、current facts、Report projectionを区別する
 - 新しいeffectやwriter authorityを暗黙に追加しない
+- stable ownerに既にあるReport compositionやrenderingをSpikeで重複実装しない
 - chapterごとに一つの到達点を持ち、節目で型・契約・実データを検証する
 - 作業後にこの文書を現在へ同期し、完了済み説明は削除する
 
@@ -135,11 +142,11 @@ Backingは、policy指定AssetのFunding Balance、Envelope claim、unassigned B
 
 次が満たされたとき、Report compositionを安定したHousehold componentへ移す。
 
-1. current-format admissionが明示的なtyped inputを作る
+1. current-format admissionが名前付きstable ownerの背後にあり、Report compositionが物理parserを所有しない
 2. 必須Commodity evidenceが明示的に照合される
-3. fixed obligation、saving、investment、reservation funding locationに明示的な意味がある
-4. source-specific parsingが名前付きadmission ownerの背後にある
+3. Reportがfixed obligation、saving、investment、reservation funding locationを必要とする場合、その意味が明示的なpolicyとして存在する
+4. Report input境界がstable typed valuesとして説明でき、compatibility sourceの物理形状をdomain contractにしない
 
-application config、Daily Target policy、Household Backing、Budget movement admissionが名前付きownerを持つ条件は満たされた。
+application config、Account profile admission、Daily Target policy、Household Backing、Budget movement admissionが名前付きownerを持つ条件は満たされた。Report composition自体のstable component移動は、上の残条件を満たす別sliceとして扱う。
 
 writer cutoverは別の境界である。Spikeの卒業だけでは、h-kernelへ正規データの書込み権限を与えない。

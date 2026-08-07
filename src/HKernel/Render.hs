@@ -9,6 +9,7 @@ module HKernel.Render
   ( renderReportBook
   , renderReportBookWithDailyFlowDateColumns
   , renderReportBookWithPresentation
+  , renderReportBookCoreWithPresentation
   , renderTrialBalance
   , renderTrialBalanceWithPresentation
   , renderProfitAndLoss
@@ -66,7 +67,7 @@ renderReportBookWithPresentation
   -> Text
 renderReportBookWithPresentation presentation report =
   T.intercalate "\n"
-    [ renderReportBookCore presentation report
+    [ renderReportBookCoreWithPresentation presentation report
     , renderUnavailableCycleAccounts
     , renderUnavailableDailyTarget
     , renderUnavailablePlannedTransactions
@@ -74,8 +75,11 @@ renderReportBookWithPresentation presentation report =
     , renderUnavailableEnvelopeBacking
     ]
 
-renderReportBookCore :: PresentationConfig -> ReportBook -> Text
-renderReportBookCore presentation
+renderReportBookCoreWithPresentation
+  :: PresentationConfig
+  -> ReportBook
+  -> Text
+renderReportBookCoreWithPresentation presentation
   (ReportBook trialBalance balanceSheet profitAndLossReport dailyFlowReport recentTransactionsReport monthlyAccountsReport) =
     T.intercalate "\n"
       [ renderTrialBalanceWithPresentation presentation trialBalance
