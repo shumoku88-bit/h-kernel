@@ -227,8 +227,8 @@ data PlanEditIntent = PlanEditIntent
   } deriving (Eq, Show)
 
 data PlanEditPreview = PlanEditPreview
-  { editOriginalBlock          :: Text
-  , editCandidateBlock         :: Text
+  { editOriginalBlock           :: Text
+  , editCandidateBlock          :: Text
   , editCandidateCompleteSource :: Text
   } deriving (Eq, Show)
 
@@ -291,7 +291,7 @@ preparePlanEdit planSource actualSource intent = do
 
   located <- first pure (locatePlanSourceBlock pId transaction planSource)
   editedBlockLines <- first pure
-    (editLocatedPlanBlock targetDate (editAmount intent) updatedPostings located)
+    (editLocatedPlanBlock pId targetDate (editAmount intent) updatedPostings located)
 
   let originalBlock = T.intercalate "\n" (locatedBlockLines located)
       candidateBlock = T.intercalate "\n" editedBlockLines
@@ -351,12 +351,6 @@ locatePlanSourceBlock
 locatePlanSourceBlock pId transaction source =
   case planIdCoordinates of
     [] -> Left (EditSourcePlanIdCoordinateMissing pId)
-    [_first, _second] -> Left
-      (EditSourcePlanIdCoordinateAmbiguous pId (length planIdCoordinates))
-    [_first, _second, _third] -> Left
-      (EditSourcePlanIdCoordinateAmbiguous pId (length planIdCoordinates))
-    coordinates@(_ : _ : _ : _) -> Left
-      (EditSourcePlanIdCoordinateAmbiguous pId (length coordinates))
     [metadataIndex] -> do
       start <- case reverse
           [ index
@@ -384,6 +378,8 @@ locatePlanSourceBlock pId transaction source =
                   (drop start sourceLines)
               , locatedSuffixLines = drop endExclusive sourceLines
               }
+    coordinates -> Left
+      (EditSourcePlanIdCoordinateAmbiguous pId (length coordinates))
   where
     sourceLines = T.splitOn "\n" source
     planIdCoordinates =
@@ -422,15 +418,15 @@ isCommentSourceLine line =
     || "#" `T.isPrefixOf` T.stripStart line
 
 editLocatedPlanBlock
-  :: Day
+  :: PlanId
+  -> Day
   -> Maybe PositivePlanEditAmount
   -> NonEmpty Posting
   -> LocatedPlanBlock
   -> Either PlanEditError [Text]
-editLocatedPlanBlock targetDate amountEdit postings located =
+editLocatedPlanBlock pId targetDate amountEdit postings located =
   case locatedBlockLines located of
-    [] -> Left (EditSourceTransactionHeaderMissing
-      (error "unreachable PlanId coordinate"))
+    [] -> Left (EditSourceTransactionHeaderMissing pId)
     header : rest -> do
       updatedRest <- case amountEdit of
         Nothing -> Right rest
