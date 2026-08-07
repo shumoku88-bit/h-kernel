@@ -10,6 +10,8 @@ module HKernel.Editor.ActualWriter
   , defaultWriterFileSystem
   , publishWithAdmission
   , publishWithAdmissionUsing
+  , publishWithPathAdmission
+  , publishWithPathAdmissionUsing
   , publishActualAppend
   , publishActualBlock
   ) where
@@ -79,6 +81,9 @@ defaultWriterFileSystem = WriterFileSystem
   , removeTextFile = removeFile
   }
 
+-- | Publish a source whose complete admission is pure and depends only on its
+-- text. This remains the ordinary boundary for Actual and other single-source
+-- formats.
 publishWithAdmission
   :: (Text -> Either (NonEmpty sourceError) admitted)
   -> WriteIntent
@@ -90,11 +95,33 @@ publishWithAdmissionUsing
   -> (Text -> Either (NonEmpty sourceError) admitted)
   -> WriteIntent
   -> IO (Either (WriteError sourceError) ())
-publishWithAdmissionUsing fileSystem admit intent =
-  catch (checkStaleAndWrite fileSystem admit intent) handleError
+publishWithAdmissionUsing fileSystem admit =
+  publishUsing fileSystem admission
   where
-    handleError :: IOException -> IO (Either (WriteError sourceError) ())
-    handleError err = pure (Left (FileIOError (show err)))
+    admission _ source = pure (fmap (const ()) (admit source))
+
+-- | Publish a source whose complete admission is owned by its filesystem path.
+--
+-- This is the boundary for source graphs such as a Journal that contains
+-- relative @include@ directives. The safe writer still owns stale detection,
+-- backup, atomic publication, post-admission, and rollback; the supplied
+-- function owns only path-aware admission of the published source graph.
+publishWithPathAdmission
+  :: (FilePath -> IO (Either (NonEmpty sourceError) admitted))
+  -> WriteIntent
+  -> IO (Either (WriteError sourceError) ())
+publishWithPathAdmission =
+  publishWithPathAdmissionUsing defaultWriterFileSystem
+
+publishWithPathAdmissionUsing
+  :: WriterFileSystem
+  -> (FilePath -> IO (Either (NonEmpty sourceError) admitted))
+  -> WriteIntent
+  -> IO (Either (WriteError sourceError) ())
+publishWithPathAdmissionUsing fileSystem admit =
+  publishUsing fileSystem admission
+  where
+    admission path _ = fmap (fmap (const ())) (admit path)
 
 publishActualAppend
   :: WriteIntent
@@ -121,9 +148,23 @@ publishActualBlock filePath expectedSource block =
           (appendSourceBlock expectedSource (SourceBlock block))
       })
 
+type Admission sourceError =
+  FilePath -> Text -> IO (Either (NonEmpty sourceError) ())
+
+publishUsing
+  :: WriterFileSystem
+  -> Admission sourceError
+  -> WriteIntent
+  -> IO (Either (WriteError sourceError) ())
+publishUsing fileSystem admit intent =
+  catch (checkStaleAndWrite fileSystem admit intent) handleError
+  where
+    handleError :: IOException -> IO (Either (WriteError sourceError) ())
+    handleError err = pure (Left (FileIOError (show err)))
+
 checkStaleAndWrite
   :: WriterFileSystem
-  -> (Text -> Either (NonEmpty sourceError) admitted)
+  -> Admission sourceError
   -> WriteIntent
   -> IO (Either (WriteError sourceError) ())
 checkStaleAndWrite fileSystem admit intent = do
@@ -134,7 +175,7 @@ checkStaleAndWrite fileSystem admit intent = do
 
 withAtomicSwap
   :: WriterFileSystem
-  -> (Text -> Either (NonEmpty sourceError) admitted)
+  -> Admission sourceError
   -> WriteIntent
   -> IO (Either (WriteError sourceError) ())
 withAtomicSwap fileSystem admit intent = do
@@ -152,7 +193,7 @@ withAtomicSwap fileSystem admit intent = do
 
 verifyOrRollback
   :: WriterFileSystem
-  -> (Text -> Either (NonEmpty sourceError) admitted)
+  -> Admission sourceError
   -> FilePath
   -> FilePath
   -> IO (Either (WriteError sourceError) ())
@@ -164,15 +205,17 @@ verifyOrRollback fileSystem admit filePath backupPath = do
     Left (readError :: IOException) -> do
       restored <- restoreBackup fileSystem backupPath filePath
       pure (Left (PostPublishReadFailed (show readError) restored))
-    Right postBytes -> case admit postBytes of
-      Left errs -> do
-        restored <- restoreBackup fileSystem backupPath filePath
-        pure (Left (PostAdmissionFailed errs restored))
-      Right _ -> do
-        _ <- catch
-          (removeTextFile fileSystem backupPath)
-          (\(_ :: IOException) -> pure ())
-        pure (Right ())
+    Right postBytes -> do
+      admitted <- admit filePath postBytes
+      case admitted of
+        Left errs -> do
+          restored <- restoreBackup fileSystem backupPath filePath
+          pure (Left (PostAdmissionFailed errs restored))
+        Right () -> do
+          _ <- catch
+            (removeTextFile fileSystem backupPath)
+            (\(_ :: IOException) -> pure ())
+          pure (Right ())
 
 restoreBackup :: WriterFileSystem -> FilePath -> FilePath -> IO Bool
 restoreBackup fileSystem backupPath filePath =
