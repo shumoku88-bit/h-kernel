@@ -18,6 +18,7 @@ module HKernel.Editor.Interaction.ActualAdd
 
 import Data.Text (Text)
 
+import HKernel.Account (Account, accountName)
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddPreview(..)
@@ -45,7 +46,7 @@ data ActualAddState = ActualAddState
 
 data ActualAddAction
   = BeginAccountSelection AccountSelectionTarget
-  | ChooseAccount Text
+  | ChooseAccount Account
   | CancelAccountSelection
   | RequestActualAddPreview
   | RequestActualAddConfirmation
@@ -69,17 +70,17 @@ transitionActualAdd
 transitionActualAdd source action state = case action of
   BeginAccountSelection target ->
     state { actualAddMode = SelectingActualAccount target }
-  ChooseAccount accountText -> case actualAddMode state of
+  ChooseAccount account -> case actualAddMode state of
     SelectingActualAccount SelectFromAccount ->
       state
         { actualAddInput =
-            (actualAddInput state) { addFromAccountText = accountText }
+            (actualAddInput state) { addFromAccountText = accountName account }
         , actualAddMode = EditingActualAdd
         }
     SelectingActualAccount SelectToAccount ->
       state
         { actualAddInput =
-            (actualAddInput state) { addToAccountText = accountText }
+            (actualAddInput state) { addToAccountText = accountName account }
         , actualAddMode = EditingActualAdd
         }
     _ -> state

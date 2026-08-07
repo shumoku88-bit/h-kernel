@@ -7,7 +7,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Exit (exitFailure, exitSuccess)
 
-import HKernel.Account (accountName)
+import HKernel.Account (accountName, mkAccount)
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddInputError(..)
@@ -98,14 +98,16 @@ testAmountShape =
     == Left ActualAddInvalidAmountShape
 
 testFromSelection :: T.Text -> Bool
-testFromSelection source =
-  let selecting = transitionActualAdd
-        source
-        (BeginAccountSelection SelectFromAccount)
-        initialActualAddState
-      selected = transitionActualAdd source (ChooseAccount "assets:cash") selecting
-  in addFromAccountText (actualAddInput selected) == "assets:cash"
-      && actualAddMode selected == EditingActualAdd
+testFromSelection source = case mkAccount "assets:cash" of
+  Left _ -> False
+  Right account ->
+    let selecting = transitionActualAdd
+          source
+          (BeginAccountSelection SelectFromAccount)
+          initialActualAddState
+        selected = transitionActualAdd source (ChooseAccount account) selecting
+    in addFromAccountText (actualAddInput selected) == "assets:cash"
+        && actualAddMode selected == EditingActualAdd
 
 testCancelSelection :: T.Text -> Bool
 testCancelSelection source =
