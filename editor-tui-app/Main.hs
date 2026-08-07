@@ -44,7 +44,25 @@ import HKernel.Editor.TUI.ActualAdd
   , emptyActualAddInput
   , transitionActualAdd
   )
-import HKernel.Journal (journalAccountRegistry)
+import HKernel.Journal
+  ( journalAccountRegistry
+  , journalTransactions
+  )
+import HKernel.Ledger
+  ( Posting
+  , Transaction
+  , postingAccount
+  , postingAmount
+  , transactionDate
+  , transactionDescription
+  , transactionPostings
+  )
+import HKernel.Money
+  ( amountCommodity
+  , amountQuantity
+  , commodityCode
+  , renderQuantity
+  )
 
 
 data Name
@@ -54,6 +72,7 @@ data Name
   | ToAccountField
   | AmountField
   | AccountList
+  | WorkspaceTransactionList
   deriving (Eq, Ord, Show)
 
 addDateTextL :: Lens' ActualAddInput Text
@@ -80,7 +99,8 @@ addAmountTextL f input =
   (\value -> input { addAmountText = value }) <$> f (addAmountText input)
 
 data UIState event
-  = InputForm (Form ActualAddInput event Name)
+  = Workspace
+  | InputForm (Form ActualAddInput event Name)
   | SelectAccount
       AccountSelectionTarget
       (L.List Name Text)
@@ -96,9 +116,10 @@ data UIState event
       (Form ActualAddInput event Name)
 
 data AppContext = AppContext
-  { contextAccounts   :: [Text]
-  , contextSourcePath :: FilePath
-  , contextSource     :: Text
+  { contextAccounts      :: [Text]
+  , contextWorkspaceList :: L.List Name Transaction
+  , contextSourcePath    :: FilePath
+  , contextSource        :: Text
   }
 
 data AppWrapper = AppWrapper AppContext (UIState AppEvent)
@@ -134,15 +155,26 @@ zoomList f (AppWrapper context (SelectAccount target accountList form)) =
     <$> f accountList
 zoomList _ wrapper = pure wrapper
 
+zoomWorkspaceList :: Traversal' AppWrapper (L.List Name Transaction)
+zoomWorkspaceList f (AppWrapper context Workspace) =
+  (\updated ->
+      AppWrapper
+        context { contextWorkspaceList = updated }
+        Workspace)
+    <$> f (contextWorkspaceList context)
+zoomWorkspaceList _ wrapper = pure wrapper
+
 drawUI :: AppWrapper -> [Widget Name]
+drawUI (AppWrapper context Workspace) =
+  [ drawWorkspace context ]
 drawUI (AppWrapper _ (InputForm form)) =
   [ center
-      (borderWithLabel (str "Actual Add Preview")
+      (borderWithLabel (str "Add actual")
         (padAll 1
           (vBox
             [ renderForm form
             , str " "
-            , str "[Esc] Quit | [Enter] Preview | [Ctrl-F] From | [Ctrl-T] To"
+            , str "[Esc] Workspace | [Enter] Preview | [Ctrl-F] From | [Ctrl-T] To"
             ])))
   ]
 drawUI (AppWrapper _ (SelectAccount target accountList _)) =
@@ -181,6 +213,66 @@ drawUI (AppWrapper _ (ShowWriteOutcome outcome _)) =
             <=> str " "
             <=> str "[Esc/Q] Quit")))
   ]
+
+drawWorkspace :: AppContext -> Widget Name
+drawWorkspace context =
+  vBox
+    [ borderWithLabel (str "h-kernel · Actual workspace")
+        (hBox
+          [ hLimit 30
+              (borderWithLabel (str "Accounts")
+                (padAll 1
+                  (vLimit 16
+                    (vBox (map txt (contextAccounts context))))))
+          , padLeft (Pad 1)
+              (padRight Max
+                (borderWithLabel (str "Transactions")
+                  (vLimit 16
+                    (L.renderList
+                      renderWorkspaceTransaction
+                      True
+                      (contextWorkspaceList context)))))
+          ])
+    , borderWithLabel (str "Selected transaction")
+        (padAll 1 (renderWorkspaceSelection context))
+    , str "[j/k or arrows] Select   [a] Add actual   [q] Quit"
+    ]
+
+renderWorkspaceTransaction :: Bool -> Transaction -> Widget Name
+renderWorkspaceTransaction selected transaction
+  | selected = withAttr L.listSelectedAttr row
+  | otherwise = row
+  where
+    row = txt
+      (T.pack (show (transactionDate transaction))
+        <> "  "
+        <> transactionDescription transaction)
+
+renderWorkspaceSelection :: AppContext -> Widget Name
+renderWorkspaceSelection context =
+  case L.listSelectedElement (contextWorkspaceList context) of
+    Nothing -> str "No Actual transactions."
+    Just (_, transaction) ->
+      vBox
+        ( txt
+            (T.pack (show (transactionDate transaction))
+              <> "  "
+              <> transactionDescription transaction)
+        : map renderWorkspacePosting
+            (NonEmpty.toList (transactionPostings transaction))
+        )
+
+renderWorkspacePosting :: Posting -> Widget Name
+renderWorkspacePosting posting =
+  txt
+    ("  "
+      <> accountName (postingAccount posting)
+      <> "  "
+      <> renderQuantity (amountQuantity amount)
+      <> " "
+      <> commodityCode (amountCommodity amount))
+  where
+    amount = postingAmount posting
 
 selectionLabel :: AccountSelectionTarget -> String
 selectionLabel SelectFromAccount = "Select From Account"
@@ -256,6 +348,7 @@ appEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 appEvent event = do
   AppWrapper context state <- get
   case state of
+    Workspace -> handleWorkspaceEvent context event
     InputForm form -> handleInputEvent context form event
     SelectAccount target accountList form ->
       handleAccountSelection context target accountList form event
@@ -266,13 +359,30 @@ appEvent event = do
     ShowWriteOutcome outcome form ->
       handleWriteOutcomeEvent outcome form event
 
+handleWorkspaceEvent
+  :: AppContext
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleWorkspaceEvent context event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'a') []) ->
+    put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
+  VtyEvent (V.EvKey (V.KChar 'A') []) ->
+    put (AppWrapper context (InputForm (mkForm emptyActualAddInput)))
+  VtyEvent vtyEvent ->
+    zoom zoomWorkspaceList (L.handleListEventVi L.handleListEvent vtyEvent)
+  _ -> pure ()
+
 handleInputEvent
   :: AppContext
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
 handleInputEvent context form event = case event of
-  VtyEvent (V.EvKey V.KEsc []) -> halt
+  VtyEvent (V.EvKey V.KEsc []) ->
+    put (AppWrapper context Workspace)
   VtyEvent (V.EvKey V.KEnter []) -> do
     let pureState =
           transitionActualAdd
@@ -469,13 +579,15 @@ main = do
             ("Failed to parse journal:\n"
               <> unlines (map show (NonEmpty.toList sourceErrors)))
         Right admittedJournal -> pure admittedJournal
-      let declarations =
-            accountDeclarations
-              (journalAccountRegistry (actualJournalValue journal))
+      let actualJournal = actualJournalValue journal
+          declarations =
+            accountDeclarations (journalAccountRegistry actualJournal)
           accounts = map (accountName . declaredAccount) declarations
-          context = AppContext accounts journalFile source
-          initialState =
-            AppWrapper context (InputForm (mkForm emptyActualAddInput))
+          transactions = journalTransactions actualJournal
+          workspaceList =
+            L.list WorkspaceTransactionList (Vec.fromList transactions) 1
+          context = AppContext accounts workspaceList journalFile source
+          initialState = AppWrapper context Workspace
           buildVty = mkVty V.defaultConfig
       initialVty <- buildVty
       _ <- customMain initialVty buildVty Nothing app initialState
