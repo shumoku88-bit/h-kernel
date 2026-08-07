@@ -204,7 +204,11 @@ loadHouseholdReportSurface directory observation journal = do
       ("accounts.journal admission failed:\n"
         <> renderAdmissionErrors errors)
     Right value -> pure value
-  budgetText <- readHouseholdSource directory "budget_alloc.tsv"
+  budgetLoad <- loadJournal (directory </> "budget.journal")
+  budgetJournal <- case budgetLoad of
+    Left err -> dieText
+      ("budget.journal admission failed:\n" <> renderLoadError err)
+    Right value -> pure value
   budgetPolicyText <- readHouseholdSource directory "budget.toml"
   householdPolicyText <- readHouseholdSource directory "household.toml"
   planText <- readHouseholdSource directory "plan.journal"
@@ -215,7 +219,7 @@ loadHouseholdReportSurface directory observation journal = do
     Right value -> pure value
   issuesText <- readHouseholdSource directory "issues.tsv"
   case buildHouseholdReportSurfaceFromNativeHouseholdSources observation actual
-      accountRegistry budgetText budgetPolicyText householdPolicyText planText
+      accountRegistry budgetJournal budgetPolicyText householdPolicyText planText
       planJournal issuesText of
     Left errors -> dieText
       ("household source admission failed:\n"

@@ -72,7 +72,10 @@ import HKernel.Household.Backing
   , deriveHouseholdBacking
   )
 import HKernel.Household.BudgetMovement
-  ( HouseholdBudgetMovement )
+  ( HouseholdBudgetMovement
+  , HouseholdBudgetMovementJournalError
+  , admitHouseholdBudgetMovementJournal
+  )
 import HKernel.Household.BudgetMovement.TSV
 import HKernel.Household.Config
   ( householdConfigurationAccountPolicy
@@ -193,6 +196,7 @@ buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsTex
     (parseHouseholdBudgetMovements budgetText)
   issues <- mapLeft issueSourceErrors (parseHouseholdIssues issuesText)
   buildHouseholdReportSurfaceFromAdmissions
+    "budget_alloc.tsv"
     observation
     actualJournal
     policy
@@ -207,22 +211,24 @@ buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsTex
   where
     journal = actualJournalValue actualJournal
 
--- | Native HouseholdRoot entrypoint for Account identity/policy and Daily
--- Target selection. Budget movement remains an explicit retained input in this
--- finite slice and is migrated independently.
+-- | Full native HouseholdRoot entrypoint for Account identity/policy, Budget
+-- movement, and Daily Target selection. The canonical accounting Journal owns
+-- Budget syntax/balancing; Account declarations come from @accounts.journal@,
+-- and Daily Target selection comes from @household.toml + plan.journal@.
 buildHouseholdReportSurfaceFromNativeHouseholdSources
   :: Day
   -> ActualJournal
   -> AccountRegistry
-  -> Text
+  -> Journal
   -> Text
   -> Text
   -> Text
   -> PlanJournal
   -> Text
   -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
-buildHouseholdReportSurfaceFromNativeHouseholdSources observation actualJournal accountRegistry budgetText budgetPolicyText householdPolicyText planText planJournal issuesText = do
+buildHouseholdReportSurfaceFromNativeHouseholdSources observation actualJournal accountRegistry budgetJournal budgetPolicyText householdPolicyText planText planJournal issuesText = do
   validateCanonicalAccountRegistry journal accountRegistry
+  validateBudgetJournalRegistry accountRegistry budgetJournal
   budgetPolicy <- mapLeft budgetPolicySourceErrors
     (parseBudgetPolicy budgetPolicyText)
   configuration <- mapLeft policySourceErrors
@@ -234,8 +240,8 @@ buildHouseholdReportSurfaceFromNativeHouseholdSources observation actualJournal 
         NonEmpty.:| [])
     Just value -> Right value
   validateHouseholdAccountPolicyRegistry accountRegistry accountPolicy
-  budget <- mapLeft budgetMovementSourceErrors
-    (parseHouseholdBudgetMovements budgetText)
+  budget <- mapLeft budgetMovementJournalSourceErrors
+    (admitHouseholdBudgetMovementJournal budgetJournal)
   issues <- mapLeft issueSourceErrors (parseHouseholdIssues issuesText)
   obligationSelections <- mapLeft dailyTargetPlanJournalSourceErrors
     (parseDailyTargetPlanJournalSelections planText planJournal)
@@ -247,6 +253,7 @@ buildHouseholdReportSurfaceFromNativeHouseholdSources observation actualJournal 
           assetSelections
           obligationSelections)
   buildHouseholdReportSurfaceFromAdmissions
+    "budget.journal"
     observation
     actualJournal
     (householdConfigurationPolicy configuration)
@@ -258,7 +265,8 @@ buildHouseholdReportSurfaceFromNativeHouseholdSources observation actualJournal 
     journal = actualJournalValue actualJournal
 
 buildHouseholdReportSurfaceFromAdmissions
-  :: Day
+  :: Text
+  -> Day
   -> ActualJournal
   -> HouseholdPolicy
   -> PlanJournal
@@ -266,7 +274,7 @@ buildHouseholdReportSurfaceFromAdmissions
   -> [HouseholdIssue]
   -> DailyTargetScopeAdmission
   -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
-buildHouseholdReportSurfaceFromAdmissions observation actualJournal policy planJournal budget issues admitDailyTargetScope = do
+buildHouseholdReportSurfaceFromAdmissions budgetSourceName observation actualJournal policy planJournal budget issues admitDailyTargetScope = do
   validatedPolicy <- mapLeft
     (fmap (sourceError "household.toml" 0 . tshow))
     (validateHouseholdPolicyAccounts (journalAccountRegistry journal) policy)
@@ -286,7 +294,7 @@ buildHouseholdReportSurfaceFromAdmissions observation actualJournal policy planJ
       outgoingDeclarations)
   dailyScope <- admitDailyTargetScope (map planFactValue outgoingPlans)
   budgetObservation <- mapLeft
-    (fmap (sourceError "budget_alloc.tsv" 0 . tshow))
+    (fmap (sourceError budgetSourceName 0 . tshow))
     (deriveHouseholdBudgetObservation observation current journal
       validatedPolicy budget)
   let admittedPolicy = householdBudgetObservationPolicy budgetObservation
@@ -327,6 +335,17 @@ validateCanonicalAccountRegistry actual canonical
   | otherwise = Left
       (sourceError "accounts.journal" 0
         "Account registry does not exactly match actual.journal declarations"
+        NonEmpty.:| [])
+
+validateBudgetJournalRegistry
+  :: AccountRegistry
+  -> Journal
+  -> Either (NonEmpty HouseholdSourceError) ()
+validateBudgetJournalRegistry canonical budget
+  | journalAccountRegistry budget == canonical = Right ()
+  | otherwise = Left
+      (sourceError "budget.journal" 0
+        "Account registry does not exactly match accounts.journal declarations"
         NonEmpty.:| [])
 
 validateHouseholdAccountPolicyRegistry
@@ -522,6 +541,12 @@ budgetMovementSourceErrors = fmap toSourceError
       "budget_alloc.tsv"
       (householdBudgetMovementTSVErrorLine err)
       (householdBudgetMovementTSVErrorMessage err)
+
+budgetMovementJournalSourceErrors
+  :: NonEmpty HouseholdBudgetMovementJournalError
+  -> NonEmpty HouseholdSourceError
+budgetMovementJournalSourceErrors =
+  fmap (sourceError "budget.journal" 0 . tshow)
 
 issueSourceErrors
   :: NonEmpty HouseholdIssueTSVError
