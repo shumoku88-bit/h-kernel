@@ -1,7 +1,7 @@
 # h-kernel アーキテクチャ
 
 ステータス: アクティブな正規architecture  
-更新日: 2026-08-06
+更新日: 2026-08-07
 
 ## 1. この文書の役割
 
@@ -26,7 +26,7 @@ explicit loader or writer effect
 validated typed values
           |
           v
-pure accounting / policy / projection / candidate preparation
+pure accounting / policy / projection / candidate / interaction
           |
           v
 rendered result or validated candidate
@@ -59,7 +59,8 @@ h-kernel-editor
   owns:
     typed edit intent, pure candidate preparation, source placement,
     complete-source admission, stale check, backup, atomic publication,
-    post-admission and restore-capable writer result
+    post-admission and restore-capable writer result,
+    typed Actual workspace projection, UI-independent Actual add interaction
 
 h-kernel-spike-household-report
   source: spike-src/
@@ -73,13 +74,13 @@ Delivery adaptersはlibraryとは別に置く。
 ```text
 app/             h-kernel report executable
 editor-app/      h-kernel-editor-cli
-editor-tui-app/  h-kernel-editor-tui
+editor-tui-app/  Brick Actual workspace executable
 repository root  report launchers and build helpers
-tools/hk         report / actual-add / edit / check / help routing only
+tools/hk         workspace-first daily doorway + explicit command routing
 tools/           repository audit and verification tools
 ```
 
-`tools/hk`はdomain ownerではない。会計計算、Report rendering、editor admission、source mutation、audit ruleを再実装せず、既存entrypointへ引数とexit statusを渡す。
+`tools/hk`はdomain ownerではない。TTY no-argではActual workspaceへ入り、explicit commandではreport / actual-add / actual-multi / actual-reverse / account / plan / budget / issue / edit / check / helpを既存entrypointへrouteする。会計計算、Report rendering、editor admission、source mutation、audit ruleを再実装しない。
 
 ## 4. Effectの所有者
 
@@ -112,11 +113,15 @@ expected old bytes
   -> success or restore-capable failure
 ```
 
-CLIやTUIはこの順序を複製しない。UI stateへcomplete private source、backup、writer authorityを持ち込まない。
+CLIやTUIはこの順序を複製しない。UI-independent interaction stateへcomplete private source、backup、writer authorityを持ち込まない。
+
+Delivery adapterがpreviewとsafe writerのexpected-old-bytes境界を接続するため読み込んだsource bytesを保持する場合、その値はdomain / interaction stateではなくeffect-delivery contextとして明示する。このplacement自体を変更するときはwriter correctnessとstale contractを別sliceで検証する。
 
 ### 4.3 Application and terminal
 
-report app、editor app、TUI、shell launcherは、引数、環境変数、標準入出力、終了状態、terminal eventを扱う。会計ruleやsource admissionをadapter都合で再実装しない。
+report app、editor app、Brick TUI、shell launcherは、引数、環境変数、標準入出力、終了状態、terminal eventを扱う。会計ruleやsource admissionをadapter都合で再実装しない。
+
+Brick固有のpane、focus、cursor、key mapping、widget、renderingは`editor-tui-app/`に置く。Account selection identity、workspace projection、Actual add interaction transitionは共有typed ownerへ委譲する。
 
 ## 5. Domain invariants
 
@@ -133,6 +138,8 @@ Quantityは`Scientific`による正確な10進数として保持する。`Amount
 ### 5.3 Account
 
 Accountの意味は名前から推測しない。`AccountRegistry`と検証済みdeclarationがAccount identity、`AccountType`、optional default Commodityを所有する。
+
+UIでadmitted Accountを選択する場合も、表示Textをidentityとして使わず`Account`を保持し、presentation boundaryでだけ`accountName`へ落とす。
 
 ### 5.4 Transaction
 
@@ -168,15 +175,15 @@ Household policy、Daily Target、Backing、Budget movement、Account profile ad
 ## 7. Dependency direction
 
 ```text
-h-kernel-household             -> h-kernel
-h-kernel-editor                -> h-kernel
-h-kernel-editor                -> h-kernel-household
+h-kernel-household              -> h-kernel
+h-kernel-editor                 -> h-kernel
+h-kernel-editor                 -> h-kernel-household
 h-kernel-spike-household-report -> h-kernel
 h-kernel-spike-household-report -> h-kernel-household
 
-report app                     -> h-kernel + h-kernel-spike-household-report
-editor app / editor TUI        -> h-kernel-editor
-tools/hk                       -> existing report launcher / editor CLI / editor TUI / checks
+report app                      -> h-kernel + h-kernel-spike-household-report
+editor app / editor TUI         -> h-kernel-editor
+tools/hk                        -> existing report launcher / editor CLI / editor TUI / checks
 ```
 
 次は禁止する。
@@ -185,7 +192,8 @@ tools/hk                       -> existing report launcher / editor CLI / editor
 - `h-kernel-household`からeditorへの依存
 - Report ownerからfilesystem writerへの依存
 - Render ownerからsource readへの依存
-- command hubへの会計ruleまたはmutation ruleの移動
+- daily routerまたはdelivery adapterへの会計rule / mutation ruleの移動
+- UI toolkit型のshared interaction ownerへの流入
 - spike-local parserによるstable admissionの再実装
 
 ## 8. Writer authority

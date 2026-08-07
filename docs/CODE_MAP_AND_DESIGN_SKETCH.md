@@ -1,7 +1,7 @@
 # h-kernel コードスコア
 
 ステータス: アクティブな全体設計面  
-更新日: 2026-08-06
+更新日: 2026-08-07
 
 ## 1. この文書の役割
 
@@ -47,12 +47,12 @@
 |---|---|---|
 | `src/` | exact accounting、Journal、Actual、Plan、Budget、Report、application config、rendering primitive | stable library |
 | `household-src/` | Account profile admission、Household policy、Daily Target、Backing、Budget movement、Issue admission | stable library |
-| `editor-src/` | typed edit intent、candidate preparation、source placement、safe writer | stable editor library |
+| `editor-src/` | typed edit intent、candidate preparation、source placement、safe writer、Actual workspace projection、UI-independent interaction | stable editor library |
 | `spike-src/` | stable typed ownerを合成するHousehold Report compositionとrendering | active spike |
 | `app/` | report CLIのfile、environment、stdout、exit boundary | delivery adapter |
 | `editor-app/` | editor CLIのargument、preview、explicit commit、exit boundary | delivery adapter |
-| `editor-tui-app/` | Actual addのBrick event loopとterminal interaction | delivery adapter |
-| `tools/hk` | report、actual-add、edit、check、helpへのrouting | daily doorway |
+| `editor-tui-app/` | Actual workspaceのBrick event loop、pane、focus、rendering、effect delivery | delivery adapter |
+| `tools/hk` | no-arg Actual workspaceとexplicit commandへのthin routing | daily doorway |
 | `tools/` | repository audit、focused verifier、report verification | operations |
 | `tests/` | module、component、effect、Report surface、repository ownershipのobservable contract | verification |
 | `docs/` | policy、architecture、contract、observation、この全体スコア | documentation |
@@ -76,7 +76,8 @@ h-kernel-editor
   source: editor-src/
   depends on: h-kernel + h-kernel-household
   owns: edit intent, candidate preparation, source placement,
-        complete-source admission, safe writer result
+        complete-source admission, safe writer result,
+        typed Actual workspace projection, UI-independent Actual add interaction
 
 h-kernel-spike-household-report
   source: spike-src/
@@ -86,7 +87,7 @@ h-kernel-spike-household-report
 executables
   app/             -> h-kernel report CLI
   editor-app/      -> h-kernel-editor-cli
-  editor-tui-app/  -> h-kernel-editor-tui
+  editor-tui-app/  -> Brick Actual workspace
 ```
 
 ## 4. CURRENT: 全体のデータ、計算、編集の流れ
@@ -95,7 +96,7 @@ executables
 graph TD
     Hub["tools/hk"]
     ReportApp["report launcher / app"]
-    EditorApp["editor CLI / TUI"]
+    EditorApp["editor CLI / Brick workspace"]
     Checks["build / test / repository audit"]
 
     CanonicalActual["private canonical actual.journal"]
@@ -211,6 +212,7 @@ fact、selected policy、validated policy、derived resultを別の声部とし�
 - `HKernel.Report`とnamed Report moduleがpure projectionを所有する
 - `HKernel.Render`とdomain render moduleがText surfaceを構築する
 - `HKernel.Render.TerminalStyle`がANSIとcharacter widthなどterminal physical detailを扱う
+- Report snapshot系のANSI normalizationは`tools/report_sections.py`へ一本化されている
 
 **DIRECTION**
 
@@ -225,32 +227,41 @@ calculation result、Report semantics、section composition、terminal physics�
 - CLIはpreviewを常に表示し、explicit commitだけをsafe writerへ渡す
 - safe writerはstale rejection、backup、atomic publication、post-admission、restore-capable failureを所有する
 - Actual reverseはnew durable `event-id`とexplicit `reverses` relationを要求する
-- Actual add TUIはexisting candidate preparationとwriterを再利用する
+- `HKernel.Editor.Interaction.ActualAdd`がUI-independentなstate / action / transitionだけを所有する
+- `HKernel.Editor.ActualWorkspace`がtyped AccountによるActual transaction projectionを所有する
+- Brick pickerは選択Accountを`Account`のままInteractionへ渡し、display textをidentityにしない
+- shared editor libraryからTUI-specific compatibility moduleは削除済みである
 - canonical `actual.journal`のwriter authorityはh-kernel editorにある
-- ordinary Actual addは`tools/hk actual-add <ACTUAL_JOURNAL>`からTUIを起動する
 
 **DIRECTION**
 
-Editorを一つのprocedureへしない。intent、candidate、admission、publication、interactionを別の声部として保ち、会計意味をcore ownerへ返す。
+Editorを一つのprocedureへしない。intent、candidate、admission、publication、interactionを別の声部として保ち、会計意味をcore ownerへ返す。Brick、将来のHaskeline、その他adapterが必要な意味だけをdirect ownerから使える形を維持する。
 
-### 5.7 Daily command hub
+### 5.7 Daily workspace doorway
 
 **CURRENT**
 
 ```text
 tools/hk
-  -> report
-  -> actual-add
-  -> edit
-  -> check
-  -> help
+  no args         -> Actual workspace
+  report          -> report launcher
+  actual-add      -> Actual workspace with explicit Journal path
+  actual-multi    -> editor CLI append
+  actual-reverse  -> editor CLI reverse
+  account         -> editor CLI account
+  plan            -> editor CLI plan
+  budget          -> editor CLI budget
+  issue           -> editor CLI issue
+  edit            -> editor CLI direct route
+  check           -> build / test / repository audit
+  help            -> usage
 ```
 
-`tools/hk`は引数とexit statusを既存ownerへ渡す。domain calculation、source selection semantics、mutation、audit ruleを所有しない。`actual-add`も一つのexplicit pathを既存TUIへ渡すだけである。
+`tools/hk`はpath resolution、引数、exit statusを既存ownerへ渡す。domain calculation、candidate admission、mutation rule、audit ruleを所有しない。shell operation menu、gum / fzf selector、numeric menu fallbackは削除済みである。
 
 **DIRECTION**
 
-日常入口は小さく保つ。full-screen orchestration、search UI、interactive selectionが必要になっても、command hubへ会計ruleを移さない。
+日常入口は小さく保つ。full-screen interactionはBrickなどのdelivery adapter、操作意味はshared typed ownerへ置き、shell routerへ別のnavigation modelを再び作らない。
 
 ### 5.8 Testと運用装置
 
@@ -258,9 +269,9 @@ tools/hk
 
 - focused testとfull testがtyped ownerのobservable contractを検証する
 - property testがBalance lawをmulti-commodity generated valueで観察する
-- editor testがcandidate、stale、publication、restoreをsynthetic sourceで観察する
+- editor testがcandidate、interaction、stale、publication、restoreをsynthetic sourceで観察する
 - repository auditがCabal source ownershipと`docs/INDEX.toml`を検査する
-- command hub verifierがrouting、argument preservation、path arity、error statusをsynthetic stubで観察する
+- daily-entrypoint verifierがnon-TTY rejection、explicit routing、argument preservation、path arity、error statusをsynthetic stubで観察する
 - CIはpublic checkoutにprivate canonical sourceを要求しない
 - Report contractとsnapshotがsurface compatibilityを検証する
 - private non-canonical rehearsalは秘密を含まないoutcomeだけをevidenceとして残す
@@ -303,7 +314,7 @@ owner = "h-kernel"
 
 [[entries]]
 path = "tools/hk"
-role = "daily-command-router"
+role = "daily-router"
 owner = "repository-operations"
 ```
 
@@ -404,7 +415,7 @@ renderSection
 | `Semigroup`、`Monoid`、`Foldable`、`foldMap` | Balance、Flow、Matrix、Daily Target、Backingのlawful aggregation |
 | parametric polymorphismと高階関数 | collection shapeに依存しないreductionとtyped basis |
 | `traverse`とMap combinator | shapeとcoordinateを保つvalidation、projection、lookup、aggregation |
-| pure coreとexplicit IO shell | accounting、policy、Report、candidate preparationと外界の分離 |
+| pure coreとexplicit IO shell | accounting、policy、Report、candidate preparation、interactionと外界の分離 |
 | `StateT LoadedFiles (ExceptT LoadError IO)` | include graph state、typed failure、file read effectの明示的な重なり |
 | module abstraction | public facade、internal facts、stable component、spike、editor、application entryのownership |
 
@@ -448,22 +459,22 @@ editor intent
 - large moduleは新しい抽象より先に楽章分けを必要としているか
 - source間の共通化候補は同じlawを共有するのか、処理順が似ているだけか
 
-### 7.7 Actual daily-use observation
+### 7.7 Actual workspace observation
 
 **CURRENT**
 
-Haskell editorとdaily command hubはmainにある。canonical `actual.journal`のwriter authorityはh-kernel editorへcutoverされ、ordinary Actual addは`tools/hk actual-add`からTUIへ入る。
+canonical `actual.journal`のwriter authorityはh-kernel editorにあり、日常のno-arg `tools/hk`はpersistent Actual workspaceへ直接入る。Actual add interactionとAccount filterはUI-independent ownerを持ち、Brickはtyped Account selectionをdeliveryする。
 
 **DIRECTION**
 
-Actual-only cutoverを小さな日常operationとして観察し、preview、confirmation、publication、post-admission、Report readback、single-writer lawを維持する。別sourceのcutoverを暗黙に連鎖させない。
+workspaceをBrick専用の意味体系へしない。Haskelineや別adapterが必要になったとき、Account identity、selection、interaction transition、candidate preparationを同じshared ownerから再利用できる形を保つ。一方でpane、cursor、focus、widgetなどdelivery固有の物理は無理に共通化しない。
 
 **QUESTION**
 
-- daily Actual addで不足するinteractionは何か
-- BQN readerへHaskell-native reversal provenance対応が必要になるか
+- Brick `UIState`と`ActualAddMode`はinteraction stageを二重所有しているか
+- Brick delivery contextのsource-byte retentionはsafe writer contractとどう対応するか
+- Actual reverse target selectionをworkspaceのread-only interactionとして扱う必要があるか
 - Plan、Budget、Issue sourceのwriter authorityを動かす必要があるか
-- rollback時のreader compatibilityをどこまで確認するか
 
 次の有限sliceは[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)が所有する。
 
