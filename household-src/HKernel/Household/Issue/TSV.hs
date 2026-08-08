@@ -113,6 +113,7 @@ parseOptionalAmount lineNumber quantityText currencyText = do
 parseStatus :: Int -> Text -> Either HouseholdIssueTSVError IssueStatus
 parseStatus _ "open" = Right Open
 parseStatus _ "resolved" = Right Resolved
+parseStatus _ "dropped" = Right Dropped
 parseStatus lineNumber _ =
   Left (errorAt lineNumber "unknown issue status")
 

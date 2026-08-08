@@ -50,9 +50,13 @@ mkIssueId value
   | otherwise = Right (IssueId value)
 
 -- | Whether the household matter still needs attention.
+--
+-- 'Dropped' is distinct from 'Resolved': it records that the matter is no
+-- longer being pursued without claiming that the underlying matter was solved.
 data IssueStatus
   = Open
   | Resolved
+  | Dropped
   deriving (Eq, Ord, Show)
 
 -- | Either one known due date or an explicit statement that it is not yet known.

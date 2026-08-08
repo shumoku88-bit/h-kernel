@@ -105,3 +105,4 @@ renderIntent intent = T.intercalate "\t"
 renderStatus :: IssueStatus -> Text
 renderStatus Open = "open"
 renderStatus Resolved = "resolved"
+renderStatus Dropped = "dropped"

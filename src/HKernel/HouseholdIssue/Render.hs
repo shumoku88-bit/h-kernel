@@ -35,6 +35,7 @@ renderStatus :: IssueStatus -> Text
 renderStatus status = case status of
   Open -> "open"
   Resolved -> "resolved"
+  Dropped -> "dropped"
 
 renderDue :: IssueDue -> Text
 renderDue due = case due of
