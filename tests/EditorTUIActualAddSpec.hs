@@ -15,10 +15,16 @@ import HKernel.Editor.ActualAppend
   , ActualAddWriteFailure(..)
   , ActualAddWriteOutcome(..)
   , ActualEditIntent(..)
+  , ActualMultiAddInput(..)
+  , ActualMultiAddInputError(..)
+  , ActualMultiAddPreview(..)
+  , ActualPostingInput(..)
   , buildActualAddIntent
   , buildActualAddIntentWithRegistry
+  , buildActualMultiAddIntentWithRegistry
   , classifyActualAddWriteResult
   , prepareActualAddPreview
+  , prepareActualMultiAddPreviewFromResolvedJournal
   )
 import HKernel.Editor.ActualWriter (WriteError(..))
 import HKernel.Editor.Interaction.ActualAdd
@@ -66,6 +72,11 @@ main = do
         , ("ready preview enters confirmation", testReadyPreviewEntersConfirmation source)
         , ("confirmation cancellation returns to ready preview", testConfirmationCancellation source)
         , ("accepted confirmation remains source-free until delivery", testConfirmationAccepted source)
+        , ("multi input builds signed three-posting intent", testMultiBuild)
+        , ("multi input requires at least three postings", testMultiRequiresThree)
+        , ("multi input rejects zero posting with row coordinate", testMultiRejectsZero)
+        , ("balanced multi input prepares one canonical candidate", testMultiBalancedPreview)
+        , ("unbalanced multi input is rejected by transaction admission", testMultiUnbalancedRejected)
         , ("successful write result is observable", testWriteSuccess)
         , ("stale write result is observable", testWriteStale)
         , ("restored admission failure is recoverable", testWriteRecovered)
@@ -342,6 +353,115 @@ readyPreviewState source =
   enterActualAddPreview
     (prepareActualAddPreview source validInput)
     (ActualAddState validInput EditingActualAdd)
+
+multiSource :: T.Text
+multiSource = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , "account expenses:books"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  ]
+
+multiInput :: ActualMultiAddInput
+multiInput = ActualMultiAddInput
+  { multiAddDateText = "2026-08-08"
+  , multiAddDescriptionText = "Split purchase"
+  , multiAddPostings =
+      ActualPostingInput "expenses:food" "600"
+        NonEmpty.:| [ ActualPostingInput "expenses:books" "150"
+                    , ActualPostingInput "assets:cash" "-750"
+                    ]
+  }
+
+expectedMultiBlock :: T.Text
+expectedMultiBlock = T.unlines
+  [ "2026-08-08 Split purchase"
+  , "  expenses:food  600 JPY"
+  , "  expenses:books  150 JPY"
+  , "  assets:cash  -750 JPY"
+  ]
+
+testMultiBuild :: Bool
+testMultiBuild =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      case buildActualMultiAddIntentWithRegistry
+          (journalAccountRegistry journal) multiInput of
+        Left _ -> False
+        Right intent ->
+          map renderPosting (NonEmpty.toList (intentPostings intent))
+            == [ ("expenses:food", "600", "JPY")
+               , ("expenses:books", "150", "JPY")
+               , ("assets:cash", "-750", "JPY")
+               ]
+  where
+    renderPosting posting =
+      ( accountName (intentAccount posting)
+      , renderQuantity (intentQuantity posting)
+      , maybe "" commodityCode (intentCommodity posting)
+      )
+
+testMultiRequiresThree :: Bool
+testMultiRequiresThree =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      buildActualMultiAddIntentWithRegistry
+        (journalAccountRegistry journal)
+        (multiInput
+          { multiAddPostings =
+              ActualPostingInput "expenses:food" "600"
+                NonEmpty.:| [ActualPostingInput "assets:cash" "-600"]
+          })
+        == Left ActualMultiAddNeedsAtLeastThreePostings
+
+testMultiRejectsZero :: Bool
+testMultiRejectsZero =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      buildActualMultiAddIntentWithRegistry
+        (journalAccountRegistry journal)
+        (multiInput
+          { multiAddPostings =
+              ActualPostingInput "expenses:food" "600"
+                NonEmpty.:| [ ActualPostingInput "expenses:books" "0"
+                            , ActualPostingInput "assets:cash" "-600"
+                            ]
+          })
+        == Left (ActualMultiAddZeroQuantity 2)
+
+testMultiBalancedPreview :: Bool
+testMultiBalancedPreview =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      prepareActualMultiAddPreviewFromResolvedJournal journal multiSource multiInput
+        == ActualMultiAddCandidateReady expectedMultiBlock
+
+testMultiUnbalancedRejected :: Bool
+testMultiUnbalancedRejected =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      case prepareActualMultiAddPreviewFromResolvedJournal
+          journal
+          multiSource
+          (multiInput
+            { multiAddPostings =
+                ActualPostingInput "expenses:food" "600"
+                  NonEmpty.:| [ ActualPostingInput "expenses:books" "150"
+                              , ActualPostingInput "assets:cash" "-700"
+                              ]
+            }) of
+        ActualMultiAddCandidateRejected _ -> True
+        _ -> False
 
 testWriteSuccess :: Bool
 testWriteSuccess =
