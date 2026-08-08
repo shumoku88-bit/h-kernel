@@ -22,12 +22,14 @@ characterizeAcceptedIssues = do
         (filter ((== "issue-one") . issueIdText . householdIssueId) issues)
       secondIssue = exactlyOne
         (filter ((== "issue-resolved") . issueIdText . householdIssueId) issues)
+      droppedIssue = exactlyOne
+        (filter ((== "issue-dropped") . issueIdText . householdIssueId) issues)
       issueWithoutAmount = exactlyOne
         (mustRight (parseHouseholdIssues optionalAmountIssue))
       jpy = mustRight (mkCommodity "JPY")
 
   assertEqual "one physical row becomes one typed HouseholdIssue"
-    2
+    3
     (length issues)
   assertEqual "open status remains typed"
     Open
@@ -47,6 +49,9 @@ characterizeAcceptedIssues = do
   assertEqual "resolved remains distinct from open"
     Resolved
     (householdIssueStatus secondIssue)
+  assertEqual "dropped remains distinct from resolved"
+    Dropped
+    (householdIssueStatus droppedIssue)
   assertEqual "blank amount and currency retain no invented Amount"
     Nothing
     (householdIssueAmount issueWithoutAmount)
@@ -118,6 +123,7 @@ validIssues = T.unlines
   , header
   , "issue-one\topen\t2026-07-20\tplanning\twifi\t200\tJPY\tdecide funding"
   , "issue-resolved\tresolved\t2026-07-01\tsubscription\tcancelled\t0\tJPY\tdone"
+  , "issue-dropped\tdropped\t2026-07-02\thome\tunused option\t\t\tno longer pursued"
   ]
 
 duplicateIssues :: T.Text
