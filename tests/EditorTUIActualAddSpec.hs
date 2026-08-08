@@ -32,12 +32,22 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualAddAction(..)
   , ActualAddMode(..)
   , ActualAddState(..)
+  , ActualMultiAddState(..)
+  , appendActualMultiPosting
   , dailyAccountCandidates
   , filterDailyAccountCandidates
+  , filterMultiAccountCandidates
   , enterActualAddPreview
   , initialActualAddState
   , initialActualAddStateForDay
+  , initialActualMultiAddStateForDay
+  , multiAccountCandidates
+  , removeSelectedActualMultiPosting
+  , selectActualMultiPosting
+  , selectedActualMultiPosting
   , setActualAddDate
+  , setSelectedActualMultiAccount
+  , setSelectedActualMultiAmount
   , transitionActualAdd
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
@@ -77,6 +87,12 @@ main = do
         , ("multi input rejects zero posting with row coordinate", testMultiRejectsZero)
         , ("balanced multi input prepares one canonical candidate", testMultiBalancedPreview)
         , ("unbalanced multi input is rejected by transaction admission", testMultiUnbalancedRejected)
+        , ("multi interaction starts with three blank posting rows", testMultiInteractionInitial)
+        , ("multi interaction appends and selects a new posting row", testMultiInteractionAppend)
+        , ("multi interaction never removes below three posting rows", testMultiInteractionMinimum)
+        , ("multi interaction updates only the selected posting", testMultiInteractionSelectedEdit)
+        , ("multi Account candidates are canonical and recent-first", testMultiAccountCandidates)
+        , ("multi Account search is case-insensitive", testMultiAccountSearch)
         , ("successful write result is observable", testWriteSuccess)
         , ("stale write result is observable", testWriteStale)
         , ("restored admission failure is recoverable", testWriteRecovered)
@@ -462,6 +478,75 @@ testMultiUnbalancedRejected =
             }) of
         ActualMultiAddCandidateRejected _ -> True
         _ -> False
+
+testMultiInteractionInitial :: Bool
+testMultiInteractionInitial =
+  let state = initialActualMultiAddStateForDay (read "2026-08-08")
+      input = actualMultiAddInput state
+      rows = NonEmpty.toList (multiAddPostings input)
+  in multiAddDateText input == "2026-08-08"
+      && length rows == 3
+      && all (== ActualPostingInput "" "") rows
+      && actualMultiSelectedPosting state == 0
+
+testMultiInteractionAppend :: Bool
+testMultiInteractionAppend =
+  let state = appendActualMultiPosting
+        (initialActualMultiAddStateForDay (read "2026-08-08"))
+  in length (NonEmpty.toList (multiAddPostings (actualMultiAddInput state))) == 4
+      && actualMultiSelectedPosting state == 3
+
+testMultiInteractionMinimum :: Bool
+testMultiInteractionMinimum =
+  let initial = initialActualMultiAddStateForDay (read "2026-08-08")
+      unchanged = removeSelectedActualMultiPosting initial
+      fourRows = appendActualMultiPosting initial
+      reduced = removeSelectedActualMultiPosting fourRows
+  in unchanged == initial
+      && length (NonEmpty.toList (multiAddPostings (actualMultiAddInput reduced))) == 3
+      && actualMultiSelectedPosting reduced == 2
+
+testMultiInteractionSelectedEdit :: Bool
+testMultiInteractionSelectedEdit = case mkAccount "expenses:books" of
+  Left _ -> False
+  Right account ->
+    let initial = initialActualMultiAddStateForDay (read "2026-08-08")
+        selected = selectActualMultiPosting 1 initial
+        withAccount = setSelectedActualMultiAccount account selected
+        withAmount = setSelectedActualMultiAmount "150" withAccount
+        rows = NonEmpty.toList (multiAddPostings (actualMultiAddInput withAmount))
+    in selectedActualMultiPosting withAmount
+        == ActualPostingInput "expenses:books" "150"
+        && rows !! 0 == ActualPostingInput "" ""
+        && rows !! 2 == ActualPostingInput "" ""
+
+testMultiAccountCandidates :: Bool
+testMultiAccountCandidates =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      map accountName
+        (multiAccountCandidates
+          (journalAccountRegistry journal)
+          (journalTransactions journal))
+        == [ "expenses:books"
+           , "liabilities:card"
+           , "expenses:food"
+           , "assets:cash"
+           , "assets:bank"
+           , "income:pension"
+           ]
+
+testMultiAccountSearch :: Bool
+testMultiAccountSearch =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates = multiAccountCandidates
+            (journalAccountRegistry journal)
+            (journalTransactions journal)
+      in map accountName (filterMultiAccountCandidates "PENSION" candidates)
+          == ["income:pension"]
 
 testWriteSuccess :: Bool
 testWriteSuccess =
