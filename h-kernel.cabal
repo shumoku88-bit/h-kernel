@@ -5,8 +5,8 @@ synopsis:           Pure Haskell Double-Entry Household Accounting Engine
 description:        A Haskell double-entry accounting engine with explicit account metadata and exact multi-commodity arithmetic.
 license:            MIT
 license-file:       LICENSE
-category:           Finance
-build-type:         Simple
+category:            Finance
+build-type:          Simple
 extra-source-files: docs/*.md
                   , docs/INDEX.toml
                   , tests/fixtures/editor/*.journal
@@ -95,8 +95,10 @@ library h-kernel-editor
                     , HKernel.Editor.BudgetMovementAppend
                     , HKernel.Editor.CLI
                     , HKernel.Editor.Interaction.ActualAdd
+                    , HKernel.Editor.Interaction.PlanCompleteAdvance
                     , HKernel.Editor.IssueAppend
                     , HKernel.Editor.PlanLifecycle
+                    , HKernel.Editor.PlanCompleteAdvance
                     , HKernel.Editor.TransactionBlock
     other-modules:    HKernel.Editor.SourceAppend
     build-depends:    base >= 4.14 && < 5
@@ -707,6 +709,19 @@ test-suite h-kernel-editor-plan-lifecycle-test
     main-is:          EditorPlanLifecycleSpec.hs
     hs-source-dirs:   tests
     build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-editor
+                    , text
+                    , time
+    default-language: Haskell2010
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+test-suite h-kernel-editor-plan-complete-advance-test
+    type:             exitcode-stdio-1.0
+    main-is:          EditorPlanCompleteAdvanceSpec.hs
+    hs-source-dirs:   tests
+    build-depends:    base >= 4.14 && < 5
+                    , directory >= 1.3 && < 1.4
                     , h-kernel
                     , h-kernel-editor
                     , text
