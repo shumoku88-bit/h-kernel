@@ -122,3 +122,7 @@ role = "observation"
 [[documents]]
 path = "docs/EDITOR_TUI_HUB_DESIGN.md"
 role = "architecture"
+
+[[documents]]
+path = "docs/TUI_INPUT_PORTABILITY_DECISION_001.md"
+role = "contract"
