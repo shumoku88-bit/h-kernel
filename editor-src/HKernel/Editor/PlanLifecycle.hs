@@ -28,6 +28,7 @@ module HKernel.Editor.PlanLifecycle
   , PlanFinishError(..)
   , preparePlanFinish
   , preparePlanFinishFromResolvedActualJournal
+  , preparePlanFinishFromResolvedJournals
   ) where
 
 import Data.Bifunctor (first)
@@ -640,9 +641,11 @@ preparePlanFinish
   -> PlanFinishIntent
   -> Either (NonEmpty PlanFinishError) PlanFinishPreview
 preparePlanFinish planSource actualSource intent = do
+  planJ <- first (pure . FinishPlanJournalSyntaxError)
+    (parsePlanJournal planSource)
   actualJ <- first (pure . FinishActualJournalSyntaxError)
     (parseActualJournal actualSource)
-  preparePlanFinishFromJournals planSource actualSource actualJ intent
+  preparePlanFinishFromJournals planJ actualSource actualJ intent
 
 preparePlanFinishFromResolvedActualJournal
   :: Journal
@@ -651,19 +654,36 @@ preparePlanFinishFromResolvedActualJournal
   -> PlanFinishIntent
   -> Either (NonEmpty PlanFinishError) PlanFinishPreview
 preparePlanFinishFromResolvedActualJournal resolvedActual planSource actualSource intent = do
+  planJ <- first (pure . FinishPlanJournalSyntaxError)
+    (parsePlanJournal planSource)
   actualJ <- first (pure . FinishActualJournalSyntaxError)
     (admitActualJournalFromResolvedJournal resolvedActual actualSource)
-  preparePlanFinishFromJournals planSource actualSource actualJ intent
+  preparePlanFinishFromJournals planJ actualSource actualJ intent
+
+-- | Prepare Plan Finish from the same include-resolved Plan and Actual Journals
+-- observed by canonical mutation delivery. Plan identity remains owned by the
+-- typed Plan journal while the emitted completion is validated as Actual.
+preparePlanFinishFromResolvedJournals
+  :: Journal
+  -> Journal
+  -> Text
+  -> Text
+  -> PlanFinishIntent
+  -> Either (NonEmpty PlanFinishError) PlanFinishPreview
+preparePlanFinishFromResolvedJournals resolvedPlan resolvedActual planSource actualSource intent = do
+  planJ <- first (pure . FinishPlanJournalSyntaxError)
+    (admitPlanJournalFromResolvedJournal resolvedPlan planSource)
+  actualJ <- first (pure . FinishActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanFinishFromJournals planJ actualSource actualJ intent
 
 preparePlanFinishFromJournals
-  :: Text
+  :: PlanJournal
   -> Text
   -> ActualJournal
   -> PlanFinishIntent
   -> Either (NonEmpty PlanFinishError) PlanFinishPreview
-preparePlanFinishFromJournals planSource actualSource actualJ intent = do
-  planJ <- first (pure . FinishPlanJournalSyntaxError) (parsePlanJournal planSource)
-
+preparePlanFinishFromJournals planJ actualSource actualJ intent = do
   pId <- first (pure . FinishInvalidId) (mkPlanId (finishPlanId intent))
 
   let existingCompletions = map declaredCompletionPlanId (actualJournalCompletionDeclarations actualJ)
