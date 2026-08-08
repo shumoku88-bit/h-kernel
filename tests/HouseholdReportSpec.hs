@@ -28,30 +28,43 @@ main = do
           accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
           issuesTSV dailyScopeTSV)
       cycleReport = householdCycleAccounts surface
+      currentPeriod = cycleAccountsCurrentPeriod cycleReport
       backing = householdEnvelopeBacking surface
       target = householdDailyTarget surface
       foodLine = exactlyOne (envelopeBackingLines backing)
       openPlans = householdPlannedTransactions surface
+      classifiedPlans = classifyPlannedTransactions currentPeriod openPlans
       issue = exactlyOne
         (filter ((== Open) . householdIssueStatus) (householdIssues surface))
       jpy = mustRight (mkCommodity "JPY")
 
   assertEqual "current income-anchor cycle is resolved from Actual and Plan Journal"
     (fromGregorian 2026 6 15, fromGregorian 2026 8 14)
-    ( periodStart (cycleAccountsCurrentPeriod cycleReport)
-    , periodEndExclusive (cycleAccountsCurrentPeriod cycleReport)
+    ( periodStart currentPeriod
+    , periodEndExclusive currentPeriod
     )
   assertEqual "previous cycle is resolved from the two latest Actual anchors"
     (fromGregorian 2026 4 15, fromGregorian 2026 6 15)
     ( periodStart (cycleAccountsPreviousPeriod cycleReport)
     , periodEndExclusive (cycleAccountsPreviousPeriod cycleReport)
     )
-  assertEqual "explicit completion removes the completed outgoing Plan"
-    ["plan-overdue", "plan-wifi"]
+  assertEqual "explicit completion removes the completed outgoing Plan without hiding other horizons"
+    ["plan-prior", "plan-overdue", "plan-wifi", "plan-next-cycle"]
     (map (planIdText . committedPlanId) openPlans)
-  assertEqual "an overdue uncompleted Plan remains in the current-cycle view"
-    [fromGregorian 2026 7 25, fromGregorian 2026 8 8]
+  assertEqual "open outgoing Plans remain date ordered across the current cycle boundary"
+    [ fromGregorian 2026 6 10
+    , fromGregorian 2026 7 25
+    , fromGregorian 2026 8 8
+    , fromGregorian 2026 8 20
+    ]
     (map committedPlanDate openPlans)
+  assertEqual "Plan horizon classification keeps before current and after current visible"
+    [ BeforeCurrentCycle
+    , InCurrentCycle
+    , InCurrentCycle
+    , AfterCurrentCycle
+    ]
+    (map classifiedPlanHorizon classifiedPlans)
   assertEqual "issue category evidence remains visible without affecting balances"
     "[planning] decide funding"
     (householdIssueDetails issue)
@@ -61,7 +74,7 @@ main = do
   assertEqual "Actual Expense movement becomes exact consumption"
     (one jpy 100)
     (envelopeActualConsumption foodLine)
-  assertEqual "only open mapped Plans become reserve and derived headroom"
+  assertEqual "only current-cycle open mapped Plans become reserve and derived headroom"
     (one jpy 600)
     (envelopePostPlanHeadroom foodLine)
   assertEqual "liquid Asset backing is selected by explicit Budget policy"
@@ -88,6 +101,16 @@ main = do
     True
     ("Source: plan.journal" `T.isInfixOf` renderedSurface
       && not ("Source: plan.tsv" `T.isInfixOf` renderedSurface))
+  assertEqual "Planned Transactions exposes still-open commitments before the current cycle"
+    True
+    ("Open before current cycle" `T.isInfixOf` renderedSurface
+      && "2026-06-10 | plan-prior" `T.isInfixOf` renderedSurface)
+  assertEqual "Planned Transactions marks the resolved current-cycle boundary"
+    True
+    ("current cycle ends before 2026-08-14" `T.isInfixOf` renderedSurface)
+  assertEqual "Planned Transactions keeps the next-cycle payment visible before cycle rollover"
+    True
+    ("2026-08-20 | plan-next-cycle" `T.isInfixOf` renderedSurface)
 
   let defaultIssues = renderHouseholdIssues OpenIssuesOnly
         (householdIssues surface)
@@ -344,7 +367,12 @@ allocationRoleMismatchTOML = T.replace
 
 planJournalText :: T.Text
 planJournalText = declarations <> T.unlines
-  [ "2026-07-25 overdue"
+  [ "2026-06-10 prior cycle"
+  , "    ; plan-id: plan-prior"
+  , "    expenses:food    50 JPY"
+  , "    assets:cash     -50 JPY"
+  , ""
+  , "2026-07-25 overdue"
   , "    ; plan-id: plan-overdue"
   , "    expenses:food   100 JPY"
   , "    assets:cash    -100 JPY"
@@ -363,6 +391,11 @@ planJournalText = declarations <> T.unlines
   , "    ; plan-id: plan-pension"
   , "    income:pension  -1000 JPY"
   , "    assets:cash      1000 JPY"
+  , ""
+  , "2026-08-20 next cycle"
+  , "    ; plan-id: plan-next-cycle"
+  , "    expenses:food   300 JPY"
+  , "    assets:cash    -300 JPY"
   ]
 
 unsupportedPlanJournalText :: T.Text
