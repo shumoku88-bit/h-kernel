@@ -426,11 +426,11 @@ data PlanCompleteAdvanceWriteError admissionError
 -- primitives as the single-source writer. Both expected roots are observed
 -- before staging and again immediately before the first rename. Plan is fenced
 -- once more after Actual installation and immediately before its own rename.
--- After both installs, both exact candidates are fenced again before whole-
--- Household admission. Staging paths are unique siblings, and recovery only
--- replaces a target that still contains this writer's exact candidate. The Bool
--- recovery coordinates mean that the expected original is safely present after
--- recovery, either because it was untouched or because guarded restore worked.
+-- Both exact candidates are fenced immediately before and after whole-Household
+-- admission. Staging paths are unique siblings, and recovery only replaces a
+-- target that still contains this writer's exact candidate. The Bool recovery
+-- coordinates mean that the expected original is safely present after recovery,
+-- either because it was untouched or because guarded restore worked.
 publishPlanCompleteAdvance
   :: IO (Either admissionError admitted)
   -> PlanCompleteAdvanceWriteIntent
@@ -579,11 +579,20 @@ installAndAdmit fileSystem postAdmission intent staged =
               admissionError
               actualSafe
               planSafe))
-        Right _ -> do
-          removeQuietly fileSystem (stagedActualBackup staged)
-          removeQuietly fileSystem (stagedPlanBackup staged)
-          cleanupCandidatePaths fileSystem staged
-          pure (Right ())
+        Right _ -> verifyAfterAdmission
+
+    verifyAfterAdmission = do
+      finalSources <- readCurrentSources fileSystem intent
+      case finalSources of
+        Left ioMessage -> recoverInstallWindowFailure ioMessage
+        Right (currentActual, currentPlan)
+          | currentActual /= writeCandidateActual intent -> recoverActualStale
+          | currentPlan /= writeCandidatePlan intent -> recoverPlanStale
+          | otherwise -> do
+              removeQuietly fileSystem (stagedActualBackup staged)
+              removeQuietly fileSystem (stagedPlanBackup staged)
+              cleanupCandidatePaths fileSystem staged
+              pure (Right ())
 
     recoverActualStale = do
       _ <- recoverExpectedSource
