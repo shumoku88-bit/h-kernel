@@ -78,10 +78,7 @@ main = do
         , ("from Account selection updates input", testFromSelection)
         , ("cancelled selection preserves input", testCancelSelection)
         , ("preview transition retains candidate block only", testPreviewTransition source)
-        , ("rejected preview cannot enter confirmation", testRejectedPreviewCannotConfirm source)
-        , ("ready preview enters confirmation", testReadyPreviewEntersConfirmation source)
-        , ("confirmation cancellation returns to ready preview", testConfirmationCancellation source)
-        , ("accepted confirmation remains source-free until delivery", testConfirmationAccepted source)
+        , ("preview returns directly to editing input", testPreviewReturn source)
         , ("multi input builds signed three-posting intent", testMultiBuild)
         , ("multi input requires at least three postings", testMultiRequiresThree)
         , ("multi input rejects zero posting with row coordinate", testMultiRejectsZero)
@@ -326,43 +323,11 @@ testPreviewTransition source =
           && not ("Opening Balance" `T.isInfixOf` stateRendering)
       _ -> False
 
-testRejectedPreviewCannotConfirm :: T.Text -> Bool
-testRejectedPreviewCannotConfirm source =
-  let input = validInput { addAmountText = "0 JPY" }
-      initial = ActualAddState input EditingActualAdd
-      rejected = enterActualAddPreview (prepareActualAddPreview source input) initial
-      confirmation = transitionActualAdd RequestActualAddConfirmation rejected
-  in confirmation == rejected
-
-testReadyPreviewEntersConfirmation :: T.Text -> Bool
-testReadyPreviewEntersConfirmation source =
-  let confirmation =
-        transitionActualAdd
-          RequestActualAddConfirmation
-          (readyPreviewState source)
-  in actualAddMode confirmation == ConfirmingActualAdd expectedBlock
-
-testConfirmationCancellation :: T.Text -> Bool
-testConfirmationCancellation source =
-  let confirmation =
-        transitionActualAdd
-          RequestActualAddConfirmation
-          (readyPreviewState source)
-      cancelled =
-        transitionActualAdd CancelActualAddConfirmation confirmation
-  in actualAddMode cancelled
-      == ShowingActualAddPreview (ActualAddCandidateReady expectedBlock)
-
-testConfirmationAccepted :: T.Text -> Bool
-testConfirmationAccepted source =
-  let confirmation =
-        transitionActualAdd
-          RequestActualAddConfirmation
-          (readyPreviewState source)
-      accepted = transitionActualAdd ConfirmActualAdd confirmation
-      stateRendering = T.pack (show accepted)
-  in actualAddMode accepted == ActualAddConfirmed expectedBlock
-      && not ("Opening Balance" `T.isInfixOf` stateRendering)
+testPreviewReturn :: T.Text -> Bool
+testPreviewReturn source =
+  let returned = transitionActualAdd ReturnToActualAddInput (readyPreviewState source)
+  in actualAddInput returned == validInput
+      && actualAddMode returned == EditingActualAdd
 
 readyPreviewState :: T.Text -> ActualAddState
 readyPreviewState source =
