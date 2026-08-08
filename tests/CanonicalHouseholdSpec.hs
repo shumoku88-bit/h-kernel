@@ -28,6 +28,10 @@ import HKernel.Editor.ActualAccountAppend
   ( accountCandidateBlock
   , prepareAccountJournalAppend
   )
+import HKernel.Editor.ActualWriter
+  ( WriteError(..)
+  , publishActualBlockWithPathAdmission
+  )
 import HKernel.Editor.BudgetMovementAppend
   ( budgetJournalCandidateBlock
   , prepareBudgetJournalMovementAppend
@@ -50,6 +54,7 @@ main :: IO ()
 main = do
   putStrLn "Running CanonicalHouseholdSpec..."
   testSyntheticRootLoading
+  testActualWholeHouseholdRollback
   testRegistryDisagreementFailure
   testInMemoryAdmission
   testNativePlanMetadataFailsClosed
@@ -84,6 +89,42 @@ testSyntheticRootLoading = do
   case buildHouseholdReportSurfaceFromHousehold observation state of
     Left errs -> die ("buildHouseholdReportSurfaceFromHousehold failed:\n" <> unlines (map show (NonEmpty.toList errs)))
     Right _ -> pure ()
+
+  removeDirectoryRecursive dir
+
+testActualWholeHouseholdRollback :: IO ()
+testActualWholeHouseholdRollback = do
+  let dir = "/tmp/synthetic_household_actual_rollback_spec"
+      actualPath = dir </> "actual.journal"
+      reportPath = dir </> "report.toml"
+      block = T.unlines
+        [ "2026-07-16 * Rollback probe"
+        , "  Assets:Bank  -100 JPY"
+        , "  Expenses:Groceries"
+        ]
+  resetDirectory dir
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+
+  root <- case mkHouseholdRoot dir of
+    Left err -> die ("mkHouseholdRoot failed: " <> show err)
+    Right r -> pure r
+
+  -- Keep the Actual candidate valid while making another canonical source
+  -- inadmissible. Actual-only post-admission could accept this publication;
+  -- whole-Household post-admission must reject and restore the original Actual.
+  TIO.writeFile reportPath "[reports.trial-balance\n"
+  result <- publishActualBlockWithPathAdmission
+    (\_ -> loadCanonicalHousehold root)
+    actualPath
+    syntheticActual
+    block
+  case result of
+    Left (PostAdmissionFailed _ True) -> pure ()
+    other -> die ("Expected checked whole-Household rollback, got: " <> show other)
+
+  restoredActual <- TIO.readFile actualPath
+  unless (restoredActual == syntheticActual)
+    (die "Whole-Household admission failure did not restore actual.journal")
 
   removeDirectoryRecursive dir
 
