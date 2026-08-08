@@ -424,11 +424,13 @@ data PlanCompleteAdvanceWriteError admissionError
 
 -- | Publish the coordinated Plan completion using the same narrow filesystem
 -- primitives as the single-source writer. Both expected roots are observed
--- before staging and again immediately before the first rename. Staging paths
--- are unique siblings, and recovery only replaces a target that still contains
--- this writer's exact candidate. The Bool recovery coordinates mean that the
--- expected original is safely present after recovery, either because it was
--- untouched or because the guarded restore succeeded.
+-- before staging and again immediately before the first rename. Plan is fenced
+-- once more after Actual installation and immediately before its own rename, so
+-- a change that lands in the cross-file installation window is never silently
+-- overwritten. Staging paths are unique siblings, and recovery only replaces a
+-- target that still contains this writer's exact candidate. The Bool recovery
+-- coordinates mean that the expected original is safely present after recovery,
+-- either because it was untouched or because the guarded restore succeeded.
 publishPlanCompleteAdvance
   :: IO (Either admissionError admitted)
   -> PlanCompleteAdvanceWriteIntent
@@ -461,6 +463,11 @@ readCurrentSources fileSystem intent = catch
     actual <- readTextFile fileSystem (writeActualPath intent)
     plan <- readTextFile fileSystem (writePlanPath intent)
     pure (Right (actual, plan)))
+  (\(errorValue :: IOException) -> pure (Left (show errorValue)))
+
+readSource :: WriterFileSystem -> FilePath -> IO (Either String Text)
+readSource fileSystem path = catch
+  (Right <$> readTextFile fileSystem path)
   (\(errorValue :: IOException) -> pure (Left (show errorValue)))
 
 data StagedCompleteAdvance = StagedCompleteAdvance
@@ -542,24 +549,63 @@ installAndAdmit fileSystem postAdmission intent staged =
       renameTextFile fileSystem
         (stagedActualNew staged)
         (writeActualPath intent)
-      renameTextFile fileSystem
-        (stagedPlanNew staged)
+      planBeforeInstall <- readSource fileSystem (writePlanPath intent)
+      case planBeforeInstall of
+        Left ioMessage ->
+          recoverInstallWindowFailure ioMessage
+        Right currentPlan
+          | currentPlan /= writeExpectedPlan intent ->
+              recoverPlanStale
+          | otherwise -> do
+              renameTextFile fileSystem
+                (stagedPlanNew staged)
+                (writePlanPath intent)
+              admitted <- postAdmission
+              case admitted of
+                Left admissionError -> do
+                  (actualSafe, planSafe) <- recoverExpectedSources fileSystem intent staged
+                  cleanupCandidatePaths fileSystem staged
+                  pure (Left
+                    (PlanCompleteAdvancePostAdmissionFailed
+                      admissionError
+                      actualSafe
+                      planSafe))
+                Right _ -> do
+                  removeQuietly fileSystem (stagedActualBackup staged)
+                  removeQuietly fileSystem (stagedPlanBackup staged)
+                  cleanupCandidatePaths fileSystem staged
+                  pure (Right ())
+
+    recoverPlanStale = do
+      actualSafe <- recoverExpectedSource
+        fileSystem
+        (stagedActualBackup staged)
+        (writeActualPath intent)
+        (writeExpectedActual intent)
+        (writeCandidateActual intent)
+      _ <- recoverExpectedSource
+        fileSystem
+        (stagedPlanBackup staged)
         (writePlanPath intent)
-      admitted <- postAdmission
-      case admitted of
-        Left admissionError -> do
-          (actualSafe, planSafe) <- recoverExpectedSources fileSystem intent staged
-          cleanupCandidatePaths fileSystem staged
-          pure (Left
-            (PlanCompleteAdvancePostAdmissionFailed
-              admissionError
-              actualSafe
-              planSafe))
-        Right _ -> do
-          removeQuietly fileSystem (stagedActualBackup staged)
-          removeQuietly fileSystem (stagedPlanBackup staged)
-          cleanupCandidatePaths fileSystem staged
-          pure (Right ())
+        (writeExpectedPlan intent)
+        (writeCandidatePlan intent)
+      cleanupCandidatePaths fileSystem staged
+      if actualSafe
+        then pure (Left PlanCompleteAdvancePlanStale)
+        else pure (Left
+          (PlanCompleteAdvanceFileIOError
+            "Plan changed during coordinated installation and Actual recovery did not complete"
+            False
+            False))
+
+    recoverInstallWindowFailure ioMessage = do
+      (actualSafe, planSafe) <- recoverExpectedSources fileSystem intent staged
+      cleanupCandidatePaths fileSystem staged
+      pure (Left
+        (PlanCompleteAdvanceFileIOError
+          ioMessage
+          actualSafe
+          planSafe))
 
     handleIO (errorValue :: IOException) = do
       (actualSafe, planSafe) <- recoverExpectedSources fileSystem intent staged
