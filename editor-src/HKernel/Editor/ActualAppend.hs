@@ -16,11 +16,18 @@ module HKernel.Editor.ActualAppend
   , buildActualAddIntentWithRegistry
   , prepareActualAddPreview
   , prepareActualAddPreviewFromResolvedJournal
+  , ActualPostingInput(..)
+  , ActualMultiAddInput(..)
+  , ActualMultiAddInputError(..)
+  , ActualMultiAddPreview(..)
+  , buildActualMultiAddIntentWithRegistry
+  , prepareActualMultiAddPreviewFromResolvedJournal
   , classifyActualAddWriteResult
   ) where
 
 import Data.Bifunctor (first)
 import Data.List.NonEmpty (NonEmpty(..))
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -240,11 +247,7 @@ parseActualAddCoordinates
   -> Either ActualAddInputError (Day, Account, Account)
 parseActualAddCoordinates input = do
   date <- maybe (Left ActualAddInvalidDate) Right
-    (parseTimeM
-      True
-      defaultTimeLocale
-      "%Y-%m-%d"
-      (T.unpack (addDateText input)) :: Maybe Day)
+    (parseDayText (addDateText input))
   fromAccount <- first (const ActualAddInvalidFromAccount)
     (mkAccount (addFromAccountText input))
   toAccount <- first (const ActualAddInvalidToAccount)
@@ -324,6 +327,109 @@ prepareActualAddPreviewWith build prepare input =
     Right intent -> case prepare intent of
       Left sourceErrors -> ActualAddCandidateRejected sourceErrors
       Right preview -> ActualAddCandidateReady (candidateBlock preview)
+
+-- | One signed posting row in the general multi-posting Actual input. A
+-- quantity may include an explicit Commodity ("600 JPY") or rely on the
+-- selected Account's canonical default ("600").
+data ActualPostingInput = ActualPostingInput
+  { multiPostingAccountText :: Text
+  , multiPostingAmountText  :: Text
+  } deriving (Eq, Show)
+
+-- | Delivery-neutral general Actual input. The ordinary two-posting form above
+-- remains the shortest daily path; this form exposes the underlying
+-- Transaction shape when a purchase, split, transfer, or correction needs more
+-- than two postings.
+data ActualMultiAddInput = ActualMultiAddInput
+  { multiAddDateText        :: Text
+  , multiAddDescriptionText :: Text
+  , multiAddPostings        :: NonEmpty ActualPostingInput
+  } deriving (Eq, Show)
+
+data ActualMultiAddInputError
+  = ActualMultiAddInvalidDate
+  | ActualMultiAddNeedsAtLeastThreePostings
+  | ActualMultiAddInvalidAccount Int
+  | ActualMultiAddInvalidAmountShape Int
+  | ActualMultiAddInvalidQuantity Int
+  | ActualMultiAddZeroQuantity Int
+  | ActualMultiAddInvalidCommodity Int
+  | ActualMultiAddMissingDefaultCommodity Int
+  deriving (Eq, Show)
+
+data ActualMultiAddPreview
+  = ActualMultiAddInputRejected ActualMultiAddInputError
+  | ActualMultiAddCandidateRejected (NonEmpty ActualEditError)
+  | ActualMultiAddCandidateReady Text
+  deriving (Eq, Show)
+
+-- | Build the general Actual intent without inventing transaction semantics in
+-- a delivery adapter. Each posting owns its sign. Complete transaction
+-- balancing remains the responsibility of the existing TransactionBlock
+-- admission path, so this function only parses input coordinates and resolves
+-- omitted Commodities from canonical Account declarations.
+buildActualMultiAddIntentWithRegistry
+  :: AccountRegistry
+  -> ActualMultiAddInput
+  -> Either ActualMultiAddInputError ActualEditIntent
+buildActualMultiAddIntentWithRegistry registry input = do
+  date <- maybe (Left ActualMultiAddInvalidDate) Right
+    (parseDayText (multiAddDateText input))
+  let rawPostings = NonEmpty.toList (multiAddPostings input)
+  if length rawPostings < 3
+    then Left ActualMultiAddNeedsAtLeastThreePostings
+    else do
+      parsed <- traverse (parseMultiPosting registry) (zip [1 ..] rawPostings)
+      postings <- maybe (Left ActualMultiAddNeedsAtLeastThreePostings) Right
+        (NonEmpty.nonEmpty parsed)
+      pure ActualEditIntent
+        { intentDate = date
+        , intentDescription = multiAddDescriptionText input
+        , intentPostings = postings
+        , intentMetadata = []
+        }
+
+parseMultiPosting
+  :: AccountRegistry
+  -> (Int, ActualPostingInput)
+  -> Either ActualMultiAddInputError IntentPosting
+parseMultiPosting registry (index, postingInput) = do
+  account <- first (const (ActualMultiAddInvalidAccount index))
+    (mkAccount (multiPostingAccountText postingInput))
+  (quantityText, commodity) <- case T.words (multiPostingAmountText postingInput) of
+    [quantityValue, commodityValue] -> do
+      parsedCommodity <- first (const (ActualMultiAddInvalidCommodity index))
+        (mkCommodity commodityValue)
+      Right (quantityValue, parsedCommodity)
+    [quantityValue] -> do
+      inferred <- case lookupAccountDeclaration account registry >>= declaredAccountDefaultCommodity of
+        Nothing -> Left (ActualMultiAddMissingDefaultCommodity index)
+        Just value -> Right value
+      Right (quantityValue, inferred)
+    _ -> Left (ActualMultiAddInvalidAmountShape index)
+  quantity <- first (const (ActualMultiAddInvalidQuantity index))
+    (parseQuantity quantityText)
+  if quantityToRational quantity == 0
+    then Left (ActualMultiAddZeroQuantity index)
+    else Right (IntentPosting account quantity (Just commodity))
+
+prepareActualMultiAddPreviewFromResolvedJournal
+  :: Journal
+  -> Text
+  -> ActualMultiAddInput
+  -> ActualMultiAddPreview
+prepareActualMultiAddPreviewFromResolvedJournal resolvedJournal source input =
+  case buildActualMultiAddIntentWithRegistry
+      (journalAccountRegistry resolvedJournal) input of
+    Left inputError -> ActualMultiAddInputRejected inputError
+    Right intent -> case prepareActualAppendFromResolvedJournal
+        resolvedJournal source intent of
+      Left sourceErrors -> ActualMultiAddCandidateRejected sourceErrors
+      Right preview -> ActualMultiAddCandidateReady (candidateBlock preview)
+
+parseDayText :: Text -> Maybe Day
+parseDayText value =
+  parseTimeM True defaultTimeLocale "%Y-%m-%d" (T.unpack value)
 
 -- | Collapse the safe writer result into a finite delivery-neutral outcome.
 classifyActualAddWriteResult
