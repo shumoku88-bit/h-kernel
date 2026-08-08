@@ -56,6 +56,7 @@ main = do
     , namedIO "coordinated writer rejects stale input" testWriterStale
     , namedIO "coordinated writer rejects stale input after staging" testWriterPrePublishStale
     , namedIO "coordinated writer protects Plan change between installs" testWriterPlanChangesBetweenInstalls
+    , namedIO "coordinated writer protects Actual change before admission" testWriterActualChangesBeforeAdmission
     , namedIO "coordinated writer rolls both back" testWriterRollback
     , namedIO "coordinated rollback protects later writer" testWriterRollbackProtectsLaterWrite
     , namedIO "partial installation restores expected roots" testWriterPartialInstallFailure
@@ -412,6 +413,31 @@ testWriterPlanChangesBetweenInstalls = withWriterFixtures $ \actualPath planPath
   pure $ case result of
     Left PlanCompleteAdvancePlanStale ->
       actual == "actual-old" && plan == laterPlan
+    _ -> False
+
+-- | An Actual write that lands after both candidate renames but before whole-
+-- Household admission must also win. The candidate fence restores Plan only and
+-- preserves the later Actual bytes.
+testWriterActualChangesBeforeAdmission :: IO Bool
+testWriterActualChangesBeforeAdmission = withWriterFixtures $ \actualPath planPath -> do
+  renameCount <- newIORef (0 :: Int)
+  let normalFileSystem = defaultWriterFileSystem
+      laterActual = "actual-from-later-writer-before-admission"
+      renameAndIntervene source target = do
+        previous <- atomicModifyIORef' renameCount (\count -> (count + 1, count))
+        renameTextFile normalFileSystem source target
+        when (previous == 1) (TIO.writeFile actualPath laterActual)
+      fileSystem = normalFileSystem
+        { renameTextFile = renameAndIntervene }
+  result <- publishPlanCompleteAdvanceUsing
+    fileSystem
+    (pure (Right () :: Either String ()))
+    (writerIntent actualPath planPath)
+  actual <- TIO.readFile actualPath
+  plan <- TIO.readFile planPath
+  pure $ case result of
+    Left PlanCompleteAdvanceActualStale ->
+      actual == laterActual && plan == "plan-old"
     _ -> False
 
 testWriterRollback :: IO Bool
