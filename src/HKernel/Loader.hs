@@ -76,7 +76,7 @@ emptyLoadedFiles = LoadedFiles Map.empty
 -- so path ancestry cannot drift away from the file currently being loaded.
 loadJournal :: FilePath -> IO (Either LoadError Journal)
 loadJournal rootPath =
-  runLoader rootPath (loadDocument (rootTrace rootPath))
+  runLoader (loadDocument (rootTrace rootPath))
 
 -- | Load a journal graph while treating an already observed root source as the
 -- exact root bytes for this admission. Included files are still resolved from
@@ -90,10 +90,10 @@ loadJournalFromRootSource
   -> Text
   -> IO (Either LoadError Journal)
 loadJournalFromRootSource rootPath rootSource =
-  runLoader rootPath (loadRootDocument (rootTrace rootPath) rootSource)
+  runLoader (loadRootDocument (rootTrace rootPath) rootSource)
 
-runLoader :: FilePath -> Loader JournalDocument -> IO (Either LoadError Journal)
-runLoader _ loadRoot = runExceptT
+runLoader :: Loader JournalDocument -> IO (Either LoadError Journal)
+runLoader loadRoot = runExceptT
   (evalStateT load emptyLoadedFiles)
   where
     load = do
