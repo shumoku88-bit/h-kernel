@@ -28,7 +28,6 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import qualified Data.Text.IO as TextIO
 import System.Directory (renameFile, removeFile)
-import System.FilePath (takeDirectory, takeFileName)
 import System.IO (Handle, hClose, openTempFile)
 
 import HKernel.Actual.Journal
@@ -104,11 +103,24 @@ defaultWriterFileSystem = WriterFileSystem
 
 stageSiblingText :: FilePath -> String -> Text -> IO FilePath
 stageSiblingText targetPath role source = do
-  let directory = takeDirectory targetPath
-      template = takeFileName targetPath <> role
+  let (directory, fileName) = splitTargetPath targetPath
+      template = fileName <> role
   (tempPath, handle) <- openTempFile directory template
   (TextIO.hPutStr handle source >> hClose handle >> pure tempPath)
     `onException` cleanupOpenTemp tempPath handle
+
+-- | Split only at the last platform path separator. This filesystem adapter
+-- intentionally needs no general path algebra: it only needs the parent text
+-- and basename required by 'openTempFile'. Both POSIX and Windows separators
+-- are accepted so an explicit absolute writer path stays on its own filesystem.
+splitTargetPath :: FilePath -> (FilePath, FilePath)
+splitTargetPath path =
+  case break isPathSeparator (reverse path) of
+    (reversedName, []) -> (".", reverse reversedName)
+    (reversedName, separator : reversedDirectory) ->
+      (reverse reversedDirectory <> [separator], reverse reversedName)
+  where
+    isPathSeparator character = character == '/' || character == '\\'
 
 cleanupOpenTemp :: FilePath -> Handle -> IO ()
 cleanupOpenTemp tempPath handle = do
