@@ -21,11 +21,14 @@ module HKernel.Editor.Interaction.ActualAdd
   , ActualMultiAddState(..)
   , initialActualMultiAddStateForDay
   , setActualMultiAddDate
+  , setActualMultiDateText
   , setActualMultiDescription
   , selectActualMultiPosting
+  , resizeActualMultiPostings
   , appendActualMultiPosting
   , removeSelectedActualMultiPosting
   , setSelectedActualMultiAccount
+  , setSelectedActualMultiAccountText
   , setSelectedActualMultiAmount
   , selectedActualMultiPosting
   , multiAccountCandidates
@@ -94,9 +97,9 @@ initialActualAddStateForDay day =
     (emptyActualAddInput { addDateText = renderDay day })
     EditingActualAdd
 
--- | Replace only the chosen accounting day. Today/yesterday shortcuts remain
--- a delivery concern; this function keeps the resulting input transformation
--- toolkit-independent.
+-- | Replace only the chosen accounting day. Delivery adapters may still offer
+-- convenience controls, but ordinary text-field editing must remain sufficient
+-- to reach every valid date.
 setActualAddDate :: Day -> ActualAddState -> ActualAddState
 setActualAddDate day state =
   state
@@ -203,9 +206,15 @@ initialActualMultiAddStateForDay day =
     }
 
 setActualMultiAddDate :: Day -> ActualMultiAddState -> ActualMultiAddState
-setActualMultiAddDate day state = state
+setActualMultiAddDate day = setActualMultiDateText (renderDay day)
+
+-- | Replace the raw date text without assigning date parsing to the delivery
+-- toolkit. This keeps the multi-posting form usable with ordinary text entry
+-- even when terminal-specific modified keys are unavailable.
+setActualMultiDateText :: Text -> ActualMultiAddState -> ActualMultiAddState
+setActualMultiDateText dateText state = state
   { actualMultiAddInput =
-      (actualMultiAddInput state) { multiAddDateText = renderDay day }
+      (actualMultiAddInput state) { multiAddDateText = dateText }
   }
 
 setActualMultiDescription :: Text -> ActualMultiAddState -> ActualMultiAddState
@@ -220,16 +229,30 @@ selectActualMultiPosting requested state =
   where
     rows = NonEmpty.toList (multiAddPostings (actualMultiAddInput state))
 
-appendActualMultiPosting :: ActualMultiAddState -> ActualMultiAddState
-appendActualMultiPosting state = state
-  { actualMultiAddInput = input
-      { multiAddPostings = toNonEmpty (rows <> [ActualPostingInput "" ""])
-      }
-  , actualMultiSelectedPosting = length rows
+-- | Resize the editable posting table while preserving source order and the
+-- contents of retained rows. Multi-posting entry always keeps at least three
+-- rows because the ordinary two-posting case has its own shorter workflow.
+-- A delivery can therefore expose posting count as an ordinary text field
+-- instead of requiring function or modified keys for row insertion/removal.
+resizeActualMultiPostings :: Int -> ActualMultiAddState -> ActualMultiAddState
+resizeActualMultiPostings requested state = state
+  { actualMultiAddInput = input { multiAddPostings = toNonEmpty resized }
+  , actualMultiSelectedPosting = clampIndex selected resized
   }
   where
     input = actualMultiAddInput state
     rows = NonEmpty.toList (multiAddPostings input)
+    selected = actualMultiSelectedPosting state
+    desired = max 3 requested
+    blanks = replicate (max 0 (desired - length rows)) (ActualPostingInput "" "")
+    resized = take desired (rows <> blanks)
+
+appendActualMultiPosting :: ActualMultiAddState -> ActualMultiAddState
+appendActualMultiPosting state =
+  let resized = resizeActualMultiPostings (length rows + 1) state
+  in resized { actualMultiSelectedPosting = length rows }
+  where
+    rows = NonEmpty.toList (multiAddPostings (actualMultiAddInput state))
 
 removeSelectedActualMultiPosting :: ActualMultiAddState -> ActualMultiAddState
 removeSelectedActualMultiPosting state
@@ -246,8 +269,15 @@ removeSelectedActualMultiPosting state
 
 setSelectedActualMultiAccount :: Account -> ActualMultiAddState -> ActualMultiAddState
 setSelectedActualMultiAccount account =
+  setSelectedActualMultiAccountText (accountName account)
+
+-- | Set the selected row's Account text directly. Canonical Account admission
+-- remains downstream in Actual candidate preparation; this function exists so
+-- ordinary form editing does not depend on a terminal shortcut to open a picker.
+setSelectedActualMultiAccountText :: Text -> ActualMultiAddState -> ActualMultiAddState
+setSelectedActualMultiAccountText accountText =
   updateSelectedActualMultiPosting
-    (\posting -> posting { multiPostingAccountText = accountName account })
+    (\posting -> posting { multiPostingAccountText = accountText })
 
 setSelectedActualMultiAmount :: Text -> ActualMultiAddState -> ActualMultiAddState
 setSelectedActualMultiAmount amount =
