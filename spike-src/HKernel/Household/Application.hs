@@ -8,8 +8,10 @@
 -- state without re-parsing raw files or invoking intermediate shell hubs.
 module HKernel.Household.Application
   ( HouseholdState(..)
+  , HouseholdWriteSnapshot(..)
   , HouseholdLoadError(..)
   , loadCanonicalHousehold
+  , loadCanonicalHouseholdWriteSnapshot
   , admitCanonicalHousehold
   , buildHouseholdReportSurfaceFromHousehold
   ) where
@@ -95,7 +97,7 @@ import HKernel.Journal
   , resolveJournalDocumentIncludes
   , validateJournalDocument
   )
-import HKernel.Loader (LoadError, loadJournal)
+import HKernel.Loader (LoadError, loadJournalFromRootSource)
 import HKernel.Plan.Journal
   ( PlanJournal
   , PlanJournalError(..)
@@ -132,6 +134,19 @@ data HouseholdState = HouseholdState
   , householdStateDailyScope       :: DailyTargetScope
   } deriving (Eq, Show)
 
+-- | One admitted Household observation together with the exact root bytes used
+-- by current coordinated Editor operations.
+--
+-- This is deliberately narrower than a repository/session abstraction. Actual
+-- and Plan are retained because current TUI mutation paths publish those roots;
+-- other source families should join only when a concrete operation needs the
+-- same expected-old ownership.
+data HouseholdWriteSnapshot = HouseholdWriteSnapshot
+  { householdWriteSnapshotState        :: HouseholdState
+  , householdWriteSnapshotActualSource :: Text
+  , householdWriteSnapshotPlanSource   :: Text
+  } deriving (Eq, Show)
+
 -- | Errors during canonical Household loading.
 data HouseholdLoadError
   = HouseholdSourceReadFailed FilePath IOException
@@ -162,10 +177,27 @@ data HouseholdLoadError
   deriving (Show)
 
 -- | Load one canonical Household root from disk into a typed 'HouseholdState'.
+--
+-- The ordinary read-only API projects from the same snapshot loader used by
+-- mutation delivery, so there is only one filesystem admission algorithm.
 loadCanonicalHousehold
   :: HouseholdRoot
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
-loadCanonicalHousehold root = do
+loadCanonicalHousehold root =
+  fmap (fmap householdWriteSnapshotState)
+    (loadCanonicalHouseholdWriteSnapshot root)
+
+-- | Load one canonical Household observation and retain the exact Actual/Plan
+-- root bytes from which its typed meaning was admitted.
+--
+-- Journal roots are read once here, then resolved with
+-- 'loadJournalFromRootSource'. This prevents the invalid temporal shape
+-- @HouseholdState from observation A / expected root bytes from observation B@
+-- without restricting ordinary include graphs.
+loadCanonicalHouseholdWriteSnapshot
+  :: HouseholdRoot
+  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
+loadCanonicalHouseholdWriteSnapshot root = do
   let paths = householdSourcePaths root
   accountsContentResult <- readHouseholdSource (householdAccountsJournalPath paths)
   case accountsContentResult of
@@ -178,13 +210,13 @@ loadActual
   :: HouseholdRoot
   -> HouseholdSourcePaths
   -> AccountRegistry
-  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
+  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
 loadActual root paths accountsRegistry = do
   rootTextResult <- readHouseholdSource (householdActualJournalPath paths)
   case rootTextResult of
     Left errors -> pure (Left errors)
     Right rootText -> do
-      loaded <- loadJournal (householdActualJournalPath paths)
+      loaded <- loadJournalFromRootSource (householdActualJournalPath paths) rootText
       case loaded of
         Left err -> pure (Left (pure (HouseholdActualLoadFailed err)))
         Right resolved -> case admitActualJournalFromResolvedJournal resolved rootText of
@@ -194,20 +226,21 @@ loadActual root paths accountsRegistry = do
                 pure (Left (pure (HouseholdAccountRegistryDisagreement
                   accountsRegistry
                   (journalAccountRegistry (actualJournalValue actualJournal)))))
-            | otherwise -> loadPlan root paths accountsRegistry actualJournal
+            | otherwise -> loadPlan root paths accountsRegistry rootText actualJournal
 
 loadPlan
   :: HouseholdRoot
   -> HouseholdSourcePaths
   -> AccountRegistry
+  -> Text
   -> ActualJournal
-  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
-loadPlan root paths accountsRegistry actualJournal = do
+  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
+loadPlan root paths accountsRegistry actualRootText actualJournal = do
   rootTextResult <- readHouseholdSource (householdPlanJournalPath paths)
   case rootTextResult of
     Left errors -> pure (Left errors)
     Right rootText -> do
-      loaded <- loadJournal (householdPlanJournalPath paths)
+      loaded <- loadJournalFromRootSource (householdPlanJournalPath paths) rootText
       case loaded of
         Left err -> pure (Left (pure (HouseholdPlanLoadFailed err)))
         Right resolved -> case admitPlanJournalFromResolvedJournal resolved rootText of
@@ -217,22 +250,32 @@ loadPlan root paths accountsRegistry actualJournal = do
                 pure (Left (pure (HouseholdPlanRegistryDisagreement
                   (householdPlanJournalPath paths)
                   "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
-            | otherwise -> loadBudget root paths accountsRegistry actualJournal rootText planJournal
+            | otherwise -> loadBudget
+                root
+                paths
+                accountsRegistry
+                actualRootText
+                actualJournal
+                rootText
+                planJournal
 
 loadBudget
   :: HouseholdRoot
   -> HouseholdSourcePaths
   -> AccountRegistry
+  -> Text
   -> ActualJournal
   -> Text
   -> PlanJournal
-  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
-loadBudget root paths accountsRegistry actualJournal planRootText planJournal = do
+  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
+loadBudget root paths accountsRegistry actualRootText actualJournal planRootText planJournal = do
   rootTextResult <- readHouseholdSource (householdBudgetJournalPath paths)
   case rootTextResult of
     Left errors -> pure (Left errors)
-    Right _ -> do
-      loaded <- loadJournal (householdBudgetJournalPath paths)
+    Right budgetRootText -> do
+      loaded <- loadJournalFromRootSource
+        (householdBudgetJournalPath paths)
+        budgetRootText
       case loaded of
         Left err -> pure (Left (pure (HouseholdBudgetLoadFailed err)))
         Right budgetJournal
@@ -243,19 +286,29 @@ loadBudget root paths accountsRegistry actualJournal planRootText planJournal = 
           | otherwise -> case admitHouseholdBudgetMovementJournal budgetJournal of
               Left errors -> pure (Left (pure (HouseholdBudgetMovementAdmitFailed errors)))
               Right budgetMovements ->
-                loadConfigsAndIssues root paths accountsRegistry actualJournal planRootText planJournal budgetJournal budgetMovements
+                loadConfigsAndIssues
+                  root
+                  paths
+                  accountsRegistry
+                  actualRootText
+                  actualJournal
+                  planRootText
+                  planJournal
+                  budgetJournal
+                  budgetMovements
 
 loadConfigsAndIssues
   :: HouseholdRoot
   -> HouseholdSourcePaths
   -> AccountRegistry
+  -> Text
   -> ActualJournal
   -> Text
   -> PlanJournal
   -> Journal
   -> [HouseholdBudgetMovement]
-  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
-loadConfigsAndIssues root paths accountsRegistry actualJournal planRootText planJournal budgetJournal budgetMovements = do
+  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
+loadConfigsAndIssues root paths accountsRegistry actualRootText actualJournal planRootText planJournal budgetJournal budgetMovements = do
   budgetTextResult <- readHouseholdSource (householdBudgetConfigPath paths)
   case budgetTextResult of
     Left errors -> pure (Left errors)
@@ -292,22 +345,28 @@ loadConfigsAndIssues root paths accountsRegistry actualJournal planRootText plan
                                   planRootText
                                   planJournal of
                                 Left errors -> pure (Left errors)
-                                Right dailyScope -> pure (Right HouseholdState
-                                  { householdStateRoot = root
-                                  , householdStatePaths = paths
-                                  , householdStateAccountsRegistry = accountsRegistry
-                                  , householdStateActualJournal = actualJournal
-                                  , householdStatePlanJournal = planJournal
-                                  , householdStateBudgetJournal = budgetJournal
-                                  , householdStateBudgetMovements = budgetMovements
-                                  , householdStateBudgetPolicy = budgetPolicy
-                                  , householdStateConfiguration = configuration
-                                  , householdStatePolicy = policy
-                                  , householdStateValidatedPolicy = validatedPolicy
-                                  , householdStateReportConfig = reportConfig
-                                  , householdStateIssues = issues
-                                  , householdStateDailyScope = dailyScope
-                                  })
+                                Right dailyScope ->
+                                  let state = HouseholdState
+                                        { householdStateRoot = root
+                                        , householdStatePaths = paths
+                                        , householdStateAccountsRegistry = accountsRegistry
+                                        , householdStateActualJournal = actualJournal
+                                        , householdStatePlanJournal = planJournal
+                                        , householdStateBudgetJournal = budgetJournal
+                                        , householdStateBudgetMovements = budgetMovements
+                                        , householdStateBudgetPolicy = budgetPolicy
+                                        , householdStateConfiguration = configuration
+                                        , householdStatePolicy = policy
+                                        , householdStateValidatedPolicy = validatedPolicy
+                                        , householdStateReportConfig = reportConfig
+                                        , householdStateIssues = issues
+                                        , householdStateDailyScope = dailyScope
+                                        }
+                                  in pure (Right HouseholdWriteSnapshot
+                                      { householdWriteSnapshotState = state
+                                      , householdWriteSnapshotActualSource = actualRootText
+                                      , householdWriteSnapshotPlanSource = planRootText
+                                      })
 
 readHouseholdSource
   :: FilePath
