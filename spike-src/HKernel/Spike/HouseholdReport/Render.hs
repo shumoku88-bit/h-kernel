@@ -238,6 +238,7 @@ issueCardLabelWidth = 8
 renderStatus :: IssueStatus -> Text
 renderStatus Open = "open"
 renderStatus Resolved = "resolved"
+renderStatus Dropped = "dropped"
 
 renderAmount :: Amount -> Text
 renderAmount amount =
