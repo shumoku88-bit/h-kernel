@@ -75,7 +75,7 @@ import HKernel.Editor.ActualReverse
   , suggestActualReverseEventIdText
   )
 import HKernel.Editor.ActualWorkspace (transactionEntriesForAccount)
-import HKernel.Editor.ActualWriter (publishActualBlockFromResolvedJournal)
+import HKernel.Editor.ActualWriter (publishActualBlockWithPathAdmission)
 import HKernel.Editor.Interaction.ActualAdd
   ( ActualAddMode(..)
   , ActualAddState(..)
@@ -1546,10 +1546,16 @@ publishActualCandidate
   -> Text
   -> EventM Name AppWrapper ()
 publishActualCandidate context stickyDay block = do
-  let stickyContext = context { contextEntryDay = stickyDay }
+  let state = contextHouseholdState context
+      root = householdStateRoot state
+      stickyContext = context { contextEntryDay = stickyDay }
+      postAdmission _ = loadCanonicalHousehold root
   writeResult <- suspendAndResume'
-    (publishActualBlockFromResolvedJournal
-      (contextSourcePath context) (contextSource context) block)
+    (publishActualBlockWithPathAdmission
+      postAdmission
+      (contextSourcePath context)
+      (contextSource context)
+      block)
   let writeOutcome = classifyActualAddWriteResult writeResult
   case writeOutcome of
     ActualAddWriteSucceeded -> do
