@@ -57,6 +57,7 @@ main = do
     , namedIO "coordinated writer rejects stale input after staging" testWriterPrePublishStale
     , namedIO "coordinated writer protects Plan change between installs" testWriterPlanChangesBetweenInstalls
     , namedIO "coordinated writer protects Actual change before admission" testWriterActualChangesBeforeAdmission
+    , namedIO "successful admission cannot mask later Actual" testWriterSuccessAdmissionDoesNotMaskLaterActual
     , namedIO "coordinated writer rolls both back" testWriterRollback
     , namedIO "coordinated rollback protects later writer" testWriterRollbackProtectsLaterWrite
     , namedIO "partial installation restores expected roots" testWriterPartialInstallFailure
@@ -439,6 +440,26 @@ testWriterActualChangesBeforeAdmission = withWriterFixtures $ \actualPath planPa
     Left PlanCompleteAdvanceActualStale ->
       actual == laterActual && plan == "plan-old"
     _ -> False
+
+-- | Whole-Household admission can itself overlap a later writer. Even when the
+-- admission result is successful, success belongs to this operation only while
+-- both published roots are still its exact candidates.
+testWriterSuccessAdmissionDoesNotMaskLaterActual :: IO Bool
+testWriterSuccessAdmissionDoesNotMaskLaterActual =
+  withWriterFixtures $ \actualPath planPath -> do
+    let laterActual = "actual-from-later-writer-during-successful-admission"
+        admitThenReplace = do
+          TIO.writeFile actualPath laterActual
+          pure (Right () :: Either String ())
+    result <- publishPlanCompleteAdvance
+      admitThenReplace
+      (writerIntent actualPath planPath)
+    actual <- TIO.readFile actualPath
+    plan <- TIO.readFile planPath
+    pure $ case result of
+      Left PlanCompleteAdvanceActualStale ->
+        actual == laterActual && plan == "plan-old"
+      _ -> False
 
 testWriterRollback :: IO Bool
 testWriterRollback = withWriterFixtures $ \actualPath planPath -> do
