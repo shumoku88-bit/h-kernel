@@ -47,7 +47,9 @@ main = do
         , ("testPlanFinishNegativeAmount", testPlanFinishNegativeAmount)
         , ("testPlanFinishZeroAmount", testPlanFinishZeroAmount)
         , ("testResolvedPlanAdd", testResolvedPlanAdd)
+        , ("testResolvedPlanAddWithPlanInclude", testResolvedPlanAddWithPlanInclude)
         , ("testResolvedPlanEditCompletion", testResolvedPlanEditCompletion)
+        , ("testResolvedPlanEditWithPlanInclude", testResolvedPlanEditWithPlanInclude)
         , ("testResolvedPlanFinish", testResolvedPlanFinish)
         , ("testResolvedPlanFinishInvalidId", testResolvedPlanFinishInvalidId)
         ]
@@ -71,6 +73,16 @@ planFixture = T.unlines
   , "  expenses:food  500 JPY"
   ]
 
+planRootFixture :: Text
+planRootFixture = T.unlines
+  [ "include accounts.journal"
+  , ""
+  , "2023-01-01 existing plan"
+  , "  ; plan-id: plan-2023-01-01-lunch"
+  , "  assets:bank  -500 JPY"
+  , "  expenses:food  500 JPY"
+  ]
+
 metadataRichPlanFixture :: Text
 metadataRichPlanFixture = T.unlines
   [ "account assets:bank"
@@ -79,6 +91,23 @@ metadataRichPlanFixture = T.unlines
   , "account expenses:food"
   , "  type: Expense"
   , "  commodity: JPY"
+  , ""
+  , "2023-01-01 existing plan"
+  , "  ; plan-id: plan-2023-01-01-lunch"
+  , "  ; recur: monthly"
+  , "  ; series: lunch-series"
+  , "  ; daily-target-id: lunch-target"
+  , "  ; reservation-id: lunch-reservation"
+  , "  ; reservation-amount: 100"
+  , "  ; reservation-commodity: JPY"
+  , "  ; human note retained verbatim"
+  , "  assets:bank  -500 JPY"
+  , "  expenses:food  500 JPY"
+  ]
+
+metadataRichPlanRootFixture :: Text
+metadataRichPlanRootFixture = T.unlines
+  [ "include accounts.journal"
   , ""
   , "2023-01-01 existing plan"
   , "  ; plan-id: plan-2023-01-01-lunch"
@@ -135,6 +164,13 @@ actualRootFixture = T.unlines
 
 resolvedActualJournal :: Journal
 resolvedActualJournal = either (error . show) id (parseJournal actualFixture)
+
+resolvedPlanJournal :: Journal
+resolvedPlanJournal = either (error . show) id (parseJournal planFixture)
+
+resolvedMetadataRichPlanJournal :: Journal
+resolvedMetadataRichPlanJournal =
+  either (error . show) id (parseJournal metadataRichPlanFixture)
 
 actualClosedRootFixture :: Text
 actualClosedRootFixture = actualRootFixture <> T.unlines
@@ -372,6 +408,22 @@ testResolvedPlanAdd =
     actualRootFixture
     (planAddIntent Nothing))
 
+testResolvedPlanAddWithPlanInclude :: Bool
+testResolvedPlanAddWithPlanInclude =
+  isLeft (parsePlanJournal planRootFixture)
+    && case preparePlanAddFromResolvedJournals
+        resolvedPlanJournal
+        resolvedActualJournal
+        planRootFixture
+        actualRootFixture
+        (planAddIntent Nothing) of
+      Right preview ->
+        "include accounts.journal" `T.isPrefixOf`
+          addCandidateCompleteSource preview
+          && "plan-2023-01-03-test-dinner"
+            `T.isInfixOf` addCandidateBlock preview
+      Left err -> error (show err)
+
 testResolvedPlanEditCompletion :: Bool
 testResolvedPlanEditCompletion =
   let intent = PlanEditIntent
@@ -386,6 +438,39 @@ testResolvedPlanEditCompletion =
       intent of
     Left (EditPlanAlreadyClosed _ :| []) -> True
     _ -> False
+
+testResolvedPlanEditWithPlanInclude :: Bool
+testResolvedPlanEditWithPlanInclude =
+  let intent = PlanEditIntent
+        { editPlanId = "plan-2023-01-01-lunch"
+        , editDate = Just (fromGregorian 2023 1 7)
+        , editAmount = Just (positiveEditQty "650")
+        }
+      retainedMetadata =
+        [ "; recur: monthly"
+        , "; series: lunch-series"
+        , "; daily-target-id: lunch-target"
+        , "; reservation-id: lunch-reservation"
+        , "; reservation-amount: 100"
+        , "; reservation-commodity: JPY"
+        , "; human note retained verbatim"
+        ]
+  in isLeft (parsePlanJournal metadataRichPlanRootFixture)
+      && case preparePlanEditFromResolvedJournals
+          resolvedMetadataRichPlanJournal
+          resolvedActualJournal
+          metadataRichPlanRootFixture
+          actualRootFixture
+          intent of
+        Right preview ->
+          let block = editCandidateBlock preview
+              candidate = editCandidateCompleteSource preview
+          in "include accounts.journal" `T.isPrefixOf` candidate
+              && "2023-01-07 existing plan" `T.isInfixOf` block
+              && "-650 JPY" `T.isInfixOf` block
+              && "650 JPY" `T.isInfixOf` block
+              && all (`T.isInfixOf` block) retainedMetadata
+        Left err -> error (show err)
 
 testResolvedPlanFinish :: Bool
 testResolvedPlanFinish =
