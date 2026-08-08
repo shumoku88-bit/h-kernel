@@ -23,11 +23,13 @@ module HKernel.Editor.ActualWriter
   , publishBudgetJournalAppend
   ) where
 
-import Control.Exception (IOException, catch)
+import Control.Exception (IOException, catch, onException, throwIO)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import qualified Data.Text.IO as TextIO
 import System.Directory (renameFile, removeFile)
+import System.FilePath (takeDirectory, takeFileName)
+import System.IO (Handle, hClose, openTempFile)
 
 import HKernel.Actual.Journal
   ( ActualJournal
@@ -80,21 +82,39 @@ data WriteError sourceError
 -- | File effects used by the writer.
 --
 -- Keeping these operations explicit makes the recovery path testable without
--- weakening the ordinary IO entry point.
+-- weakening the ordinary IO entry point. 'stageSiblingTextFile' must allocate
+-- a fresh path in the target directory so concurrent writer invocations never
+-- share a backup or candidate staging file.
 data WriterFileSystem = WriterFileSystem
-  { readTextFile   :: FilePath -> IO Text
-  , writeTextFile  :: FilePath -> Text -> IO ()
-  , renameTextFile :: FilePath -> FilePath -> IO ()
-  , removeTextFile :: FilePath -> IO ()
+  { readTextFile          :: FilePath -> IO Text
+  , writeTextFile         :: FilePath -> Text -> IO ()
+  , stageSiblingTextFile  :: FilePath -> String -> Text -> IO FilePath
+  , renameTextFile        :: FilePath -> FilePath -> IO ()
+  , removeTextFile        :: FilePath -> IO ()
   }
 
 defaultWriterFileSystem :: WriterFileSystem
 defaultWriterFileSystem = WriterFileSystem
   { readTextFile = TextIO.readFile
   , writeTextFile = TextIO.writeFile
+  , stageSiblingTextFile = stageSiblingText
   , renameTextFile = renameFile
   , removeTextFile = removeFile
   }
+
+stageSiblingText :: FilePath -> String -> Text -> IO FilePath
+stageSiblingText targetPath role source = do
+  let directory = takeDirectory targetPath
+      template = takeFileName targetPath <> role
+  (tempPath, handle) <- openTempFile directory template
+  (TextIO.hPutStr handle source >> hClose handle >> pure tempPath)
+    `onException` cleanupOpenTemp tempPath handle
+
+cleanupOpenTemp :: FilePath -> Handle -> IO ()
+cleanupOpenTemp tempPath handle = do
+  _ <- catch (hClose handle) (\(_ :: IOException) -> pure ())
+  _ <- catch (removeFile tempPath) (\(_ :: IOException) -> pure ())
+  pure ()
 
 -- | Publish a source whose complete admission is pure and depends only on its
 -- text. This remains the ordinary boundary for Actual and other single-source
@@ -251,6 +271,10 @@ checkStaleAndWrite fileSystem admit intent = do
     then pure (Left StaleFile)
     else withAtomicSwap fileSystem admit intent
 
+-- | Stage both old and new bytes at unique sibling paths, then fence publication
+-- with a second stale check immediately before rename. No lock is introduced:
+-- the project remains single-operator, but two processes cannot silently share
+-- staging filenames or overwrite a change that landed during candidate staging.
 withAtomicSwap
   :: WriterFileSystem
   -> Admission sourceError
@@ -258,48 +282,123 @@ withAtomicSwap
   -> IO (Either (WriteError sourceError) ())
 withAtomicSwap fileSystem admit intent = do
   let filePath = targetFilePath intent
-      backupPath = filePath <> ".backup.tmp"
-      newPath = filePath <> ".new.tmp"
       expectedSource = expectedSourceText (expectedOldBytes intent)
       candidateSource = candidateSourceText (candidateNewBytes intent)
 
-  writeTextFile fileSystem backupPath expectedSource
-  writeTextFile fileSystem newPath candidateSource
-  renameTextFile fileSystem newPath filePath
+  backupPath <- stageSiblingTextFile fileSystem filePath ".backup.tmp" expectedSource
+  newPath <- stageSiblingTextFile fileSystem filePath ".new.tmp" candidateSource
+    `onException` removeQuietly fileSystem backupPath
 
-  verifyOrRollback fileSystem admit filePath backupPath
+  preRename <- catch
+    (Right <$> readTextFile fileSystem filePath)
+    (pure . Left)
+  case preRename of
+    Left (readError :: IOException) -> do
+      cleanupStaged fileSystem [newPath, backupPath]
+      throwIO readError
+    Right latestBytes
+      | latestBytes /= expectedSource -> do
+          cleanupStaged fileSystem [newPath, backupPath]
+          pure (Left StaleFile)
+      | otherwise -> do
+          renameTextFile fileSystem newPath filePath
+            `onException` cleanupStaged fileSystem [newPath, backupPath]
+          verifyOrRollback
+            fileSystem
+            admit
+            filePath
+            backupPath
+            candidateSource
 
 verifyOrRollback
   :: WriterFileSystem
   -> Admission sourceError
   -> FilePath
   -> FilePath
+  -> Text
   -> IO (Either (WriteError sourceError) ())
-verifyOrRollback fileSystem admit filePath backupPath = do
-  postRead <- catch
-    (Right <$> readTextFile fileSystem filePath)
-    (pure . Left)
+verifyOrRollback fileSystem admit filePath backupPath candidateSource = do
+  postRead <- tryRead fileSystem filePath
   case postRead of
-    Left (readError :: IOException) -> do
-      restored <- restoreBackup fileSystem backupPath filePath
+    Left readError -> do
+      restored <- restoreBackupIfCandidate
+        fileSystem backupPath filePath candidateSource
       pure (Left (PostPublishReadFailed (show readError) restored))
-    Right postBytes -> do
-      admitted <- admit filePath postBytes
-      case admitted of
-        Left errs -> do
-          restored <- restoreBackup fileSystem backupPath filePath
-          pure (Left (PostAdmissionFailed errs restored))
-        Right () -> do
-          _ <- catch
-            (removeTextFile fileSystem backupPath)
-            (\(_ :: IOException) -> pure ())
+    Right postBytes
+      | postBytes /= candidateSource -> do
+          removeQuietly fileSystem backupPath
+          pure (Left StaleFile)
+      | otherwise -> do
+          admitted <- admit filePath postBytes
+          case admitted of
+            Left errs -> do
+              restored <- restoreBackupIfCandidate
+                fileSystem backupPath filePath candidateSource
+              pure (Left (PostAdmissionFailed errs restored))
+            Right () -> verifyPublishedCandidate
+              fileSystem filePath backupPath candidateSource
+
+-- | Admission may perform filesystem IO and therefore opens another temporal
+-- window. Re-read once after admission so success is never reported for a file
+-- that has already ceased to be this writer's candidate.
+verifyPublishedCandidate
+  :: WriterFileSystem
+  -> FilePath
+  -> FilePath
+  -> Text
+  -> IO (Either (WriteError sourceError) ())
+verifyPublishedCandidate fileSystem filePath backupPath candidateSource = do
+  finalRead <- tryRead fileSystem filePath
+  case finalRead of
+    Left readError -> do
+      restored <- restoreBackupIfCandidate
+        fileSystem backupPath filePath candidateSource
+      pure (Left (PostPublishReadFailed (show readError) restored))
+    Right finalBytes
+      | finalBytes /= candidateSource -> do
+          removeQuietly fileSystem backupPath
+          pure (Left StaleFile)
+      | otherwise -> do
+          removeQuietly fileSystem backupPath
           pure (Right ())
 
-restoreBackup :: WriterFileSystem -> FilePath -> FilePath -> IO Bool
-restoreBackup fileSystem backupPath filePath =
+-- | Restore only while the target still contains exactly the bytes published by
+-- this writer. If another writer has changed the target, never overwrite it.
+-- A verified mismatch makes the old backup obsolete; an unreadable target keeps
+-- the backup available for explicit recovery rather than guessing.
+restoreBackupIfCandidate
+  :: WriterFileSystem
+  -> FilePath
+  -> FilePath
+  -> Text
+  -> IO Bool
+restoreBackupIfCandidate fileSystem backupPath filePath candidateSource = do
+  current <- tryRead fileSystem filePath
+  case current of
+    Left _ -> pure False
+    Right currentBytes
+      | currentBytes /= candidateSource -> do
+          removeQuietly fileSystem backupPath
+          pure False
+      | otherwise -> catch
+          (renameTextFile fileSystem backupPath filePath >> pure True)
+          (\(_ :: IOException) -> pure False)
+
+tryRead :: WriterFileSystem -> FilePath -> IO (Either IOException Text)
+tryRead fileSystem filePath =
   catch
-    (renameTextFile fileSystem backupPath filePath >> pure True)
-    (\(_ :: IOException) -> pure False)
+    (Right <$> readTextFile fileSystem filePath)
+    (pure . Left)
+
+cleanupStaged :: WriterFileSystem -> [FilePath] -> IO ()
+cleanupStaged fileSystem = mapM_ (removeQuietly fileSystem)
+
+removeQuietly :: WriterFileSystem -> FilePath -> IO ()
+removeQuietly fileSystem filePath = do
+  _ <- catch
+    (removeTextFile fileSystem filePath)
+    (\(_ :: IOException) -> pure ())
+  pure ()
 
 expectedSourceText :: ExpectedSource -> Text
 expectedSourceText (ExpectedSource source) = source
