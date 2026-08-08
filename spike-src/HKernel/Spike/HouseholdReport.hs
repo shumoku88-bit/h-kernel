@@ -8,6 +8,9 @@
 module HKernel.Spike.HouseholdReport
   ( HouseholdSourceError(..)
   , HouseholdReportSurface(..)
+  , PlannedTransactionHorizon(..)
+  , ClassifiedPlannedTransaction(..)
+  , classifyPlannedTransactions
   , EnvelopeBackingLine(..)
   , envelopeLedgerRemaining
   , envelopePostPlanHeadroom
@@ -144,6 +147,20 @@ data AdmittedPlans = AdmittedPlans
   , admittedOutgoingPlans   :: [PlanFact]
   } deriving (Eq, Show)
 
+-- | Display relation of an open outgoing Plan to the resolved current cycle.
+-- This is intentionally presentation-facing classification; Budget, Backing,
+-- and Daily Target remain bounded by the current cycle independently.
+data PlannedTransactionHorizon
+  = BeforeCurrentCycle
+  | InCurrentCycle
+  | AfterCurrentCycle
+  deriving (Eq, Show)
+
+data ClassifiedPlannedTransaction = ClassifiedPlannedTransaction
+  { classifiedPlanHorizon :: PlannedTransactionHorizon
+  , classifiedPlanValue   :: CommittedOutgoingPlan
+  } deriving (Eq, Show)
+
 data HouseholdReportSurface = HouseholdReportSurface
   { householdCycleAccounts       :: CycleAccounts
   , householdPlannedTransactions :: [CommittedOutgoingPlan]
@@ -233,20 +250,23 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
       entitlement = householdBudgetEntitlement budgetObservation
       remaining = householdBudgetRemaining budgetObservation
       openPlanIds = Set.fromList (map committedPlanId openPlanValues)
-      openPlans = openPlansInPeriod current
+      openPlans = openEligiblePlans
         (journalAccountRegistry journal) openPlanIds outgoingPlans
+      currentOpenPlans = filter
+        (periodContains current . committedPlanDate . planFactValue)
+        openPlans
       backingPlans =
         [ HouseholdBackingPlan
             { householdBackingPlanDestination = planFactTo plan
             , householdBackingPlanAmount = committedPlanAmount (planFactValue plan)
             }
-        | plan <- openPlans
+        | plan <- currentOpenPlans
         ]
       backing = deriveHouseholdBacking
         observation current journal admittedPolicy
         budget entitlement consumption remaining backingPlans
       target = deriveDailyTarget observation current journal
-        dailyScope (map planFactValue openPlans)
+        dailyScope (map planFactValue currentOpenPlans)
   pure HouseholdReportSurface
     { householdCycleAccounts = cycleAccounts current previous journal
     , householdPlannedTransactions = map planFactValue openPlans
@@ -254,6 +274,23 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
     , householdEnvelopeBacking = backing
     , householdDailyTarget = target
     }
+
+-- | Classify already admitted open outgoing Plans without changing which Plans
+-- participate in current-cycle accounting calculations.
+classifyPlannedTransactions
+  :: Period
+  -> [CommittedOutgoingPlan]
+  -> [ClassifiedPlannedTransaction]
+classifyPlannedTransactions current = map classifyOne
+  where
+    classifyOne plan = ClassifiedPlannedTransaction
+      { classifiedPlanHorizon = classifyDate (committedPlanDate plan)
+      , classifiedPlanValue = plan
+      }
+    classifyDate day
+      | day < periodStart current = BeforeCurrentCycle
+      | periodContains current day = InCurrentCycle
+      | otherwise = AfterCurrentCycle
 
 validatePlanJournalRegistry
   :: Journal
@@ -450,19 +487,17 @@ resolveCycles observation journal incomeAccount anchors =
       (NonEmpty.singleton . sourceError "household.toml" 0 . tshow)
       (mkPeriod start end)
 
-openPlansInPeriod
-  :: Period
-  -> AccountRegistry
+openEligiblePlans
+  :: AccountRegistry
   -> Set.Set PlanId
   -> [PlanFact]
   -> [PlanFact]
-openPlansInPeriod period registry openPlanIds =
+openEligiblePlans registry openPlanIds =
   sortOn (committedPlanDate . planFactValue)
     . filter eligible
   where
     eligible plan =
       Set.member (committedPlanId (planFactValue plan)) openPlanIds
-        && periodContains period (committedPlanDate (planFactValue plan))
         && accountTypeFor (planFactFrom plan) registry == Just Asset
         && accountTypeFor (planFactTo plan) registry
           `elem` [Just Expense, Just Liability]

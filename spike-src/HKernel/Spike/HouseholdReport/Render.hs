@@ -35,7 +35,10 @@ import HKernel.Render
   )
 import HKernel.Render.TerminalStyle
 import HKernel.Report (ReportBook)
-import HKernel.Report.CycleAccounts (CycleAccounts)
+import HKernel.Report.CycleAccounts
+  ( CycleAccounts
+  , cycleAccountsCurrentPeriod
+  )
 import HKernel.Report.Presentation
 import HKernel.Spike.HouseholdReport
 
@@ -106,7 +109,9 @@ renderHouseholdReportSectionWithCycle renderCycle presentation section surface =
     HouseholdDailyTarget ->
       renderDailyTarget presentation (householdDailyTarget surface)
     HouseholdPlannedTransactions ->
-      renderPlans (householdPlannedTransactions surface)
+      renderPlans
+        (cycleAccountsCurrentPeriod (householdCycleAccounts surface))
+        (householdPlannedTransactions surface)
     HouseholdIssues visibility ->
       renderHouseholdIssues visibility (householdIssues surface)
     HouseholdEnvelopeBacking ->
@@ -161,16 +166,57 @@ renderRates rates = T.intercalate ", " (map renderRate rates)
           fraction = abs (scaled `mod` 100)
       in tshow whole <> "." <> T.justifyRight 2 '0' (tshow fraction)
 
-renderPlans :: [CommittedOutgoingPlan] -> Text
-renderPlans plans = T.intercalate "\n"
+renderPlans :: Period -> [CommittedOutgoingPlan] -> Text
+renderPlans period plans = T.intercalate "\n"
   [ terminalHeader "Planned Transactions"
-  , terminalMeta "Source: plan.journal | Open outgoing commitments inside the resolved current cycle"
+  , terminalMeta "Source: plan.journal | All open outgoing commitments; current-cycle calculations remain cycle-bounded"
   , ""
-  , if null plans
-      then terminalDim "(none)"
-      else T.intercalate "\n" (map renderCommittedOutgoingPlanLine plans)
+  , renderPlanHorizon period plans
   , ""
   ]
+
+renderPlanHorizon :: Period -> [CommittedOutgoingPlan] -> Text
+renderPlanHorizon _ [] = terminalDim "(none)"
+renderPlanHorizon period plans =
+  T.intercalate "\n" (beforeLines ++ currentLines ++ afterLines)
+  where
+    classified = classifyPlannedTransactions period plans
+    before = plansAt BeforeCurrentCycle classified
+    current = plansAt InCurrentCycle classified
+    after = plansAt AfterCurrentCycle classified
+    beforeLines
+      | null before = []
+      | otherwise =
+          [ terminalYellow "Open before current cycle"
+          , renderPlanLines before
+          , ""
+          ]
+    currentLines
+      | null current = [terminalDim "(no open commitments inside current cycle)"]
+      | otherwise = [renderPlanLines current]
+    afterLines
+      | null after = []
+      | otherwise =
+          [ ""
+          , terminalMeta
+              ("──────── current cycle ends before "
+                <> renderDay (periodEndExclusive period)
+                <> " ────────")
+          , renderPlanLines after
+          ]
+
+plansAt
+  :: PlannedTransactionHorizon
+  -> [ClassifiedPlannedTransaction]
+  -> [CommittedOutgoingPlan]
+plansAt horizon classified =
+  [ classifiedPlanValue plan
+  | plan <- classified
+  , classifiedPlanHorizon plan == horizon
+  ]
+
+renderPlanLines :: [CommittedOutgoingPlan] -> Text
+renderPlanLines = T.intercalate "\n" . map renderCommittedOutgoingPlanLine
 
 renderHouseholdIssues :: IssueVisibility -> [HouseholdIssue] -> Text
 renderHouseholdIssues visibility issues = T.intercalate "\n"
