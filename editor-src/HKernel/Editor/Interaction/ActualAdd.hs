@@ -69,8 +69,6 @@ data ActualAddMode
   = EditingActualAdd
   | SelectingActualAccount AccountSelectionTarget
   | ShowingActualAddPreview ActualAddPreview
-  | ConfirmingActualAdd Text
-  | ActualAddConfirmed Text
   deriving (Eq, Show)
 
 data ActualAddState = ActualAddState
@@ -82,9 +80,6 @@ data ActualAddAction
   = BeginAccountSelection AccountSelectionTarget
   | ChooseAccount Account
   | CancelAccountSelection
-  | RequestActualAddConfirmation
-  | CancelActualAddConfirmation
-  | ConfirmActualAdd
   | ReturnToActualAddInput
   deriving (Eq, Show)
 
@@ -147,13 +142,17 @@ matchesDailyRole registry target account =
 
 -- | Enter preview mode with a preview prepared by the Actual operation owner.
 -- Interaction does not need the complete source that produced this value.
+-- A ready preview is already the single human confirmation surface; delivery
+-- adapters may explicitly publish its candidate block without introducing a
+-- second interaction state containing the same information.
 enterActualAddPreview :: ActualAddPreview -> ActualAddState -> ActualAddState
 enterActualAddPreview preview state =
   state { actualAddMode = ShowingActualAddPreview preview }
 
 -- | Apply one source-independent interaction action to the ordinary Actual add
 -- workflow. Candidate preparation remains owned by 'HKernel.Editor.ActualAppend';
--- delivery adapters supply the resulting preview through 'enterActualAddPreview'.
+-- publication is an explicit delivery effect from a ready preview, not another
+-- duplicated state transition.
 transitionActualAdd
   :: ActualAddAction
   -> ActualAddState
@@ -177,21 +176,6 @@ transitionActualAdd action state = case action of
     _ -> state
   CancelAccountSelection -> case actualAddMode state of
     SelectingActualAccount _ -> state { actualAddMode = EditingActualAdd }
-    _ -> state
-  RequestActualAddConfirmation -> case actualAddMode state of
-    ShowingActualAddPreview (ActualAddCandidateReady block) ->
-      state { actualAddMode = ConfirmingActualAdd block }
-    _ -> state
-  CancelActualAddConfirmation -> case actualAddMode state of
-    ConfirmingActualAdd block ->
-      state
-        { actualAddMode =
-            ShowingActualAddPreview (ActualAddCandidateReady block)
-        }
-    _ -> state
-  ConfirmActualAdd -> case actualAddMode state of
-    ConfirmingActualAdd block ->
-      state { actualAddMode = ActualAddConfirmed block }
     _ -> state
   ReturnToActualAddInput -> state { actualAddMode = EditingActualAdd }
 
