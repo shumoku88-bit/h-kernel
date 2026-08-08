@@ -28,8 +28,11 @@ import HKernel.Editor.ActualReverse (ActualReverseIntent(..))
 import HKernel.Editor.IssueAppend (IssueAppendIntent(..))
 import HKernel.Editor.PlanLifecycle
   ( PlanAddIntent(..)
+  , PlanEditIntent(..)
   , PlanFinishIntent(..)
+  , PositivePlanEditAmount
   , PositivePlanFinishAmount
+  , mkPositivePlanEditAmount
   , mkPositivePlanFinishAmount
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
@@ -57,6 +60,7 @@ data EditorCommand
   | BudgetMovementCmd FilePath HouseholdBudgetMovement
   | IssueCmd FilePath IssueAppendIntent
   | PlanAddCmd FilePath FilePath PlanAddIntent
+  | PlanEditCmd FilePath FilePath PlanEditIntent
   | PlanFinishCmd FilePath FilePath PlanFinishIntent
   deriving (Eq, Show)
 
@@ -80,6 +84,10 @@ data CliError
   | CliPlanAddDescriptionRequired
   | CliPlanAddPostingRequired
   | CliPlanAddOptionInvalid
+  | CliPlanEditIdRequired
+  | CliPlanEditChangeRequired
+  | CliPlanEditAmountMustBePositive
+  | CliPlanEditOptionInvalid
   | CliPlanFinishIdRequired
   | CliPlanFinishDateRequired
   | CliPlanFinishAmountMustBePositive
@@ -93,6 +101,7 @@ parseEditorCommand ("account":args) = parseLeaf parseAccount args
 parseEditorCommand ("budget":args) = parseLeaf parseBudget args
 parseEditorCommand ("issue":args) = parseLeaf parseIssue args
 parseEditorCommand ("plan":"add":args) = parseLeaf parsePlanAdd args
+parseEditorCommand ("plan":"edit":args) = parseLeaf parsePlanEdit args
 parseEditorCommand ("plan":"finish":args) = parseLeaf parsePlanFinish args
 parseEditorCommand _ = Left CliUsage
 
@@ -256,6 +265,54 @@ parsePlanAddOptions fields ("--series":series:rest) =
     rest
 parsePlanAddOptions _ _ = Left CliPlanAddOptionInvalid
 
+data PlanEditFields = PlanEditFields
+  { planEditIdField     :: Maybe Text
+  , planEditDateField   :: Maybe Day
+  , planEditAmountField :: Maybe PositivePlanEditAmount
+  }
+
+emptyPlanEditFields :: PlanEditFields
+emptyPlanEditFields = PlanEditFields Nothing Nothing Nothing
+
+parsePlanEdit :: [String] -> Either CliError EditorCommand
+parsePlanEdit (planFile:actualFile:optionArgs) = do
+  fields <- parsePlanEditOptions emptyPlanEditFields optionArgs
+  planId <- case planEditIdField fields of
+    Just value | not (T.null value) -> Right value
+    _ -> Left CliPlanEditIdRequired
+  case (planEditDateField fields, planEditAmountField fields) of
+    (Nothing, Nothing) -> Left CliPlanEditChangeRequired
+    _ -> Right
+      (PlanEditCmd planFile actualFile
+        (PlanEditIntent
+          planId
+          (planEditDateField fields)
+          (planEditAmountField fields)))
+parsePlanEdit _ = Left CliUsage
+
+parsePlanEditOptions
+  :: PlanEditFields
+  -> [String]
+  -> Either CliError PlanEditFields
+parsePlanEditOptions fields [] = Right fields
+parsePlanEditOptions fields ("--id":planId:rest) =
+  parsePlanEditOptions fields
+    { planEditIdField = Just (T.pack planId) }
+    rest
+parsePlanEditOptions fields ("--date":dateText:rest) = do
+  date <- parseDate dateText
+  parsePlanEditOptions fields
+    { planEditDateField = Just date }
+    rest
+parsePlanEditOptions fields ("--amount":quantityText:rest) = do
+  quantity <- parseQuantityValue quantityText
+  positiveAmount <- mapDomainError CliPlanEditAmountMustBePositive
+    (mkPositivePlanEditAmount quantity)
+  parsePlanEditOptions fields
+    { planEditAmountField = Just positiveAmount }
+    rest
+parsePlanEditOptions _ _ = Left CliPlanEditOptionInvalid
+
 data PlanFinishFields = PlanFinishFields
   { planFinishIdField     :: Maybe Text
   , planFinishDateField   :: Maybe Day
@@ -371,6 +428,10 @@ renderCliError errorValue = case errorValue of
   CliPlanAddDescriptionRequired -> "--description is required for plan add"
   CliPlanAddPostingRequired -> "at least one --posting is required for plan add"
   CliPlanAddOptionInvalid -> "invalid or incomplete plan add option"
+  CliPlanEditIdRequired -> "--id is required for plan edit"
+  CliPlanEditChangeRequired -> "plan edit requires --date or --amount"
+  CliPlanEditAmountMustBePositive -> "--amount must be a positive magnitude for plan edit"
+  CliPlanEditOptionInvalid -> "invalid or incomplete plan edit option"
   CliPlanFinishIdRequired -> "--id is required for plan finish"
   CliPlanFinishDateRequired -> "--actual-date is required for plan finish"
   CliPlanFinishAmountMustBePositive -> "--actual-amount must be a positive magnitude"
@@ -385,5 +446,6 @@ usageText = unlines
   , "  h-kernel-editor-cli budget [--commit] <budget_alloc.tsv> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm>"
   , "  h-kernel-editor-cli issue [--commit] <issues.tsv> <id> <status> <YYYY-MM-DD> <category> <title> <qty|-> <comm|-> <details...>"
   , "  h-kernel-editor-cli plan add [--commit] <plan.journal> <actual.journal> --date YYYY-MM-DD --description DESC --posting ACCT QTY COMM ... [--id ID] [--series SERIES]"
+  , "  h-kernel-editor-cli plan edit [--commit] <plan.journal> <actual.journal> --id ID [--date YYYY-MM-DD] [--amount POSITIVE_QTY]"
   , "  h-kernel-editor-cli plan finish [--commit] <plan.journal> <actual.journal> --id ID --actual-date YYYY-MM-DD [--actual-amount POSITIVE_QTY]"
   ]
