@@ -58,16 +58,50 @@ main = do
     expectedBlock
     (candidateBlock preview)
 
-  let resolvedPreview = mustRight
+  let resolvedJournal = mustRight (parseJournal resolvedFixtureSource)
+      resolvedPreview = mustRight
         (prepareActualReverseFromResolvedJournal
-          (mustRight (parseJournal resolvedFixtureSource))
+          resolvedJournal
           resolvedActualRoot
           validIntent)
   assertEqual "reverse using declarations outside the Actual root"
     expectedBlock
     (candidateBlock resolvedPreview)
 
-  -- 2. Candidate complete source is re-parseable and provenance remains typed.
+  -- 2. Delivery-neutral input keeps the target typed and converges on the
+  -- same reversal candidate as the explicit intent path.
+  let validInput = ActualReverseInput
+        { reverseInputEventIdText = "event-123-reversal-1"
+        , reverseInputDateText = "2026-08-05"
+        , reverseInputDescriptionText = "Reverse mistaken expense"
+        }
+  assertEqual "build reversal intent around the selected typed target"
+    (Right validIntent)
+    (buildActualReverseIntent targetId validInput)
+  assertEqual "delivery input prepares the same validated reversal block"
+    (ActualReverseCandidateReady expectedBlock)
+    (prepareActualReverseInputFromResolvedJournal
+      resolvedJournal resolvedActualRoot targetId validInput)
+  assertEqual "reject malformed reversal identity before candidate creation"
+    (Left ActualReverseInvalidEventId)
+    (buildActualReverseIntent targetId
+      validInput { reverseInputEventIdText = "bad event id" })
+  assertEqual "reject malformed reversal date before candidate creation"
+    (Left ActualReverseInvalidDate)
+    (buildActualReverseIntent targetId
+      validInput { reverseInputDateText = "2026-99-99" })
+  assertEqual "suggest the simple reversal identity when it is free"
+    "event-123-reversal"
+    (suggestActualReverseEventIdText [targetId] targetId)
+  assertEqual "skip an occupied suggested reversal identity"
+    "event-123-reversal-2"
+    (suggestActualReverseEventIdText
+      [ targetId
+      , mustRight (mkActualTransactionId "event-123-reversal")
+      ]
+      targetId)
+
+  -- 3. Candidate complete source is re-parseable and provenance remains typed.
   case parseActualJournal (candidateCompleteSource preview) of
     Left errs -> do
       putStrLn "  [FAIL] candidate complete source should be parseable"
@@ -82,19 +116,19 @@ main = do
         | declaration <- actualJournalReversalDeclarations admitted
         ]
 
-  -- 3. TargetNotFound rejection.
+  -- 4. TargetNotFound rejection.
   assertLeftEqual "reject reverse when target ID is not found"
     [TargetNotFound missingId]
     (prepareActualReverse fixtureSource missingIntent)
 
-  -- 4. Reversal identity cannot reuse an existing Actual identity.
+  -- 5. Reversal identity cannot reuse an existing Actual identity.
   let duplicateIdentityIntent = validIntent
         { reverseEventId = targetId }
   assertLeftEqual "reject reversal ID already present in source"
     [ReversalIdAlreadyExists targetId]
     (prepareActualReverse fixtureSource duplicateIdentityIntent)
 
-  -- 5. The same target cannot be reversed directly twice.
+  -- 6. The same target cannot be reversed directly twice.
   let duplicateTargetIntent = ActualReverseIntent
         { reverseEventId = secondReversalId
         , reverseTargetId = targetId
@@ -107,7 +141,7 @@ main = do
       (candidateCompleteSource preview)
       duplicateTargetIntent)
 
-  -- 6. A reversal can itself be reversed through its own durable identity.
+  -- 7. A reversal can itself be reversed through its own durable identity.
   let reverseOfReverseIntent = ActualReverseIntent
         { reverseEventId = secondReversalId
         , reverseTargetId = reversalId

@@ -15,7 +15,7 @@ import Lens.Micro (Lens', Traversal')
 import Lens.Micro.Mtl ()
 
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -40,8 +40,15 @@ import HKernel.Account
   , declaredAccountType
   )
 import HKernel.Actual.Journal
-  ( actualJournalCompletionDeclarations
+  ( ActualTransactionEntry
+  , actualJournalCompletionDeclarations
+  , actualJournalReversalDeclarations
+  , actualJournalTransactionEntries
   , actualJournalValue
+  , actualTransactionEntryIdentity
+  , actualTransactionEntryTransaction
+  , reversedTransactionId
+  , reversalTransactionId
   )
 import HKernel.Application.Config (HouseholdSourcePaths(..), mkHouseholdRoot)
 import HKernel.Budget.Policy
@@ -63,7 +70,13 @@ import HKernel.Editor.ActualAppend
   , prepareActualAddPreviewFromResolvedJournal
   , prepareActualMultiAddPreviewFromResolvedJournal
   )
-import HKernel.Editor.ActualWorkspace (transactionsForAccount)
+import HKernel.Editor.ActualReverse
+  ( ActualReverseInput(..)
+  , ActualReverseInputPreview(..)
+  , prepareActualReverseInputFromResolvedJournal
+  , suggestActualReverseEventIdText
+  )
+import HKernel.Editor.ActualWorkspace (transactionEntriesForAccount)
 import HKernel.Editor.ActualWriter (publishActualBlockFromResolvedJournal)
 import HKernel.Editor.Interaction.ActualAdd
   ( ActualAddMode(..)
@@ -108,7 +121,6 @@ import HKernel.Household.Policy
   , householdUnassignedBudgetAccounts
   )
 import HKernel.HouseholdIssue (HouseholdIssue(..))
-import HKernel.Journal (journalTransactions)
 import HKernel.Ledger
   ( Posting
   , Transaction
@@ -125,7 +137,11 @@ import HKernel.Money
   , renderQuantity
   )
 import HKernel.Plan (planIdText)
-import HKernel.Plan.Completion (declaredCompletionPlanId)
+import HKernel.Plan.Completion
+  ( ActualTransactionId
+  , actualTransactionIdText
+  , declaredCompletionPlanId
+  )
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , identifiedPlanId
@@ -171,6 +187,8 @@ data Name
   | MultiPostingCountField
   | MultiAccountField
   | MultiAmountField
+  | ReverseDateField
+  | ReverseDescriptionField
   | WorkspaceAccountList
   | WorkspaceTransactionList
   | PlanList
@@ -236,6 +254,16 @@ data UIState event
       ActualMultiAddPreview
       ActualMultiAddState
       (Form MultiEditInput event Name)
+  | ReverseInputForm
+      ActualTransactionId
+      Transaction
+      (Form ActualReverseInput event Name)
+  | ReverseShowPreview
+      ActualTransactionId
+      Transaction
+      ActualReverseInputPreview
+      (Form ActualReverseInput event Name)
+  | ReverseUnavailable Text
   | ShowWriteOutcome ActualAddWriteOutcome
   | PlanInputForm
       PlanAdvanceProposal
@@ -258,7 +286,6 @@ data AppContext = AppContext
   , contextObservationDay       :: Day
   , contextEntryDay             :: Day
   , contextWorkspaceAccounts    :: L.List Name (Maybe Account)
-  , contextAllTransactions      :: [Transaction]
   , contextWorkspaceList        :: L.List Name Transaction
   , contextWorkspaceFocus       :: WorkspaceFocus
   , contextPlanList             :: L.List Name IdentifiedPlanTransaction
@@ -314,6 +341,16 @@ multiEditAmountTextL :: Lens' MultiEditInput Text
 multiEditAmountTextL f input =
   (\value -> input { multiEditAmountText = value })
     <$> f (multiEditAmountText input)
+
+reverseInputDateTextL :: Lens' ActualReverseInput Text
+reverseInputDateTextL f input =
+  (\value -> input { reverseInputDateText = value })
+    <$> f (reverseInputDateText input)
+
+reverseInputDescriptionTextL :: Lens' ActualReverseInput Text
+reverseInputDescriptionTextL f input =
+  (\value -> input { reverseInputDescriptionText = value })
+    <$> f (reverseInputDescriptionText input)
 
 planActualDateTextL :: Lens' PlanCompleteAdvanceInput Text
 planActualDateTextL f input =
@@ -409,6 +446,35 @@ syncMultiForm
   -> Form MultiEditInput event Name
 syncMultiForm state = updateFormState (multiEditInputFor state)
 
+initialReverseInput
+  :: Day
+  -> Text
+  -> Transaction
+  -> ActualReverseInput
+initialReverseInput day eventIdText transaction = ActualReverseInput
+  { reverseInputEventIdText = eventIdText
+  , reverseInputDateText = T.pack (show day)
+  , reverseInputDescriptionText = "Reverse: " <> transactionDescription transaction
+  }
+
+mkReverseForm
+  :: Day
+  -> Text
+  -> Transaction
+  -> Form ActualReverseInput event Name
+mkReverseForm day eventIdText transaction =
+  let label labelText widget =
+        padBottom (Pad 1)
+          ((vLimit 1 (hLimit 20 (str labelText <+> fill ' '))) <+> widget)
+      form = newForm
+        [ label "Date:"
+            @@= editTextField reverseInputDateTextL ReverseDateField (Just 1)
+        , label "Description:"
+            @@= editTextField reverseInputDescriptionTextL ReverseDescriptionField (Just 1)
+        ]
+  in setFormFocus ReverseDescriptionField
+      (form (initialReverseInput day eventIdText transaction))
+
 mkPlanCompleteForm
   :: Day
   -> PlanAdvanceProposal
@@ -439,6 +505,12 @@ zoomMultiForm :: Traversal' AppWrapper (Form MultiEditInput AppEvent Name)
 zoomMultiForm f (AppWrapper context (MultiInput state form)) =
   (\updated -> AppWrapper context (MultiInput state updated)) <$> f form
 zoomMultiForm _ wrapper = pure wrapper
+
+zoomReverseForm :: Traversal' AppWrapper (Form ActualReverseInput AppEvent Name)
+zoomReverseForm f (AppWrapper context (ReverseInputForm target transaction form)) =
+  (\updated -> AppWrapper context (ReverseInputForm target transaction updated))
+    <$> f form
+zoomReverseForm _ wrapper = pure wrapper
 
 zoomPlanForm :: Traversal' AppWrapper (Form PlanCompleteAdvanceInput AppEvent Name)
 zoomPlanForm f (AppWrapper context (PlanInputForm proposal form)) =
@@ -515,6 +587,42 @@ drawUI (AppWrapper _ (MultiShowPreview preview _ _)) =
         (hLimit 86
           (padAll 1
             (renderMultiPreview preview <=> str " " <=> str (multiPreviewControls preview)))))
+  ]
+drawUI (AppWrapper _ (ReverseInputForm targetId transaction form)) =
+  [ center
+      (borderWithLabel (str "Reverse Actual")
+        (hLimit 86
+          (padAll 1
+            ( vBox
+                [ renderReverseTarget targetId transaction
+                , str " "
+                , str "The original transaction stays immutable; Reverse appends its exact inverse."
+                , str "Reversal identity is generated automatically."
+                , str " "
+                , renderForm form
+                , str " "
+                , str "[Tab] Next field | [Esc] Actual | [Enter] Preview"
+                ]))))
+  ]
+drawUI (AppWrapper _ (ReverseShowPreview targetId transaction preview _)) =
+  [ center
+      (borderWithLabel (str "Reverse Preview")
+        (hLimit 86
+          (padAll 1
+            ( renderReverseTarget targetId transaction
+              <=> str " "
+              <=> renderReversePreview preview
+              <=> str " "
+              <=> str (reversePreviewControls preview)))))
+  ]
+drawUI (AppWrapper _ (ReverseUnavailable message)) =
+  [ center
+      (borderWithLabel (str "Reverse unavailable")
+        (hLimit 80
+          (padAll 1
+            ( withAttr (attrName "warning") (txt message)
+              <=> str " "
+              <=> str "[Enter/Esc] Back to Actual | [Q] Quit"))))
   ]
 drawUI (AppWrapper _ (ShowWriteOutcome outcome)) =
   [ center
@@ -623,6 +731,34 @@ multiPreviewControls preview = case preview of
   ActualMultiAddCandidateReady _ -> "[Esc/B] Back | [Enter/Y] Publish | [Q] Quit"
   _ -> "[Esc/B] Back | [Q] Quit"
 
+renderReverseTarget :: ActualTransactionId -> Transaction -> Widget Name
+renderReverseTarget targetId transaction =
+  vBox
+    ( txt (T.pack (show (transactionDate transaction))
+        <> "  [" <> actualTransactionIdText targetId <> "]  "
+        <> transactionDescription transaction)
+      : map renderWorkspacePosting
+          (NonEmpty.toList (transactionPostings transaction))
+    )
+
+renderReversePreview :: ActualReverseInputPreview -> Widget Name
+renderReversePreview preview = case preview of
+  ActualReverseInputRejected inputError ->
+    withAttr (attrName "error")
+      (txt ("Input rejected: " <> T.pack (show inputError)))
+  ActualReverseCandidateRejected sourceErrors ->
+    withAttr (attrName "error")
+      (txt (T.intercalate "\n" (map (T.pack . show) (NonEmpty.toList sourceErrors))))
+  ActualReverseCandidateReady block ->
+    withAttr (attrName "success")
+      (str "Validation successful. Source unmodified.")
+      <=> str " " <=> txt block
+
+reversePreviewControls :: ActualReverseInputPreview -> String
+reversePreviewControls preview = case preview of
+  ActualReverseCandidateReady _ -> "[Esc/B] Back | [Enter/Y] Publish | [Q] Quit"
+  _ -> "[Esc/B] Back | [Q] Quit"
+
 renderPlanProposal :: PlanAdvanceProposal -> Widget Name
 renderPlanProposal proposal =
   vBox
@@ -723,7 +859,7 @@ drawWorkspace context =
     , borderWithLabel (str "Selected transaction")
         (padAll 1 (renderWorkspaceSelection context))
     , txt ("Filter: " <> workspaceFilterText context)
-    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [a] Daily Actual   [m] Multi Actual   [q] Quit"
+    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [Enter] Reverse selected   [a] Daily Actual   [m] Multi Actual   [q] Quit"
     ]
 
 drawPlansView :: AppContext -> Widget Name
@@ -977,6 +1113,40 @@ selectedWorkspaceAccount context = case L.listSelectedElement (contextWorkspaceA
   Nothing -> Nothing
   Just (_, maybeAccount) -> maybeAccount
 
+filteredWorkspaceEntries :: AppContext -> [ActualTransactionEntry]
+filteredWorkspaceEntries context =
+  transactionEntriesForAccount
+    (selectedWorkspaceAccount context)
+    (actualJournalTransactionEntries
+      (householdStateActualJournal (contextHouseholdState context)))
+
+selectedWorkspaceEntry :: AppContext -> Maybe ActualTransactionEntry
+selectedWorkspaceEntry context = do
+  (selectedIndex, _) <- L.listSelectedElement (contextWorkspaceList context)
+  listToMaybe (drop selectedIndex (filteredWorkspaceEntries context))
+
+selectedWorkspaceReverseTarget
+  :: AppContext
+  -> Either Text (ActualTransactionId, Transaction)
+selectedWorkspaceReverseTarget context = case selectedWorkspaceEntry context of
+  Nothing -> Left "No Actual transaction is selected."
+  Just entry -> case actualTransactionEntryIdentity entry of
+    Nothing -> Left
+      "Reverse unavailable: this transaction has no durable Actual identity."
+    Just targetId -> case directReversalFor context targetId of
+      Nothing -> Right (targetId, actualTransactionEntryTransaction entry)
+      Just reversalId -> Left
+        ("Already reversed by " <> actualTransactionIdText reversalId
+          <> ". Select that reversal if you need to restore the original effect.")
+
+directReversalFor :: AppContext -> ActualTransactionId -> Maybe ActualTransactionId
+directReversalFor context targetId = listToMaybe
+  [ reversalTransactionId declaration
+  | declaration <- actualJournalReversalDeclarations
+      (householdStateActualJournal (contextHouseholdState context))
+  , reversedTransactionId declaration == targetId
+  ]
+
 renderWorkspaceTransaction :: Bool -> Transaction -> Widget Name
 renderWorkspaceTransaction selected transaction
   | selected = withAttr L.listSelectedAttr row
@@ -986,14 +1156,29 @@ renderWorkspaceTransaction selected transaction
       <> transactionDescription transaction)
 
 renderWorkspaceSelection :: AppContext -> Widget Name
-renderWorkspaceSelection context = case L.listSelectedElement (contextWorkspaceList context) of
+renderWorkspaceSelection context = case selectedWorkspaceEntry context of
   Nothing -> str "No Actual transactions for this account."
-  Just (_, transaction) ->
-    vBox
-      ( txt (T.pack (show (transactionDate transaction)) <> "  "
-          <> transactionDescription transaction)
-      : map renderWorkspacePosting (NonEmpty.toList (transactionPostings transaction))
+  Just entry ->
+    let transaction = actualTransactionEntryTransaction entry
+    in vBox
+      ( [ txt (T.pack (show (transactionDate transaction)) <> "  "
+            <> transactionDescription transaction)
+        ]
+        ++ map renderWorkspacePosting
+            (NonEmpty.toList (transactionPostings transaction))
+        ++ [str " ", renderReverseAvailability context entry]
       )
+
+renderReverseAvailability :: AppContext -> ActualTransactionEntry -> Widget Name
+renderReverseAvailability context entry = case actualTransactionEntryIdentity entry of
+  Nothing -> withAttr (attrName "warning")
+    (str "Reverse unavailable: no durable Actual identity.")
+  Just targetId -> case directReversalFor context targetId of
+    Just reversalId -> withAttr (attrName "warning")
+      (txt ("Already reversed by " <> actualTransactionIdText reversalId
+        <> ". Select that reversal to reverse it."))
+    Nothing -> withAttr (attrName "success")
+      (txt ("[Enter] Reverse  event-id: " <> actualTransactionIdText targetId))
 
 renderWorkspacePosting :: Posting -> Widget Name
 renderWorkspacePosting posting =
@@ -1053,6 +1238,11 @@ appEvent event = do
     MultiInput multiState form -> handleMultiInputEvent context multiState form event
     MultiShowPreview preview multiState form ->
       handleMultiPreviewEvent context preview multiState form event
+    ReverseInputForm targetId transaction form ->
+      handleReverseInputEvent context targetId transaction form event
+    ReverseShowPreview targetId transaction preview form ->
+      handleReversePreviewEvent context targetId transaction preview form event
+    ReverseUnavailable _ -> handleReverseUnavailableEvent context event
     ShowWriteOutcome _ -> handleWriteOutcomeEvent event
     PlanInputForm proposal form -> handlePlanInputEvent context proposal form event
     PlanShowPreview proposal result form ->
@@ -1121,6 +1311,12 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey (V.KChar 'M') [])
     | contextCurrentSection context == ActualSection -> openMultiInput context
   VtyEvent (V.EvKey V.KEnter [])
+    | contextCurrentSection context == ActualSection
+    , contextWorkspaceFocus context == AccountsFocus ->
+        put (AppWrapper (context { contextWorkspaceFocus = TransactionsFocus }) Workspace)
+  VtyEvent (V.EvKey V.KEnter [])
+    | contextCurrentSection context == ActualSection -> openSelectedActualReverse context
+  VtyEvent (V.EvKey V.KEnter [])
     | contextCurrentSection context == PlansSection -> openSelectedPlanCompletion context
   VtyEvent (V.EvKey (V.KChar 'c') [])
     | contextCurrentSection context == PlansSection -> openSelectedPlanCompletion context
@@ -1150,6 +1346,21 @@ openMultiInput :: AppContext -> EventM Name AppWrapper ()
 openMultiInput context = do
   let state = initialActualMultiAddStateForDay (contextEntryDay context)
   put (AppWrapper context (MultiInput state (mkMultiForm state)))
+
+openSelectedActualReverse :: AppContext -> EventM Name AppWrapper ()
+openSelectedActualReverse context = case selectedWorkspaceReverseTarget context of
+  Left message -> put (AppWrapper context (ReverseUnavailable message))
+  Right (targetId, transaction) ->
+    let existingIds =
+          [ identity
+          | entry <- actualJournalTransactionEntries
+              (householdStateActualJournal (contextHouseholdState context))
+          , Just identity <- [actualTransactionEntryIdentity entry]
+          ]
+        eventIdText = suggestActualReverseEventIdText existingIds targetId
+    in put (AppWrapper context
+      (ReverseInputForm targetId transaction
+        (mkReverseForm (contextObservationDay context) eventIdText transaction)))
 
 openSelectedPlanCompletion :: AppContext -> EventM Name AppWrapper ()
 openSelectedPlanCompletion context =
@@ -1193,10 +1404,12 @@ handleWorkspaceListEvent context vtyEvent = case contextWorkspaceFocus context o
 
 applyWorkspaceAccountFilter :: AppContext -> AppContext
 applyWorkspaceAccountFilter context = context
-  { contextWorkspaceList = L.list WorkspaceTransactionList (Vec.fromList filteredTransactions) 1 }
+  { contextWorkspaceList =
+      L.list WorkspaceTransactionList (Vec.fromList filteredTransactions) 1
+  }
   where
-    filteredTransactions = transactionsForAccount
-      (selectedWorkspaceAccount context) (contextAllTransactions context)
+    filteredTransactions =
+      map actualTransactionEntryTransaction (filteredWorkspaceEntries context)
 
 handleInputEvent
   :: AppContext
@@ -1345,6 +1558,68 @@ publishActualCandidate context stickyDay block = do
         Nothing -> put (AppWrapper context ShowWorkspaceReloadFailure)
         Just freshContext -> put (AppWrapper freshContext Workspace)
     _ -> put (AppWrapper context (ShowWriteOutcome writeOutcome))
+
+handleReverseInputEvent
+  :: AppContext
+  -> ActualTransactionId
+  -> Transaction
+  -> Form ActualReverseInput AppEvent Name
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleReverseInputEvent context targetId transaction form event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> put (AppWrapper context Workspace)
+  VtyEvent (V.EvKey V.KEnter []) -> do
+    let resolvedJournal = actualJournalValue
+          (householdStateActualJournal (contextHouseholdState context))
+        preview = prepareActualReverseInputFromResolvedJournal
+          resolvedJournal (contextSource context) targetId (formState form)
+    put (AppWrapper context
+      (ReverseShowPreview targetId transaction preview form))
+  _ -> zoom zoomReverseForm (handleFormEvent event)
+
+handleReversePreviewEvent
+  :: AppContext
+  -> ActualTransactionId
+  -> Transaction
+  -> ActualReverseInputPreview
+  -> Form ActualReverseInput AppEvent Name
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleReversePreviewEvent context targetId transaction preview form event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> back
+  VtyEvent (V.EvKey (V.KChar 'b') []) -> back
+  VtyEvent (V.EvKey (V.KChar 'B') []) -> back
+  VtyEvent (V.EvKey V.KEnter []) -> publish
+  VtyEvent (V.EvKey (V.KChar 'y') []) -> publish
+  VtyEvent (V.EvKey (V.KChar 'Y') []) -> publish
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
+  _ -> pure ()
+  where
+    back = put (AppWrapper context (ReverseInputForm targetId transaction form))
+    publish = publishReadyReversePreview context preview
+
+publishReadyReversePreview
+  :: AppContext
+  -> ActualReverseInputPreview
+  -> EventM Name AppWrapper ()
+publishReadyReversePreview context preview = case preview of
+  ActualReverseCandidateReady block ->
+    publishActualCandidate context (contextEntryDay context) block
+  _ -> pure ()
+
+handleReverseUnavailableEvent
+  :: AppContext
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleReverseUnavailableEvent context event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> back
+  VtyEvent (V.EvKey V.KEnter []) -> back
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
+  _ -> pure ()
+  where
+    back = put (AppWrapper context Workspace)
 
 handlePlanInputEvent
   :: AppContext
@@ -1530,7 +1805,6 @@ makeWorkspaceContext focusLatest today journalFile source planSource state =
     , contextObservationDay = today
     , contextEntryDay = today
     , contextWorkspaceAccounts = workspaceAccounts
-    , contextAllTransactions = transactions
     , contextWorkspaceList = workspaceList
     , contextWorkspaceFocus = TransactionsFocus
     , contextPlanList = planList
@@ -1539,9 +1813,10 @@ makeWorkspaceContext focusLatest today journalFile source planSource state =
     , contextPlanSource = planSource
     }
   where
-    actualJournal = actualJournalValue (householdStateActualJournal state)
     declarations = accountDeclarations (householdStateAccountsRegistry state)
-    transactions = journalTransactions actualJournal
+    transactions =
+      map actualTransactionEntryTransaction
+        (actualJournalTransactionEntries (householdStateActualJournal state))
     workspaceAccounts = L.list WorkspaceAccountList
       (Vec.fromList (Nothing : map (Just . declaredAccount) declarations)) 1
     initialWorkspaceList = L.list WorkspaceTransactionList (Vec.fromList transactions) 1
