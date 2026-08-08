@@ -545,7 +545,7 @@ drawUI (AppWrapper _ (PlanInputForm proposal form)) =
               <=> str "Blank Actual amount uses the planned amount."
               <=> str "Blank Next amount keeps the original planned amount."
               <=> str "Clear Next nominal date to complete without a successor."
-              <=> str "[Ctrl-T] Actual Today | [Ctrl-Y] Actual Yesterday"
+              <=> str "[F6/Ctrl-T] Actual Today | [F7/Ctrl-Y] Actual Yesterday"
               <=> str "[Esc] Plans | [Enter] Preview"))))
   ]
 drawUI (AppWrapper _ (PlanShowPreview _ result _)) =
@@ -1525,7 +1525,11 @@ handlePlanInputEvent context proposal form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> put (AppWrapper context Workspace)
   VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl]) ->
     setPlanFormActualDay context (contextObservationDay context) proposal form
+  VtyEvent (V.EvKey (V.KFun 6) []) ->
+    setPlanFormActualDay context (contextObservationDay context) proposal form
   VtyEvent (V.EvKey (V.KChar 'y') [V.MCtrl]) ->
+    setPlanFormActualDay context (addDays (-1) (contextObservationDay context)) proposal form
+  VtyEvent (V.EvKey (V.KFun 7) []) ->
     setPlanFormActualDay context (addDays (-1) (contextObservationDay context)) proposal form
   VtyEvent (V.EvKey V.KEnter []) -> preparePlanPreview context proposal form
   _ -> zoom zoomPlanForm (handleFormEvent event)
