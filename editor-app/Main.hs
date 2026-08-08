@@ -197,9 +197,10 @@ executeCommand commitMode command = case command of
   PlanFinishCmd planFile actualFile intent -> do
     planSource <- TIO.readFile planFile
     actualSource <- TIO.readFile actualFile
+    resolvedPlan <- loadResolvedPlanJournal planFile planSource
     resolvedActual <- loadResolvedActualJournal actualFile
-    case PlanLifecycle.preparePlanFinishFromResolvedActualJournal
-        resolvedActual planSource actualSource intent of
+    case PlanLifecycle.preparePlanFinishFromResolvedJournals
+        resolvedPlan resolvedActual planSource actualSource intent of
       Left errors -> validationFailed errors
       Right preview ->
         executePreview
