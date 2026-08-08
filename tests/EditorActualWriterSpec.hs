@@ -4,13 +4,13 @@
 module Main (main) where
 
 import Control.Exception (IOException, catch, throwIO)
-import Data.IORef (atomicModifyIORef', newIORef)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TIO
-import System.Directory (removeFile)
+import System.Directory (doesFileExist, removeFile)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Actual.Journal
@@ -36,9 +36,13 @@ main :: IO ()
 main = do
   let results =
         [ ("testStaleReject", testStaleReject)
+        , ("testPreRenameStaleReject", testPreRenameStaleReject)
+        , ("testUniqueSiblingStaging", testUniqueSiblingStaging)
         , ("testActualWrite", testActualWrite)
         , ("testPlanWrite", testPlanWrite)
         , ("testPostAdmissionFailure", testPostAdmissionFailure)
+        , ("testRollbackProtectsLaterWrite", testRollbackProtectsLaterWrite)
+        , ("testPostAdmissionChangeNotSuccess", testPostAdmissionChangeNotSuccess)
         , ("testPostPublishReadFailureRestores", testPostPublishReadFailureRestores)
         , ("testActualBlockWrite", testActualBlockWrite)
         , ("testActualBlockStaleReject", testActualBlockStaleReject)
@@ -126,6 +130,60 @@ testStaleReject =
       Left StaleFile -> show result == "Left StaleFile"
       _ -> False
 
+-- | A write that lands while candidate bytes are being staged must win. The
+-- first writer sees the change at the immediate pre-rename fence, removes both
+-- of its unique staging files, and never publishes its candidate.
+testPreRenameStaleReject :: IO Bool
+testPreRenameStaleReject =
+  withFixture "tests/fixtures/test_writer_pre_rename_stale.journal" actualOld $ \path -> do
+    readCount <- newIORef (0 :: Int)
+    stagedPaths <- newIORef ([] :: [FilePath])
+    let normalFileSystem = defaultWriterFileSystem
+        laterWriterBytes = actualOld <> "\n; later writer\n"
+        readWithInterveningWrite filePath = do
+          previous <- atomicModifyIORef' readCount (\count -> (count + 1, count))
+          if previous == 1
+            then do
+              TIO.writeFile filePath laterWriterBytes
+              pure laterWriterBytes
+            else readTextFile normalFileSystem filePath
+        stageAndRecord filePath role source = do
+          staged <- stageSiblingTextFile normalFileSystem filePath role source
+          atomicModifyIORef' stagedPaths (\paths -> (staged : paths, ()))
+          pure staged
+        faultingFileSystem = normalFileSystem
+          { readTextFile = readWithInterveningWrite
+          , stageSiblingTextFile = stageAndRecord
+          }
+        intent = WriteIntent
+          path
+          (ExpectedSource actualOld)
+          (CandidateSource actualNew)
+    result <- publishWithAdmissionUsing
+      faultingFileSystem
+      parseActualJournal
+      intent
+    current <- TIO.readFile path
+    staged <- readIORef stagedPaths
+    leftovers <- mapM doesFileExist staged
+    pure $ case result of
+      Left StaleFile -> current == laterWriterBytes && not (or leftovers)
+      _ -> False
+
+-- | The default filesystem adapter delegates sibling allocation to openTempFile,
+-- so two staging requests for the same target and role cannot share a path.
+testUniqueSiblingStaging :: IO Bool
+testUniqueSiblingStaging =
+  withFixture "tests/fixtures/test_writer_unique_stage.journal" actualOld $ \path -> do
+    let fileSystem = defaultWriterFileSystem
+    first <- stageSiblingTextFile fileSystem path ".race.tmp" "first"
+    second <- stageSiblingTextFile fileSystem path ".race.tmp" "second"
+    firstExists <- doesFileExist first
+    secondExists <- doesFileExist second
+    removeIfPresent first
+    removeIfPresent second
+    pure (first /= second && firstExists && secondExists)
+
 testActualWrite :: IO Bool
 testActualWrite =
   expectPublished
@@ -158,18 +216,64 @@ testPostAdmissionFailure =
         (== actualOld) <$> TIO.readFile path
       _ -> pure False
 
+-- | If path-aware post-admission fails after another writer has replaced the
+-- candidate, rollback must not overwrite that later write.
+testRollbackProtectsLaterWrite :: IO Bool
+testRollbackProtectsLaterWrite =
+  withFixture "tests/fixtures/test_writer_checked_rollback.journal" actualOld $ \path -> do
+    let laterWriterBytes = actualOld <> "\n; later writer after publish\n"
+        intent = WriteIntent
+          path
+          (ExpectedSource actualOld)
+          (CandidateSource actualNew)
+        rejectAfterLaterWrite filePath = do
+          TIO.writeFile filePath laterWriterBytes
+          pure
+            (Left ("simulated admission failure" NonEmpty.:| [])
+              :: Either (NonEmpty Text) ())
+    result <- publishWithPathAdmissionUsing
+      defaultWriterFileSystem
+      rejectAfterLaterWrite
+      intent
+    current <- TIO.readFile path
+    pure $ case result of
+      Left (PostAdmissionFailed _ False) -> current == laterWriterBytes
+      _ -> False
+
+-- | Even a successful admission result is not enough if the target stopped
+-- being this writer's candidate during admission. Do not report success.
+testPostAdmissionChangeNotSuccess :: IO Bool
+testPostAdmissionChangeNotSuccess =
+  withFixture "tests/fixtures/test_writer_post_admission_change.journal" actualOld $ \path -> do
+    let laterWriterBytes = actualOld <> "\n; later writer during admission\n"
+        intent = WriteIntent
+          path
+          (ExpectedSource actualOld)
+          (CandidateSource actualNew)
+        admitThenReplace filePath = do
+          TIO.writeFile filePath laterWriterBytes
+          pure (Right () :: Either (NonEmpty Text) ())
+    result <- publishWithPathAdmissionUsing
+      defaultWriterFileSystem
+      admitThenReplace
+      intent
+    current <- TIO.readFile path
+    pure $ case result of
+      Left StaleFile -> current == laterWriterBytes
+      _ -> False
+
 testPostPublishReadFailureRestores :: IO Bool
 testPostPublishReadFailureRestores =
   withFixture "tests/fixtures/test_writer_read_failure.journal" actualOld $ \path -> do
     readCount <- newIORef (0 :: Int)
     let normalFileSystem = defaultWriterFileSystem
-        failSecondRead filePath = do
+        failVerificationRead filePath = do
           previous <- atomicModifyIORef' readCount (\count -> (count + 1, count))
-          if previous == 0
-            then readTextFile normalFileSystem filePath
-            else throwIO (userError "simulated post-publish read failure")
+          if previous == 2
+            then throwIO (userError "simulated post-publish read failure")
+            else readTextFile normalFileSystem filePath
         faultingFileSystem = normalFileSystem
-          { readTextFile = failSecondRead }
+          { readTextFile = failVerificationRead }
         intent = WriteIntent
           path
           (ExpectedSource actualOld)
