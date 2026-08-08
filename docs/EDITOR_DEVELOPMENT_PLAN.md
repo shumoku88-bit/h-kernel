@@ -3,7 +3,7 @@
 ステータス: アクティブな正規開発設計面  
 Owner: h-kernel editor  
 Canonical: yes  
-更新日: 2026-08-07  
+更新日: 2026-08-08  
 更新条件: editorのmain能力、daily-use入口、writer authority、次のcoherent editor chapterが変わるとき
 
 ## 1. この文書の役割
@@ -31,7 +31,7 @@ h-kernel-editor
   owns:
     typed edit intent
     candidate preparation and source placement
-    complete-source admission
+    complete source admission
     safe writer result
     typed Actual workspace projection
     UI-independent Actual add interaction
@@ -95,6 +95,8 @@ HKernel.Editor.ActualWorkspace
 
 Account pickerで選んだidentityは`Account`のままInteractionへ渡し、free-form `ActualAddInput`へ反映する地点でだけ`accountName`へ落とす。表示TextをAccount identityとして扱わない。
 
+一般multi-posting inputも、Brick固有の文字列文法や独自balance判定を持たせない。各postingはsigned quantityを持つ`ActualEditIntent`へ収束し、Account identity、Commodity resolution、Transaction balance、complete-source admissionは既存ownerへ戻す。
+
 ### 2.3 Preview, admission and safe writer
 
 すべてのwrite candidateは、source mutation前にpreviewされる。
@@ -106,7 +108,7 @@ explicit source path
   -> candidate complete source
   -> stable complete-source admission
   -> preview
-  -> optional explicit commit
+  -> explicit publication action
 ```
 
 candidate fragmentだけを正しいと見なさない。Account、Money、Transaction、Actual metadata、Plan、Budget movement、Issueは、それぞれのstable ownerへ戻してcandidate complete sourceを検証する。
@@ -138,6 +140,8 @@ UI-independentな`ActualAddState`はcomplete private sourceを保持しない。
 
 Brick TUIのhomeはpersistent Actual workspaceである。
 
+現在mainの日常Actual pathは次である。
+
 ```text
 Accounts pane
   -> typed Account selection
@@ -154,9 +158,11 @@ Accounts pane
   -> workspace
 ```
 
+このpathはcorrectnessを満たすが、日常記帳としてpreviewとconfirmationが重複し、操作距離が長い。daily-use completion chapterでは、validated candidateを一度だけ人間へ提示し、その画面から明示的にpublicationできる導線を優先する。安全性はscreen数ではなくtyped intent、complete-source admission、stale rejection、safe writerで担保する。
+
 Brickはpane、focus、cursor、key mapping、widget、rendering、terminal eventを所有する。Account filterの意味、Actual addのinteraction transition、candidate preparation、safe writer semanticsは共有ownerへ委譲する。
 
-Actual add成功後はfresh sourceを読み直してworkspaceへ戻り、新しいtransactionを表示する。失敗時はstale、restore済みfailure、未復旧failure、filesystem failureを有限なoutcomeとして表示する。
+Actual add成功後はfresh sourceを読み直してworkspaceへ戻り、新しいtransactionを表示する。成功を確認するためだけのdead-end result screenは作らない。失敗時はstale、restore済みfailure、未復旧failure、filesystem failureを有限なoutcomeとして表示する。
 
 ### 2.5 Daily workspace entrypoint
 
@@ -193,6 +199,20 @@ Actual reverseは元Transactionを変更せず、新しいTransactionをappend�
 - reverse-of-reverseは新しいexplicit edgeとして許可する
 
 日常routeは`tools/hk actual-reverse`から既存Editor CLIへ委譲する。専用selectorまたはreverse専用TUIはまだ存在しない。詳細は[`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)が所有する。
+
+### 2.7 Plan complete and advance
+
+Plans workspaceは、open Planを選び、Actualへ実績化し、必要ならsuccessor Planを同じcoherent operationで補充できる。
+
+- Actual dateとnominal Plan dateを分離する
+- Actual amount overrideはsuccessor amountへ暗黙伝播しない
+- monthly recurrenceのnext dateはoriginal nominal Plan dateから提案する
+- once recurrenceはsuccessorなしを標準にする
+- cycle / unspecified recurrenceはnext nominal dateを明示入力する
+- Actual completionはexisting plan-idを再利用し、successorはfresh PlanIdを持つ
+- ActualとPlanの双方をcomplete candidateとして検証してからpublishする
+
+このsemantic contractはdaily-use completion chapterで変更しない。対象は操作距離、表示、戻り先などdelivery ergonomicsである。
 
 ## 3. Single-user writer law
 
@@ -233,24 +253,104 @@ EditorはAccount identity、Money、Transaction balance、Actual / Plan / Budget
 
 Editor固有の責任は、user/application edit intent、candidate fragmentとsource placement、complete-source preview、stale checkとsafe publication、UI-independent interaction contractである。delivery adapterはterminal/process/file effectを接続する。
 
-## 5. NEXT: Actual workspace state ownership chapter
+## 5. NEXT: daily-use TUI completion chapter
 
-次のcoherent editor chapterは、Brick workspaceが持つscreen stateとUI-independent `ActualAddState`の関係を観察し、重複が確認できた場合は同じchapter内でownership整理と検証まで完成させることである。
+次のcoherent editor chapterは、日々の家計運用で最も頻度の高い操作を、command hubへ戻らずHousehold TUIだけで短く完了できる状態にすることである。
 
-中心の問い:
+日常利用のacceptance criterionは次である。
 
-> Brickの`UIState`にあるInput / Account selection / Preview / Confirmationのscreen caseと、`ActualAddMode`のinteraction caseは、同じ意味を二重所有しているか。もし重複しているなら、Brick toolkit固有のstateを残したまま、どこまで`ActualAddState`をcanonical interaction stateとして使えるか。
+> `tools/hk`を起動し、通常の記帳、必要なmulti-posting記帳、予定支出の実績化と次回予定の補充、主要reportの閲覧まで、CLI commandへ逃げずに到達できる。
 
-### Scope
+優先順位は固定する。
 
-- Brick `UIState`と`ActualAddMode`のcase対応を全列挙する
-- Form、Brick List、cursor、focus、renderingなどtoolkit固有stateを区別する
-- interaction meaning、derived screen state、effect-delivery stateを区別する
-- duplicated state transitionとmanual synchronizationを特定する
-- Haskelineなど別adapterが再利用するべきstate/action contractを確認する
-- 削除できるcase、branch、conversionが明確なら、同じchapterで実装、focused regression、full test、final diff reviewまで行う
+1. ordinary daily Actual entry
+2. multi-posting Actual entry
+3. Plan completion and successor replenishment
+4. direct Report selection
 
-観察だけを独立PRへ切り出し、その結果をさらに細いimplementation PRへ送ることをデフォルトにしない。Brick moduleとshared interaction moduleの両方へ変更が必要でも、それらが同じActual workspace capabilityを完成させるなら一つのcoherent changeとして扱う。
+Account maintenance、Budget maintenance、Issue maintenance、Settings編集などの低頻度operationは、このdaily-use acceptance criterionを満たした後に扱う。
+
+### 5.1 Ergonomic laws
+
+- common pathを最短にする
+- uncommon optionは失わず、通常操作の途中へ常設しない
+- command一覧からverbを選ぶのではなく、workspaceで対象を見て必要なoperationへ入る
+- same validated candidateをPreviewとConfirmationの二画面で重複表示しない
+- source mutation前にcandidateは必ず人間へ提示する
+- publication actionは明示的なkeyで行う
+- successful writeはfresh Household reload後、意味のあるworkspaceへ戻す
+- failureだけは十分な情報を残し、続行不能なら明示して止める
+- Brick toolkit stateとdomain interaction stateの重複は、操作距離を減らすために必要な範囲で整理する
+- generic command frameworkやgeneric form frameworkは導入しない
+
+### 5.2 Ordinary Actual
+
+ordinary daily Actualは最頻operationなので、amountをfirst focusとし、Todayとcanonical Account defaultを積極的に既定値として使う。
+
+目標flowは次である。
+
+```text
+Actual workspace
+  -> [a]
+  -> amount / description / typed Account selection
+  -> validated preview
+  -> explicit publish
+  -> fresh Actual workspace
+```
+
+Todayは入力不要、Yesterdayはone-key shortcut、other dateは明示的に開く。Account候補はtyped AccountRegistryから作り、recent-first表示とcase-insensitive searchを使う。
+
+### 5.3 Multi-posting Actual
+
+multi-postingはordinary Actualとは別の会計モデルではない。どちらも同じ`ActualEditIntent`と`TransactionBlock` admissionへ収束する。
+
+```text
+ordinary two-posting input --+
+                             +-> ActualEditIntent -> TransactionBlock admission
+multi posting-row input -----+
+```
+
+multi pathでは各postingがAccount identityとsigned quantityを持つ。Commodityを省略できるのは、そのAccountのcanonical defaultが一意に得られる場合だけである。
+
+Brick deliveryは次を担当する。
+
+- posting rowの選択
+- typed Account picker
+- signed amount input
+- posting row追加
+- 3行を下回らない範囲でposting row削除
+- Today / Yesterday / other date shortcut
+- validated previewへの遷移
+
+Brickはtotal=0判定、Commodity accounting rule、Account declaration ruleを再実装しない。unbalanced transactionは既存`TransactionBlock` admissionが拒否する。
+
+### 5.4 Plan completion and replenishment
+
+現在のComplete & Advance semantic contractを保ち、Planを選んだ地点から実績化と次回補充へ短く到達できることを優先する。
+
+通常ケースでは予定金額をActual amountのdefault、monthly proposalをsuccessor dateのdefaultとし、変更がないfieldへ余分な入力を要求しない。successor不要の場合も明示的かつ短く選べること。
+
+### 5.5 Reports
+
+Reports sectionは`r`を繰り返して順番に巡回するだけのsurfaceから、named reportを直接選択できるsurfaceへ変える。
+
+少なくともdaily-useで次へ直接到達できることを優先する。
+
+- Account balances / Balance Sheet
+- Recent Actual
+- Planned Transactions
+- Current Cycle / Cycle Comparison
+- Daily Flow / Monthly Accounts
+- Daily Target
+- Envelope & Backing
+
+Report calculationやrendering semanticsをTUIへ複製しない。typed report ownerを選択してrenderするだけにする。
+
+### 5.6 State ownership cleanup
+
+Brick `UIState`とUI-independent interaction stateの重複整理は独立目的ではなく、上記daily-use flowを短く明瞭にするための手段として行う。
+
+Form、Brick List、cursor、focus、viewportはtoolkit stateとして残してよい。interaction meaning、candidate readiness、publication readinessをBrickとshared ownerで二重所有している場合だけ整理する。
 
 ### Non-goals
 
@@ -259,20 +359,25 @@ Editor固有の責任は、user/application edit intent、candidate fragmentとs
 - writer authority変更
 - source format migration
 - reversal identity policy変更
+- Plan recurrence semantics変更
 - Haskeline implementation追加
 - generic UI framework導入
 - directoryの見た目だけの再配置
 - Spike卒業
+- private canonical sourceの変更
 
 これらはfileやmoduleが違うからではなく、rollback条件とdomain meaningが異なるためchapter境界の外に置く。
 
-## 6. Remaining decisions
+## 6. Remaining decisions after daily-use completion
 
-- Brick screen stateとUI-independent interaction stateの重複整理
 - Brick delivery contextのsource-byte retentionとsafe writer ownershipのseparate ownership chapter
-- Haskelineまたは他adapterを実際に追加する必要が生じた時のdelivery構成
-- Actual multi-postingの日常interaction
 - Actual reverse target selectorとidentity input experience
+- Plan edit interaction
+- Account maintenance interaction
+- Budget maintenance interaction
+- Issue maintenance interaction
+- Settings maintenance interaction
+- Haskelineまたは他adapterを実際に追加する必要が生じた時のdelivery構成
 - Plan source writer authority
 - Budget movement source writer authority
 - Issue source writer authority

@@ -56,8 +56,12 @@ import HKernel.Editor.ActualAppend
   , ActualAddPreview(..)
   , ActualAddWriteFailure(..)
   , ActualAddWriteOutcome(..)
+  , ActualMultiAddInput(..)
+  , ActualMultiAddPreview(..)
+  , ActualPostingInput(..)
   , classifyActualAddWriteResult
   , prepareActualAddPreviewFromResolvedJournal
+  , prepareActualMultiAddPreviewFromResolvedJournal
   )
 import HKernel.Editor.ActualWorkspace (transactionsForAccount)
 import HKernel.Editor.ActualWriter (publishActualBlockFromResolvedJournal)
@@ -66,11 +70,23 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualAddAction(..)
   , ActualAddMode(..)
   , ActualAddState(..)
+  , ActualMultiAddState(..)
+  , appendActualMultiPosting
   , dailyAccountCandidates
   , filterDailyAccountCandidates
+  , filterMultiAccountCandidates
   , enterActualAddPreview
   , initialActualAddStateForDay
+  , initialActualMultiAddStateForDay
+  , multiAccountCandidates
+  , removeSelectedActualMultiPosting
+  , selectActualMultiPosting
+  , selectedActualMultiPosting
   , setActualAddDate
+  , setActualMultiAddDate
+  , setActualMultiDescription
+  , setSelectedActualMultiAccount
+  , setSelectedActualMultiAmount
   , transitionActualAdd
   )
 import HKernel.Editor.Interaction.PlanCompleteAdvance
@@ -157,6 +173,8 @@ data Name
   | FromAccountField
   | ToAccountField
   | AmountField
+  | MultiDescriptionField
+  | MultiAmountField
   | AccountList
   | WorkspaceAccountList
   | WorkspaceTransactionList
@@ -202,6 +220,11 @@ data PlanPreviewResult
   = PlanPreviewRejected Text
   | PlanPreviewReady PlanCompleteAdvancePreview
 
+data MultiEditInput = MultiEditInput
+  { multiEditDescriptionText :: Text
+  , multiEditAmountText      :: Text
+  } deriving (Eq, Show)
+
 data UIState event
   = Workspace
   | InputForm (Form ActualAddInput event Name)
@@ -213,12 +236,19 @@ data UIState event
   | ShowPreview
       ActualAddPreview
       (Form ActualAddInput event Name)
-  | ShowConfirmation
+  | MultiInput
+      ActualMultiAddState
+      (Form MultiEditInput event Name)
+  | MultiSelectAccount
       Text
-      (Form ActualAddInput event Name)
-  | ShowWriteOutcome
-      ActualAddWriteOutcome
-      (Form ActualAddInput event Name)
+      (L.List Name Account)
+      ActualMultiAddState
+      (Form MultiEditInput event Name)
+  | MultiShowPreview
+      ActualMultiAddPreview
+      ActualMultiAddState
+      (Form MultiEditInput event Name)
+  | ShowWriteOutcome ActualAddWriteOutcome
   | PlanInputForm
       PlanAdvanceProposal
       (Form PlanCompleteAdvanceInput event Name)
@@ -273,6 +303,16 @@ addAmountTextL :: Lens' ActualAddInput Text
 addAmountTextL f input =
   (\value -> input { addAmountText = value }) <$> f (addAmountText input)
 
+multiEditDescriptionTextL :: Lens' MultiEditInput Text
+multiEditDescriptionTextL f input =
+  (\value -> input { multiEditDescriptionText = value })
+    <$> f (multiEditDescriptionText input)
+
+multiEditAmountTextL :: Lens' MultiEditInput Text
+multiEditAmountTextL f input =
+  (\value -> input { multiEditAmountText = value })
+    <$> f (multiEditAmountText input)
+
 planActualDateTextL :: Lens' PlanCompleteAdvanceInput Text
 planActualDateTextL f input =
   (\value -> input { planActualDateText = value }) <$> f (planActualDateText input)
@@ -312,6 +352,42 @@ mkDailyForm day =
   setFormFocus AmountField
     (mkForm (actualAddInput (initialActualAddStateForDay day)))
 
+multiEditInputFor :: ActualMultiAddState -> MultiEditInput
+multiEditInputFor state = MultiEditInput
+  { multiEditDescriptionText =
+      multiAddDescriptionText (actualMultiAddInput state)
+  , multiEditAmountText =
+      multiPostingAmountText (selectedActualMultiPosting state)
+  }
+
+mkMultiForm :: ActualMultiAddState -> Form MultiEditInput event Name
+mkMultiForm state =
+  let label labelText widget =
+        padBottom (Pad 1)
+          ((vLimit 1 (hLimit 20 (str labelText <+> fill ' '))) <+> widget)
+      form = newForm
+        [ label "Description:"
+            @@= editTextField multiEditDescriptionTextL MultiDescriptionField (Just 1)
+        , label "Selected amount:"
+            @@= editTextField multiEditAmountTextL MultiAmountField (Just 1)
+        ]
+  in setFormFocus MultiDescriptionField (form (multiEditInputFor state))
+
+commitMultiForm
+  :: ActualMultiAddState
+  -> Form MultiEditInput event Name
+  -> ActualMultiAddState
+commitMultiForm state form =
+  let input = formState form
+  in setSelectedActualMultiAmount (multiEditAmountText input)
+      (setActualMultiDescription (multiEditDescriptionText input) state)
+
+syncMultiForm
+  :: ActualMultiAddState
+  -> Form MultiEditInput event Name
+  -> Form MultiEditInput event Name
+syncMultiForm state = updateFormState (multiEditInputFor state)
+
 mkPlanCompleteForm
   :: Day
   -> PlanAdvanceProposal
@@ -338,6 +414,11 @@ zoomForm f (AppWrapper context (InputForm form)) =
   (\updated -> AppWrapper context (InputForm updated)) <$> f form
 zoomForm _ wrapper = pure wrapper
 
+zoomMultiForm :: Traversal' AppWrapper (Form MultiEditInput AppEvent Name)
+zoomMultiForm f (AppWrapper context (MultiInput state form)) =
+  (\updated -> AppWrapper context (MultiInput state updated)) <$> f form
+zoomMultiForm _ wrapper = pure wrapper
+
 zoomPlanForm :: Traversal' AppWrapper (Form PlanCompleteAdvanceInput AppEvent Name)
 zoomPlanForm f (AppWrapper context (PlanInputForm proposal form)) =
   (\updated -> AppWrapper context (PlanInputForm proposal updated)) <$> f form
@@ -347,6 +428,11 @@ zoomList :: Traversal' AppWrapper (L.List Name Account)
 zoomList f (AppWrapper context (SelectAccount target query accountList form)) =
   (\updated -> AppWrapper context (SelectAccount target query updated form)) <$> f accountList
 zoomList _ wrapper = pure wrapper
+
+zoomMultiAccountList :: Traversal' AppWrapper (L.List Name Account)
+zoomMultiAccountList f (AppWrapper context (MultiSelectAccount query accountList state form)) =
+  (\updated -> AppWrapper context (MultiSelectAccount query updated state form)) <$> f accountList
+zoomMultiAccountList _ wrapper = pure wrapper
 
 zoomWorkspaceAccounts :: Traversal' AppWrapper (L.List Name (Maybe Account))
 zoomWorkspaceAccounts f (AppWrapper context Workspace) =
@@ -398,23 +484,50 @@ drawUI (AppWrapper _ (SelectAccount target query accountList _)) =
   ]
 drawUI (AppWrapper _ (ShowPreview preview _)) =
   [ center
-      (borderWithLabel (str "Preview")
+      (borderWithLabel (str "Actual Preview")
         (padAll 1 (renderPreview preview <=> str " " <=> str (previewControls preview))))
   ]
-drawUI (AppWrapper _ (ShowConfirmation block _)) =
+drawUI (AppWrapper context (MultiInput state form)) =
   [ center
-      (borderWithLabel (str "Confirm Actual Add")
-        (padAll 1
-          (str "Confirm this validated transaction?"
-            <=> str "No source write has occurred."
-            <=> str " "
-            <=> withAttr (attrName "success") (txt block)
-            <=> str " "
-            <=> str "[Y] Confirm | [N/Esc] Cancel | [Q] Quit")))
+      (borderWithLabel (str "Multi-posting Actual")
+        (hLimit 86
+          (padAll 1
+            ( vBox
+                [ txt ("Date: " <> dateSummary context
+                    (multiAddDateText (actualMultiAddInput state)))
+                , str "Each posting owns its sign. The complete transaction must balance to zero."
+                , str " "
+                , renderMultiPostingRows state
+                , str " "
+                , txt ("Selected account: " <> selectedMultiAccountLabel state)
+                , renderForm form
+                , str " "
+                , str "[F2/Ctrl-F] Account | [Ctrl-N/P] Next/previous row | [F4] Add row | [F5] Remove row"
+                , str "[Ctrl-T] Today | [Ctrl-Y] Yesterday | [Esc] Actual | [Enter] Preview"
+                ]))))
   ]
-drawUI (AppWrapper _ (ShowWriteOutcome outcome _)) =
+drawUI (AppWrapper _ (MultiSelectAccount query accountList _ _)) =
   [ center
-      (borderWithLabel (str "Actual Add Result")
+      (borderWithLabel (str "Select Posting Account")
+        (hLimit 64
+          (vLimit 18
+            ( txt ("Search: " <> query)
+              <=> str "Any canonical Account is valid here; recent use is shown first."
+              <=> str " "
+              <=> L.renderList renderAccount True accountList
+              <=> str " "
+              <=> str "[Up/Down] Move | [Enter] Select | [Esc] Cancel"))))
+  ]
+drawUI (AppWrapper _ (MultiShowPreview preview _ _)) =
+  [ center
+      (borderWithLabel (str "Multi-posting Preview")
+        (hLimit 86
+          (padAll 1
+            (renderMultiPreview preview <=> str " " <=> str (multiPreviewControls preview)))))
+  ]
+drawUI (AppWrapper _ (ShowWriteOutcome outcome)) =
+  [ center
+      (borderWithLabel (str "Actual Write Result")
         (padAll 1 (renderWriteOutcome outcome <=> str " " <=> str "[Esc/Q] Quit")))
   ]
 drawUI (AppWrapper _ (PlanInputForm proposal form)) =
@@ -474,13 +587,57 @@ drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
   ]
 
 entryDateSummary :: AppContext -> ActualAddInput -> Text
-entryDateSummary context input
-  | addDateText input == T.pack (show today) = "Today  " <> addDateText input
-  | addDateText input == T.pack (show yesterday) = "Yesterday  " <> addDateText input
-  | otherwise = "Other  " <> addDateText input
+entryDateSummary context = dateSummary context . addDateText
+
+dateSummary :: AppContext -> Text -> Text
+dateSummary context value
+  | value == T.pack (show today) = "Today  " <> value
+  | value == T.pack (show yesterday) = "Yesterday  " <> value
+  | otherwise = "Other  " <> value
   where
     today = contextObservationDay context
     yesterday = addDays (-1) today
+
+renderMultiPostingRows :: ActualMultiAddState -> Widget Name
+renderMultiPostingRows state =
+  vBox
+    [ renderRow index posting
+    | (index, posting) <- zip [0 ..]
+        (NonEmpty.toList (multiAddPostings (actualMultiAddInput state)))
+    ]
+  where
+    selected = actualMultiSelectedPosting state
+    renderRow index posting =
+      let accountText
+            | T.null (multiPostingAccountText posting) = "(choose account)"
+            | otherwise = multiPostingAccountText posting
+          amountText
+            | T.null (multiPostingAmountText posting) = "(amount)"
+            | otherwise = multiPostingAmountText posting
+          row = txt
+            (T.pack (show (index + 1)) <> ".  " <> accountText <> "  " <> amountText)
+      in if index == selected then withAttr L.listSelectedAttr row else row
+
+selectedMultiAccountLabel :: ActualMultiAddState -> Text
+selectedMultiAccountLabel state =
+  let value = multiPostingAccountText (selectedActualMultiPosting state)
+  in if T.null value then "(not selected)" else value
+
+renderMultiPreview :: ActualMultiAddPreview -> Widget Name
+renderMultiPreview preview = case preview of
+  ActualMultiAddInputRejected inputError ->
+    withAttr (attrName "error") (txt ("Input rejected: " <> T.pack (show inputError)))
+  ActualMultiAddCandidateRejected sourceErrors ->
+    withAttr (attrName "error")
+      (txt (T.intercalate "\n" (map (T.pack . show) (NonEmpty.toList sourceErrors))))
+  ActualMultiAddCandidateReady block ->
+    withAttr (attrName "success") (str "Validation successful. Source unmodified.")
+      <=> str " " <=> txt block
+
+multiPreviewControls :: ActualMultiAddPreview -> String
+multiPreviewControls preview = case preview of
+  ActualMultiAddCandidateReady _ -> "[Esc/B] Back | [Enter/Y] Publish | [Q] Quit"
+  _ -> "[Esc/B] Back | [Q] Quit"
 
 renderPlanProposal :: PlanAdvanceProposal -> Widget Name
 renderPlanProposal proposal =
@@ -582,7 +739,7 @@ drawWorkspace context =
     , borderWithLabel (str "Selected transaction")
         (padAll 1 (renderWorkspaceSelection context))
     , txt ("Filter: " <> workspaceFilterText context)
-    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [a] Daily Actual   [q] Quit"
+    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [a] Daily Actual   [m] Multi Actual   [q] Quit"
     ]
 
 drawPlansView :: AppContext -> Widget Name
@@ -704,9 +861,9 @@ drawReportsView context =
   vBox
     [ borderWithLabel (str ("Household Report: " <> show (contextSelectedReport context)))
         (vLimit 18 (viewport ReportsViewport Vertical (renderSelectedReport context)))
-    , txt ("Active report: " <> T.pack (show (contextSelectedReport context))
-        <> "  |  Press [r] to cycle reports")
-    , str "[1-7] Switch section   [r] Cycle Report   [q] Quit"
+    , txt ("Active report: " <> T.pack (show (contextSelectedReport context)))
+    , str "[t] Trial   [b] Balance Sheet   [p] P&L   [d] Daily   [m] Monthly   [c] Cycle   [a] Recent   [h] Household   [r] Next"
+    , str "[1-7] Switch section   [q] Quit"
     ]
 
 renderSelectedReport :: AppContext -> Widget Name
@@ -853,7 +1010,7 @@ renderPreview preview = case preview of
 
 previewControls :: ActualAddPreview -> String
 previewControls preview = case preview of
-  ActualAddCandidateReady _ -> "[Esc/B] Back | [C] Continue to confirmation | [Q] Quit"
+  ActualAddCandidateReady _ -> "[Esc/B] Back | [Enter/Y] Publish | [Q] Quit"
   _ -> "[Esc/B] Back | [Q] Quit"
 
 renderWriteOutcome :: ActualAddWriteOutcome -> Widget Name
@@ -889,8 +1046,12 @@ appEvent event = do
     SelectAccount target query accountList form ->
       handleAccountSelection context target query accountList form event
     ShowPreview preview form -> handlePreviewEvent context preview form event
-    ShowConfirmation block form -> handleConfirmationEvent context block form event
-    ShowWriteOutcome outcome form -> handleWriteOutcomeEvent outcome form event
+    MultiInput multiState form -> handleMultiInputEvent context multiState form event
+    MultiSelectAccount query accountList multiState form ->
+      handleMultiAccountSelection context query accountList multiState form event
+    MultiShowPreview preview multiState form ->
+      handleMultiPreviewEvent context preview multiState form event
+    ShowWriteOutcome _ -> handleWriteOutcomeEvent event
     PlanInputForm proposal form -> handlePlanInputEvent context proposal form event
     PlanShowPreview proposal result form ->
       handlePlanPreviewEvent context proposal result form event
@@ -918,6 +1079,22 @@ handleWorkspaceEvent context event = case event of
     put (AppWrapper (context { contextCurrentSection = ReportsSection }) Workspace)
   VtyEvent (V.EvKey (V.KChar '7') []) ->
     put (AppWrapper (context { contextCurrentSection = SettingsSection }) Workspace)
+  VtyEvent (V.EvKey (V.KChar 't') [])
+    | contextCurrentSection context == ReportsSection -> selectReport context ReportTrialBalance
+  VtyEvent (V.EvKey (V.KChar 'b') [])
+    | contextCurrentSection context == ReportsSection -> selectReport context ReportBalanceSheet
+  VtyEvent (V.EvKey (V.KChar 'p') [])
+    | contextCurrentSection context == ReportsSection -> selectReport context ReportProfitAndLoss
+  VtyEvent (V.EvKey (V.KChar 'd') [])
+    | contextCurrentSection context == ReportsSection -> selectReport context ReportDailyFlow
+  VtyEvent (V.EvKey (V.KChar 'm') [])
+    | contextCurrentSection context == ReportsSection -> selectReport context ReportMonthlyAccounts
+  VtyEvent (V.EvKey (V.KChar 'c') [])
+    | contextCurrentSection context == ReportsSection -> selectReport context ReportCycleAccounts
+  VtyEvent (V.EvKey (V.KChar 'a') [])
+    | contextCurrentSection context == ReportsSection -> selectReport context ReportRecentTransactions
+  VtyEvent (V.EvKey (V.KChar 'h') [])
+    | contextCurrentSection context == ReportsSection -> selectReport context ReportCombinedBook
   VtyEvent (V.EvKey (V.KChar 'r') [])
     | contextCurrentSection context == ReportsSection ->
         put (AppWrapper (context { contextSelectedReport = cycleReport (contextSelectedReport context) }) Workspace)
@@ -927,6 +1104,10 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey (V.KChar 'A') [])
     | contextCurrentSection context == ActualSection ->
         put (AppWrapper context (InputForm (mkDailyForm (contextEntryDay context))))
+  VtyEvent (V.EvKey (V.KChar 'm') [])
+    | contextCurrentSection context == ActualSection -> openMultiInput context
+  VtyEvent (V.EvKey (V.KChar 'M') [])
+    | contextCurrentSection context == ActualSection -> openMultiInput context
   VtyEvent (V.EvKey V.KEnter [])
     | contextCurrentSection context == PlansSection -> openSelectedPlanCompletion context
   VtyEvent (V.EvKey (V.KChar 'c') [])
@@ -948,6 +1129,15 @@ handleWorkspaceEvent context event = case event of
     | contextCurrentSection context == PlansSection ->
         zoom zoomPlanList (L.handleListEventVi L.handleListEvent vtyEvent)
   _ -> pure ()
+
+selectReport :: AppContext -> ReportChoice -> EventM Name AppWrapper ()
+selectReport context report =
+  put (AppWrapper (context { contextSelectedReport = report }) Workspace)
+
+openMultiInput :: AppContext -> EventM Name AppWrapper ()
+openMultiInput context = do
+  let state = initialActualMultiAddStateForDay (contextEntryDay context)
+  put (AppWrapper context (MultiInput state (mkMultiForm state)))
 
 openSelectedPlanCompletion :: AppContext -> EventM Name AppWrapper ()
 openSelectedPlanCompletion context =
@@ -1087,77 +1277,193 @@ handlePreviewEvent context preview form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> put (AppWrapper context (InputForm form))
   VtyEvent (V.EvKey (V.KChar 'b') []) -> put (AppWrapper context (InputForm form))
   VtyEvent (V.EvKey (V.KChar 'B') []) -> put (AppWrapper context (InputForm form))
-  VtyEvent (V.EvKey (V.KChar 'c') []) -> requestConfirmation context preview form
-  VtyEvent (V.EvKey (V.KChar 'C') []) -> requestConfirmation context preview form
+  VtyEvent (V.EvKey V.KEnter []) -> publishReadyActualPreview context preview form
+  VtyEvent (V.EvKey (V.KChar 'y') []) -> publishReadyActualPreview context preview form
+  VtyEvent (V.EvKey (V.KChar 'Y') []) -> publishReadyActualPreview context preview form
+  VtyEvent (V.EvKey (V.KChar 'c') []) -> publishReadyActualPreview context preview form
+  VtyEvent (V.EvKey (V.KChar 'C') []) -> publishReadyActualPreview context preview form
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
   _ -> pure ()
 
-requestConfirmation
+publishReadyActualPreview
   :: AppContext
   -> ActualAddPreview
   -> Form ActualAddInput AppEvent Name
   -> EventM Name AppWrapper ()
-requestConfirmation context preview form = do
-  let state = transitionActualAdd RequestActualAddConfirmation
-        (ActualAddState (formState form) (ShowingActualAddPreview preview))
-  case actualAddMode state of
-    ConfirmingActualAdd block -> put (AppWrapper context (ShowConfirmation block form))
-    _ -> put (AppWrapper context (ShowPreview preview form))
+publishReadyActualPreview context preview form = case preview of
+  ActualAddCandidateReady block ->
+    let stickyDay = fromMaybe (contextEntryDay context)
+          (readMaybe (T.unpack (addDateText (formState form))))
+    in publishActualCandidate context stickyDay block
+  _ -> pure ()
 
-handleConfirmationEvent
+handleMultiInputEvent
   :: AppContext
-  -> Text
-  -> Form ActualAddInput AppEvent Name
+  -> ActualMultiAddState
+  -> Form MultiEditInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleConfirmationEvent context block form event = case event of
-  VtyEvent (V.EvKey V.KEsc []) -> cancelConfirmation context block form
-  VtyEvent (V.EvKey (V.KChar 'n') []) -> cancelConfirmation context block form
-  VtyEvent (V.EvKey (V.KChar 'N') []) -> cancelConfirmation context block form
-  VtyEvent (V.EvKey (V.KChar 'y') []) -> acceptConfirmation context block form
-  VtyEvent (V.EvKey (V.KChar 'Y') []) -> acceptConfirmation context block form
+handleMultiInputEvent context state form event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> put (AppWrapper context Workspace)
+  VtyEvent (V.EvKey V.KEnter []) -> prepareMultiPreview context state form
+  VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl]) ->
+    replaceMultiState context
+      (setActualMultiAddDate (contextObservationDay context) (commitMultiForm state form)) form
+  VtyEvent (V.EvKey (V.KChar 'y') [V.MCtrl]) ->
+    replaceMultiState context
+      (setActualMultiAddDate (addDays (-1) (contextObservationDay context))
+        (commitMultiForm state form)) form
+  VtyEvent (V.EvKey (V.KFun 2) []) -> openMultiAccountSelection context state form
+  VtyEvent (V.EvKey (V.KChar 'f') [V.MCtrl]) -> openMultiAccountSelection context state form
+  VtyEvent (V.EvKey (V.KChar 'n') [V.MCtrl]) ->
+    moveMultiSelection context 1 state form
+  VtyEvent (V.EvKey (V.KChar 'p') [V.MCtrl]) ->
+    moveMultiSelection context (-1) state form
+  VtyEvent (V.EvKey (V.KFun 4) []) ->
+    replaceMultiState context (appendActualMultiPosting (commitMultiForm state form)) form
+  VtyEvent (V.EvKey (V.KFun 5) []) ->
+    replaceMultiState context (removeSelectedActualMultiPosting (commitMultiForm state form)) form
+  _ -> zoom zoomMultiForm (handleFormEvent event)
+
+replaceMultiState
+  :: AppContext
+  -> ActualMultiAddState
+  -> Form MultiEditInput AppEvent Name
+  -> EventM Name AppWrapper ()
+replaceMultiState context state form =
+  put (AppWrapper context (MultiInput state (syncMultiForm state form)))
+
+moveMultiSelection
+  :: AppContext
+  -> Int
+  -> ActualMultiAddState
+  -> Form MultiEditInput AppEvent Name
+  -> EventM Name AppWrapper ()
+moveMultiSelection context offset state form =
+  let committed = commitMultiForm state form
+      selected = actualMultiSelectedPosting committed + offset
+      moved = selectActualMultiPosting selected committed
+  in replaceMultiState context moved form
+
+openMultiAccountSelection
+  :: AppContext
+  -> ActualMultiAddState
+  -> Form MultiEditInput AppEvent Name
+  -> EventM Name AppWrapper ()
+openMultiAccountSelection context state form = do
+  let committed = commitMultiForm state form
+  put (AppWrapper context
+    (MultiSelectAccount "" (multiAccountSelectionList context "") committed
+      (syncMultiForm committed form)))
+
+multiAccountSelectionList :: AppContext -> Text -> L.List Name Account
+multiAccountSelectionList context query =
+  L.list AccountList
+    (Vec.fromList
+      (filterMultiAccountCandidates query
+        (multiAccountCandidates
+          (householdStateAccountsRegistry (contextHouseholdState context))
+          (contextAllTransactions context)))) 1
+
+handleMultiAccountSelection
+  :: AppContext
+  -> Text
+  -> L.List Name Account
+  -> ActualMultiAddState
+  -> Form MultiEditInput AppEvent Name
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleMultiAccountSelection context query accountList state form event = case event of
+  VtyEvent (V.EvKey V.KEsc []) ->
+    put (AppWrapper context (MultiInput state form))
+  VtyEvent (V.EvKey V.KEnter []) -> case L.listSelectedElement accountList of
+    Nothing -> pure ()
+    Just (_, account) -> do
+      let selected = setSelectedActualMultiAccount account state
+      put (AppWrapper context (MultiInput selected (syncMultiForm selected form)))
+  VtyEvent (V.EvKey V.KBS []) ->
+    replaceMultiAccountSearch context (T.dropEnd 1 query) state form
+  VtyEvent (V.EvKey (V.KChar 'u') [V.MCtrl]) ->
+    replaceMultiAccountSearch context "" state form
+  VtyEvent (V.EvKey (V.KChar character) []) ->
+    replaceMultiAccountSearch context (query <> T.singleton character) state form
+  VtyEvent vtyEvent -> zoom zoomMultiAccountList (L.handleListEvent vtyEvent)
+  _ -> pure ()
+
+replaceMultiAccountSearch
+  :: AppContext
+  -> Text
+  -> ActualMultiAddState
+  -> Form MultiEditInput AppEvent Name
+  -> EventM Name AppWrapper ()
+replaceMultiAccountSearch context query state form =
+  put (AppWrapper context
+    (MultiSelectAccount query (multiAccountSelectionList context query) state form))
+
+prepareMultiPreview
+  :: AppContext
+  -> ActualMultiAddState
+  -> Form MultiEditInput AppEvent Name
+  -> EventM Name AppWrapper ()
+prepareMultiPreview context state form = do
+  let committed = commitMultiForm state form
+      resolvedJournal = actualJournalValue
+        (householdStateActualJournal (contextHouseholdState context))
+      preview = prepareActualMultiAddPreviewFromResolvedJournal
+        resolvedJournal (contextSource context) (actualMultiAddInput committed)
+  put (AppWrapper context (MultiShowPreview preview committed (syncMultiForm committed form)))
+
+handleMultiPreviewEvent
+  :: AppContext
+  -> ActualMultiAddPreview
+  -> ActualMultiAddState
+  -> Form MultiEditInput AppEvent Name
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleMultiPreviewEvent context preview state form event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> put (AppWrapper context (MultiInput state form))
+  VtyEvent (V.EvKey (V.KChar 'b') []) -> put (AppWrapper context (MultiInput state form))
+  VtyEvent (V.EvKey (V.KChar 'B') []) -> put (AppWrapper context (MultiInput state form))
+  VtyEvent (V.EvKey V.KEnter []) -> publishReadyMultiPreview context preview state
+  VtyEvent (V.EvKey (V.KChar 'y') []) -> publishReadyMultiPreview context preview state
+  VtyEvent (V.EvKey (V.KChar 'Y') []) -> publishReadyMultiPreview context preview state
+  VtyEvent (V.EvKey (V.KChar 'c') []) -> publishReadyMultiPreview context preview state
+  VtyEvent (V.EvKey (V.KChar 'C') []) -> publishReadyMultiPreview context preview state
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
   _ -> pure ()
 
-cancelConfirmation
+publishReadyMultiPreview
   :: AppContext
-  -> Text
-  -> Form ActualAddInput AppEvent Name
+  -> ActualMultiAddPreview
+  -> ActualMultiAddState
   -> EventM Name AppWrapper ()
-cancelConfirmation context block form = do
-  let state = transitionActualAdd CancelActualAddConfirmation
-        (ActualAddState (formState form) (ConfirmingActualAdd block))
-  case actualAddMode state of
-    ShowingActualAddPreview preview -> put (AppWrapper context (ShowPreview preview form))
-    _ -> put (AppWrapper context (ShowConfirmation block form))
+publishReadyMultiPreview context preview state = case preview of
+  ActualMultiAddCandidateReady block ->
+    let stickyDay = fromMaybe (contextEntryDay context)
+          (readMaybe (T.unpack (multiAddDateText (actualMultiAddInput state))))
+    in publishActualCandidate context stickyDay block
+  _ -> pure ()
 
-acceptConfirmation
+publishActualCandidate
   :: AppContext
+  -> Day
   -> Text
-  -> Form ActualAddInput AppEvent Name
   -> EventM Name AppWrapper ()
-acceptConfirmation context block form = do
-  let state = transitionActualAdd ConfirmActualAdd
-        (ActualAddState (formState form) (ConfirmingActualAdd block))
-      stickyDay = fromMaybe (contextEntryDay context)
-        (readMaybe (T.unpack (addDateText (formState form))))
-      stickyContext = context { contextEntryDay = stickyDay }
-  case actualAddMode state of
-    ActualAddConfirmed confirmedBlock -> do
-      writeResult <- suspendAndResume'
-        (publishActualBlockFromResolvedJournal
-          (contextSourcePath context) (contextSource context) confirmedBlock)
-      let writeOutcome = classifyActualAddWriteResult writeResult
-      case writeOutcome of
-        ActualAddWriteSucceeded -> do
-          reloadedContext <- suspendAndResume' (reloadWorkspaceContext stickyContext)
-          case reloadedContext of
-            Nothing -> put (AppWrapper context ShowWorkspaceReloadFailure)
-            Just freshContext -> put (AppWrapper freshContext Workspace)
-        _ -> put (AppWrapper context (ShowWriteOutcome writeOutcome form))
-    _ -> put (AppWrapper context (ShowConfirmation block form))
+publishActualCandidate context stickyDay block = do
+  let stickyContext = context { contextEntryDay = stickyDay }
+  writeResult <- suspendAndResume'
+    (publishActualBlockFromResolvedJournal
+      (contextSourcePath context) (contextSource context) block)
+  let writeOutcome = classifyActualAddWriteResult writeResult
+  case writeOutcome of
+    ActualAddWriteSucceeded -> do
+      reloadedContext <- suspendAndResume' (reloadWorkspaceContext stickyContext)
+      case reloadedContext of
+        Nothing -> put (AppWrapper context ShowWorkspaceReloadFailure)
+        Just freshContext -> put (AppWrapper freshContext Workspace)
+    _ -> put (AppWrapper context (ShowWriteOutcome writeOutcome))
 
 handlePlanInputEvent
   :: AppContext
@@ -1332,12 +1638,8 @@ reloadWorkspaceContext context = do
               }))
         _ -> pure Nothing
 
-handleWriteOutcomeEvent
-  :: ActualAddWriteOutcome
-  -> Form ActualAddInput AppEvent Name
-  -> BrickEvent Name AppEvent
-  -> EventM Name AppWrapper ()
-handleWriteOutcomeEvent _ _ = handleExitOnlyEvent
+handleWriteOutcomeEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
+handleWriteOutcomeEvent = handleExitOnlyEvent
 
 handleExitOnlyEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleExitOnlyEvent event = case event of

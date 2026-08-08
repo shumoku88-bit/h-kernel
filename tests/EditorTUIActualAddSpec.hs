@@ -15,10 +15,16 @@ import HKernel.Editor.ActualAppend
   , ActualAddWriteFailure(..)
   , ActualAddWriteOutcome(..)
   , ActualEditIntent(..)
+  , ActualMultiAddInput(..)
+  , ActualMultiAddInputError(..)
+  , ActualMultiAddPreview(..)
+  , ActualPostingInput(..)
   , buildActualAddIntent
   , buildActualAddIntentWithRegistry
+  , buildActualMultiAddIntentWithRegistry
   , classifyActualAddWriteResult
   , prepareActualAddPreview
+  , prepareActualMultiAddPreviewFromResolvedJournal
   )
 import HKernel.Editor.ActualWriter (WriteError(..))
 import HKernel.Editor.Interaction.ActualAdd
@@ -26,12 +32,22 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualAddAction(..)
   , ActualAddMode(..)
   , ActualAddState(..)
+  , ActualMultiAddState(..)
+  , appendActualMultiPosting
   , dailyAccountCandidates
   , filterDailyAccountCandidates
+  , filterMultiAccountCandidates
   , enterActualAddPreview
   , initialActualAddState
   , initialActualAddStateForDay
+  , initialActualMultiAddStateForDay
+  , multiAccountCandidates
+  , removeSelectedActualMultiPosting
+  , selectActualMultiPosting
+  , selectedActualMultiPosting
   , setActualAddDate
+  , setSelectedActualMultiAccount
+  , setSelectedActualMultiAmount
   , transitionActualAdd
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
@@ -62,10 +78,18 @@ main = do
         , ("from Account selection updates input", testFromSelection)
         , ("cancelled selection preserves input", testCancelSelection)
         , ("preview transition retains candidate block only", testPreviewTransition source)
-        , ("rejected preview cannot enter confirmation", testRejectedPreviewCannotConfirm source)
-        , ("ready preview enters confirmation", testReadyPreviewEntersConfirmation source)
-        , ("confirmation cancellation returns to ready preview", testConfirmationCancellation source)
-        , ("accepted confirmation remains source-free until delivery", testConfirmationAccepted source)
+        , ("preview returns directly to editing input", testPreviewReturn source)
+        , ("multi input builds signed three-posting intent", testMultiBuild)
+        , ("multi input requires at least three postings", testMultiRequiresThree)
+        , ("multi input rejects zero posting with row coordinate", testMultiRejectsZero)
+        , ("balanced multi input prepares one canonical candidate", testMultiBalancedPreview)
+        , ("unbalanced multi input is rejected by transaction admission", testMultiUnbalancedRejected)
+        , ("multi interaction starts with three blank posting rows", testMultiInteractionInitial)
+        , ("multi interaction appends and selects a new posting row", testMultiInteractionAppend)
+        , ("multi interaction never removes below three posting rows", testMultiInteractionMinimum)
+        , ("multi interaction updates only the selected posting", testMultiInteractionSelectedEdit)
+        , ("multi Account candidates are canonical and recent-first", testMultiAccountCandidates)
+        , ("multi Account search is case-insensitive", testMultiAccountSearch)
         , ("successful write result is observable", testWriteSuccess)
         , ("stale write result is observable", testWriteStale)
         , ("restored admission failure is recoverable", testWriteRecovered)
@@ -299,49 +323,195 @@ testPreviewTransition source =
           && not ("Opening Balance" `T.isInfixOf` stateRendering)
       _ -> False
 
-testRejectedPreviewCannotConfirm :: T.Text -> Bool
-testRejectedPreviewCannotConfirm source =
-  let input = validInput { addAmountText = "0 JPY" }
-      initial = ActualAddState input EditingActualAdd
-      rejected = enterActualAddPreview (prepareActualAddPreview source input) initial
-      confirmation = transitionActualAdd RequestActualAddConfirmation rejected
-  in confirmation == rejected
-
-testReadyPreviewEntersConfirmation :: T.Text -> Bool
-testReadyPreviewEntersConfirmation source =
-  let confirmation =
-        transitionActualAdd
-          RequestActualAddConfirmation
-          (readyPreviewState source)
-  in actualAddMode confirmation == ConfirmingActualAdd expectedBlock
-
-testConfirmationCancellation :: T.Text -> Bool
-testConfirmationCancellation source =
-  let confirmation =
-        transitionActualAdd
-          RequestActualAddConfirmation
-          (readyPreviewState source)
-      cancelled =
-        transitionActualAdd CancelActualAddConfirmation confirmation
-  in actualAddMode cancelled
-      == ShowingActualAddPreview (ActualAddCandidateReady expectedBlock)
-
-testConfirmationAccepted :: T.Text -> Bool
-testConfirmationAccepted source =
-  let confirmation =
-        transitionActualAdd
-          RequestActualAddConfirmation
-          (readyPreviewState source)
-      accepted = transitionActualAdd ConfirmActualAdd confirmation
-      stateRendering = T.pack (show accepted)
-  in actualAddMode accepted == ActualAddConfirmed expectedBlock
-      && not ("Opening Balance" `T.isInfixOf` stateRendering)
+testPreviewReturn :: T.Text -> Bool
+testPreviewReturn source =
+  let returned = transitionActualAdd ReturnToActualAddInput (readyPreviewState source)
+  in actualAddInput returned == validInput
+      && actualAddMode returned == EditingActualAdd
 
 readyPreviewState :: T.Text -> ActualAddState
 readyPreviewState source =
   enterActualAddPreview
     (prepareActualAddPreview source validInput)
     (ActualAddState validInput EditingActualAdd)
+
+multiSource :: T.Text
+multiSource = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , "account expenses:books"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  ]
+
+multiInput :: ActualMultiAddInput
+multiInput = ActualMultiAddInput
+  { multiAddDateText = "2026-08-08"
+  , multiAddDescriptionText = "Split purchase"
+  , multiAddPostings =
+      ActualPostingInput "expenses:food" "600"
+        NonEmpty.:| [ ActualPostingInput "expenses:books" "150"
+                    , ActualPostingInput "assets:cash" "-750"
+                    ]
+  }
+
+expectedMultiBlock :: T.Text
+expectedMultiBlock = T.unlines
+  [ "2026-08-08 Split purchase"
+  , "  expenses:food  600 JPY"
+  , "  expenses:books  150 JPY"
+  , "  assets:cash  -750 JPY"
+  ]
+
+testMultiBuild :: Bool
+testMultiBuild =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      case buildActualMultiAddIntentWithRegistry
+          (journalAccountRegistry journal) multiInput of
+        Left _ -> False
+        Right intent ->
+          map renderPosting (NonEmpty.toList (intentPostings intent))
+            == [ ("expenses:food", "600", "JPY")
+               , ("expenses:books", "150", "JPY")
+               , ("assets:cash", "-750", "JPY")
+               ]
+  where
+    renderPosting posting =
+      ( accountName (intentAccount posting)
+      , renderQuantity (intentQuantity posting)
+      , maybe "" commodityCode (intentCommodity posting)
+      )
+
+testMultiRequiresThree :: Bool
+testMultiRequiresThree =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      buildActualMultiAddIntentWithRegistry
+        (journalAccountRegistry journal)
+        (multiInput
+          { multiAddPostings =
+              ActualPostingInput "expenses:food" "600"
+                NonEmpty.:| [ActualPostingInput "assets:cash" "-600"]
+          })
+        == Left ActualMultiAddNeedsAtLeastThreePostings
+
+testMultiRejectsZero :: Bool
+testMultiRejectsZero =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      buildActualMultiAddIntentWithRegistry
+        (journalAccountRegistry journal)
+        (multiInput
+          { multiAddPostings =
+              ActualPostingInput "expenses:food" "600"
+                NonEmpty.:| [ ActualPostingInput "expenses:books" "0"
+                            , ActualPostingInput "assets:cash" "-600"
+                            ]
+          })
+        == Left (ActualMultiAddZeroQuantity 2)
+
+testMultiBalancedPreview :: Bool
+testMultiBalancedPreview =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      prepareActualMultiAddPreviewFromResolvedJournal journal multiSource multiInput
+        == ActualMultiAddCandidateReady expectedMultiBlock
+
+testMultiUnbalancedRejected :: Bool
+testMultiUnbalancedRejected =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      case prepareActualMultiAddPreviewFromResolvedJournal
+          journal
+          multiSource
+          (multiInput
+            { multiAddPostings =
+                ActualPostingInput "expenses:food" "600"
+                  NonEmpty.:| [ ActualPostingInput "expenses:books" "150"
+                              , ActualPostingInput "assets:cash" "-700"
+                              ]
+            }) of
+        ActualMultiAddCandidateRejected _ -> True
+        _ -> False
+
+testMultiInteractionInitial :: Bool
+testMultiInteractionInitial =
+  let state = initialActualMultiAddStateForDay (read "2026-08-08")
+      input = actualMultiAddInput state
+      rows = NonEmpty.toList (multiAddPostings input)
+  in multiAddDateText input == "2026-08-08"
+      && length rows == 3
+      && all (== ActualPostingInput "" "") rows
+      && actualMultiSelectedPosting state == 0
+
+testMultiInteractionAppend :: Bool
+testMultiInteractionAppend =
+  let state = appendActualMultiPosting
+        (initialActualMultiAddStateForDay (read "2026-08-08"))
+  in length (NonEmpty.toList (multiAddPostings (actualMultiAddInput state))) == 4
+      && actualMultiSelectedPosting state == 3
+
+testMultiInteractionMinimum :: Bool
+testMultiInteractionMinimum =
+  let initial = initialActualMultiAddStateForDay (read "2026-08-08")
+      unchanged = removeSelectedActualMultiPosting initial
+      fourRows = appendActualMultiPosting initial
+      reduced = removeSelectedActualMultiPosting fourRows
+  in unchanged == initial
+      && length (NonEmpty.toList (multiAddPostings (actualMultiAddInput reduced))) == 3
+      && actualMultiSelectedPosting reduced == 2
+
+testMultiInteractionSelectedEdit :: Bool
+testMultiInteractionSelectedEdit = case mkAccount "expenses:books" of
+  Left _ -> False
+  Right account ->
+    let initial = initialActualMultiAddStateForDay (read "2026-08-08")
+        selected = selectActualMultiPosting 1 initial
+        withAccount = setSelectedActualMultiAccount account selected
+        withAmount = setSelectedActualMultiAmount "150" withAccount
+        rows = NonEmpty.toList (multiAddPostings (actualMultiAddInput withAmount))
+    in selectedActualMultiPosting withAmount
+        == ActualPostingInput "expenses:books" "150"
+        && rows !! 0 == ActualPostingInput "" ""
+        && rows !! 2 == ActualPostingInput "" ""
+
+testMultiAccountCandidates :: Bool
+testMultiAccountCandidates =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      map accountName
+        (multiAccountCandidates
+          (journalAccountRegistry journal)
+          (journalTransactions journal))
+        == [ "expenses:books"
+           , "liabilities:card"
+           , "expenses:food"
+           , "assets:cash"
+           , "assets:bank"
+           , "income:pension"
+           ]
+
+testMultiAccountSearch :: Bool
+testMultiAccountSearch =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates = multiAccountCandidates
+            (journalAccountRegistry journal)
+            (journalTransactions journal)
+      in map accountName (filterMultiAccountCandidates "PENSION" candidates)
+          == ["income:pension"]
 
 testWriteSuccess :: Bool
 testWriteSuccess =
