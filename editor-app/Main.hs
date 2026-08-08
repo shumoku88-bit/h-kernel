@@ -163,7 +163,9 @@ executeCommand commitMode command = case command of
     case PlanLifecycle.preparePlanAddFromResolvedJournals
         resolvedPlan resolvedActual planSource actualSource intent of
       Left errors -> validationFailed errors
-      Right preview ->
+      Right preview -> do
+        admitPlanCandidate planFile
+          (PlanLifecycle.addCandidateCompleteSource preview)
         executePreview
           publishPlanJournalFromResolvedJournal
           planFile
@@ -180,7 +182,9 @@ executeCommand commitMode command = case command of
     case PlanLifecycle.preparePlanEditFromResolvedJournals
         resolvedPlan resolvedActual planSource actualSource intent of
       Left errors -> validationFailed errors
-      Right preview ->
+      Right preview -> do
+        admitPlanCandidate planFile
+          (PlanLifecycle.editCandidateCompleteSource preview)
         executeReplacementPreview
           publishPlanJournalFromResolvedJournal
           planFile
@@ -219,6 +223,13 @@ loadResolvedPlanJournal sourceFile rootSource = do
   case result of
     Left loadError -> die ("Plan Journal load failed: " <> show loadError)
     Right journal -> pure journal
+
+admitPlanCandidate :: FilePath -> Text -> IO ()
+admitPlanCandidate sourceFile candidateSource = do
+  result <- admitPlanJournalRootSource sourceFile candidateSource
+  case result of
+    Left errors -> validationFailed errors
+    Right _ -> pure ()
 
 validationFailed :: Show error => NonEmpty.NonEmpty error -> IO a
 validationFailed errors =
