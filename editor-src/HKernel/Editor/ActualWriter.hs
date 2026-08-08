@@ -19,6 +19,9 @@ module HKernel.Editor.ActualWriter
   , publishActualBlock
   , publishActualBlockWithPathAdmission
   , publishActualBlockFromResolvedJournal
+  , PlanJournalSourceAdmissionError(..)
+  , admitPlanJournalPath
+  , publishPlanJournalFromResolvedJournal
   , BudgetJournalSourceAdmissionError(..)
   , admitBudgetJournalPath
   , publishBudgetJournalAppend
@@ -43,7 +46,12 @@ import HKernel.Household.BudgetMovement
   , HouseholdBudgetMovementJournalError
   , admitHouseholdBudgetMovementJournal
   )
-import HKernel.Loader (LoadError, loadJournal)
+import HKernel.Loader (LoadError, loadJournal, loadJournalFromRootSource)
+import HKernel.Plan.Journal
+  ( PlanJournal
+  , PlanJournalError
+  , admitPlanJournalFromResolvedJournal
+  )
 
 -- | The complete source snapshot that the caller observed before preview.
 --
@@ -202,6 +210,33 @@ publishActualAppendFromResolvedJournal
   -> IO (Either (WriteError ActualSourceAdmissionError) ())
 publishActualAppendFromResolvedJournal =
   publishWithPathAdmission admitActualJournalPath
+
+data PlanJournalSourceAdmissionError
+  = PlanJournalSourceLoadError LoadError
+  | PlanJournalSourceAdmissionError PlanJournalError
+  deriving (Show)
+
+-- | Admit one Plan root using exactly the observed root bytes together with its
+-- filesystem-resolved include graph. Accounting meaning comes from the
+-- resolved Journal; Plan identity and metadata remain owned by Plan Journal.
+admitPlanJournalPath
+  :: FilePath
+  -> IO (Either (NonEmpty PlanJournalSourceAdmissionError) PlanJournal)
+admitPlanJournalPath sourceFile = do
+  source <- TextIO.readFile sourceFile
+  resolved <- loadJournalFromRootSource sourceFile source
+  pure $ case resolved of
+    Left loadError -> Left (pure (PlanJournalSourceLoadError loadError))
+    Right journal -> case admitPlanJournalFromResolvedJournal journal source of
+      Left errors -> Left (fmap PlanJournalSourceAdmissionError errors)
+      Right planJournal -> Right planJournal
+
+-- | Publish a Plan root and re-admit the complete include-resolved Plan graph.
+publishPlanJournalFromResolvedJournal
+  :: WriteIntent
+  -> IO (Either (WriteError PlanJournalSourceAdmissionError) ())
+publishPlanJournalFromResolvedJournal =
+  publishWithPathAdmission admitPlanJournalPath
 
 data BudgetJournalSourceAdmissionError
   = BudgetJournalSourceLoadError LoadError
