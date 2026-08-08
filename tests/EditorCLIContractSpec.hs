@@ -12,8 +12,15 @@ import HKernel.Editor.ActualReverse
   )
 import HKernel.Editor.CLI
 import HKernel.Editor.IssueAppend (intentAmount, intentDetails)
-import HKernel.Editor.PlanLifecycle (addDate)
+import HKernel.Editor.PlanLifecycle
+  ( addDate
+  , editAmount
+  , editDate
+  , editPlanId
+  , positivePlanEditAmountQuantity
+  )
 import HKernel.Household.BudgetMovement (householdBudgetMovementMemo)
+import HKernel.Money (quantityFromInteger)
 import HKernel.Plan.Completion (actualTransactionIdText)
 
 main :: IO ()
@@ -27,6 +34,11 @@ main = do
         , ("Issue amount pair rejects one-sided omission", testIssueAmountPair)
         , ("Issue blank amount and details are preserved", testIssueBlankAmount)
         , ("Plan add requires explicit date", testPlanAddDateRequired)
+        , ("Plan edit admits identity date and amount", testPlanEditAdmission)
+        , ("Plan edit requires identity", testPlanEditIdRequired)
+        , ("Plan edit requires at least one change coordinate", testPlanEditChangeRequired)
+        , ("Plan edit rejects non-positive amount", testPlanEditNonPositiveAmount)
+        , ("Plan edit admits command-local commit", testPlanEditCommit)
         , ("Plan finish requires explicit actual date", testPlanFinishDateRequired)
         , ("Plan finish rejects negative actual amount", testPlanFinishNegativeAmount)
         , ("Plan finish rejects zero actual amount", testPlanFinishZeroAmount)
@@ -157,6 +169,77 @@ testPlanAddDateRequired =
     , "100"
     , "JPY"
     ] == Left CliPlanAddDateRequired
+
+testPlanEditAdmission :: Bool
+testPlanEditAdmission = case parseEditorCommand
+  [ "plan"
+  , "edit"
+  , "plan.journal"
+  , "actual.journal"
+  , "--id"
+  , "plan-2026-08-05-meal"
+  , "--date"
+  , "2026-08-06"
+  , "--amount"
+  , "250"
+  ] of
+    Right (PreviewOnly, PlanEditCmd "plan.journal" "actual.journal" intent) ->
+      editPlanId intent == "plan-2026-08-05-meal"
+        && editDate intent == Just (fromGregorian 2026 8 6)
+        && fmap positivePlanEditAmountQuantity (editAmount intent)
+          == Just (quantityFromInteger 250)
+    _ -> False
+
+testPlanEditIdRequired :: Bool
+testPlanEditIdRequired =
+  parseEditorCommand
+    [ "plan"
+    , "edit"
+    , "plan.journal"
+    , "actual.journal"
+    , "--date"
+    , "2026-08-06"
+    ] == Left CliPlanEditIdRequired
+
+testPlanEditChangeRequired :: Bool
+testPlanEditChangeRequired =
+  parseEditorCommand
+    [ "plan"
+    , "edit"
+    , "plan.journal"
+    , "actual.journal"
+    , "--id"
+    , "plan-2026-08-05-meal"
+    ] == Left CliPlanEditChangeRequired
+
+testPlanEditNonPositiveAmount :: Bool
+testPlanEditNonPositiveAmount =
+  parseEditorCommand
+    [ "plan"
+    , "edit"
+    , "plan.journal"
+    , "actual.journal"
+    , "--id"
+    , "plan-2026-08-05-meal"
+    , "--amount"
+    , "0"
+    ] == Left CliPlanEditAmountMustBePositive
+
+testPlanEditCommit :: Bool
+testPlanEditCommit = case parseEditorCommand
+  [ "plan"
+  , "edit"
+  , "--commit"
+  , "plan.journal"
+  , "actual.journal"
+  , "--id"
+  , "plan-2026-08-05-meal"
+  , "--date"
+  , "2026-08-06"
+  ] of
+    Right (CommitRequested, PlanEditCmd _ _ intent) ->
+      editDate intent == Just (fromGregorian 2026 8 6)
+    _ -> False
 
 testPlanFinishDateRequired :: Bool
 testPlanFinishDateRequired =
