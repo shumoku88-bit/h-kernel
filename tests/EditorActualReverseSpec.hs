@@ -90,6 +90,16 @@ main = do
     (Left ActualReverseInvalidDate)
     (buildActualReverseIntent targetId
       validInput { reverseInputDateText = "2026-99-99" })
+  assertEqual "suggest the simple reversal identity when it is free"
+    "event-123-reversal"
+    (suggestActualReverseEventIdText [targetId] targetId)
+  assertEqual "skip an occupied suggested reversal identity"
+    "event-123-reversal-2"
+    (suggestActualReverseEventIdText
+      [ targetId
+      , mustRight (mkActualTransactionId "event-123-reversal")
+      ]
+      targetId)
 
   -- 3. Candidate complete source is re-parseable and provenance remains typed.
   case parseActualJournal (candidateCompleteSource preview) of

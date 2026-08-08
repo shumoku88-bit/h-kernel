@@ -10,6 +10,7 @@ module HKernel.Editor.ActualReverse
   , ActualReverseInputError(..)
   , ActualReverseInputPreview(..)
   , buildActualReverseIntent
+  , suggestActualReverseEventIdText
   , prepareActualReverseInputFromResolvedJournal
   ) where
 
@@ -17,6 +18,7 @@ import Data.Bifunctor (first)
 import qualified Data.Foldable as Foldable
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -120,6 +122,23 @@ buildActualReverseIntent targetId input = do
     , reverseDate = date
     , reverseDescription = reverseInputDescriptionText input
     }
+
+-- | Suggest a valid, source-local reversal identity without asking a delivery
+-- surface to expose identity bookkeeping to the person using it. Domain
+-- admission remains authoritative: this is only a collision-avoiding default.
+suggestActualReverseEventIdText
+  :: [ActualTransactionId]
+  -> ActualTransactionId
+  -> Text
+suggestActualReverseEventIdText existingIds targetId = go 1
+  where
+    used = Set.fromList (map actualTransactionIdText existingIds)
+    stem = actualTransactionIdText targetId <> "-reversal"
+    candidate 1 = stem
+    candidate index = stem <> "-" <> T.pack (show index)
+    go index
+      | candidate index `Set.member` used = go (index + 1)
+      | otherwise = candidate index
 
 prepareActualReverseInputFromResolvedJournal
   :: Journal
