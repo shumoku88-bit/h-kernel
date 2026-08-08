@@ -1,454 +1,677 @@
 # h-kernel Editor 開発設計面
 
 ステータス: アクティブな正規開発設計面  
-Owner: h-kernel editor  
+Owner: h-kernel editor / daily Household application  
 Canonical: yes  
-更新日: 2026-08-08  
-更新条件: editorのmain能力、daily-use入口、writer authority、次のcoherent editor chapterが変わるとき
+更新日: 2026-08-09  
+更新条件: editorのmain能力、writer law、TUI ownership、active roadmap順序が変わるとき
 
 ## 1. この文書の役割
 
-この文書は、`h-kernel` editorの現在能力、component境界、write effect、daily-use入口、次に完成させるcoherent editor chapterを所有する。
+この文書は、`h-kernel` editorの現在能力、守るべき設計法則、ここから完成へ進む順序を所有する。
 
-過去のE番号、branch、commit、完了PRの履歴はGitが所有する。この文書には、現在mainで使えるもの、まだ使えないもの、次に完成させるdomain capabilityまたはownership chapterだけを置く。
+2026-08-09の詳細な棚卸しと`bqn-ledger`比較は`CURRENT_STATE_AUDIT_2026-08-09.md`に固定する。この文書はsnapshotを繰り返さず、current targetとactive roadmapを更新し続ける。
 
-## 2. CURRENT
+過去のPR番号、branch、細かい実装履歴はGitが所有する。ここには現在の意味、順序、exit gateだけを置く。
+
+## 2. Project goal
+
+h-kernelは単に「Haskellで家計簿を実装できる」ことを目標にしない。
+
+実用品を通して、次がコードから読めることを目標にする。
+
+- 値が何であるか
+- どの状態が不可能か
+- 何と何がidentity/provenanceで関係しているか
+- どこまでがpure transformationか
+- どこでfilesystem/terminal/clockへ触れるか
+- canonical source textとruntime projectionがどう違うか
+
+目標形は次である。
 
 ```text
-canonical source                 separate private data repository
-actual.journal canonical writer  h-kernel editor
-actual.journal readers           bqn-ledger and h-kernel
-other source writer authority    unchanged by Actual cutover
-h-kernel role                    report engine + explicit editor + workspace-first daily entrypoint
-Actual writer cutover            approved 2026-08-06
+small typed domain owners
+  + pure transformations
+  + explicit admission
+  + narrow safe effects
+  + thin delivery adapters
 ```
 
-現在のEditorは、共有operationとdelivery adapterを分ける。
+Clean Architectureの語彙や抽象層を増やすこと自体は目的ではない。家計簿の意味が見えなくなるgeneric frameworkも作らない。
+
+## 3. Canonical Household boundary
+
+shared canonical Household rootはengine-neutralな8ファイルである。
 
 ```text
-h-kernel-editor
-  source: editor-src/
-  owns:
-    typed edit intent
-    candidate preparation and source placement
-    complete source admission
-    safe writer result
-    typed Actual workspace projection
-    UI-independent Actual add interaction
-
-h-kernel-editor-cli
-  source: editor-app/
-  owns:
-    argv / preview / explicit --commit / exit status / effect delivery
-
-h-kernel-editor-tui
-  source: editor-tui-app/
-  owns:
-    Brick workspace / pane / focus / cursor / key binding / rendering / effect delivery
-
-tools/hk
-  owns:
-    workspace-first daily routing and explicit command routing only
+accounts.journal
+actual.journal
+plan.journal
+budget.journal
+budget.toml
+household.toml
+report.toml
+issues.tsv
 ```
 
-### 2.1 Current editor operations
+```text
+canonical source
+  -> Haskell-specific typed admission
+  -> h-kernel domain/application
 
-CLIは現在、次のnamed operationを公開する。
+canonical source
+  -> BQN-specific array-native admission
+  -> bqn-ledger domain/application
+```
 
-- Actual ordinary append
-- Actual native multi-posting append
-- Actual reversal
-- Account declaration append
-- Budget movement append
-- Household Issue append
+canonical sourceへHaskell constructor、Brick state、BQN rank compatibility、command-hub argument shapeを持ち込まない。
+
+一方のengineがcanonical semanticsへ追いついていない場合、意味をsilent ignoreせずfail closedする。
+
+### Writer authority
+
+write capabilityとcurrent operational writer authorityを分ける。
+
+現在明示されているcanonical writer authorityは少なくとも次である。
+
+```text
+actual.journal current writer authority = h-kernel editor
+```
+
+Account、Plan、Budget、Issueにwrite capabilityがあっても、その事実だけからprivate canonical writer authorityを移動しない。
+
+`bqn-ledger`が同じwrite contractを実装しても、authority cutoverは別の明示chapterとする。
+
+## 4. Current daily-use baseline
+
+current mainでは次の高頻度operationがHousehold TUIから完結する。
+
+1. ordinary Daily Actual
+2. 3+ Posting Actual
+3. selected Plan -> Actual completion
+4. optional successor Plan replenishment
+5. selected Actual -> Reverse
+6. major Reports
+7. Actual Account filtering/browsing
+
+current TUIへ未接続の主なoperationは次である。
+
 - Plan add
-- Plan finish
+- Plan edit
+- Account add
+- Budget movement
+- Issue add
+- Issue resolve
+- Issue drop
 
-Plan editはcurrent CLI operationではない。BQN editorに存在したsurfaceを網羅すること自体は目標にしない。
+これらは「domain functionがある」だけでは完成と数えない。人間がHousehold workspaceから安全に完了できて初めてdelivery capabilityとしてcompleteとする。
 
-`actual.journal`へwriteするoperationは、cutover後の唯一writerとして`h-kernel` editorを使う。Budget movement、Issue、Plan sourceそのもののwriter authorityは、このActual cutoverから推測して移さない。
+## 5. Interaction law
 
-### 2.2 Shared Editor ownership
+BQN command hubをBrickへ移植しない。
 
-Actual addの意味は一つのTUI moduleへ閉じ込めない。
+Haskell TUIの基本形は、verb一覧からcommandを選ぶのではなく、現在見えているtyped対象へ自然なoperationを出すことである。
 
 ```text
-HKernel.Editor.ActualAppend
-  -> free-form input admission
-  -> typed edit intent
-  -> candidate preparation
-  -> preview result
-  -> write outcome classification
+Actual transaction selected
+  -> Reverse
 
-HKernel.Editor.Interaction.ActualAdd
-  -> selection target
-  -> interaction mode
-  -> interaction state
-  -> interaction action
-  -> pure transition
+Plan selected
+  -> Complete & Advance
+  -> Edit
 
-HKernel.Editor.ActualWorkspace
-  -> typed Account selectionからActual transaction projection
+Issue selected
+  -> Resolve
+  -> Drop
+
+Budget workspace
+  -> Movement
+
+Accounts workspace
+  -> Add Account
 ```
 
-`HKernel.Editor.Interaction.ActualAdd`はBrick、Haskeline、cursor、widget、filesystem effectを所有しない。ActualAppend所有の型や関数を再exportする互換棚も持たない。
+required input contractは次を基本とする。
 
-Account pickerで選んだidentityは`Account`のままInteractionへ渡し、free-form `ActualAddInput`へ反映する地点でだけ`accountName`へ落とす。表示TextをAccount identityとして扱わない。
+- Enter
+- Esc
+- Tab
+- arrows
+- ordinary text input
 
-一般multi-posting inputも、Brick固有の文字列文法や独自balance判定を持たせない。各postingはsigned quantityを持つ`ActualEditIntent`へ収束し、Account identity、Commodity resolution、Transaction balance、complete-source admissionは既存ownerへ戻す。
+function key、Ctrl-modified key、prefix sequence、manual provenance identityを必須にしない。
 
-### 2.3 Preview, admission and safe writer
+文字shortcutは補助として存在してよいが、operationを発見する唯一の方法にしない。
 
-すべてのwrite candidateは、source mutation前にpreviewされる。
+### Reverse is the reference interaction
+
+current Actual Reverseは今後のcontextual operationの参照形とする。
 
 ```text
-explicit source path
-  + typed intent
-  -> pure candidate fragment
-  -> candidate complete source
-  -> stable complete-source admission
+selected admitted entity
+  -> typed identity retained by workspace projection
+  -> Enter
+  -> operation-specific input
+  -> pure validated candidate
   -> preview
-  -> explicit publication action
+  -> explicit publication
+  -> fresh workspace
 ```
 
-candidate fragmentだけを正しいと見なさない。Account、Money、Transaction、Actual metadata、Plan、Budget movement、Issueは、それぞれのstable ownerへ戻してcandidate complete sourceを検証する。
+identityをdisplay text、date、description、amount、Account、whole-value equalityから復元しない。
 
-source publicationは既存safe writerが所有する。
+## 6. Domain and delivery ownership
+
+### Domain/editor owners
+
+Domain ownerはaccounting semantics、identity、provenance、candidate preparation、admissionを所有する。
+
+Examples:
+
+- `HKernel.Ledger`
+- `HKernel.Money`
+- `HKernel.Actual.Journal`
+- `HKernel.Plan.Journal`
+- `HKernel.Editor.ActualAppend`
+- `HKernel.Editor.ActualReverse`
+- `HKernel.Editor.PlanLifecycle`
+- Issue / Budget / Account named owners
+
+### Delivery adapters
+
+CLI/TUIは次だけを所有する。
+
+- argv / terminal event
+- cursor / focus / widget
+- free-form delivery input
+- explicit preview/publication choice
+- effect invocation
+- user-facing outcome
+
+Delivery adapterは次を再実装しない。
+
+- balance law
+- AccountType inference
+- Commodity arithmetic
+- Plan recurrence semantics
+- identity relation
+- reversal provenance
+- complete source admission
+- report calculation
+
+## 7. Writer law target
+
+Canonical writerは最低でも次のlawを満たす。
 
 ```text
-expected old bytes
-  + validated candidate bytes
+expected bytes
+  -> validated complete candidate
   -> stale rejection
   -> backup
-  -> sibling temporary file
+  -> sibling staged candidate
+  -> immediate pre-publication stale recheck
   -> atomic publication
   -> post-admission
-  -> success or restore-capable failure
+  -> success
+     or checked restore-capable failure
 ```
 
-CLIやTUIはこの処理を複製しない。
+checked restoreとは、rollback前にtargetが自分のjust-published candidateから変化していないことを確認する意味である。
 
-- preview後にsourceが変わっていればwriteしない
-- domain admissionが失敗した場合はsourceへ触れない
-- publish後のadmission failureでは通常運用を継続しない
-- backup、temporary file、recovery artifact、private sourceをGitへ入れない
-- focused testとpublic CIはsynthetic sourceだけを使う
+cross-process distributed lock、generic transaction manager、database abstractionは導入しない。必要なのは一人のoperatorのcanonical fileを、遅延したpreviewや偶発的なparallel processから壊さない狭いlawである。
 
-UI-independentな`ActualAddState`はcomplete private sourceを保持しない。Brick delivery contextは現在、previewとsafe writerのexpected-old-bytes境界を接続するため、読み込んだsource bytesを保持している。このplacementを変更する場合は、UI cleanupへ混ぜず、writer correctness / ownershipという別のsemantic rollback boundaryとして扱う。
+### Cross-file operations
 
-### 2.4 Actual workspace TUI
+Plan Complete & Advanceのようなtwo-source operationはfilesystem-level atomicityを主張しない。
 
-Brick TUIのhomeはpersistent Actual workspaceである。
+必要なのは次である。
 
-現在mainの日常Actual pathは次である。
+- both expected sources checked before first publication
+- both complete candidates admitted before publication
+- coordinated installation
+- whole-Household post-admission
+- restore both originals when the operation cannot complete
+- later unrelated writerをrollbackで上書きしない
+
+single-fileとcross-file operationは同じdomain operationではない。共通化はlawが本当に同じeffect primitiveに限る。
+
+## 8. Roadmap ordering
+
+ここからは次の順で進む。
 
 ```text
-Accounts pane
-  -> typed Account selection
-  -> Transactions pane projection
-  -> selected Transaction detail
-
-[a]
-  -> ordinary Actual input
-  -> typed Account picker
-  -> validated preview
-  -> explicit publish
-  -> existing safe writer
-  -> fresh Household reload
-  -> workspace
-
-[m]
-  -> multi-posting Actual input
-  -> posting row selection / add / remove
-  -> typed Account picker + signed amount per row
-  -> validated preview
-  -> explicit publish
-  -> existing safe writer
-  -> fresh Household reload
-  -> workspace
+0. documentation baseline
+1. publication correctness
+2. canonical snapshot / post-admission boundary
+3. TUI ownership seam
+4. contextual maintenance operations
+5. daily UX/report completion
+6. production ownership + compatibility subtraction
+7. cross-engine legacy retirement gates
 ```
 
-ordinary pathとmulti pathは別の会計モデルを持たない。どちらも既存`ActualEditIntent`と`TransactionBlock` admissionへ収束する。validated candidateをPreviewで一度だけ提示し、同じblockを別Confirmation画面へ複製しない。安全性はtyped intent、complete-source admission、stale rejection、safe writerで担保する。
+前phaseが完全に全projectを終えるまで次へ進めない、というwaterfallではない。ただし、correctness変更、ownership refactor、UI capability追加を一つのPRへ混ぜない。
 
-Brickはpane、focus、cursor、key mapping、widget、rendering、terminal eventを所有する。Account filterの意味、Actual addのinteraction transition、candidate preparation、safe writer semanticsは共有ownerへ委譲する。
+---
 
-Actual add成功後はfresh sourceを読み直してworkspaceへ戻り、新しいtransactionを表示する。成功を確認するためだけのdead-end result screenは作らない。失敗時はstale、restore済みfailure、未復旧failure、filesystem failureを有限なoutcomeとして表示する。
+# Phase 0 — documentation baseline
 
-### 2.5 Daily workspace entrypoint
+## Goal
 
-日常入口は`tools/hk`である。TTYで引数なし実行した場合、shell operation menuを経由せずActual workspaceへ直接入る。
+2026-08-09 auditを固定し、古いEditor設計面をcurrent mainへ合わせ、以降のPRが同じ優先順位を参照できるようにする。
+
+## Scope
+
+- current-state audit document
+- this canonical roadmap update
+- docs index registration
+
+## Non-goals
+
+- production code
+- writer authority
+- private source mutation
+- TUI behavior
+
+## Exit gate
+
+- remote baselineが記録されている
+- current capabilityと未接続capabilityが区別されている
+- correctness / ownership / UX debtが分離されている
+- next implementation chapterがPhase 1として明示されている
+
+---
+
+# Phase 1 — single-source publication correctness
+
+## Goal
+
+canonical Actual authorityを担うshared single-file publication effectのrace windowを閉じる。
+
+## Finite slice 1A — safe publication hardening
+
+対象はwriter effectだけ。
+
+Implement/characterize:
+
+- unique sibling staged candidate / recovery paths
+- expected-old-bytes stale rejection before write side effects
+- immediate pre-publication stale recheck
+- atomic replacement
+- post-publication read/admission
+- rollback only if target still matches the just-published candidate
+- deterministic tests for stale-before-publish and changed-before-rollback cases
+
+Do not mix:
+
+- TUI changes
+- Account/Plan/Budget/Issue semantics
+- writer-authority cutover
+- source migration
+- generic lock manager
+
+## Exit gate
+
+Every current caller of the shared single-file effect receives the stronger law without duplicating its algorithm.
+
+---
+
+# Phase 2 — canonical snapshot and complete post-admission
+
+## Goal
+
+「どのsource bytesを見てdomain判断したか」と「どのbytesをexpected-oldとしてpublishするか」を同じobservationへ結びつける。
+
+## Finite slice 2A — application write snapshot
+
+Introduce the narrowest useful typed snapshot that can carry:
+
+- admitted canonical Household meaning
+- exact expected bytes for the source(s) an operation may publish
+
+The type name is not fixed by this roadmap. Do not create a generic repository/session abstraction.
+
+The loader should prevent this shape:
 
 ```text
-tools/hk
-  no args         -> Actual workspace
-  report          -> report launcher
-  actual-add      -> Actual workspace with explicit Journal path
-  actual-multi    -> editor CLI append
-  actual-reverse  -> editor CLI reverse
-  account         -> editor CLI account
-  plan            -> editor CLI plan
-  budget          -> editor CLI budget
-  issue           -> editor CLI issue
-  edit            -> editor CLI direct route
-  check           -> build / test / repository audit
-  help            -> usage
+HouseholdState from observation A
+expected raw source from observation B
 ```
 
-`--base DIR`、`HKERNEL_LEDGER_DATA_DIR`、`ledger-data.local`はprivate ledger directoryを解決するためのdelivery concernである。`tools/hk`は会計計算、candidate admission、source mutation ruleを再実装しない。
+## Finite slice 2B — Actual whole-Household post-admission
 
-shell `prompt_choice`、gum / fzf selector、numeric operation menuはdaily navigation modelから削除済みである。
+Clarify and implement the canonical success boundary for Actual publication.
 
-### 2.6 Actual reversal
-
-Actual reverseは元Transactionを変更せず、新しいTransactionをappendする。
-
-- postingsを順序とCommodityを保ってexactに反転する
-- reversalは新しいdurable `event-id`を持つ
-- `reverses` metadataでtargetを明示する
-- unknown target、self-reference、duplicate direct reversalを拒否する
-- reverse-of-reverseは新しいexplicit edgeとして許可する
-
-日常routeは`tools/hk actual-reverse`から既存Editor CLIへ委譲する。専用selectorまたはreverse専用TUIはまだ存在しない。詳細は[`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)が所有する。
-
-### 2.7 Plan complete and advance
-
-Plans workspaceは、open Planを選び、Actualへ実績化し、必要ならsuccessor Planを同じcoherent operationで補充できる。
-
-- Actual dateとnominal Plan dateを分離する
-- Actual amount overrideはsuccessor amountへ暗黙伝播しない
-- monthly recurrenceのnext dateはoriginal nominal Plan dateから提案する
-- once recurrenceはsuccessorなしを標準にする
-- cycle / unspecified recurrenceはnext nominal dateを明示入力する
-- Actual completionはexisting plan-idを再利用し、successorはfresh PlanIdを持つ
-- ActualとPlanの双方をcomplete candidateとして検証してからpublishする
-
-このsemantic contractはdelivery ergonomicsから独立して維持する。
-
-### 2.8 Reports workspace
-
-Reports workspaceは、core reportとtyped Household report sectionを同じread-only surfaceから直接選択する。
-
-core reports:
-
-- Trial Balance
-- Balance Sheet
-- Profit & Loss
-- Daily Flow
-- Monthly Accounts
-- Recent Actual
-
-Household report sections:
-
-- Current Cycle
-- Daily Target
-- Planned Transactions
-- Envelope & Backing
-
-combined Household reportも残す。Household-specific sectionは`HouseholdReportSection`を選択し、`renderHouseholdReportSection`へ委譲する。BrickはCycle、Daily Target、Plan、Envelope計算やrendererを再実装しない。
-
-## 3. Single-user writer law
-
-このprojectのcanonical editorは一人のoperatorが順番に使う。
-
-cross-process shared lock、二つのeditorによるalternating canonical write、lock contention testは要件にしない。
+Preferred law:
 
 ```text
-canonical actual.journal writer = h-kernel editor
-bqn-ledger actual write          = prohibited by operation
-other source writer authority    = unchanged by this cutover
+publish Actual candidate
+  -> re-admit complete canonical Household
+  -> success
 ```
 
-`bqn-ledger`をreaderまたはReport engineとしてcanonical sourceへ向け続けることはできる。ただし、canonical `actual.journal`を変更するcommandへは使わない。
+If complete Household admission fails because of the published candidate, restore the original Actual source using the checked rollback law from Phase 1.
 
-writerを切り替えた後は、旧editorのoperationを終了し、新しいeditorでlatest sourceを読み直す。preview後の変更はcurrent stale-source rejectionで拒否する。
+Do not change Actual accounting/reversal semantics in this slice.
 
-reader compatibilityは別の問いである。h-kernel形式の`reverses`を含むsourceへBQN readerを向ける場合、BQN側のJournal admission adaptationが必要になり得る。writer切替とreader維持を一つの暗黙条件へ混ぜない。
+## Finite slice 2C — Plan/other publication qualification review
 
-Actual-specific activation、stop、rollbackは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
+Review all canonical mutation routes after the common writer law is stable.
 
-## 4. Component boundary
+Particularly verify:
+
+- Plan add/edit complete path-aware admission where include graphs are valid
+- Plan Complete & Advance rollback guards
+- Account Journal publication
+- Budget Journal publication
+- Issue TSV publication
+
+Fix one source family per coherent slice when behavior differs. Do not create a universal writer framework merely to make call sites look similar.
+
+## Exit gate
+
+Canonical mutation routes have explicit admission scope, expected snapshot ownership, and rollback behavior.
+
+---
+
+# Phase 3 — thin TUI ownership seam
+
+## Goal
+
+Stop adding new operation controllers directly into an already responsibility-heavy `editor-tui-app/Main.hs`.
+
+This phase is behavior-preserving ownership refactor only.
+
+## Finite slice 3A — Actual/Plan delivery owner extraction
+
+Use existing semantic boundaries to move delivery orchestration into small named owners.
+
+A plausible target shape is:
 
 ```text
-h-kernel-editor -> h-kernel
-h-kernel-editor -> h-kernel-household
-editor-app      -> h-kernel-editor
-editor-tui-app  -> h-kernel-editor
+Main
+  -> Brick app bootstrap
+  -> Household section navigation/composition
 
-the following are forbidden:
-h-kernel            -> h-kernel-editor
-h-kernel-household  -> h-kernel-editor
-Report              -> h-kernel-editor
-tools/hk            -> domain implementation
+TUI Actual owner
+  -> Actual forms/render/event routing
+  -> calls existing Actual editor operations
+
+TUI Plan owner
+  -> Plan forms/render/event routing
+  -> calls existing Plan editor operations
 ```
 
-EditorはAccount identity、Money、Transaction balance、Actual / Plan / Budget / Issue admission、Report calculationを再実装しない。
+Exact module names are implementation details.
 
-Editor固有の責任は、user/application edit intent、candidate fragmentとsource placement、complete-source preview、stale checkとsafe publication、UI-independent interaction contractである。delivery adapterはterminal/process/file effectを接続する。
+Keep in Main only responsibilities that truly compose the whole application.
 
-## 5. COMPLETED: daily-use TUI completion chapter
+Do not introduce:
 
-日々の家計運用で最も頻度の高い操作を、command hubへ戻らずHousehold TUIだけで短く完了できる状態にした。
+- generic screen framework
+- generic command framework
+- generic form DSL
+- Lens abstraction for its own sake
+- domain semantics in TUI modules
 
-日常利用のacceptance criterionは次である。
+## Exit gate
 
-> `tools/hk`を起動し、通常の記帳、必要なmulti-posting記帳、予定支出の実績化と次回予定の補充、主要reportの閲覧まで、CLI commandへ逃げずに到達できる。
+Adding a new Issue/Budget/Account contextual operation no longer requires extending one monolithic top-level controller with unrelated state and effect logic.
 
-完成した順序は次である。
+---
 
-1. ordinary daily Actual entry
-2. multi-posting Actual entry
-3. Plan completion and successor replenishment
-4. direct typed Report selection
+# Phase 4 — contextual maintenance operations
 
-Account maintenance、Budget maintenance、Issue maintenance、Settings編集などの低頻度operationは、このdaily-use acceptance criterionの外に置く。
+After Phases 1-3, restore missing human capabilities in Haskell-native workspace form.
 
-### 5.1 Ergonomic laws
+The default order is selected to maximize reuse of already existing typed semantics while keeping each slice finite.
 
-- common pathを最短にする
-- uncommon optionは失わず、通常操作の途中へ常設しない
-- command一覧からverbを選ぶのではなく、workspaceで対象を見て必要なoperationへ入る
-- same validated candidateをPreviewとConfirmationの二画面で重複表示しない
-- source mutation前にcandidateは必ず人間へ提示する
-- publication actionは明示的なkeyで行う
-- successful writeはfresh Household reload後、意味のあるworkspaceへ戻す
-- failureだけは十分な情報を残し、続行不能なら明示して止める
-- Brick toolkit stateとdomain interaction stateの重複は、操作距離を減らすために必要な範囲で整理する
-- generic command frameworkやgeneric form frameworkは導入しない
+## 4A — Issue selected -> Resolve / Drop
 
-### 5.2 Ordinary Actual
+Why first:
 
-ordinary daily Actualはamountをfirst focusとし、Todayとcanonical Account defaultを既定値として使う。
+- stable `IssueId` already exists
+- typed `Resolved` / `Dropped` distinction exists
+- identity-based close candidate already exists
+- this is a clean second example of the Reverse interaction law
+
+Target:
 
 ```text
-Actual workspace
-  -> [a]
-  -> amount / description / typed Account selection
-  -> validated preview
-  -> explicit publish
-  -> fresh Actual workspace
+Issues workspace
+  -> select open Issue
+  -> Enter
+  -> Resolve or Drop
+  -> decision memo
+  -> preview
+  -> publish
+  -> fresh Issues workspace
 ```
 
-Todayは入力不要、Yesterdayはshortcut、other dateは明示的に開く。Account候補はtyped AccountRegistryから作り、recent-first表示とcase-insensitive searchを使う。
+No display-row index crosses the mutation boundary.
 
-### 5.3 Multi-posting Actual
+## 4B — Issue add
 
-multi-postingはordinary Actualとは別の会計モデルではない。どちらも同じ`ActualEditIntent`と`TransactionBlock` admissionへ収束する。
+Expose Issue creation from the same workspace without turning Issue into accounting fact or Budget policy.
+
+## 4C — Budget workspace -> Movement
+
+Use the existing typed Budget movement and canonical `budget.journal` admission.
+
+Target:
 
 ```text
-ordinary two-posting input --+
-                             +-> ActualEditIntent -> TransactionBlock admission
-multi posting-row input -----+
+Budget workspace
+  -> Movement
+  -> from/to Budget Accounts
+  -> exact Amount
+  -> preview
+  -> publish
 ```
 
-multi pathでは各postingがAccount identityとsigned quantityを持つ。Commodityを省略できるのは、そのAccountのcanonical defaultが一意に得られる場合だけである。
+Do not copy BQN `budget` command argument grammar into Brick.
 
-Brickはposting row selection、typed Account picker、signed amount、row add/remove、date shortcut、preview transitionを担当する。total=0判定、Commodity accounting rule、Account declaration ruleは再実装しない。
+## 4D — Accounts workspace -> Add Account
 
-### 5.4 Plan completion and replenishment
+Use `accounts.journal` as final owner of:
 
-Complete & AdvanceはPlanを選んだ地点からActual実績化と次回補充へ到達する。予定金額をActual amountのdefault、monthly proposalをsuccessor dateのdefaultとし、変更がないfieldへ余分な入力を要求しない。
+- Account identity
+- AccountType
+- optional default Commodity
 
-Plan recurrence、PlanId、Actual completion relationのsemantic contractは既存ownerが保持する。
+Target interaction should make Account type and optional Commodity explicit without teaching the TUI canonical source syntax.
 
-### 5.5 Reports
+## 4E — Plan selected -> Edit
 
-Reports sectionはnamed reportへ直接到達できる。
+Use stable `PlanId` from the selected admitted Plan.
 
-- Account balances / Balance Sheet
-- Recent Actual
-- Planned Transactions
-- Current Cycle
-- Daily Flow / Monthly Accounts
-- Daily Target
-- Envelope & Backing
+Do not ask the person to type PlanId or edit by list index.
 
-`r`による有限なnext-report巡回も残す。Report calculationやrendering semanticsをTUIへ複製せず、typed report ownerを選択してrenderする。
+Initially retain current narrow edit semantics unless a separate domain chapter deliberately broadens them.
 
-### 5.6 State ownership cleanup
+## 4F — Plans workspace -> Add Plan
 
-Brick `UIState`とUI-independent interaction stateの重複整理は独立目的にしない。Form、Brick List、cursor、focus、viewportはtoolkit stateとして残し、interaction meaning、candidate readiness、publication readinessの二重所有だけを必要に応じて整理する。
+Add from the Plans workspace using typed postings and Plan metadata admission.
 
-### Non-goals
+Do not reuse the old command-hub form merely because the CLI already has an argument grammar.
 
-- safe writer contractの変更
-- expected old bytes / complete source retentionの移動
-- writer authority変更
-- source format migration
-- reversal identity policy変更
-- Plan recurrence semantics変更
-- Haskeline implementation追加
-- generic UI framework導入
-- directoryの見た目だけの再配置
-- Spike卒業
-- private canonical sourceの変更
+## Exit gate
 
-## 6. NEXT: Actual correction / reversal workspace chapter
+The retained useful BQN maintenance accomplishments are reachable through contextual Haskell workspaces where the operation still belongs in h-kernel.
 
-次のcoherent editor chapterは、Actual workspaceで既存Transactionを見つけ、その場から既存reversal contractへ入れるようにすることである。
+---
 
-中心の問い:
+# Phase 5 — daily UX and Report completion
 
-> 表示中のActual TransactionをAccount filterやtransaction listから選択したまま、free-form event-id入力やcommand hubへ戻らず、安全にreversal previewへ到達できるか。
+This phase improves interaction distance without adding new accounting meaning.
 
-目標flow:
+## 5A — ordinary-key Account discovery
+
+Restore convenient canonical Account browsing/search after the portability cleanup.
+
+Requirements:
+
+- no F-key or Ctrl-key requirement
+- direct text entry remains a complete fallback
+- picker returns typed Account identity
+- candidate list comes from canonical AccountRegistry
+- terminal adapter does not infer Account meaning from names
+
+Prefer a Tab/Enter/browse path over a new prefix mode.
+
+## 5B — Report browse-and-Enter
+
+Replace shortcut memorization as the only discoverable path.
+
+Expose all retained typed reports that have stable semantics, including report distinctions already present in domain code such as Cycle Comparison when its application coordinates are available.
+
+Letter shortcuts may remain as optional accelerators.
+
+## 5C — Plan confirmation simplification
+
+Re-evaluate the current Preview -> Continue -> Y sequence.
+
+Do not remove meaningful review of a two-source operation merely to match ordinary Actual. Reduce steps only where the same validated candidate is being confirmed redundantly.
+
+## 5D — section navigation
+
+Evaluate whether `1-7` should remain an accelerator rather than the primary navigation contract. Prefer visible selection with ordinary keys if it reduces memorization without adding modes.
+
+## 5E — income / transfer workflow decision
+
+Do not automatically add dedicated screens because BQN had named commands.
+
+First test whether ordinary/multi-posting entry already makes income and transfer clear enough. Add a dedicated workflow only when it reduces real semantic/input burden rather than duplicating `Transaction` construction.
+
+---
+
+# Phase 6 — production ownership and subtraction
+
+Do this after the correctness and daily operation boundaries are stable enough that renaming/moving owners does not obscure active behavior changes.
+
+## 6A — retire production `Spike` ownership
+
+Move production-equivalent Household Report/Application owners to stable namespaces/source components.
+
+This is an ownership refactor only. No Report semantic changes in the same slice.
+
+## 6B — remove superseded compatibility APIs
+
+Candidates include:
+
+- Transaction-only projections superseded by identity-preserving entries
+- legacy noncanonical editor fallback branches
+- obsolete TUI states/shortcut descriptions
+- retained adapters whose migration evidence is no longer needed
+
+Delete only with call-site and test evidence. Do not create compatibility aliases simply to preserve internal names.
+
+## 6C — Main.hs final audit
+
+After contextual sections have their own natural owners, re-audit `Main.hs`.
+
+The target is not a particular line count. The target is that Main owns application composition rather than every section's operation state machine.
+
+---
+
+# Phase 7 — cross-engine legacy retirement gates
+
+h-kernel completion and bqn-ledger canonical recovery may proceed in parallel.
+
+h-kernel Phases 1-6 do not need to wait for BQN reader parity unless a change would delete shared migration evidence or alter canonical semantics.
+
+Private legacy sources may be deleted only after the corresponding bqn-ledger recovery gate proves:
+
+- canonical read parity
+- retained report parity where relevant
+- writer capability/authority decision where relevant
+- no production reader/writer/default/UI/check requires the old source
+
+Do not delete all legacy sources in one cleanup merely because the target root is already known. Retire source-by-source according to ownership.
+
+## 9. Priority summary
+
+If only the next three implementation chapters are considered, the order is:
+
+1. **Single-source safe publication hardening**
+2. **Canonical write snapshot + whole-Household post-admission**
+3. **Behavior-preserving TUI ownership seam**
+
+The first new user-facing capability after these should be:
+
+4. **Issue selected -> Resolve / Drop**
+
+Then:
+
+5. Issue add
+6. Budget Movement
+7. Account Add
+8. Plan Edit
+9. Plan Add
+10. Account discovery / Report navigation / remaining UX subtraction
+
+This ordering is intentional. Adding Budget/Account/Issue/Plan forms directly to current Main before writer and ownership debt are addressed would make the application more capable while making the architecture harder to teach and maintain.
+
+## 10. Per-slice development law
+
+Every implementation chapter starts by re-checking remote main and parallel work.
+
+A coherent slice should have one semantic rollback boundary.
+
+Do not mix unless inseparable:
+
+- correctness change
+- ownership refactor
+- UI behavior change
+- source migration
+- writer authority cutover
+- destructive retirement
+
+For each slice:
+
+1. inspect current owner and parallel branches/PRs
+2. state the domain/effect phrase before editing
+3. add focused synthetic evidence
+4. run the relevant full test suite
+5. run repository ownership audit where applicable
+6. run complete report verification when report/application behavior can be affected
+7. review final diff for private source leakage and compatibility growth
+8. keep Draft until evidence is green
+9. do not merge without explicit approval
+
+## 11. Non-goals
+
+- giant TUI rewrite
+- BQN algorithm translation into Haskell syntax
+- command-hub reimplementation
+- generic repository abstraction
+- giant compatibility layer
+- engine-specific canonical source fields
+- weakening identity/provenance for convenience
+- floating-point money
+- inferring identity from equality
+- inferring Account policy from Account names
+- deleting private legacy evidence before BQN recovery gates
+
+## 12. Completion picture
+
+The desired stable daily application is:
 
 ```text
-Actual workspace
-  -> select Transaction
-  -> explicit reverse action
-  -> typed target identity
-  -> existing reversal preparation / admission
-  -> validated preview
-  -> explicit publish
-  -> fresh Actual workspace
+HouseholdRoot
+  -> one coherent admitted snapshot
+  -> typed Household/domain values
+  -> pure report and editor transformations
+  -> narrow safe publication effects
+  -> workspace delivery
+
+workspace
+  -> select meaningful entity
+  -> see available domain operation
+  -> enter only genuinely new information
+  -> preview validated result
+  -> publish safely
+  -> reload one coherent Household snapshot
 ```
 
-### Scope
-
-- current workspace transaction selectionからreversal targetを得る
-- 表示文字列ではなく既存durable identityを使う
-- dedicated reversal previewを持つ
-- safe writerとstale-source rejectionを再利用する
-- success後はfresh HouseholdをreloadしActual workspaceへ戻す
-- already directly reversed targetは既存ownerの規則どおり拒否する
-- reverse-of-reverseの既存explicit-edge semanticsを保つ
-
-### Non-goals
-
-- reversal identity policy変更
-- `reverses` metadata形式変更
-- original Transaction mutation
-- automatic reversal chaining
-- source format migration
-- writer authority変更
-- generic action framework
-- Plan / Budget / Issue correction semantics
-
-reversalのaccounting / provenance contractは[`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)が所有する。TUIはその意味を再実装しない。
-
-## 7. Remaining decisions
-
-- Brick delivery contextのsource-byte retentionとsafe writer ownershipのseparate ownership chapter
-- Plan edit interaction
-- Account maintenance interaction
-- Budget maintenance interaction
-- Issue maintenance interaction
-- Settings maintenance interaction
-- Haskelineまたは他adapterを実際に追加する必要が生じた時のdelivery構成
-- Plan source writer authority
-- Budget movement source writer authority
-- Issue source writer authority
-- Account declarationを将来`accounts.journal`へ分離する時期
-- BQN readerがHaskell-native reversal provenanceを読む必要があるか
-- private source topology migration
-
-source topologyとsource別authorityの正規ownerは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)である。
-
-## 8. 関連文書
-
-- [`ARCHITECTURE.md`](ARCHITECTURE.md): component、dependency、effect boundary
-- [`HASKELL_NATIVE_CODE_POLICY.md`](HASKELL_NATIVE_CODE_POLICY.md): Haskellとdomain structureの対応
-- [`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md): private sourceとsource別writer authority
-- [`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md): Actual writer cutover、activation、stop、rollback
-- [`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md): reversal contract
-- [`EDITOR_CORRECTNESS_REVIEW.md`](EDITOR_CORRECTNESS_REVIEW.md): correctness recoveryの完了記録
+At that point、h-kernelの価値は「Haskellでも家計簿が作れた」ではなく、家計簿のidentity、relation、impossible state、pure calculation、effect boundaryがHaskellの構造として読めることにある。

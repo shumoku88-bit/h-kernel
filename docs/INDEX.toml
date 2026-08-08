@@ -44,6 +44,10 @@ path = "docs/EDITOR_CORRECTNESS_REVIEW.md"
 role = "observation"
 
 [[documents]]
+path = "docs/CURRENT_STATE_AUDIT_2026-08-09.md"
+role = "observation"
+
+[[documents]]
 path = "docs/EDITOR_DEVELOPMENT_PLAN.md"
 role = "architecture"
 
