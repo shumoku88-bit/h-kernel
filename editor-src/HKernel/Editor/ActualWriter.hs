@@ -20,6 +20,7 @@ module HKernel.Editor.ActualWriter
   , publishActualBlockWithPathAdmission
   , publishActualBlockFromResolvedJournal
   , PlanJournalSourceAdmissionError(..)
+  , admitPlanJournalRootSource
   , admitPlanJournalPath
   , publishPlanJournalFromResolvedJournal
   , BudgetJournalSourceAdmissionError(..)
@@ -216,20 +217,28 @@ data PlanJournalSourceAdmissionError
   | PlanJournalSourceAdmissionError PlanJournalError
   deriving (Show)
 
--- | Admit one Plan root using exactly the observed root bytes together with its
--- filesystem-resolved include graph. Accounting meaning comes from the
--- resolved Journal; Plan identity and metadata remain owned by Plan Journal.
-admitPlanJournalPath
+-- | Admit exact Plan root bytes together with the include graph resolved from
+-- the root path. This can validate an in-memory candidate before publication
+-- without replacing the current root file.
+admitPlanJournalRootSource
   :: FilePath
+  -> Text
   -> IO (Either (NonEmpty PlanJournalSourceAdmissionError) PlanJournal)
-admitPlanJournalPath sourceFile = do
-  source <- TextIO.readFile sourceFile
+admitPlanJournalRootSource sourceFile source = do
   resolved <- loadJournalFromRootSource sourceFile source
   pure $ case resolved of
     Left loadError -> Left (pure (PlanJournalSourceLoadError loadError))
     Right journal -> case admitPlanJournalFromResolvedJournal journal source of
       Left errors -> Left (fmap PlanJournalSourceAdmissionError errors)
       Right planJournal -> Right planJournal
+
+-- | Admit one Plan root using exactly the root bytes read for this observation.
+admitPlanJournalPath
+  :: FilePath
+  -> IO (Either (NonEmpty PlanJournalSourceAdmissionError) PlanJournal)
+admitPlanJournalPath sourceFile = do
+  source <- TextIO.readFile sourceFile
+  admitPlanJournalRootSource sourceFile source
 
 -- | Publish a Plan root and re-admit the complete include-resolved Plan graph.
 publishPlanJournalFromResolvedJournal
