@@ -5,9 +5,15 @@ module HKernel.Editor.IssueAppend
   , IssueAppendError(..)
   , IssueAppendPreview(..)
   , prepareIssueAppend
+  , IssueCloseDisposition(..)
+  , IssueCloseIntent(..)
+  , IssueCloseError(..)
+  , IssueClosePreview(..)
+  , prepareIssueClose
   ) where
 
 import Data.Bifunctor (first)
+import Data.Char (isControl)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -16,10 +22,13 @@ import Data.Time.Format (defaultTimeLocale, formatTime)
 
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.HouseholdIssue
-  ( HouseholdIssueError
+  ( HouseholdIssue
+  , HouseholdIssueError
   , IssueId
   , IssueStatus(..)
   , IssueDue(..)
+  , householdIssueId
+  , householdIssueStatus
   , mkHouseholdIssue
   , issueIdText
   )
@@ -106,3 +115,135 @@ renderStatus :: IssueStatus -> Text
 renderStatus Open = "open"
 renderStatus Resolved = "resolved"
 renderStatus Dropped = "dropped"
+
+-- Issue close
+
+-- | Closing an Issue records why attention ended without overloading the
+-- source status with an arbitrary string.
+data IssueCloseDisposition
+  = ResolveIssue
+  | DropIssue
+  deriving (Eq, Show)
+
+data IssueCloseIntent = IssueCloseIntent
+  { closeIssueId      :: IssueId
+  , closeDisposition  :: IssueCloseDisposition
+  , closeDecisionMemo :: Text
+  } deriving (Eq, Show)
+
+data IssueCloseError
+  = CloseSourceParseError (NonEmpty HouseholdIssueTSVError)
+  | CloseIssueNotFound IssueId
+  | CloseIssueNotOpen IssueStatus
+  | CloseDecisionMemoBlank
+  | CloseDecisionMemoHasSurroundingWhitespace
+  | CloseDecisionMemoHasControlCharacter
+  | ClosePhysicalRowMismatch IssueId
+  | CloseCandidateSourceParseError (NonEmpty HouseholdIssueTSVError)
+  deriving (Eq, Show)
+
+data IssueClosePreview = IssueClosePreview
+  { closeOriginalRow             :: Text
+  , closeCandidateRow            :: Text
+  , closeCandidateCompleteSource :: Text
+  } deriving (Eq, Show)
+
+prepareIssueClose
+  :: Text
+  -> IssueCloseIntent
+  -> Either (NonEmpty IssueCloseError) IssueClosePreview
+prepareIssueClose existingSource intent = do
+  issues <- first (pure . CloseSourceParseError)
+    (parseHouseholdIssues existingSource)
+  target <- maybe
+    (Left (pure (CloseIssueNotFound (closeIssueId intent))))
+    Right
+    (findIssue (closeIssueId intent) issues)
+  case householdIssueStatus target of
+    Open -> Right ()
+    status -> Left (pure (CloseIssueNotOpen status))
+  validateDecisionMemo (closeDecisionMemo intent)
+  (originalRow, candidateRow, candidateSource) <-
+    replaceIssueRow intent existingSource
+  _ <- first (pure . CloseCandidateSourceParseError)
+    (parseHouseholdIssues candidateSource)
+  pure IssueClosePreview
+    { closeOriginalRow = originalRow
+    , closeCandidateRow = candidateRow
+    , closeCandidateCompleteSource = candidateSource
+    }
+
+findIssue :: IssueId -> [HouseholdIssue] -> Maybe HouseholdIssue
+findIssue targetId = go
+  where
+    go [] = Nothing
+    go (issue : rest)
+      | householdIssueId issue == targetId = Just issue
+      | otherwise = go rest
+
+validateDecisionMemo
+  :: Text
+  -> Either (NonEmpty IssueCloseError) ()
+validateDecisionMemo memo
+  | T.null (T.strip memo) = Left (pure CloseDecisionMemoBlank)
+  | T.strip memo /= memo = Left (pure CloseDecisionMemoHasSurroundingWhitespace)
+  | T.any isControl memo = Left (pure CloseDecisionMemoHasControlCharacter)
+  | otherwise = Right ()
+
+replaceIssueRow
+  :: IssueCloseIntent
+  -> Text
+  -> Either (NonEmpty IssueCloseError) (Text, Text, Text)
+replaceIssueRow intent source =
+  case matches of
+    [(index, oldRow, fields)] ->
+      let newFields = replaceFields intent fields
+          newRow = T.intercalate "\t" newFields
+          newLines = replaceAt index newRow sourceLines
+      in Right (oldRow, newRow, T.intercalate "\n" newLines)
+    _ -> Left (pure (ClosePhysicalRowMismatch (closeIssueId intent)))
+  where
+    sourceLines = T.splitOn "\n" source
+    matches =
+      [ (index, row, fields)
+      | (index, row) <- zip [0 ..] sourceLines
+      , not (ignoredPhysicalLine row)
+      , Just fields <- [matchingIssueFields (closeIssueId intent) row]
+      ]
+
+matchingIssueFields :: IssueId -> Text -> Maybe [Text]
+matchingIssueFields targetId row = case T.splitOn "\t" row of
+  fields@[identifier, _, _, _, _, _, _, _]
+    | identifier == issueIdText targetId -> Just fields
+  _ -> Nothing
+
+ignoredPhysicalLine :: Text -> Bool
+ignoredPhysicalLine row =
+  let stripped = T.strip row
+  in T.null stripped || "#" `T.isPrefixOf` stripped
+
+replaceFields :: IssueCloseIntent -> [Text] -> [Text]
+replaceFields intent fields = case fields of
+  [identifier, _, day, category, title, amount, currency, details] ->
+    [ identifier
+    , closeStatusText (closeDisposition intent)
+    , day
+    , category
+    , title
+    , amount
+    , currency
+    , details <> "。Decision: " <> closeDecisionMemo intent
+    ]
+  _ -> fields
+
+closeStatusText :: IssueCloseDisposition -> Text
+closeStatusText ResolveIssue = "resolved"
+closeStatusText DropIssue = "dropped"
+
+replaceAt :: Int -> value -> [value] -> [value]
+replaceAt target replacement = go 0
+  where
+    go _ [] = []
+    go index (value : rest)
+      | index == target = replacement : rest
+      | otherwise = value : go (index + 1) rest
