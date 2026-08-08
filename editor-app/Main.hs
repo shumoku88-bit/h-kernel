@@ -21,6 +21,7 @@ import qualified HKernel.Editor.BudgetMovementAppend as BudgetMovementAppend
 import HKernel.Editor.CLI
 import qualified HKernel.Editor.IssueAppend as IssueAppend
 import qualified HKernel.Editor.PlanLifecycle as PlanLifecycle
+import HKernel.Household.Application (loadCanonicalHousehold)
 import HKernel.Household.BudgetMovement.TSV
   ( parseHouseholdBudgetMovements )
 import HKernel.Household.Issue.TSV (parseHouseholdIssues)
@@ -79,17 +80,18 @@ executeCommand commitMode command = case command of
     existingSource <- TIO.readFile journalFile
     let dir = takeDirectory journalFile
         rootDir = if dir == "" then "." else dir
-        paths = case mkHouseholdRoot rootDir of
-          Right r -> householdSourcePaths r
-          Left _ -> case mkHouseholdRoot "." of
-            Right r -> householdSourcePaths r
-            Left _ -> error "unreachable"
+    root <- case mkHouseholdRoot rootDir of
+      Right r -> pure r
+      Left _ -> case mkHouseholdRoot "." of
+        Right r -> pure r
+        Left _ -> error "unreachable"
+    let paths = householdSourcePaths root
     if normalise journalFile == normalise (householdAccountsJournalPath paths)
       then case ActualAccountAppend.prepareAccountJournalAppend existingSource declaration of
         Left errors -> validationFailed errors
         Right preview ->
           executePreview
-            (publishWithAdmission parseAccountJournal)
+            (publishWithPathAdmission (\_ -> loadCanonicalHousehold root))
             journalFile
             existingSource
             (ActualAccountAppend.accountCandidateBlock preview)
