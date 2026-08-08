@@ -83,6 +83,8 @@ optional aid  = may exist only when required path remains complete
 
 候補pickerやshortcutを将来再導入する場合は、Tab + Enterなどportable pathからも同じ機能へ到達できることを条件とする。
 
+portableであることは、候補選択や発見可能性を捨てる理由ではない。Accountなど既知のcanonical candidateを持つfieldでは、直接text入力を常に残した上で、ordinary keysだけから候補browse/searchへ到達できるergonomic aidを別sliceで追加してよい。候補pickerは入力の唯一経路にせず、手打ちを強制する唯一経路にも固定しない。
+
 ## Boundaries
 
 このdecisionは次を変更しない。
