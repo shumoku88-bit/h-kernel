@@ -25,8 +25,7 @@ import HKernel.Household.BudgetMovement.TSV
   ( parseHouseholdBudgetMovements )
 import HKernel.Household.Issue.TSV (parseHouseholdIssues)
 import HKernel.Journal (Journal)
-import HKernel.Loader (loadJournal)
-import HKernel.Plan.Journal (parsePlanJournal)
+import HKernel.Loader (loadJournal, loadJournalFromRootSource)
 import System.FilePath ((</>), normalise, takeDirectory)
 
 die :: String -> IO a
@@ -159,13 +158,14 @@ executeCommand commitMode command = case command of
   PlanAddCmd planFile actualFile intent -> do
     planSource <- TIO.readFile planFile
     actualSource <- TIO.readFile actualFile
+    resolvedPlan <- loadResolvedPlanJournal planFile planSource
     resolvedActual <- loadResolvedActualJournal actualFile
-    case PlanLifecycle.preparePlanAddFromResolvedActualJournal
-        resolvedActual planSource actualSource intent of
+    case PlanLifecycle.preparePlanAddFromResolvedJournals
+        resolvedPlan resolvedActual planSource actualSource intent of
       Left errors -> validationFailed errors
       Right preview ->
         executePreview
-          (publishWithAdmission parsePlanJournal)
+          publishPlanJournalFromResolvedJournal
           planFile
           planSource
           (PlanLifecycle.addCandidateBlock preview)
@@ -175,13 +175,14 @@ executeCommand commitMode command = case command of
   PlanEditCmd planFile actualFile intent -> do
     planSource <- TIO.readFile planFile
     actualSource <- TIO.readFile actualFile
+    resolvedPlan <- loadResolvedPlanJournal planFile planSource
     resolvedActual <- loadResolvedActualJournal actualFile
-    case PlanLifecycle.preparePlanEditFromResolvedActualJournal
-        resolvedActual planSource actualSource intent of
+    case PlanLifecycle.preparePlanEditFromResolvedJournals
+        resolvedPlan resolvedActual planSource actualSource intent of
       Left errors -> validationFailed errors
       Right preview ->
         executeReplacementPreview
-          (publishWithAdmission parsePlanJournal)
+          publishPlanJournalFromResolvedJournal
           planFile
           planSource
           (PlanLifecycle.editOriginalBlock preview)
@@ -210,6 +211,13 @@ loadResolvedActualJournal sourceFile = do
   result <- loadJournal sourceFile
   case result of
     Left loadError -> die ("Actual Journal load failed: " <> show loadError)
+    Right journal -> pure journal
+
+loadResolvedPlanJournal :: FilePath -> Text -> IO Journal
+loadResolvedPlanJournal sourceFile rootSource = do
+  result <- loadJournalFromRootSource sourceFile rootSource
+  case result of
+    Left loadError -> die ("Plan Journal load failed: " <> show loadError)
     Right journal -> pure journal
 
 validationFailed :: Show error => NonEmpty.NonEmpty error -> IO a
