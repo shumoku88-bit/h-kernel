@@ -17,6 +17,7 @@ module HKernel.Editor.ActualWriter
   , publishActualAppend
   , publishActualAppendFromResolvedJournal
   , publishActualBlock
+  , publishActualBlockWithPathAdmission
   , publishActualBlockFromResolvedJournal
   , BudgetJournalSourceAdmissionError(..)
   , admitBudgetJournalPath
@@ -238,6 +239,22 @@ publishActualBlock
   -> IO (Either (WriteError ActualJournalError) ())
 publishActualBlock filePath expectedSource block =
   publishActualAppend
+    (actualBlockWriteIntent filePath expectedSource block)
+
+-- | Place an already validated Actual block while letting the application
+-- choose the complete post-publication admission boundary.
+--
+-- The source-placement and filesystem law stay here. A canonical Household
+-- adapter can therefore require whole-Household admission without duplicating
+-- append placement, stale checks, staging, publication, or checked rollback.
+publishActualBlockWithPathAdmission
+  :: (FilePath -> IO (Either (NonEmpty sourceError) admitted))
+  -> FilePath
+  -> Text
+  -> Text
+  -> IO (Either (WriteError sourceError) ())
+publishActualBlockWithPathAdmission admit filePath expectedSource block =
+  publishWithPathAdmission admit
     (actualBlockWriteIntent filePath expectedSource block)
 
 -- | Publish an already validated block through resolved Actual admission.
