@@ -229,7 +229,7 @@ executePreview
   -> IO ()
 executePreview publish sourceFile existingSource block completeSource commitMode = do
   TIO.putStrLn "--- Preview ---"
-  TIO.putStr block
+  putPreviewBlock block
   TIO.putStrLn "---------------"
   executePublication publish sourceFile existingSource completeSource commitMode
 
@@ -245,11 +245,18 @@ executeReplacementPreview
   -> IO ()
 executeReplacementPreview publish sourceFile existingSource originalBlock candidateBlock completeSource commitMode = do
   TIO.putStrLn "--- Before ---"
-  TIO.putStr originalBlock
+  putPreviewBlock originalBlock
   TIO.putStrLn "--- After ----"
-  TIO.putStr candidateBlock
+  putPreviewBlock candidateBlock
   TIO.putStrLn "---------------"
   executePublication publish sourceFile existingSource completeSource commitMode
+
+putPreviewBlock :: Text -> IO ()
+putPreviewBlock block = do
+  TIO.putStr block
+  if "\n" `T.isSuffixOf` block
+    then pure ()
+    else TIO.putStrLn ""
 
 executePublication
   :: Show sourceError
