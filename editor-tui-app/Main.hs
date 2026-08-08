@@ -19,7 +19,6 @@ import Data.Maybe (fromMaybe, listToMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (Day)
 import Data.Time.LocalTime (getZonedTime, localDay, zonedTimeToLocalTime)
 import qualified Data.Vector as Vec
@@ -27,7 +26,6 @@ import System.Directory (doesDirectoryExist)
 import System.Environment (getArgs)
 import System.Exit (die)
 import System.FilePath (takeDirectory)
-import System.IO.Error (tryIOError)
 import Text.Read (readMaybe)
 
 import HKernel.Account
@@ -110,8 +108,10 @@ import HKernel.Editor.PlanCompleteAdvance
   )
 import HKernel.Household.Application
   ( HouseholdState(..)
+  , HouseholdWriteSnapshot(..)
   , buildHouseholdReportSurfaceFromHousehold
   , loadCanonicalHousehold
+  , loadCanonicalHouseholdWriteSnapshot
   )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.Policy
@@ -1759,25 +1759,22 @@ handlePlanOutcomeEvent context event = case event of
 reloadWorkspaceContext :: AppContext -> IO (Maybe AppContext)
 reloadWorkspaceContext context = do
   let root = householdStateRoot (contextHouseholdState context)
-  loadResult <- loadCanonicalHousehold root
+  loadResult <- loadCanonicalHouseholdWriteSnapshot root
   case loadResult of
     Left _ -> pure Nothing
-    Right freshState -> do
-      let freshPaths = householdStatePaths freshState
+    Right snapshot -> do
+      let freshState = householdWriteSnapshotState snapshot
+          freshPaths = householdStatePaths freshState
           actualPath = householdActualJournalPath freshPaths
-          planPath = householdPlanJournalPath freshPaths
-      actualResult <- tryIOError (TIO.readFile actualPath)
-      planResult <- tryIOError (TIO.readFile planPath)
-      case (actualResult, planResult) of
-        (Right freshActual, Right freshPlan) ->
-          pure (Just
-            ((makeWorkspaceContext True
-                (contextObservationDay context)
-                actualPath freshActual freshPlan freshState)
-              { contextEntryDay = contextEntryDay context
-              , contextCurrentSection = contextCurrentSection context
-              }))
-        _ -> pure Nothing
+          freshActual = householdWriteSnapshotActualSource snapshot
+          freshPlan = householdWriteSnapshotPlanSource snapshot
+      pure (Just
+        ((makeWorkspaceContext True
+            (contextObservationDay context)
+            actualPath freshActual freshPlan freshState)
+          { contextEntryDay = contextEntryDay context
+          , contextCurrentSection = contextCurrentSection context
+          }))
 
 handleWriteOutcomeEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleWriteOutcomeEvent = handleExitOnlyEvent
@@ -1861,24 +1858,18 @@ main = do
       root <- case mkHouseholdRoot rootPath of
         Left err -> die ("Invalid household root: " <> show err)
         Right value -> pure value
-      householdResult <- loadCanonicalHousehold root
-      state <- case householdResult of
+      householdResult <- loadCanonicalHouseholdWriteSnapshot root
+      snapshot <- case householdResult of
         Left errs -> die
           ("Failed to load canonical Household:\n"
             <> unlines (map show (NonEmpty.toList errs)))
         Right value -> pure value
-      let paths = householdStatePaths state
+      let state = householdWriteSnapshotState snapshot
+          paths = householdStatePaths state
           journalFile = householdActualJournalPath paths
-          planFile = householdPlanJournalPath paths
-      actualRead <- tryIOError (TIO.readFile journalFile)
-      source <- case actualRead of
-        Left err -> die ("Cannot read actual.journal: " <> show err)
-        Right content -> pure content
-      planRead <- tryIOError (TIO.readFile planFile)
-      planSource <- case planRead of
-        Left err -> die ("Cannot read plan.journal: " <> show err)
-        Right content -> pure content
-      let context = makeWorkspaceContext False today journalFile source planSource state
+          source = householdWriteSnapshotActualSource snapshot
+          planSource = householdWriteSnapshotPlanSource snapshot
+          context = makeWorkspaceContext False today journalFile source planSource state
           initialState = AppWrapper context Workspace
           buildVty = mkVty V.defaultConfig
       initialVty <- buildVty
