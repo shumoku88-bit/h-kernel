@@ -3,7 +3,6 @@
 module Main (main) where
 
 import Control.Exception (IOException, catch)
-import Control.Monad (unless)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -20,7 +19,7 @@ import HKernel.Account
   , declareAccountWithDefaultCommodity
   , mkAccount
   )
-import HKernel.Application.Config (mkHouseholdRoot)
+import HKernel.Application.Config (HouseholdRoot, mkHouseholdRoot)
 import HKernel.Editor.ActualAccountAppend
   ( AccountJournalAppendPreview(..)
   , prepareAccountJournalAppend
@@ -99,7 +98,7 @@ accountCandidate = do
   pure (accountCandidateCompleteSource preview)
 
 withSyntheticHousehold
-  :: (FilePath -> HKernel.Application.Config.HouseholdRoot -> IO Bool)
+  :: (FilePath -> HouseholdRoot -> IO Bool)
   -> IO Bool
 withSyntheticHousehold action = do
   let dir = "/tmp/h-kernel-account-publication-spec"
