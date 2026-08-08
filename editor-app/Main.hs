@@ -172,6 +172,23 @@ executeCommand commitMode command = case command of
           (PlanLifecycle.addCandidateCompleteSource preview)
           commitMode
 
+  PlanEditCmd planFile actualFile intent -> do
+    planSource <- TIO.readFile planFile
+    actualSource <- TIO.readFile actualFile
+    resolvedActual <- loadResolvedActualJournal actualFile
+    case PlanLifecycle.preparePlanEditFromResolvedActualJournal
+        resolvedActual planSource actualSource intent of
+      Left errors -> validationFailed errors
+      Right preview ->
+        executeReplacementPreview
+          (publishWithAdmission parsePlanJournal)
+          planFile
+          planSource
+          (PlanLifecycle.editOriginalBlock preview)
+          (PlanLifecycle.editCandidateBlock preview)
+          (PlanLifecycle.editCandidateCompleteSource preview)
+          commitMode
+
   PlanFinishCmd planFile actualFile intent -> do
     planSource <- TIO.readFile planFile
     actualSource <- TIO.readFile actualFile
@@ -214,7 +231,35 @@ executePreview publish sourceFile existingSource block completeSource commitMode
   TIO.putStrLn "--- Preview ---"
   TIO.putStr block
   TIO.putStrLn "---------------"
+  executePublication publish sourceFile existingSource completeSource commitMode
 
+executeReplacementPreview
+  :: Show sourceError
+  => (WriteIntent -> IO (Either (WriteError sourceError) ()))
+  -> FilePath
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> CommitMode
+  -> IO ()
+executeReplacementPreview publish sourceFile existingSource originalBlock candidateBlock completeSource commitMode = do
+  TIO.putStrLn "--- Before ---"
+  TIO.putStr originalBlock
+  TIO.putStrLn "--- After ----"
+  TIO.putStr candidateBlock
+  TIO.putStrLn "---------------"
+  executePublication publish sourceFile existingSource completeSource commitMode
+
+executePublication
+  :: Show sourceError
+  => (WriteIntent -> IO (Either (WriteError sourceError) ()))
+  -> FilePath
+  -> Text
+  -> Text
+  -> CommitMode
+  -> IO ()
+executePublication publish sourceFile existingSource completeSource commitMode =
   case commitMode of
     PreviewOnly ->
       TIO.putStrLn
