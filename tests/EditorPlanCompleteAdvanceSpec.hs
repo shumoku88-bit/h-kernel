@@ -55,6 +55,7 @@ main = do
     [ namedIO "coordinated writer publishes both" testWriterSuccess
     , namedIO "coordinated writer rejects stale input" testWriterStale
     , namedIO "coordinated writer rejects stale input after staging" testWriterPrePublishStale
+    , namedIO "coordinated writer protects Plan change between installs" testWriterPlanChangesBetweenInstalls
     , namedIO "coordinated writer rolls both back" testWriterRollback
     , namedIO "coordinated rollback protects later writer" testWriterRollbackProtectsLaterWrite
     , namedIO "partial installation restores expected roots" testWriterPartialInstallFailure
@@ -386,6 +387,31 @@ testWriterPrePublishStale = withWriterFixtures $ \actualPath planPath -> do
         && plan == "plan-later"
         && length staged == 4
         && not (or leftovers)
+    _ -> False
+
+-- | A Plan write that lands after Actual has been installed but before Plan is
+-- installed must win. The operation restores its own Actual candidate and never
+-- overwrites the later Plan bytes.
+testWriterPlanChangesBetweenInstalls :: IO Bool
+testWriterPlanChangesBetweenInstalls = withWriterFixtures $ \actualPath planPath -> do
+  renameCount <- newIORef (0 :: Int)
+  let normalFileSystem = defaultWriterFileSystem
+      laterPlan = "plan-from-later-writer"
+      renameAndIntervene source target = do
+        previous <- atomicModifyIORef' renameCount (\count -> (count + 1, count))
+        renameTextFile normalFileSystem source target
+        when (previous == 0) (TIO.writeFile planPath laterPlan)
+      fileSystem = normalFileSystem
+        { renameTextFile = renameAndIntervene }
+  result <- publishPlanCompleteAdvanceUsing
+    fileSystem
+    (pure (Right () :: Either String ()))
+    (writerIntent actualPath planPath)
+  actual <- TIO.readFile actualPath
+  plan <- TIO.readFile planPath
+  pure $ case result of
+    Left PlanCompleteAdvancePlanStale ->
+      actual == "actual-old" && plan == laterPlan
     _ -> False
 
 testWriterRollback :: IO Bool
