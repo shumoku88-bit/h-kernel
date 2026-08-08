@@ -20,7 +20,7 @@ module HKernel.Editor.PlanCompleteAdvance
   , publishPlanCompleteAdvanceUsing
   ) where
 
-import Control.Exception (IOException, catch)
+import Control.Exception (IOException, catch, onException)
 import Data.Bifunctor (first)
 import Data.Char (isAsciiLower, isAsciiUpper, isSpace, toLower)
 import Data.List (foldl')
@@ -422,6 +422,13 @@ data PlanCompleteAdvanceWriteError admissionError
   | PlanCompleteAdvanceFileIOError String Bool Bool
   deriving (Eq, Show)
 
+-- | Publish the coordinated Plan completion using the same narrow filesystem
+-- primitives as the single-source writer. Both expected roots are observed
+-- before staging and again immediately before the first rename. Staging paths
+-- are unique siblings, and recovery only replaces a target that still contains
+-- this writer's exact candidate. The Bool recovery coordinates mean that the
+-- expected original is safely present after recovery, either because it was
+-- untouched or because the guarded restore succeeded.
 publishPlanCompleteAdvance
   :: IO (Either admissionError admitted)
   -> PlanCompleteAdvanceWriteIntent
@@ -434,57 +441,199 @@ publishPlanCompleteAdvanceUsing
   -> PlanCompleteAdvanceWriteIntent
   -> IO (Either (PlanCompleteAdvanceWriteError admissionError) ())
 publishPlanCompleteAdvanceUsing fileSystem postAdmission intent = do
-  staleCheck <- catch
-    (do
-      currentActual <- readTextFile fileSystem (writeActualPath intent)
-      currentPlan <- readTextFile fileSystem (writePlanPath intent)
-      pure (Right (currentActual, currentPlan)))
-    (\(errorValue :: IOException) ->
-      pure (Left (PlanCompleteAdvanceFileIOError (show errorValue) False False)))
-  case staleCheck of
-    Left errorValue -> pure (Left errorValue)
+  initial <- readCurrentSources fileSystem intent
+  case initial of
+    Left ioMessage ->
+      pure (Left (PlanCompleteAdvanceFileIOError ioMessage False False))
     Right (currentActual, currentPlan)
-      | currentActual /= writeExpectedActual intent -> pure (Left PlanCompleteAdvanceActualStale)
-      | currentPlan /= writeExpectedPlan intent -> pure (Left PlanCompleteAdvancePlanStale)
-      | otherwise -> publishBoth fileSystem postAdmission intent
+      | currentActual /= writeExpectedActual intent ->
+          pure (Left PlanCompleteAdvanceActualStale)
+      | currentPlan /= writeExpectedPlan intent ->
+          pure (Left PlanCompleteAdvancePlanStale)
+      | otherwise -> stageAndPublish fileSystem postAdmission intent
 
-publishBoth
+readCurrentSources
+  :: WriterFileSystem
+  -> PlanCompleteAdvanceWriteIntent
+  -> IO (Either String (Text, Text))
+readCurrentSources fileSystem intent = catch
+  (do
+    actual <- readTextFile fileSystem (writeActualPath intent)
+    plan <- readTextFile fileSystem (writePlanPath intent)
+    pure (Right (actual, plan)))
+  (\(errorValue :: IOException) -> pure (Left (show errorValue)))
+
+data StagedCompleteAdvance = StagedCompleteAdvance
+  { stagedActualBackup :: FilePath
+  , stagedActualNew    :: FilePath
+  , stagedPlanBackup   :: FilePath
+  , stagedPlanNew      :: FilePath
+  }
+
+stageAndPublish
   :: WriterFileSystem
   -> IO (Either admissionError admitted)
   -> PlanCompleteAdvanceWriteIntent
   -> IO (Either (PlanCompleteAdvanceWriteError admissionError) ())
-publishBoth fileSystem postAdmission intent = catch run handleIO
+stageAndPublish fileSystem postAdmission intent = do
+  stagedResult <- catch
+    (Right <$> stageCompleteAdvance fileSystem intent)
+    (\(errorValue :: IOException) -> pure (Left (show errorValue)))
+  case stagedResult of
+    Left ioMessage ->
+      pure (Left (PlanCompleteAdvanceFileIOError ioMessage False False))
+    Right staged -> do
+      prePublish <- readCurrentSources fileSystem intent
+      case prePublish of
+        Left ioMessage -> do
+          cleanupStaged fileSystem staged
+          pure (Left (PlanCompleteAdvanceFileIOError ioMessage False False))
+        Right (currentActual, currentPlan)
+          | currentActual /= writeExpectedActual intent -> do
+              cleanupStaged fileSystem staged
+              pure (Left PlanCompleteAdvanceActualStale)
+          | currentPlan /= writeExpectedPlan intent -> do
+              cleanupStaged fileSystem staged
+              pure (Left PlanCompleteAdvancePlanStale)
+          | otherwise ->
+              installAndAdmit fileSystem postAdmission intent staged
+
+stageCompleteAdvance
+  :: WriterFileSystem
+  -> PlanCompleteAdvanceWriteIntent
+  -> IO StagedCompleteAdvance
+stageCompleteAdvance fileSystem intent = do
+  actualBackup <- stageSiblingTextFile fileSystem
+    (writeActualPath intent)
+    ".complete-advance.backup.tmp"
+    (writeExpectedActual intent)
+  planBackup <- stageSiblingTextFile fileSystem
+    (writePlanPath intent)
+    ".complete-advance.backup.tmp"
+    (writeExpectedPlan intent)
+    `onException` removeQuietly fileSystem actualBackup
+  actualNew <- stageSiblingTextFile fileSystem
+    (writeActualPath intent)
+    ".complete-advance.new.tmp"
+    (writeCandidateActual intent)
+    `onException` cleanupPaths fileSystem [planBackup, actualBackup]
+  planNew <- stageSiblingTextFile fileSystem
+    (writePlanPath intent)
+    ".complete-advance.new.tmp"
+    (writeCandidatePlan intent)
+    `onException` cleanupPaths fileSystem [actualNew, planBackup, actualBackup]
+  pure StagedCompleteAdvance
+    { stagedActualBackup = actualBackup
+    , stagedActualNew = actualNew
+    , stagedPlanBackup = planBackup
+    , stagedPlanNew = planNew
+    }
+
+installAndAdmit
+  :: WriterFileSystem
+  -> IO (Either admissionError admitted)
+  -> PlanCompleteAdvanceWriteIntent
+  -> StagedCompleteAdvance
+  -> IO (Either (PlanCompleteAdvanceWriteError admissionError) ())
+installAndAdmit fileSystem postAdmission intent staged =
+  catch run handleIO
   where
-    actualBackup = writeActualPath intent <> ".complete-advance.backup.tmp"
-    actualNew = writeActualPath intent <> ".complete-advance.new.tmp"
-    planBackup = writePlanPath intent <> ".complete-advance.backup.tmp"
-    planNew = writePlanPath intent <> ".complete-advance.new.tmp"
     run = do
-      writeTextFile fileSystem actualBackup (writeExpectedActual intent)
-      writeTextFile fileSystem planBackup (writeExpectedPlan intent)
-      writeTextFile fileSystem actualNew (writeCandidateActual intent)
-      writeTextFile fileSystem planNew (writeCandidatePlan intent)
-      renameTextFile fileSystem actualNew (writeActualPath intent)
-      renameTextFile fileSystem planNew (writePlanPath intent)
+      renameTextFile fileSystem
+        (stagedActualNew staged)
+        (writeActualPath intent)
+      renameTextFile fileSystem
+        (stagedPlanNew staged)
+        (writePlanPath intent)
       admitted <- postAdmission
       case admitted of
         Left admissionError -> do
-          actualRestored <- restore fileSystem actualBackup (writeActualPath intent)
-          planRestored <- restore fileSystem planBackup (writePlanPath intent)
-          pure (Left (PlanCompleteAdvancePostAdmissionFailed admissionError actualRestored planRestored))
+          (actualSafe, planSafe) <- recoverExpectedSources fileSystem intent staged
+          cleanupCandidatePaths fileSystem staged
+          pure (Left
+            (PlanCompleteAdvancePostAdmissionFailed
+              admissionError
+              actualSafe
+              planSafe))
         Right _ -> do
-          removeQuietly fileSystem actualBackup
-          removeQuietly fileSystem planBackup
+          removeQuietly fileSystem (stagedActualBackup staged)
+          removeQuietly fileSystem (stagedPlanBackup staged)
+          cleanupCandidatePaths fileSystem staged
           pure (Right ())
-    handleIO (errorValue :: IOException) = do
-      actualRestored <- restore fileSystem actualBackup (writeActualPath intent)
-      planRestored <- restore fileSystem planBackup (writePlanPath intent)
-      pure (Left (PlanCompleteAdvanceFileIOError (show errorValue) actualRestored planRestored))
 
-restore :: WriterFileSystem -> FilePath -> FilePath -> IO Bool
-restore fileSystem backupPath targetPath = catch
-  (renameTextFile fileSystem backupPath targetPath >> pure True)
-  (\(_ :: IOException) -> pure False)
+    handleIO (errorValue :: IOException) = do
+      (actualSafe, planSafe) <- recoverExpectedSources fileSystem intent staged
+      cleanupCandidatePaths fileSystem staged
+      pure (Left
+        (PlanCompleteAdvanceFileIOError
+          (show errorValue)
+          actualSafe
+          planSafe))
+
+recoverExpectedSources
+  :: WriterFileSystem
+  -> PlanCompleteAdvanceWriteIntent
+  -> StagedCompleteAdvance
+  -> IO (Bool, Bool)
+recoverExpectedSources fileSystem intent staged = do
+  actualSafe <- recoverExpectedSource
+    fileSystem
+    (stagedActualBackup staged)
+    (writeActualPath intent)
+    (writeExpectedActual intent)
+    (writeCandidateActual intent)
+  planSafe <- recoverExpectedSource
+    fileSystem
+    (stagedPlanBackup staged)
+    (writePlanPath intent)
+    (writeExpectedPlan intent)
+    (writeCandidatePlan intent)
+  pure (actualSafe, planSafe)
+
+-- | Recover only while the source is still either untouched expected bytes or
+-- this operation's exact candidate. A later unrelated writer wins and is never
+-- replaced by rollback. When the target cannot be read, keep the backup for
+-- explicit recovery rather than guessing.
+recoverExpectedSource
+  :: WriterFileSystem
+  -> FilePath
+  -> FilePath
+  -> Text
+  -> Text
+  -> IO Bool
+recoverExpectedSource fileSystem backupPath targetPath expected candidate = do
+  current <- catch
+    (Just <$> readTextFile fileSystem targetPath)
+    (\(_ :: IOException) -> pure Nothing)
+  case current of
+    Nothing -> pure False
+    Just bytes
+      | bytes == expected -> do
+          removeQuietly fileSystem backupPath
+          pure True
+      | bytes == candidate -> catch
+          (renameTextFile fileSystem backupPath targetPath >> pure True)
+          (\(_ :: IOException) -> pure False)
+      | otherwise -> do
+          removeQuietly fileSystem backupPath
+          pure False
+
+cleanupStaged :: WriterFileSystem -> StagedCompleteAdvance -> IO ()
+cleanupStaged fileSystem staged = cleanupPaths fileSystem
+  [ stagedActualNew staged
+  , stagedPlanNew staged
+  , stagedActualBackup staged
+  , stagedPlanBackup staged
+  ]
+
+cleanupCandidatePaths :: WriterFileSystem -> StagedCompleteAdvance -> IO ()
+cleanupCandidatePaths fileSystem staged = cleanupPaths fileSystem
+  [ stagedActualNew staged
+  , stagedPlanNew staged
+  ]
+
+cleanupPaths :: WriterFileSystem -> [FilePath] -> IO ()
+cleanupPaths fileSystem = mapM_ (removeQuietly fileSystem)
 
 removeQuietly :: WriterFileSystem -> FilePath -> IO ()
 removeQuietly fileSystem path = catch
