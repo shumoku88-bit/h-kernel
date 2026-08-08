@@ -165,7 +165,10 @@ import HKernel.Report.Config
   , reportConfigurationPresentation
   )
 import HKernel.Spike.HouseholdReport.Render
-  ( renderReportBookWithHouseholdPresentation )
+  ( HouseholdReportSection(..)
+  , renderHouseholdReportSection
+  , renderReportBookWithHouseholdPresentation
+  )
 
 data Name
   = DateField
@@ -211,10 +214,10 @@ data ReportChoice
   | ReportProfitAndLoss
   | ReportDailyFlow
   | ReportMonthlyAccounts
-  | ReportCycleAccounts
+  | ReportHousehold HouseholdReportSection
   | ReportRecentTransactions
   | ReportCombinedBook
-  deriving (Eq, Ord, Show, Enum, Bounded)
+  deriving (Eq, Show)
 
 data PlanPreviewResult
   = PlanPreviewRejected Text
@@ -859,12 +862,46 @@ renderIssue issue =
 drawReportsView :: AppContext -> Widget Name
 drawReportsView context =
   vBox
-    [ borderWithLabel (str ("Household Report: " <> show (contextSelectedReport context)))
+    [ borderWithLabel (txt ("Household Report: " <> reportChoiceLabel selected))
         (vLimit 18 (viewport ReportsViewport Vertical (renderSelectedReport context)))
-    , txt ("Active report: " <> T.pack (show (contextSelectedReport context)))
-    , str "[t] Trial   [b] Balance Sheet   [p] P&L   [d] Daily   [m] Monthly   [c] Cycle   [a] Recent   [h] Household   [r] Next"
+    , txt ("Active report: " <> reportChoiceLabel selected)
+    , str "[t] Trial   [b] Balance Sheet   [p] P&L   [d] Daily   [m] Monthly   [a] Recent"
+    , str "[c] Cycle   [T] Target   [P] Planned   [E] Envelope   [h] Household   [r] Next"
     , str "[1-7] Switch section   [q] Quit"
     ]
+  where
+    selected = contextSelectedReport context
+
+reportChoiceLabel :: ReportChoice -> Text
+reportChoiceLabel choice = case choice of
+  ReportTrialBalance -> "Trial Balance"
+  ReportBalanceSheet -> "Balance Sheet"
+  ReportProfitAndLoss -> "Profit & Loss"
+  ReportDailyFlow -> "Daily Flow"
+  ReportMonthlyAccounts -> "Monthly Accounts"
+  ReportHousehold section -> case section of
+    HouseholdCycleAccounts -> "Current Cycle"
+    HouseholdDailyTarget -> "Daily Target"
+    HouseholdPlannedTransactions -> "Planned Transactions"
+    HouseholdIssues _ -> "Household Issues"
+    HouseholdEnvelopeBacking -> "Envelope & Backing"
+  ReportRecentTransactions -> "Recent Actual"
+  ReportCombinedBook -> "Household"
+
+reportChoices :: [ReportChoice]
+reportChoices =
+  [ ReportTrialBalance
+  , ReportBalanceSheet
+  , ReportProfitAndLoss
+  , ReportDailyFlow
+  , ReportMonthlyAccounts
+  , ReportHousehold HouseholdCycleAccounts
+  , ReportHousehold HouseholdDailyTarget
+  , ReportHousehold HouseholdPlannedTransactions
+  , ReportHousehold HouseholdEnvelopeBacking
+  , ReportRecentTransactions
+  , ReportCombinedBook
+  ]
 
 renderSelectedReport :: AppContext -> Widget Name
 renderSelectedReport context = case contextSelectedReport context of
@@ -878,10 +915,9 @@ renderSelectedReport context = case contextSelectedReport context of
     txt (renderDailyFlowWithPresentation pres (dailyFlow (defaultDateRange day) journal))
   ReportMonthlyAccounts ->
     txt (renderMonthlyAccountsWithPresentation pres (monthlyAccounts (defaultDateRange day) journal))
-  ReportCycleAccounts -> case buildHouseholdReportSurfaceFromHousehold day state of
+  ReportHousehold section -> case buildHouseholdReportSurfaceFromHousehold day state of
     Left err -> txt ("Report surface error: " <> T.pack (show err))
-    Right surface -> txt
-      (renderReportBookWithHouseholdPresentation pres (reportBook (defaultDateRange day) journal) surface)
+    Right surface -> txt (renderHouseholdReportSection pres section surface)
   ReportRecentTransactions ->
     txt (renderRecentTransactionsWithPresentation pres
       (recentTransactions defaultRecentCount day journal))
@@ -1090,7 +1126,17 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey (V.KChar 'm') [])
     | contextCurrentSection context == ReportsSection -> selectReport context ReportMonthlyAccounts
   VtyEvent (V.EvKey (V.KChar 'c') [])
-    | contextCurrentSection context == ReportsSection -> selectReport context ReportCycleAccounts
+    | contextCurrentSection context == ReportsSection ->
+        selectReport context (ReportHousehold HouseholdCycleAccounts)
+  VtyEvent (V.EvKey (V.KChar 'T') [])
+    | contextCurrentSection context == ReportsSection ->
+        selectReport context (ReportHousehold HouseholdDailyTarget)
+  VtyEvent (V.EvKey (V.KChar 'P') [])
+    | contextCurrentSection context == ReportsSection ->
+        selectReport context (ReportHousehold HouseholdPlannedTransactions)
+  VtyEvent (V.EvKey (V.KChar 'E') [])
+    | contextCurrentSection context == ReportsSection ->
+        selectReport context (ReportHousehold HouseholdEnvelopeBacking)
   VtyEvent (V.EvKey (V.KChar 'a') [])
     | contextCurrentSection context == ReportsSection -> selectReport context ReportRecentTransactions
   VtyEvent (V.EvKey (V.KChar 'h') [])
@@ -1155,9 +1201,13 @@ openSelectedPlanCompletion context =
           (PlanInputForm proposal (mkPlanCompleteForm (contextObservationDay context) proposal)))
 
 cycleReport :: ReportChoice -> ReportChoice
-cycleReport choice
-  | choice == maxBound = minBound
-  | otherwise = succ choice
+cycleReport choice = go reportChoices
+  where
+    go [] = ReportTrialBalance
+    go [_] = ReportTrialBalance
+    go (current : next : rest)
+      | current == choice = next
+      | otherwise = go (next : rest)
 
 toggleWorkspaceFocus :: AppContext -> AppContext
 toggleWorkspaceFocus context = context

@@ -149,16 +149,26 @@ Accounts pane
   -> selected Transaction detail
 
 [a]
-  -> Actual add input
-  -> Account picker
-  -> preview
-  -> explicit confirmation
+  -> ordinary Actual input
+  -> typed Account picker
+  -> validated preview
+  -> explicit publish
   -> existing safe writer
-  -> fresh source reload
+  -> fresh Household reload
+  -> workspace
+
+[m]
+  -> multi-posting Actual input
+  -> posting row selection / add / remove
+  -> typed Account picker + signed amount per row
+  -> validated preview
+  -> explicit publish
+  -> existing safe writer
+  -> fresh Household reload
   -> workspace
 ```
 
-このpathはcorrectnessを満たすが、日常記帳としてpreviewとconfirmationが重複し、操作距離が長い。daily-use completion chapterでは、validated candidateを一度だけ人間へ提示し、その画面から明示的にpublicationできる導線を優先する。安全性はscreen数ではなくtyped intent、complete-source admission、stale rejection、safe writerで担保する。
+ordinary pathとmulti pathは別の会計モデルを持たない。どちらも既存`ActualEditIntent`と`TransactionBlock` admissionへ収束する。validated candidateをPreviewで一度だけ提示し、同じblockを別Confirmation画面へ複製しない。安全性はtyped intent、complete-source admission、stale rejection、safe writerで担保する。
 
 Brickはpane、focus、cursor、key mapping、widget、rendering、terminal eventを所有する。Account filterの意味、Actual addのinteraction transition、candidate preparation、safe writer semanticsは共有ownerへ委譲する。
 
@@ -212,7 +222,29 @@ Plans workspaceは、open Planを選び、Actualへ実績化し、必要ならsu
 - Actual completionはexisting plan-idを再利用し、successorはfresh PlanIdを持つ
 - ActualとPlanの双方をcomplete candidateとして検証してからpublishする
 
-このsemantic contractはdaily-use completion chapterで変更しない。対象は操作距離、表示、戻り先などdelivery ergonomicsである。
+このsemantic contractはdelivery ergonomicsから独立して維持する。
+
+### 2.8 Reports workspace
+
+Reports workspaceは、core reportとtyped Household report sectionを同じread-only surfaceから直接選択する。
+
+core reports:
+
+- Trial Balance
+- Balance Sheet
+- Profit & Loss
+- Daily Flow
+- Monthly Accounts
+- Recent Actual
+
+Household report sections:
+
+- Current Cycle
+- Daily Target
+- Planned Transactions
+- Envelope & Backing
+
+combined Household reportも残す。Household-specific sectionは`HouseholdReportSection`を選択し、`renderHouseholdReportSection`へ委譲する。BrickはCycle、Daily Target、Plan、Envelope計算やrendererを再実装しない。
 
 ## 3. Single-user writer law
 
@@ -253,22 +285,22 @@ EditorはAccount identity、Money、Transaction balance、Actual / Plan / Budget
 
 Editor固有の責任は、user/application edit intent、candidate fragmentとsource placement、complete-source preview、stale checkとsafe publication、UI-independent interaction contractである。delivery adapterはterminal/process/file effectを接続する。
 
-## 5. NEXT: daily-use TUI completion chapter
+## 5. COMPLETED: daily-use TUI completion chapter
 
-次のcoherent editor chapterは、日々の家計運用で最も頻度の高い操作を、command hubへ戻らずHousehold TUIだけで短く完了できる状態にすることである。
+日々の家計運用で最も頻度の高い操作を、command hubへ戻らずHousehold TUIだけで短く完了できる状態にした。
 
 日常利用のacceptance criterionは次である。
 
 > `tools/hk`を起動し、通常の記帳、必要なmulti-posting記帳、予定支出の実績化と次回予定の補充、主要reportの閲覧まで、CLI commandへ逃げずに到達できる。
 
-優先順位は固定する。
+完成した順序は次である。
 
 1. ordinary daily Actual entry
 2. multi-posting Actual entry
 3. Plan completion and successor replenishment
-4. direct Report selection
+4. direct typed Report selection
 
-Account maintenance、Budget maintenance、Issue maintenance、Settings編集などの低頻度operationは、このdaily-use acceptance criterionを満たした後に扱う。
+Account maintenance、Budget maintenance、Issue maintenance、Settings編集などの低頻度operationは、このdaily-use acceptance criterionの外に置く。
 
 ### 5.1 Ergonomic laws
 
@@ -285,9 +317,7 @@ Account maintenance、Budget maintenance、Issue maintenance、Settings編集な
 
 ### 5.2 Ordinary Actual
 
-ordinary daily Actualは最頻operationなので、amountをfirst focusとし、Todayとcanonical Account defaultを積極的に既定値として使う。
-
-目標flowは次である。
+ordinary daily Actualはamountをfirst focusとし、Todayとcanonical Account defaultを既定値として使う。
 
 ```text
 Actual workspace
@@ -298,7 +328,7 @@ Actual workspace
   -> fresh Actual workspace
 ```
 
-Todayは入力不要、Yesterdayはone-key shortcut、other dateは明示的に開く。Account候補はtyped AccountRegistryから作り、recent-first表示とcase-insensitive searchを使う。
+Todayは入力不要、Yesterdayはshortcut、other dateは明示的に開く。Account候補はtyped AccountRegistryから作り、recent-first表示とcase-insensitive searchを使う。
 
 ### 5.3 Multi-posting Actual
 
@@ -312,45 +342,31 @@ multi posting-row input -----+
 
 multi pathでは各postingがAccount identityとsigned quantityを持つ。Commodityを省略できるのは、そのAccountのcanonical defaultが一意に得られる場合だけである。
 
-Brick deliveryは次を担当する。
-
-- posting rowの選択
-- typed Account picker
-- signed amount input
-- posting row追加
-- 3行を下回らない範囲でposting row削除
-- Today / Yesterday / other date shortcut
-- validated previewへの遷移
-
-Brickはtotal=0判定、Commodity accounting rule、Account declaration ruleを再実装しない。unbalanced transactionは既存`TransactionBlock` admissionが拒否する。
+Brickはposting row selection、typed Account picker、signed amount、row add/remove、date shortcut、preview transitionを担当する。total=0判定、Commodity accounting rule、Account declaration ruleは再実装しない。
 
 ### 5.4 Plan completion and replenishment
 
-現在のComplete & Advance semantic contractを保ち、Planを選んだ地点から実績化と次回補充へ短く到達できることを優先する。
+Complete & AdvanceはPlanを選んだ地点からActual実績化と次回補充へ到達する。予定金額をActual amountのdefault、monthly proposalをsuccessor dateのdefaultとし、変更がないfieldへ余分な入力を要求しない。
 
-通常ケースでは予定金額をActual amountのdefault、monthly proposalをsuccessor dateのdefaultとし、変更がないfieldへ余分な入力を要求しない。successor不要の場合も明示的かつ短く選べること。
+Plan recurrence、PlanId、Actual completion relationのsemantic contractは既存ownerが保持する。
 
 ### 5.5 Reports
 
-Reports sectionは`r`を繰り返して順番に巡回するだけのsurfaceから、named reportを直接選択できるsurfaceへ変える。
-
-少なくともdaily-useで次へ直接到達できることを優先する。
+Reports sectionはnamed reportへ直接到達できる。
 
 - Account balances / Balance Sheet
 - Recent Actual
 - Planned Transactions
-- Current Cycle / Cycle Comparison
+- Current Cycle
 - Daily Flow / Monthly Accounts
 - Daily Target
 - Envelope & Backing
 
-Report calculationやrendering semanticsをTUIへ複製しない。typed report ownerを選択してrenderするだけにする。
+`r`による有限なnext-report巡回も残す。Report calculationやrendering semanticsをTUIへ複製せず、typed report ownerを選択してrenderする。
 
 ### 5.6 State ownership cleanup
 
-Brick `UIState`とUI-independent interaction stateの重複整理は独立目的ではなく、上記daily-use flowを短く明瞭にするための手段として行う。
-
-Form、Brick List、cursor、focus、viewportはtoolkit stateとして残してよい。interaction meaning、candidate readiness、publication readinessをBrickとshared ownerで二重所有している場合だけ整理する。
+Brick `UIState`とUI-independent interaction stateの重複整理は独立目的にしない。Form、Brick List、cursor、focus、viewportはtoolkit stateとして残し、interaction meaning、candidate readiness、publication readinessの二重所有だけを必要に応じて整理する。
 
 ### Non-goals
 
@@ -366,12 +382,53 @@ Form、Brick List、cursor、focus、viewportはtoolkit stateとして残して�
 - Spike卒業
 - private canonical sourceの変更
 
-これらはfileやmoduleが違うからではなく、rollback条件とdomain meaningが異なるためchapter境界の外に置く。
+## 6. NEXT: Actual correction / reversal workspace chapter
 
-## 6. Remaining decisions after daily-use completion
+次のcoherent editor chapterは、Actual workspaceで既存Transactionを見つけ、その場から既存reversal contractへ入れるようにすることである。
+
+中心の問い:
+
+> 表示中のActual TransactionをAccount filterやtransaction listから選択したまま、free-form event-id入力やcommand hubへ戻らず、安全にreversal previewへ到達できるか。
+
+目標flow:
+
+```text
+Actual workspace
+  -> select Transaction
+  -> explicit reverse action
+  -> typed target identity
+  -> existing reversal preparation / admission
+  -> validated preview
+  -> explicit publish
+  -> fresh Actual workspace
+```
+
+### Scope
+
+- current workspace transaction selectionからreversal targetを得る
+- 表示文字列ではなく既存durable identityを使う
+- dedicated reversal previewを持つ
+- safe writerとstale-source rejectionを再利用する
+- success後はfresh HouseholdをreloadしActual workspaceへ戻す
+- already directly reversed targetは既存ownerの規則どおり拒否する
+- reverse-of-reverseの既存explicit-edge semanticsを保つ
+
+### Non-goals
+
+- reversal identity policy変更
+- `reverses` metadata形式変更
+- original Transaction mutation
+- automatic reversal chaining
+- source format migration
+- writer authority変更
+- generic action framework
+- Plan / Budget / Issue correction semantics
+
+reversalのaccounting / provenance contractは[`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)が所有する。TUIはその意味を再実装しない。
+
+## 7. Remaining decisions
 
 - Brick delivery contextのsource-byte retentionとsafe writer ownershipのseparate ownership chapter
-- Actual reverse target selectorとidentity input experience
 - Plan edit interaction
 - Account maintenance interaction
 - Budget maintenance interaction
@@ -387,7 +444,7 @@ Form、Brick List、cursor、focus、viewportはtoolkit stateとして残して�
 
 source topologyとsource別authorityの正規ownerは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)である。
 
-## 7. 関連文書
+## 8. 関連文書
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): component、dependency、effect boundary
 - [`HASKELL_NATIVE_CODE_POLICY.md`](HASKELL_NATIVE_CODE_POLICY.md): Haskellとdomain structureの対応
