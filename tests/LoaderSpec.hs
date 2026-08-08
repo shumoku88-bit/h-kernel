@@ -32,6 +32,7 @@ import System.IO (hClose, openTempFile)
 main :: IO ()
 main = withTemporaryDirectory $ \directory -> do
   relativeIncludeTest directory
+  rootSourceSnapshotTest directory
   syntheticMasterFileIntegrationTest directory
   rootReadFailurePathTest directory
   missingIncludeReadPathTest directory
@@ -73,6 +74,32 @@ relativeIncludeTest directory = do
       (length (journalTransactions journal))
     Left err -> failTest
       ("relative include loading failed: " ++ T.unpack (renderLoadError err))
+
+-- | The observed root bytes are the root of this admission even when the file
+-- at the same path changes before include resolution. Included files still come
+-- from the filesystem and retain normal relative-path semantics.
+rootSourceSnapshotTest :: FilePath -> IO ()
+rootSourceSnapshotTest directory = do
+  let root = directory </> "snapshot-root.journal"
+      accounts = directory </> "snapshot-accounts.journal"
+      observedRoot = "include snapshot-accounts.journal\n"
+
+  TIO.writeFile root "include definitely-missing.journal\n"
+  TIO.writeFile accounts (T.unlines
+    [ "account assets:snapshot"
+    , "    type: asset"
+    , "    commodity: JPY"
+    ])
+
+  result <- loadJournalFromRootSource root observedRoot
+  case result of
+    Right journal -> assertAccountType
+      "observed root source is not re-read from disk"
+      (journalAccountRegistry journal)
+      "assets:snapshot"
+      Asset
+    Left err -> failTest
+      ("observed root source loading failed: " ++ T.unpack (renderLoadError err))
 
 -- | Exercise a synthetic master-file entry shape: callers provide only
 -- @journal-tree/master.journal@ while that master file owns separate Account
