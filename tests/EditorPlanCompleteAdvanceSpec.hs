@@ -3,18 +3,24 @@
 
 module Main (main) where
 
-import Control.Exception (IOException, catch)
+import Control.Exception (IOException, catch, throwIO)
+import Control.Monad (when)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (fromGregorian)
-import System.Directory (removeFile)
+import System.Directory (doesFileExist, removeFile)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Actual.Journal
   ( ActualJournal
   , admitActualJournalFromResolvedJournal
+  )
+import HKernel.Editor.ActualWriter
+  ( WriterFileSystem(..)
+  , defaultWriterFileSystem
   )
 import HKernel.Editor.Interaction.PlanCompleteAdvance
   ( PlanCompleteAdvanceInput(..)
@@ -48,7 +54,10 @@ main = do
   writerResults <- sequence
     [ namedIO "coordinated writer publishes both" testWriterSuccess
     , namedIO "coordinated writer rejects stale input" testWriterStale
+    , namedIO "coordinated writer rejects stale input after staging" testWriterPrePublishStale
     , namedIO "coordinated writer rolls both back" testWriterRollback
+    , namedIO "coordinated rollback protects later writer" testWriterRollbackProtectsLaterWrite
+    , namedIO "partial installation restores expected roots" testWriterPartialInstallFailure
     ]
   let results = pureResults ++ writerResults
   mapM_ print results
@@ -347,6 +356,38 @@ testWriterStale = withWriterFixtures $ \actualPath planPath -> do
       actual == "actual-old" && plan == "plan-old"
     _ -> False
 
+-- | A change that lands while the four unique sibling files are being staged
+-- must be observed by the immediate pre-publication fence. Neither candidate is
+-- installed, and every staged sibling created by this attempt is removed.
+testWriterPrePublishStale :: IO Bool
+testWriterPrePublishStale = withWriterFixtures $ \actualPath planPath -> do
+  stageCount <- newIORef (0 :: Int)
+  stagedPaths <- newIORef ([] :: [FilePath])
+  let normalFileSystem = defaultWriterFileSystem
+      stageAndIntervene targetPath role source = do
+        staged <- stageSiblingTextFile normalFileSystem targetPath role source
+        atomicModifyIORef' stagedPaths (\paths -> (staged : paths, ()))
+        previous <- atomicModifyIORef' stageCount (\count -> (count + 1, count))
+        when (previous == 3) (TIO.writeFile planPath "plan-later")
+        pure staged
+      fileSystem = normalFileSystem
+        { stageSiblingTextFile = stageAndIntervene }
+  result <- publishPlanCompleteAdvanceUsing
+    fileSystem
+    (pure (Right () :: Either String ()))
+    (writerIntent actualPath planPath)
+  actual <- TIO.readFile actualPath
+  plan <- TIO.readFile planPath
+  staged <- readIORef stagedPaths
+  leftovers <- mapM doesFileExist staged
+  pure $ case result of
+    Left PlanCompleteAdvancePlanStale ->
+      actual == "actual-old"
+        && plan == "plan-later"
+        && length staged == 4
+        && not (or leftovers)
+    _ -> False
+
 testWriterRollback :: IO Bool
 testWriterRollback = withWriterFixtures $ \actualPath planPath -> do
   result <- publishPlanCompleteAdvance
@@ -356,5 +397,49 @@ testWriterRollback = withWriterFixtures $ \actualPath planPath -> do
   plan <- TIO.readFile planPath
   pure $ case result of
     Left (PlanCompleteAdvancePostAdmissionFailed _ True True) ->
+      actual == "actual-old" && plan == "plan-old"
+    _ -> False
+
+-- | If another writer replaces Actual during whole-Household admission, the
+-- coordinated rollback must not overwrite it. Plan is still this operation's
+-- candidate, so only Plan is restored to the expected source.
+testWriterRollbackProtectsLaterWrite :: IO Bool
+testWriterRollbackProtectsLaterWrite = withWriterFixtures $ \actualPath planPath -> do
+  let laterActual = "actual-from-later-writer"
+      rejectAfterLaterWrite = do
+        TIO.writeFile actualPath laterActual
+        pure (Left "whole household rejected" :: Either String ())
+  result <- publishPlanCompleteAdvance
+    rejectAfterLaterWrite
+    (writerIntent actualPath planPath)
+  actual <- TIO.readFile actualPath
+  plan <- TIO.readFile planPath
+  pure $ case result of
+    Left (PlanCompleteAdvancePostAdmissionFailed _ False True) ->
+      actual == laterActual && plan == "plan-old"
+    _ -> False
+
+-- | Failure of the second install rename leaves Actual temporarily published.
+-- Recovery is candidate-guarded and returns both sources to their expected
+-- bytes without relying on fixed staging filenames.
+testWriterPartialInstallFailure :: IO Bool
+testWriterPartialInstallFailure = withWriterFixtures $ \actualPath planPath -> do
+  renameCount <- newIORef (0 :: Int)
+  let normalFileSystem = defaultWriterFileSystem
+      failSecondRename source target = do
+        previous <- atomicModifyIORef' renameCount (\count -> (count + 1, count))
+        if previous == 1
+          then throwIO (userError "simulated Plan install failure")
+          else renameTextFile normalFileSystem source target
+      fileSystem = normalFileSystem
+        { renameTextFile = failSecondRename }
+  result <- publishPlanCompleteAdvanceUsing
+    fileSystem
+    (pure (Right () :: Either String ()))
+    (writerIntent actualPath planPath)
+  actual <- TIO.readFile actualPath
+  plan <- TIO.readFile planPath
+  pure $ case result of
+    Left (PlanCompleteAdvanceFileIOError _ True True) ->
       actual == "actual-old" && plan == "plan-old"
     _ -> False
