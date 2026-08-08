@@ -7,6 +7,7 @@ module HKernel.Loader
   , JournalReadFailure(..)
   , LoadError(..)
   , loadJournal
+  , loadJournalFromRootSource
   ) where
 
 import Control.Exception (IOException, try)
@@ -74,13 +75,44 @@ emptyLoadedFiles = LoadedFiles Map.empty
 -- trace owns cycle detection, duplicate diagnostics, and read-failure context,
 -- so path ancestry cannot drift away from the file currently being loaded.
 loadJournal :: FilePath -> IO (Either LoadError Journal)
-loadJournal rootPath = runExceptT
+loadJournal rootPath =
+  runLoader rootPath (loadDocument (rootTrace rootPath))
+
+-- | Load a journal graph while treating an already observed root source as the
+-- exact root bytes for this admission. Included files are still resolved from
+-- disk relative to the supplied root path.
+--
+-- This is the filesystem counterpart of a write snapshot: callers can bind a
+-- preview or application state to the same root bytes later used as
+-- expected-old without re-reading the root during graph admission.
+loadJournalFromRootSource
+  :: FilePath
+  -> Text
+  -> IO (Either LoadError Journal)
+loadJournalFromRootSource rootPath rootSource =
+  runLoader rootPath (loadRootDocument (rootTrace rootPath) rootSource)
+
+runLoader :: FilePath -> Loader JournalDocument -> IO (Either LoadError Journal)
+runLoader _ loadRoot = runExceptT
   (evalStateT load emptyLoadedFiles)
   where
     load = do
-      document <- loadDocument (rootTrace rootPath)
+      document <- loadRoot
       fromEither
         (first JournalValidationFailed (validateJournalDocument document))
+
+loadRootDocument :: IncludeTrace -> Text -> Loader JournalDocument
+loadRootDocument trace source = do
+  loadedFiles <- get
+  admittedFiles <- fromEither (admitFile trace loadedFiles)
+  put admittedFiles
+  document <- fromEither
+    (first (JournalParseFailed path) (parseJournalDocument source))
+  resolveJournalDocumentIncludes
+    (loadDocument . extendTrace trace . resolveInclude path)
+    document
+  where
+    path = traceDestination trace
 
 loadDocument :: IncludeTrace -> Loader JournalDocument
 loadDocument trace = do
