@@ -43,10 +43,13 @@ import HKernel.Editor.Interaction.ActualAdd
   , initialActualMultiAddStateForDay
   , multiAccountCandidates
   , removeSelectedActualMultiPosting
+  , resizeActualMultiPostings
   , selectActualMultiPosting
   , selectedActualMultiPosting
   , setActualAddDate
+  , setActualMultiDateText
   , setSelectedActualMultiAccount
+  , setSelectedActualMultiAccountText
   , setSelectedActualMultiAmount
   , transitionActualAdd
   )
@@ -85,9 +88,12 @@ main = do
         , ("balanced multi input prepares one canonical candidate", testMultiBalancedPreview)
         , ("unbalanced multi input is rejected by transaction admission", testMultiUnbalancedRejected)
         , ("multi interaction starts with three blank posting rows", testMultiInteractionInitial)
+        , ("multi interaction accepts ordinary date text editing", testMultiInteractionDateText)
+        , ("multi interaction resizes posting rows without shortcut keys", testMultiInteractionResize)
         , ("multi interaction appends and selects a new posting row", testMultiInteractionAppend)
         , ("multi interaction never removes below three posting rows", testMultiInteractionMinimum)
         , ("multi interaction updates only the selected posting", testMultiInteractionSelectedEdit)
+        , ("multi interaction edits Account text without a picker", testMultiInteractionAccountText)
         , ("multi Account candidates are canonical and recent-first", testMultiAccountCandidates)
         , ("multi Account search is case-insensitive", testMultiAccountSearch)
         , ("successful write result is observable", testWriteSuccess)
@@ -454,6 +460,22 @@ testMultiInteractionInitial =
       && all (== ActualPostingInput "" "") rows
       && actualMultiSelectedPosting state == 0
 
+testMultiInteractionDateText :: Bool
+testMultiInteractionDateText =
+  let state = setActualMultiDateText "2026-08-07"
+        (initialActualMultiAddStateForDay (read "2026-08-08"))
+  in multiAddDateText (actualMultiAddInput state) == "2026-08-07"
+
+testMultiInteractionResize :: Bool
+testMultiInteractionResize =
+  let initial = initialActualMultiAddStateForDay (read "2026-08-08")
+      fiveRows = resizeActualMultiPostings 5 initial
+      selectedLast = selectActualMultiPosting 4 fiveRows
+      reduced = resizeActualMultiPostings 3 selectedLast
+  in length (NonEmpty.toList (multiAddPostings (actualMultiAddInput fiveRows))) == 5
+      && length (NonEmpty.toList (multiAddPostings (actualMultiAddInput reduced))) == 3
+      && actualMultiSelectedPosting reduced == 2
+
 testMultiInteractionAppend :: Bool
 testMultiInteractionAppend =
   let state = appendActualMultiPosting
@@ -484,6 +506,14 @@ testMultiInteractionSelectedEdit = case mkAccount "expenses:books" of
         == ActualPostingInput "expenses:books" "150"
         && rows !! 0 == ActualPostingInput "" ""
         && rows !! 2 == ActualPostingInput "" ""
+
+testMultiInteractionAccountText :: Bool
+testMultiInteractionAccountText =
+  let initial = initialActualMultiAddStateForDay (read "2026-08-08")
+      selected = selectActualMultiPosting 2 initial
+      changed = setSelectedActualMultiAccountText "assets:cash" selected
+  in selectedActualMultiPosting changed
+      == ActualPostingInput "assets:cash" ""
 
 testMultiAccountCandidates :: Bool
 testMultiAccountCandidates =
