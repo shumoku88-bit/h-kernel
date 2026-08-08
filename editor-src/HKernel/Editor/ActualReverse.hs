@@ -6,6 +6,11 @@ module HKernel.Editor.ActualReverse
   , ActualReversePreview(..)
   , prepareActualReverse
   , prepareActualReverseFromResolvedJournal
+  , ActualReverseInput(..)
+  , ActualReverseInputError(..)
+  , ActualReverseInputPreview(..)
+  , buildActualReverseIntent
+  , prepareActualReverseInputFromResolvedJournal
   ) where
 
 import Data.Bifunctor (first)
@@ -15,7 +20,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
-import Data.Time.Format (defaultTimeLocale, formatTime)
+import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 
 import HKernel.Account (accountName)
 import HKernel.Actual.Journal
@@ -55,6 +60,7 @@ import HKernel.Plan.Completion
   , actualTransactionIdText
   , identifiedActualId
   , identifiedActualTransaction
+  , mkActualTransactionId
   )
 
 -- | A request to append one identified reversing transaction.
@@ -78,6 +84,56 @@ data ActualReversePreview = ActualReversePreview
   { candidateBlock          :: Text
   , candidateCompleteSource :: Text
   } deriving (Eq, Show)
+
+-- | Delivery-neutral text input for a selected reversal target. The target
+-- identity itself is intentionally not free-form text: a delivery adapter must
+-- obtain it from an admitted Actual transaction entry.
+data ActualReverseInput = ActualReverseInput
+  { reverseInputEventIdText     :: Text
+  , reverseInputDateText        :: Text
+  , reverseInputDescriptionText :: Text
+  } deriving (Eq, Show)
+
+data ActualReverseInputError
+  = ActualReverseInvalidEventId
+  | ActualReverseInvalidDate
+  deriving (Eq, Show)
+
+data ActualReverseInputPreview
+  = ActualReverseInputRejected ActualReverseInputError
+  | ActualReverseCandidateRejected (NonEmpty ActualReverseError)
+  | ActualReverseCandidateReady Text
+  deriving (Eq, Show)
+
+buildActualReverseIntent
+  :: ActualTransactionId
+  -> ActualReverseInput
+  -> Either ActualReverseInputError ActualReverseIntent
+buildActualReverseIntent targetId input = do
+  reversalId <- first (const ActualReverseInvalidEventId)
+    (mkActualTransactionId (reverseInputEventIdText input))
+  date <- maybe (Left ActualReverseInvalidDate) Right
+    (parseDayText (reverseInputDateText input))
+  pure ActualReverseIntent
+    { reverseEventId = reversalId
+    , reverseTargetId = targetId
+    , reverseDate = date
+    , reverseDescription = reverseInputDescriptionText input
+    }
+
+prepareActualReverseInputFromResolvedJournal
+  :: Journal
+  -> Text
+  -> ActualTransactionId
+  -> ActualReverseInput
+  -> ActualReverseInputPreview
+prepareActualReverseInputFromResolvedJournal resolvedJournal source targetId input =
+  case buildActualReverseIntent targetId input of
+    Left inputError -> ActualReverseInputRejected inputError
+    Right intent -> case prepareActualReverseFromResolvedJournal
+        resolvedJournal source intent of
+      Left sourceErrors -> ActualReverseCandidateRejected sourceErrors
+      Right preview -> ActualReverseCandidateReady (candidateBlock preview)
 
 prepareActualReverse
   :: Text
@@ -123,6 +179,9 @@ prepareActualReverseFromJournal journal existingSource intent = do
 
 parseSource :: Text -> Either (NonEmpty ActualReverseError) ActualJournal
 parseSource = first (pure . SourceParseError) . parseActualJournal
+
+parseDayText :: Text -> Maybe Day
+parseDayText = parseTimeM True defaultTimeLocale "%Y-%m-%d" . T.unpack
 
 ensureNewIdentity
   :: ActualTransactionId

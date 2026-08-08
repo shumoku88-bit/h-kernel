@@ -20,6 +20,10 @@
 module HKernel.Actual.Journal
   ( ActualJournal
   , actualJournalValue
+  , actualJournalTransactionEntries
+  , ActualTransactionEntry
+  , actualTransactionEntryTransaction
+  , actualTransactionEntryIdentity
   , actualJournalIdentifiedTransactions
   , actualJournalCompletionDeclarations
   , actualJournalReversalDeclarations
@@ -64,9 +68,21 @@ import HKernel.Plan.Completion
   , mkActualTransactionId
   )
 
+-- | One Actual transaction in root-source order together with the identity that
+-- Actual metadata admission assigned to that exact source position, when any.
+--
+-- Keeping the association here avoids reconstructing identity later from date,
+-- description, amount, or Transaction equality. Ordinary identity-free Actual
+-- facts remain present with 'Nothing'.
+data ActualTransactionEntry = ActualTransactionEntry
+  { actualTransactionEntryTransaction :: Transaction
+  , actualTransactionEntryIdentity    :: Maybe ActualTransactionId
+  } deriving (Eq, Show)
+
 -- | One validated Journal plus the explicit Actual metadata projections.
 data ActualJournal = ActualJournal
   { actualJournalValue                  :: Journal
+  , actualJournalTransactionEntries     :: [ActualTransactionEntry]
   , actualJournalIdentifiedTransactions :: [IdentifiedActualTransaction]
   , actualJournalCompletionDeclarations :: [PlanCompletionDeclaration]
   , actualJournalReversalDeclarations   :: [ActualReversalDeclaration]
@@ -135,6 +151,7 @@ admitActualJournalFromResolvedJournal journal input
       Just errors -> Left errors
       Nothing -> Right ActualJournal
         { actualJournalValue = journal
+        , actualJournalTransactionEntries = transactionEntries
         , actualJournalIdentifiedTransactions = identifiedTransactions
         , actualJournalCompletionDeclarations = declarations
         , actualJournalReversalDeclarations = reversals
@@ -145,6 +162,13 @@ admitActualJournalFromResolvedJournal journal input
     transactionCount = length transactions
     metadataCount = length metadataBlocks
     admissions = zipWith admitTransactionMetadata transactions metadataBlocks
+    transactionEntries = zipWith toTransactionEntry transactions admissions
+    toTransactionEntry transaction admission = ActualTransactionEntry
+      { actualTransactionEntryTransaction = transaction
+      , actualTransactionEntryIdentity =
+          identifiedActualId . locatedIdentifiedValue
+            <$> admissionIdentified admission
+      }
     locatedIdentified = mapMaybe admissionIdentified admissions
     identifiedTransactions =
       map locatedIdentifiedValue locatedIdentified
