@@ -3,8 +3,8 @@ name:               h-kernel
 version:            0.1.0.0
 synopsis:           Pure Haskell Double-Entry Household Accounting Engine
 description:        A Haskell double-entry accounting engine with explicit account metadata and exact multi-commodity arithmetic.
-license:            MIT
-license-file:       LICENSE
+license:             MIT
+license-file:        LICENSE
 category:            Finance
 build-type:          Simple
 extra-source-files: docs/*.md
@@ -97,6 +97,7 @@ library h-kernel-editor
                     , HKernel.Editor.Interaction.ActualAdd
                     , HKernel.Editor.Interaction.PlanCompleteAdvance
                     , HKernel.Editor.IssueAppend
+                    , HKernel.Editor.PlanBudgetSync
                     , HKernel.Editor.PlanLifecycle
                     , HKernel.Editor.PlanCompleteAdvance
                     , HKernel.Editor.TransactionBlock
