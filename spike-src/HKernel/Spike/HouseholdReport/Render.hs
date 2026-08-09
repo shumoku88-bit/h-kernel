@@ -77,19 +77,32 @@ renderHouseholdReportSection presentation section surface =
     HouseholdEnvelopeBacking ->
       renderEnvelope presentation (householdEnvelopeBacking surface)
 
+-- | Retain the old injected CycleAccounts renderer parameter as a compatibility
+-- seam while Household publication moves to the precise cycle report types.
+-- The injected compatibility renderer no longer owns the visible cycle section.
 renderHouseholdReportSections
-  :: PresentationConfig
+  :: (PresentationConfig -> CycleAccounts -> Text)
+  -> PresentationConfig
   -> HouseholdReportSurface
   -> Text
-renderHouseholdReportSections =
-  renderHouseholdReportSectionsWithIssueVisibility OpenIssuesOnly
+renderHouseholdReportSections _ =
+  renderHouseholdReportSectionsDirect OpenIssuesOnly
 
 renderHouseholdReportSectionsWithIssueVisibility
+  :: IssueVisibility
+  -> (PresentationConfig -> CycleAccounts -> Text)
+  -> PresentationConfig
+  -> HouseholdReportSurface
+  -> Text
+renderHouseholdReportSectionsWithIssueVisibility visibility _ =
+  renderHouseholdReportSectionsDirect visibility
+
+renderHouseholdReportSectionsDirect
   :: IssueVisibility
   -> PresentationConfig
   -> HouseholdReportSurface
   -> Text
-renderHouseholdReportSectionsWithIssueVisibility visibility presentation surface =
+renderHouseholdReportSectionsDirect visibility presentation surface =
   T.intercalate "\n"
     [ renderHouseholdReportSection presentation section surface
     | section <-
@@ -500,7 +513,7 @@ renderReportBookWithHouseholdPresentation
 renderReportBookWithHouseholdPresentation presentation report household =
   T.intercalate "\n"
     [ renderReportBookCoreWithPresentation presentation report
-    , renderHouseholdReportSections presentation household
+    , renderHouseholdReportSectionsDirect OpenIssuesOnly presentation household
     ]
 
 tshow :: Show value => value -> Text
