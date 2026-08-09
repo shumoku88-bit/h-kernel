@@ -11,7 +11,6 @@ import HKernel.Money
 import HKernel.Period
 import HKernel.Plan
 import HKernel.Plan.Journal
-import HKernel.Render (renderCycleAccountsWithPresentation)
 import HKernel.Report.CycleAccounts
 import HKernel.Report.Presentation (defaultPresentationConfig)
 import HKernel.Spike.HouseholdReport
@@ -27,9 +26,8 @@ main = do
         (buildHouseholdReportSurfaceFromPlanJournal observation actual
           accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
           issuesTSV dailyScopeTSV)
-      cycleReport = householdCycleAccounts surface
-      currentPeriod = cycleAccountsCurrentPeriod cycleReport
       currentCycle = householdCurrentCycleAccounts surface
+      currentPeriod = currentCycleAccountsPeriod currentCycle
       backing = householdEnvelopeBacking surface
       target = householdDailyTarget surface
       foodLine = exactlyOne (envelopeBackingLines backing)
@@ -44,14 +42,6 @@ main = do
     ( periodStart currentPeriod
     , periodEndExclusive currentPeriod
     )
-  assertEqual "previous cycle is resolved from the two latest Actual anchors"
-    (fromGregorian 2026 4 15, fromGregorian 2026 6 15)
-    ( periodStart (cycleAccountsPreviousPeriod cycleReport)
-    , periodEndExclusive (cycleAccountsPreviousPeriod cycleReport)
-    )
-  assertEqual "precise current-cycle report retains the same resolved current period"
-    currentPeriod
-    (currentCycleAccountsPeriod currentCycle)
   assertEqual "precise current-cycle report observes through the Household observation day"
     observation
     (currentCycleAccountsObservation currentCycle)
@@ -60,12 +50,18 @@ main = do
     (length (currentCycleAccountsRows currentCycle))
   case householdCycleComparison surface of
     HouseholdCycleComparisonAvailable comparison -> do
+      let baseline = cycleComparisonBaseline comparison
+      assertEqual "previous cycle is resolved from the two latest Actual anchors"
+        (fromGregorian 2026 4 15, fromGregorian 2026 6 15)
+        ( periodStart (currentCycleAccountsPeriod baseline)
+        , periodEndExclusive (currentCycleAccountsPeriod baseline)
+        )
       assertEqual "Household daily comparison uses aligned elapsed policy"
         AlignedElapsed
         (cycleComparisonPolicy comparison)
       assertEqual "Household daily comparison observes the previous cycle at the same elapsed day"
         (fromGregorian 2026 5 31)
-        (currentCycleAccountsObservation (cycleComparisonBaseline comparison))
+        (currentCycleAccountsObservation baseline)
     unavailable -> do
       putStrLn "  [FAIL] aligned Household Cycle Comparison should be available"
       putStrLn ("    actual: " ++ show unavailable)
@@ -116,7 +112,6 @@ main = do
     (dailyTargetRate target)
 
   let renderedSurface = renderHouseholdReportSections
-        renderCycleAccountsWithPresentation
         defaultPresentationConfig
         surface
   assertEqual "Household cycle delivery publishes the precise current-cycle report"
