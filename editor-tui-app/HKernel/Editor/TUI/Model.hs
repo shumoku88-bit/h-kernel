@@ -10,6 +10,7 @@ module HKernel.Editor.TUI.Model
   ) where
 
 import qualified Brick.Widgets.List as L
+import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import Data.Time.Calendar (Day)
 import qualified Data.Vector as Vec
@@ -22,12 +23,15 @@ import HKernel.Account
 import HKernel.Actual.Journal
   ( actualJournalCompletionDeclarations
   , actualJournalTransactionEntries
+  , actualJournalValue
   , actualTransactionEntryTransaction
   )
 import HKernel.Application.Config (HouseholdSourcePaths(..))
 import HKernel.Household.Application
-  ( HouseholdState(..)
+  ( HouseholdLoadError
+  , HouseholdState(..)
   , HouseholdWriteSnapshot(..)
+  , buildHouseholdReportSurfaceFromHousehold
   , loadCanonicalHouseholdWriteSnapshot
   )
 import HKernel.HouseholdIssue (HouseholdIssue)
@@ -38,6 +42,10 @@ import HKernel.Plan.Journal
   , identifiedPlanId
   , planJournalTransactions
   )
+import HKernel.Report (ReportBook, reportBookWithPlan)
+import HKernel.Report.Config (reportConfigurationPlan)
+import HKernel.Report.Plan (ReportPlanError, resolveReportPlan)
+import HKernel.Spike.HouseholdReport (HouseholdReportSurface)
 import HKernel.Spike.HouseholdReport.Render (HouseholdReportSection)
 
 data Name
@@ -118,21 +126,23 @@ data ReportChoice
   deriving (Eq, Show)
 
 data AppContext = AppContext
-  { contextHouseholdState       :: HouseholdState
-  , contextCurrentSection       :: HouseholdSection
-  , contextSelectedReport       :: ReportChoice
-  , contextObservationDay       :: Day
-  , contextEntryDay             :: Day
-  , contextWorkspaceAccounts    :: L.List Name (Maybe Account)
-  , contextWorkspaceList        :: L.List Name Transaction
-  , contextWorkspaceFocus       :: WorkspaceFocus
-  , contextPlanList             :: L.List Name IdentifiedPlanTransaction
-  , contextIssueList            :: L.List Name HouseholdIssue
-  , contextSourcePath           :: FilePath
-  , contextSource               :: Text
-  , contextPlanSource           :: Text
-  , contextBudgetSource         :: Text
-  , contextIssuesSource         :: Text
+  { contextHouseholdState          :: HouseholdState
+  , contextCurrentSection          :: HouseholdSection
+  , contextSelectedReport          :: ReportChoice
+  , contextObservationDay          :: Day
+  , contextResolvedReportBook      :: Either ReportPlanError ReportBook
+  , contextHouseholdReportSurface  :: Either (NonEmpty HouseholdLoadError) HouseholdReportSurface
+  , contextEntryDay                :: Day
+  , contextWorkspaceAccounts       :: L.List Name (Maybe Account)
+  , contextWorkspaceList           :: L.List Name Transaction
+  , contextWorkspaceFocus          :: WorkspaceFocus
+  , contextPlanList                :: L.List Name IdentifiedPlanTransaction
+  , contextIssueList               :: L.List Name HouseholdIssue
+  , contextSourcePath              :: FilePath
+  , contextSource                  :: Text
+  , contextPlanSource              :: Text
+  , contextBudgetSource            :: Text
+  , contextIssuesSource            :: Text
   }
 
 type AppEvent = ()
@@ -153,6 +163,8 @@ makeWorkspaceContext focusLatest today journalFile source planSource budgetSourc
     , contextCurrentSection = ActualSection
     , contextSelectedReport = ReportTrialBalance
     , contextObservationDay = today
+    , contextResolvedReportBook = resolvedReportBook
+    , contextHouseholdReportSurface = householdReportSurface
     , contextEntryDay = today
     , contextWorkspaceAccounts = workspaceAccounts
     , contextWorkspaceList = workspaceList
@@ -184,6 +196,13 @@ makeWorkspaceContext focusLatest today journalFile source planSource budgetSourc
       (planJournalTransactions (householdStatePlanJournal state))
     planList = L.list PlanList (Vec.fromList openPlans) 1
     issueList = L.list IssueList (Vec.fromList (householdStateIssues state)) 1
+    journal = actualJournalValue (householdStateActualJournal state)
+    reportConfig = householdStateReportConfig state
+    resolvedReportBook = case resolveReportPlan
+        today journal (reportConfigurationPlan reportConfig) of
+      Left err -> Left err
+      Right plan -> Right (reportBookWithPlan plan journal)
+    householdReportSurface = buildHouseholdReportSurfaceFromHousehold today state
 
 reloadWorkspaceContext :: AppContext -> IO (Maybe AppContext)
 reloadWorkspaceContext context = do
