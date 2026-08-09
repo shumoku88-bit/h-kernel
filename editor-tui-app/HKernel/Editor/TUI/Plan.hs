@@ -38,11 +38,17 @@ import HKernel.Editor.ActualWriter
   , WriteIntent(..)
   , admitPlanJournalRootSource
   , publishPlanJournalFromResolvedJournal
+  , publishWithPathAdmission
   )
 import HKernel.Editor.Interaction.PlanCompleteAdvance
   ( PlanCompleteAdvanceInput(..)
   , initialPlanCompleteAdvanceInput
   , parsePlanCompleteAdvanceInput
+  )
+import HKernel.Editor.PlanBudgetSync
+  ( PlanBudgetSyncPreview(..)
+  , PlanBudgetSyncResult(..)
+  , preparePlanBudgetSync
   )
 import HKernel.Editor.PlanCompleteAdvance
   ( PlanAdvanceProposal(..)
@@ -75,6 +81,7 @@ import HKernel.Household.Application
   ( HouseholdState(..)
   , loadCanonicalHousehold
   )
+import HKernel.Household.Config (householdConfigurationAccountPolicy)
 import HKernel.Ledger
   ( Posting
   , postingAccount
@@ -93,7 +100,7 @@ import HKernel.Money
   , quantityToRational
   , renderQuantity
   )
-import HKernel.Plan (planIdText)
+import HKernel.Plan (PlanId, planIdText)
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , identifiedPlanId
@@ -127,18 +134,21 @@ data State event
   | AddPreview PlanAddPreview (Form PlanAddInput event Name)
   | EditInput IdentifiedPlanTransaction (Form PlanEditInput event Name)
   | EditPreview IdentifiedPlanTransaction PlanEditPreview (Form PlanEditInput event Name)
+  | BudgetSyncWarning PlanId Text
   | WriteOutcome Text
   | ReturnToWorkspace
   | PublishRequested PublishRequest
   | QuitRequested
 
 data PublishRequest
-  = PublishCompleteAdvance PlanCompleteAdvancePreview
+  = PublishCompleteAdvance PlanId PlanCompleteAdvancePreview
   | PublishAdd PlanAddPreview
   | PublishEdit PlanEditPreview
+  | PublishBudgetSync PlanId
 
 data PublishResult
   = Published AppContext
+  | BudgetSyncPending AppContext PlanId Text
   | PublicationFailed Text
   | ReloadFailed
 
@@ -309,11 +319,11 @@ drawFlow state = case state of
           (vLimit 30
             (padAll 1
               ( str "This will update Actual and, when present, append the successor Plan as one operation."
-                <=> str "Both complete candidates have already been validated."
+                <=> str "A linked Budget execution will then be synchronized idempotently by PlanId."
                 <=> str " "
                 <=> renderCompletePreview preview
                 <=> str " "
-                <=> str "[Y] Publish both | [N/Esc] Back | [Q] Quit")))))
+                <=> str "[Y] Publish | [N/Esc] Back | [Q] Quit")))))
   AddInput form ->
     center
       (borderWithLabel (str "Add Plan")
@@ -342,6 +352,15 @@ drawFlow state = case state of
     simplePreview "Edit Plan Preview"
       (str "Before" <=> txt (editOriginalBlock preview)
         <=> str " " <=> str "After" <=> txt (editCandidateBlock preview))
+  BudgetSyncWarning planId message ->
+    center
+      (borderWithLabel (str "Plan Completed / Budget Sync Pending")
+        (hLimit 88
+          (padAll 1
+            ( txt ("Plan " <> planIdText planId <> " is already completed.")
+              <=> txt message
+              <=> str " "
+              <=> str "[R] Retry Budget sync | [Esc] Plans | [Q] Quit"))))
   WriteOutcome message ->
     center
       (borderWithLabel (str "Plan Result")
@@ -385,6 +404,13 @@ handleFlowEvent context event = do
     EditInput identified form -> handleEditInput context identified form event
     EditPreview identified preview form ->
       handleSimplePreview (EditInput identified form) (PublishEdit preview) event
+    BudgetSyncWarning planId _ -> case event of
+      VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
+      VtyEvent (V.EvKey (V.KChar 'r') []) -> put (PublishRequested (PublishBudgetSync planId))
+      VtyEvent (V.EvKey (V.KChar 'R') []) -> put (PublishRequested (PublishBudgetSync planId))
+      VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
+      VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
+      _ -> pure ()
     WriteOutcome _ -> case event of
       VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
       VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
@@ -459,8 +485,10 @@ handleConfirmation proposal preview form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> back
   VtyEvent (V.EvKey (V.KChar 'n') []) -> back
   VtyEvent (V.EvKey (V.KChar 'N') []) -> back
-  VtyEvent (V.EvKey (V.KChar 'y') []) -> put (PublishRequested (PublishCompleteAdvance preview))
-  VtyEvent (V.EvKey (V.KChar 'Y') []) -> put (PublishRequested (PublishCompleteAdvance preview))
+  VtyEvent (V.EvKey (V.KChar 'y') []) ->
+    put (PublishRequested (PublishCompleteAdvance (proposalPlanId proposal) preview))
+  VtyEvent (V.EvKey (V.KChar 'Y') []) ->
+    put (PublishRequested (PublishCompleteAdvance (proposalPlanId proposal) preview))
   VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
   _ -> pure ()
@@ -568,12 +596,17 @@ parseDay text = case parseTimeM True defaultTimeLocale "%Y-%m-%d" (T.unpack (T.s
 
 publishCandidate :: AppContext -> PublishRequest -> IO PublishResult
 publishCandidate context request = case request of
-  PublishCompleteAdvance preview -> publishCompleteAdvance context preview
+  PublishCompleteAdvance planId preview -> publishCompleteAdvance context planId preview
   PublishAdd preview -> publishPlanRoot context (addCandidateCompleteSource preview)
   PublishEdit preview -> publishPlanRoot context (editCandidateCompleteSource preview)
+  PublishBudgetSync planId -> syncCompletedPlanBudget context planId
 
-publishCompleteAdvance :: AppContext -> PlanCompleteAdvancePreview -> IO PublishResult
-publishCompleteAdvance context preview = do
+publishCompleteAdvance
+  :: AppContext
+  -> PlanId
+  -> PlanCompleteAdvancePreview
+  -> IO PublishResult
+publishCompleteAdvance context planId preview = do
   let state = contextHouseholdState context
       paths = householdStatePaths state
       root = householdStateRoot state
@@ -589,8 +622,48 @@ publishCompleteAdvance context preview = do
       postAdmission = loadCanonicalHousehold root
   writeResult <- publishPlanCompleteAdvance postAdmission intent
   case writeResult of
-    Right () -> reloadPlans context
     Left writeError -> pure (PublicationFailed (renderWriteError writeError))
+    Right () -> do
+      reloaded <- reloadWorkspaceContext
+        (context { contextCurrentSection = PlansSection })
+      case reloaded of
+        Nothing -> pure ReloadFailed
+        Just freshContext -> syncCompletedPlanBudget freshContext planId
+
+syncCompletedPlanBudget :: AppContext -> PlanId -> IO PublishResult
+syncCompletedPlanBudget context planId =
+  case preparePlanBudgetSync
+      (householdStateAccountsRegistry state)
+      (householdStatePolicy state)
+      (householdConfigurationAccountPolicy (householdStateConfiguration state))
+      (householdStatePlanJournal state)
+      (householdStateActualJournal state)
+      (contextSource context)
+      (householdStateBudgetJournal state)
+      (contextBudgetSource context)
+      planId of
+    Left errors -> pure (BudgetSyncPending context planId
+      ("Budget sync preparation failed: " <> showText (NonEmpty.toList errors)))
+    Right (PlanBudgetSyncNotLinked _) -> pure (Published context)
+    Right (PlanBudgetSyncApplied _) -> pure (Published context)
+    Right (PlanBudgetSyncAppend preview) -> do
+      let paths = householdStatePaths state
+          budgetPath = householdBudgetJournalPath paths
+          root = householdStateRoot state
+      result <- publishWithPathAdmission
+        (\_ -> loadCanonicalHousehold root)
+        WriteIntent
+          { targetFilePath = budgetPath
+          , expectedOldBytes = ExpectedSource (contextBudgetSource context)
+          , candidateNewBytes = CandidateSource
+              (planBudgetSyncCandidateCompleteSource preview)
+          }
+      case result of
+        Left err -> pure (BudgetSyncPending context planId
+          ("Budget sync publication failed: " <> showText err))
+        Right () -> reloadPlans context
+  where
+    state = contextHouseholdState context
 
 publishPlanRoot :: AppContext -> Text -> IO PublishResult
 publishPlanRoot context candidate = do
