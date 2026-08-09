@@ -29,6 +29,7 @@ main = do
           issuesTSV dailyScopeTSV)
       cycleReport = householdCycleAccounts surface
       currentPeriod = cycleAccountsCurrentPeriod cycleReport
+      currentCycle = householdCurrentCycleAccounts surface
       backing = householdEnvelopeBacking surface
       target = householdDailyTarget surface
       foodLine = exactlyOne (envelopeBackingLines backing)
@@ -48,6 +49,27 @@ main = do
     ( periodStart (cycleAccountsPreviousPeriod cycleReport)
     , periodEndExclusive (cycleAccountsPreviousPeriod cycleReport)
     )
+  assertEqual "precise current-cycle report retains the same resolved current period"
+    currentPeriod
+    (currentCycleAccountsPeriod currentCycle)
+  assertEqual "precise current-cycle report observes through the Household observation day"
+    observation
+    (currentCycleAccountsObservation currentCycle)
+  assertEqual "precise current-cycle report publishes the complete declared Account axis"
+    8
+    (length (currentCycleAccountsRows currentCycle))
+  case householdCycleComparison surface of
+    HouseholdCycleComparisonAvailable comparison -> do
+      assertEqual "Household daily comparison uses aligned elapsed policy"
+        AlignedElapsed
+        (cycleComparisonPolicy comparison)
+      assertEqual "Household daily comparison observes the previous cycle at the same elapsed day"
+        (fromGregorian 2026 5 31)
+        (currentCycleAccountsObservation (cycleComparisonBaseline comparison))
+    unavailable -> do
+      putStrLn "  [FAIL] aligned Household Cycle Comparison should be available"
+      putStrLn ("    actual: " ++ show unavailable)
+      exitFailure
   assertEqual "explicit completion removes the completed outgoing Plan without hiding other horizons"
     ["plan-prior", "plan-overdue", "plan-wifi", "plan-next-cycle"]
     (map (planIdText . committedPlanId) openPlans)
@@ -97,6 +119,19 @@ main = do
         renderCycleAccountsWithPresentation
         defaultPresentationConfig
         surface
+  assertEqual "Household cycle delivery publishes the precise current-cycle report"
+    True
+    ("Current Cycle Accounts" `T.isInfixOf` renderedSurface
+      && "Opening" `T.isInfixOf` renderedSurface
+      && "Closing" `T.isInfixOf` renderedSurface)
+  assertEqual "Household cycle delivery publishes the aligned previous-cycle comparison"
+    True
+    ("Cycle Comparison" `T.isInfixOf` renderedSurface
+      && "Policy: aligned_elapsed" `T.isInfixOf` renderedSurface
+      && "2026-05-31" `T.isInfixOf` renderedSurface)
+  assertEqual "legacy Expense-only matrix no longer owns visible Household cycle output"
+    False
+    ("Cycle Accounts & Comparison Matrix" `T.isInfixOf` renderedSurface)
   assertEqual "Planned Transactions identifies the native Plan Journal source"
     True
     ("Source: plan.journal" `T.isInfixOf` renderedSurface
