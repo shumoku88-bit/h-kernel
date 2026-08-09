@@ -111,6 +111,10 @@ import HKernel.Money
   , renderQuantity
   )
 
+data PreviewResult preview
+  = PreviewRejected Text
+  | PreviewReady preview
+
 data BudgetInput = BudgetInput
   { budgetMemoText      :: Text
   , budgetFromText      :: Text
@@ -139,14 +143,14 @@ data IssueCloseInput = IssueCloseInput
 
 data State event
   = BudgetInputState (Form BudgetInput event Name)
-  | BudgetPreviewState BudgetJournalMovementAppendPreview (Form BudgetInput event Name)
+  | BudgetPreviewState (PreviewResult BudgetJournalMovementAppendPreview) (Form BudgetInput event Name)
   | AccountInputState (Form AccountInput event Name)
-  | AccountPreviewState Text AccountJournalAppendPreview (Form AccountInput event Name)
+  | AccountPreviewState (PreviewResult (Text, AccountJournalAppendPreview)) (Form AccountInput event Name)
   | IssueAddInputState (Form IssueInput event Name)
-  | IssueAddPreviewState IssueAppendPreview (Form IssueInput event Name)
+  | IssueAddPreviewState (PreviewResult IssueAppendPreview) (Form IssueInput event Name)
   | IssueCloseChoiceState HouseholdIssue
   | IssueCloseInputState HouseholdIssue IssueCloseDisposition (Form IssueCloseInput event Name)
-  | IssueClosePreviewState HouseholdIssue IssueCloseDisposition IssueClosePreview (Form IssueCloseInput event Name)
+  | IssueClosePreviewState HouseholdIssue IssueCloseDisposition (PreviewResult IssueClosePreview) (Form IssueCloseInput event Name)
   | WriteOutcome Text
   | ReturnToWorkspace
   | PublishRequested PublishRequest
@@ -328,22 +332,25 @@ drawFlow state = case state of
     [ "Both Accounts must be canonical Budget Accounts."
     , "[Tab] Next field   [Enter] Preview   [Esc] Budget"
     ]
-  BudgetPreviewState preview _ -> previewBox "Budget Movement Preview"
-    (txt (budgetJournalCandidateBlock preview))
+  BudgetPreviewState result _ -> previewBox "Budget Movement Preview"
+    (renderPreviewResult (txt . budgetJournalCandidateBlock) result)
+    (previewControls result)
   AccountInputState form -> inputBox "Add Account" form
     [ "Type: asset | liability | equity | income | expense | budget"
     , "Commodity may be blank when no default is required."
     , "[Tab] Next field   [Enter] Preview   [Esc] Accounts"
     ]
-  AccountPreviewState _ preview _ -> previewBox "Account Preview"
-    (txt (accountCandidateBlock preview))
+  AccountPreviewState result _ -> previewBox "Account Preview"
+    (renderPreviewResult (txt . accountCandidateBlock . snd) result)
+    (previewControls result)
   IssueAddInputState form -> inputBox "Add Household Issue" form
     [ "Issue identity is generated from the current Household observation."
     , "Leave both Amount and Commodity blank for a non-monetary Issue."
     , "[Tab] Next field   [Enter] Preview   [Esc] Issues"
     ]
-  IssueAddPreviewState preview _ -> previewBox "Issue Preview"
-    (txt (candidateBlock preview))
+  IssueAddPreviewState result _ -> previewBox "Issue Preview"
+    (renderPreviewResult (txt . candidateBlock) result)
+    (previewControls result)
   IssueCloseChoiceState issue ->
     center (borderWithLabel (str "Close Selected Issue")
       (hLimit 78 (padAll 1
@@ -356,9 +363,10 @@ drawFlow state = case state of
     [ "Selected: " <> T.unpack (issueIdText (householdIssueId issue))
     , "[Tab] Next field   [Enter] Preview   [Esc] Back"
     ]
-  IssueClosePreviewState _ _ preview _ ->
+  IssueClosePreviewState _ _ result _ ->
     previewBox "Issue Close Preview"
-      (txt (closeOriginalRow preview) <=> str " -> " <=> txt (closeCandidateRow preview))
+      (renderPreviewResult renderIssueClosePreview result)
+      (previewControls result)
   WriteOutcome message ->
     center (borderWithLabel (str "Maintenance Result")
       (hLimit 84 (padAll 1 (txt message <=> str " " <=> str "[Esc] Workspace   [Q] Quit"))))
@@ -374,14 +382,14 @@ inputBox title form helpLines =
         (padAll 1
           (renderForm form <=> str " " <=> vBox (map str helpLines)))))
 
-previewBox :: String -> Widget Name -> Widget Name
-previewBox title body =
+previewBox :: String -> Widget Name -> String -> Widget Name
+previewBox title body controls =
   center
     (borderWithLabel (str title)
       (hLimit 88
         (vLimit 32
           (padAll 1
-            (body <=> str " " <=> str "[Enter] Publish   [Esc] Back   [Q] Quit")))))
+            (body <=> str " " <=> str controls)))))
 
 handleFlowEvent
   :: AppContext
@@ -391,15 +399,18 @@ handleFlowEvent context event = do
   state <- get
   case state of
     BudgetInputState form -> handleBudgetInput context form event
-    BudgetPreviewState preview form -> handlePreview (BudgetInputState form) (PublishBudget preview) event
+    BudgetPreviewState result form ->
+      handlePreview (BudgetInputState form) PublishBudget result event
     AccountInputState form -> handleAccountInput context form event
-    AccountPreviewState source preview form -> handlePreview (AccountInputState form) (PublishAccount source preview) event
+    AccountPreviewState result form ->
+      handlePreview (AccountInputState form) (uncurry PublishAccount) result event
     IssueAddInputState form -> handleIssueAddInput context form event
-    IssueAddPreviewState preview form -> handlePreview (IssueAddInputState form) (PublishIssueAdd preview) event
+    IssueAddPreviewState result form ->
+      handlePreview (IssueAddInputState form) PublishIssueAdd result event
     IssueCloseChoiceState issue -> handleIssueCloseChoice issue event
     IssueCloseInputState issue disposition form -> handleIssueCloseInput context issue disposition form event
-    IssueClosePreviewState issue disposition preview form ->
-      handlePreview (IssueCloseInputState issue disposition form) (PublishIssueClose preview) event
+    IssueClosePreviewState issue disposition result form ->
+      handlePreview (IssueCloseInputState issue disposition form) PublishIssueClose result event
     WriteOutcome _ -> case event of
       VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
       VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
@@ -413,31 +424,33 @@ handleBudgetInput :: AppContext -> Form BudgetInput AppEvent Name -> BrickEvent 
 handleBudgetInput context form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
   VtyEvent (V.EvKey V.KEnter []) -> case prepareBudget context (formState form) of
-    Left message -> put (WriteOutcome message)
-    Right preview -> put (BudgetPreviewState preview form)
+    Left message -> put (BudgetPreviewState (PreviewRejected message) form)
+    Right preview -> put (BudgetPreviewState (PreviewReady preview) form)
   _ -> zoom zoomBudgetForm (handleFormEvent event)
 
 handleAccountInput :: AppContext -> Form AccountInput AppEvent Name -> BrickEvent Name AppEvent -> EventM Name (State AppEvent) ()
 handleAccountInput context form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
   VtyEvent (V.EvKey V.KEnter []) -> case prepareAccountDeclaration (formState form) of
-    Left message -> put (WriteOutcome message)
+    Left message -> put (AccountPreviewState (PreviewRejected message) form)
     Right declaration -> do
       let paths = householdStatePaths (contextHouseholdState context)
       sourceResult <- liftIO (tryIOError (TIO.readFile (householdAccountsJournalPath paths)))
       case sourceResult of
-        Left err -> put (WriteOutcome ("Cannot read accounts.journal: " <> T.pack (show err)))
+        Left err -> put (AccountPreviewState
+          (PreviewRejected ("Cannot read accounts.journal: " <> T.pack (show err))) form)
         Right source -> case prepareAccountJournalAppend source declaration of
-          Left errors -> put (WriteOutcome ("Account rejected: " <> T.pack (show (NonEmpty.toList errors))))
-          Right preview -> put (AccountPreviewState source preview form)
+          Left errors -> put (AccountPreviewState
+            (PreviewRejected ("Account rejected: " <> T.pack (show (NonEmpty.toList errors)))) form)
+          Right preview -> put (AccountPreviewState (PreviewReady (source, preview)) form)
   _ -> zoom zoomAccountForm (handleFormEvent event)
 
 handleIssueAddInput :: AppContext -> Form IssueInput AppEvent Name -> BrickEvent Name AppEvent -> EventM Name (State AppEvent) ()
 handleIssueAddInput context form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
   VtyEvent (V.EvKey V.KEnter []) -> case prepareIssueAdd context (formState form) of
-    Left message -> put (WriteOutcome message)
-    Right preview -> put (IssueAddPreviewState preview form)
+    Left message -> put (IssueAddPreviewState (PreviewRejected message) form)
+    Right preview -> put (IssueAddPreviewState (PreviewReady preview) form)
   _ -> zoom zoomIssueForm (handleFormEvent event)
 
 handleIssueCloseChoice :: HouseholdIssue -> BrickEvent Name AppEvent -> EventM Name (State AppEvent) ()
@@ -459,17 +472,42 @@ handleIssueCloseInput context issue disposition form event = case event of
           , closeDecisionMemo = issueDecisionMemoText (formState form)
           }
     in case prepareIssueClose (contextIssuesSource context) intent of
-      Left errors -> put (WriteOutcome ("Issue close rejected: " <> T.pack (show (NonEmpty.toList errors))))
-      Right preview -> put (IssueClosePreviewState issue disposition preview form)
+      Left errors -> put (IssueClosePreviewState issue disposition
+        (PreviewRejected ("Issue close rejected: " <> T.pack (show (NonEmpty.toList errors)))) form)
+      Right preview -> put (IssueClosePreviewState issue disposition (PreviewReady preview) form)
   _ -> zoom zoomIssueCloseForm (handleFormEvent event)
 
-handlePreview :: State AppEvent -> PublishRequest -> BrickEvent Name AppEvent -> EventM Name (State AppEvent) ()
-handlePreview back publishRequest event = case event of
+handlePreview
+  :: State AppEvent
+  -> (preview -> PublishRequest)
+  -> PreviewResult preview
+  -> BrickEvent Name AppEvent
+  -> EventM Name (State AppEvent) ()
+handlePreview back toRequest result event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> put back
-  VtyEvent (V.EvKey V.KEnter []) -> put (PublishRequested publishRequest)
+  VtyEvent (V.EvKey V.KEnter []) -> case result of
+    PreviewRejected _ -> pure ()
+    PreviewReady preview -> put (PublishRequested (toRequest preview))
   VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
   _ -> pure ()
+
+renderPreviewResult
+  :: (preview -> Widget Name)
+  -> PreviewResult preview
+  -> Widget Name
+renderPreviewResult renderPreview result = case result of
+  PreviewRejected message -> withAttr (attrName "error") (txt message)
+  PreviewReady preview -> renderPreview preview
+
+previewControls :: PreviewResult preview -> String
+previewControls result = case result of
+  PreviewReady _ -> "[Enter] Publish   [Esc] Back   [Q] Quit"
+  PreviewRejected _ -> "[Esc] Back   [Q] Quit"
+
+renderIssueClosePreview :: IssueClosePreview -> Widget Name
+renderIssueClosePreview preview =
+  txt (closeOriginalRow preview) <=> str " -> " <=> txt (closeCandidateRow preview)
 
 prepareBudget :: AppContext -> BudgetInput -> Either Text BudgetJournalMovementAppendPreview
 prepareBudget context input = do
