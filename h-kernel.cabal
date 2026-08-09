@@ -647,6 +647,9 @@ executable h-kernel-editor-cli
 
 executable h-kernel-editor-tui
     main-is:          Main.hs
+    other-modules:    HKernel.Editor.TUI.Actual
+                    , HKernel.Editor.TUI.Model
+                    , HKernel.Editor.TUI.Plan
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
                     , directory >= 1.3 && < 1.4
