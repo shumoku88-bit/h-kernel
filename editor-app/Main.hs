@@ -154,17 +154,43 @@ executeCommand commitMode command = case command of
               commitMode
 
   IssueCmd tsvFile intent -> do
-    existingSource <- TIO.readFile tsvFile
-    case IssueAppend.prepareIssueAppend existingSource intent of
-      Left errors -> validationFailed errors
-      Right preview ->
-        executePreview
-          (publishWithAdmission parseHouseholdIssues)
-          tsvFile
-          existingSource
-          (IssueAppend.candidateBlock preview)
-          (IssueAppend.candidateCompleteSource preview)
-          commitMode
+    let dir = takeDirectory tsvFile
+        rootDir = if dir == "" then "." else dir
+    root <- case mkHouseholdRoot rootDir of
+      Right r -> pure r
+      Left _ -> case mkHouseholdRoot "." of
+        Right r -> pure r
+        Left _ -> error "unreachable"
+    let paths = householdSourcePaths root
+    if normalise tsvFile == normalise (householdIssuesPath paths)
+      then do
+        snapshotResult <- loadCanonicalHouseholdWriteSnapshot root
+        snapshot <- case snapshotResult of
+          Left errors -> validationFailed errors
+          Right value -> pure value
+        let existingSource = householdWriteSnapshotIssuesSource snapshot
+        case IssueAppend.prepareIssueAppend existingSource intent of
+          Left errors -> validationFailed errors
+          Right preview ->
+            executePreview
+              (publishWithPathAdmission (\_ -> loadCanonicalHousehold root))
+              tsvFile
+              existingSource
+              (IssueAppend.candidateBlock preview)
+              (IssueAppend.candidateCompleteSource preview)
+              commitMode
+      else do
+        existingSource <- TIO.readFile tsvFile
+        case IssueAppend.prepareIssueAppend existingSource intent of
+          Left errors -> validationFailed errors
+          Right preview ->
+            executePreview
+              (publishWithAdmission parseHouseholdIssues)
+              tsvFile
+              existingSource
+              (IssueAppend.candidateBlock preview)
+              (IssueAppend.candidateCompleteSource preview)
+              commitMode
 
   PlanAddCmd planFile actualFile intent -> do
     planSource <- TIO.readFile planFile
