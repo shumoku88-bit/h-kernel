@@ -60,6 +60,14 @@ data Name
   | PlanActualAmountField
   | PlanSuccessorDateField
   | PlanSuccessorAmountField
+  | PlanAddDateField
+  | PlanAddDescriptionField
+  | PlanAddFromField
+  | PlanAddToField
+  | PlanAddAmountField
+  | PlanAddCommodityField
+  | PlanEditDateField
+  | PlanEditAmountField
   | BudgetMemoField
   | BudgetFromField
   | BudgetToField
