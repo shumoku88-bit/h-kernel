@@ -276,8 +276,10 @@ drawReportsView :: AppContext -> Widget Name
 drawReportsView context =
   vBox
     [ borderWithLabel (txt ("Household Report: " <> reportChoiceLabel selected))
-        (vLimit 18 (viewport ReportsViewport Vertical (renderSelectedReport context)))
-    , txt ("Active report: " <> reportChoiceLabel selected)
+        (withVScrollBars OnRight
+          (withHScrollBars OnBottom
+            (viewport ReportsViewport Both (renderSelectedReport context))))
+    , str "[↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page   [Home/End] Top/Bottom"
     , str "[t] Trial   [b] Balance Sheet   [p] P&L   [d] Daily   [m] Monthly   [a] Recent"
     , str "[c] Cycle   [T] Target   [P] Planned   [E] Envelope   [h] Household   [r] Next"
     , str "[1-7] Switch section   [q] Quit"
@@ -406,6 +408,26 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey (V.KChar '5') []) -> switchSection IssuesSection
   VtyEvent (V.EvKey (V.KChar '6') []) -> switchSection ReportsSection
   VtyEvent (V.EvKey (V.KChar '7') []) -> switchSection SettingsSection
+  VtyEvent (V.EvKey V.KUp [])
+    | inReports -> vScrollBy reportsViewport (-1)
+  VtyEvent (V.EvKey V.KDown [])
+    | inReports -> vScrollBy reportsViewport 1
+  VtyEvent (V.EvKey V.KLeft [V.MShift])
+    | inReports -> hScrollPage reportsViewport Up
+  VtyEvent (V.EvKey V.KRight [V.MShift])
+    | inReports -> hScrollPage reportsViewport Down
+  VtyEvent (V.EvKey V.KLeft [])
+    | inReports -> hScrollBy reportsViewport (-4)
+  VtyEvent (V.EvKey V.KRight [])
+    | inReports -> hScrollBy reportsViewport 4
+  VtyEvent (V.EvKey V.KPageUp [])
+    | inReports -> vScrollPage reportsViewport Up
+  VtyEvent (V.EvKey V.KPageDown [])
+    | inReports -> vScrollPage reportsViewport Down
+  VtyEvent (V.EvKey V.KHome [])
+    | inReports -> vScrollToBeginning reportsViewport
+  VtyEvent (V.EvKey V.KEnd [])
+    | inReports -> vScrollToEnd reportsViewport
   VtyEvent (V.EvKey (V.KChar 't') [])
     | inReports -> selectReport ReportTrialBalance
   VtyEvent (V.EvKey (V.KChar 'b') [])
@@ -464,12 +486,15 @@ handleWorkspaceEvent context event = case event of
     inActual = contextCurrentSection context == ActualSection
     inPlans = contextCurrentSection context == PlansSection
     inReports = contextCurrentSection context == ReportsSection
+    reportsViewport = viewportScroll ReportsViewport
     switchSection :: HouseholdSection -> EventM Name AppWrapper ()
     switchSection section =
       put (AppWrapper (context { contextCurrentSection = section }) Workspace)
     selectReport :: ReportChoice -> EventM Name AppWrapper ()
-    selectReport report =
+    selectReport report = do
       put (AppWrapper (context { contextSelectedReport = report }) Workspace)
+      vScrollToBeginning reportsViewport
+      hScrollToBeginning reportsViewport
     openSelectedPlan :: EventM Name AppWrapper ()
     openSelectedPlan = case Plan.startSelectedCompletion context of
       Nothing -> pure ()
