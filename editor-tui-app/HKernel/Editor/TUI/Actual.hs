@@ -31,6 +31,7 @@ import Data.Time.Calendar (Day)
 import qualified Data.Vector as Vec
 import Text.Read (readMaybe)
 
+import qualified HKernel.Account
 import HKernel.Actual.Journal
   ( ActualTransactionEntry
   , actualJournalReversalDeclarations
