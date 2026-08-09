@@ -55,6 +55,7 @@ The primary measure is not deleted lines. It is the reader distance required to 
 - [x] Current semantic ownership is clear enough for further classification without moving code: `HKernel.Household.Application` owns canonical Household admission/state; the typed calculation path in `HKernel.Spike.HouseholdReport` owns Household report composition; `Spike` is therefore partly a stale location/name, not a description of runtime status.
 - [ ] Inventory retained compatibility-oriented exports inside `HKernel.Spike.HouseholdReport` and their remaining callers; in particular separate source-reading compatibility entry points from the typed `buildHouseholdReportSurfaceFromAdmitted` path.
 - [ ] Inventory retained TSV compatibility paths that are still required by current canonical Household operation.
+- [x] `docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md` is useful historical evidence but no longer describes the canonical source composition: it still records `accounts.tsv`, `budget_alloc.tsv`, and `daily_target_scope.tsv` as current Household Report inputs. Treat it as architecture-history residue until updated or superseded, not as present source authority.
 
 ### Repeated source observation / parsing
 
@@ -65,16 +66,45 @@ The primary measure is not deleted lines. It is the reader distance required to 
 - [x] `HKernel.Household.DailyTarget` independently reconstructs Plan transaction blocks for Daily Target / reservation metadata.
 - [x] `HKernel.Editor.PlanCompleteAdvance` independently scans Plan source blocks for `series`, `recur`, and related metadata.
 - [x] `HKernel.Editor.PlanLifecycle` independently locates physical Plan blocks / `plan-id` coordinates for edit operations.
-- [ ] Record every current raw journal root scanner and the metadata/source coordinate it extracts.
-- [ ] Mark which scans add genuinely new source-location evidence and which only rediscover structure already observed earlier.
+- [x] Current raw Journal-root scanner inventory and extracted evidence are recorded below.
+
+| Owner | Root observed | Evidence extracted | Classification |
+|---|---|---|---|
+| `HKernel.Journal` | any Journal source | top-level syntax blocks, declarations, includes, validated transactions, posting line coordinates | necessary syntax boundary |
+| `HKernel.Account.Journal` | `accounts.journal` | declaration-only source shape and account metadata gate | source-specific boundary, overlaps structural scan |
+| `HKernel.Actual.Journal` | `actual.journal` root | transaction alignment plus `event-id`, `plan-id`, `reverses` line/value evidence | domain metadata projection, structural scan duplicated |
+| `HKernel.Plan.Journal` | `plan.journal` root | transaction header coordinate plus `plan-id` line/value evidence | domain identity projection, structural scan duplicated |
+| `HKernel.Household.DailyTarget` | `plan.journal` root | `daily-target-id`, reservation id/amount/commodity | household metadata projection, structural scan duplicated |
+| `HKernel.Editor.PlanCompleteAdvance` | `plan.journal` root | arbitrary transaction metadata used for `series`, `recur`, successor metadata and relation lookup | editor/domain operation re-observation; repeated whole-root block reconstruction |
+| `HKernel.Editor.PlanLifecycle` | `plan.journal` root | physical `plan-id`, transaction header, posting line and replacement coordinates | necessary physical edit evidence, though it rediscovers block structure |
+
+- [x] Native Budget movement is a useful negative case: `HKernel.Household.BudgetMovement` consumes validated `Journal` transactions and does not rescan raw `budget.journal` blocks. `BudgetMovementAppend` similarly delegates native candidate syntax to Journal admission rather than adding another metadata block scanner.
+- [x] Scans that add genuinely new source-location evidence are distinguished from scans that mainly rediscover source structure.
+  - `PlanLifecycle` needs physical source coordinates because Plan Edit preserves unrelated comments/metadata while replacing exact source lines; that is a real editor boundary.
+  - `Actual.Journal`, `Plan.Journal`, and `DailyTarget` add domain-specific metadata meaning, but each first rebuilds the same transaction block structure.
+  - `PlanCompleteAdvance` needs `series` / `recur` meaning but does not need new physical edit coordinates; repeated `sourceBlocks` calls therefore lean more strongly toward redundant observation.
 - [x] Scanner rules are not fully identical across owners.
   - canonical `HKernel.Journal` ends the current block on a blank line;
   - Actual / Plan / Daily Target metadata scanners retain blank lines inside the current reconstructed block and continue until another top-level line;
   - `HKernel.Editor.PlanCompleteAdvance` follows the same continue-until-top-level shape;
   - `HKernel.Editor.PlanLifecycle` treats both `;` and `#` as comment prefixes for physical source location, while the canonical Journal and the other inspected metadata scanners use `;` comments.
   These differences do not yet prove a user-visible bug, but they are repeated evidence that source structure has more than one operational definition.
-- [ ] Count repeated full-root passes in canonical Household load, report construction, Actual add, Plan add/edit/complete, Daily Target, and reload paths.
-- [ ] Identify the narrowest existing representation that could carry shared source structure without stealing metadata meaning from Actual / Plan / Daily Target owners.
+- [x] Existing `JournalDocument` is not currently sufficient as the shared root-source observation.
+  - `collectBlocks` owns canonical structural parsing, but transaction indented metadata comments are not retained in a transaction block;
+  - `ParsedTransaction` retains the typed transaction and posting line coordinates, not transaction header/source metadata coordinates;
+  - therefore downstream Actual / Plan / Daily Target owners cannot obtain their metadata evidence from the existing `JournalDocument` and must return to raw root `Text`.
+  This explains the duplication without yet prescribing a new abstraction.
+- [x] Repeated full-root work has been recorded for the currently relevant paths.
+  - canonical Household load reads Journal roots once, but then performs source-family projection passes: Actual gets one additional Actual metadata scan; Plan gets one Plan metadata scan and one additional Daily Target metadata scan; native Budget movement projects from the validated Journal without another raw block scan;
+  - report construction from an already admitted `HouseholdState` does not need raw source re-parsing; the observed TUI redraw repetition in #135 is projection placement, not Journal parsing;
+  - `prepareActualAppendFromResolvedJournal` scans the existing Actual root once for metadata and scans the candidate Actual root again for candidate admission;
+  - Plan Add from resolved Journals re-admits existing Plan metadata and Actual metadata, then admits the candidate Plan metadata;
+  - Plan Edit does the same Plan/Actual re-admission, performs a separate physical Plan source-location phase, then re-admits the candidate Plan source;
+  - legacy `Plan Finish` from resolved Journals admits Plan once and Actual once, then `prepareActualAppendFromResolvedJournal` admits the same existing Actual root again and the candidate Actual root once more;
+  - Complete & Advance starts from typed Plan/Actual values, but reads target Plan metadata once; when a successor is requested it calls safety assessment, which reads target metadata again and, for a series relation, calls `sourceSeriesFor` once per active candidate, each rebuilding `sourceBlocks`; candidate Plan admission adds another Plan-root scan;
+  - TUI publication intentionally performs time-separated post-publication admission for writer safety, then `reloadWorkspaceContext` performs another canonical Household load to obtain the fresh UI observation. These two loads have different correctness meanings and must not be labeled removable duplication merely from count alone.
+- [x] The narrowest ownership statement is now clear enough for a future cleanup decision: the missing shared evidence is root Journal source structure / coordinates, not Actual, Plan, Daily Target, or Budget semantics. Domain-specific metadata admission should remain with those named owners. No implementation is approved yet.
+- [ ] Decide whether canonical `HKernel.Journal` should retain enough root transaction source evidence to support those projections, or whether a separate narrowly named root-source observation type is clearer. Compare reader distance before choosing.
 - [ ] Do not introduce a generic metadata framework merely to reduce duplication; require a named source-structure ownership reason first.
 
 ### Projection / report work
@@ -116,16 +146,16 @@ The primary measure is not deleted lines. It is the reader distance required to 
 ### Performance-sensitive repetition
 
 - [ ] Record every `Journal -> AccountingFacts` preparation reachable from one report request and confirm where lazy sharing actually applies.
-- [ ] Record every source parse/admission reachable from one canonical Household load/reload.
+- [x] Record source parse/admission repetition reachable from one canonical Household load/reload and the current editor publication paths; see the source-observation section above.
 - [ ] Record repeated list scans over Plans / Actual completions / account declarations in high-frequency TUI paths.
-- [ ] Distinguish harmless small pure scans from whole-source / whole-ledger repeated passes before optimizing.
-- [ ] Prefer moving computation to the correct observation boundary over introducing mutable caches.
+- [x] Distinguish harmless/necessary repeated validation from suspicious whole-source repetition: writer post-admission and reload are time-separated correctness/UI observations, while `PlanCompleteAdvance` rebuilding the same immutable `planSource` once per series candidate occurs inside one pure observation and is the clearest current performance smell.
+- [x] Prefer moving computation to the correct observation boundary over introducing mutable caches.
 
 ## Candidate cleanup themes, not yet approved refactors
 
 These are hypotheses only. They become implementation TODOs only after the evidence above is checked.
 
-- [ ] Shared journal source-structure observation with domain-specific metadata admission layered on top.
+- [ ] Shared Journal root source-structure observation with domain-specific metadata admission layered on top. Evidence is now strong; exact owner/type shape still undecided.
 - [ ] Graduate canonical Household application/report owners out of `Spike` naming/component boundaries.
 - [ ] Reduce duplicate state/projection inside TUI observation context.
 - [ ] Shrink compatibility entry points once all current callers are known.
@@ -136,6 +166,7 @@ These are hypotheses only. They become implementation TODOs only after the evide
 
 - [x] Baseline remote checked at start of this ledger.
 - [x] #135 was open, Ready, mergeable, CI #466 SUCCESS, head `7b877543c84fc543d05dd81c3c15a5d979cdf9ff`.
+- [x] #136 is the cumulative observation ledger and remains documentation-only; no implementation semantics are changed here.
 - [ ] Re-check #135 only when work overlaps its two TUI files, when merging it, or when its status matters to another recorded item.
 
 ## Progress log
@@ -143,4 +174,7 @@ These are hypotheses only. They become implementation TODOs only after the evide
 - [x] Initial cross-boundary observation recorded instead of leaving results only in chat.
 - [x] Added `Account.Journal` to the source-scan inventory and recorded concrete scanner-rule divergence.
 - [x] Confirmed that `Spike` currently contains production owners, not merely disposable experiments.
+- [x] Completed the first Journal-root scanner inventory and classified physical-coordinate evidence versus repeated source-structure observation.
+- [x] Recorded canonical Household/editor parse repetition and isolated `PlanCompleteAdvance` per-series-candidate root rescanning as the strongest current pure repeated-scan hotspot.
+- [x] Established why `JournalDocument` cannot currently replace the downstream scanners: required transaction metadata/source evidence is discarded at canonical parse time.
 - [ ] Continue from this checklist; do not restart with a blanket repository audit.
