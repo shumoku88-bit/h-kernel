@@ -65,6 +65,7 @@ The primary measure is not deleted lines. It is the reader distance required to 
   - `HKernel.Budget.TSV` is also outside the current canonical Household load path and should be treated separately as retained core compatibility rather than conflated with `issues.tsv`.
   - retained does not always mean unreachable: editor CLI still supports a non-canonical Budget movement target by parsing/publishing the old TSV path when the requested target is not canonical `budget.journal`. That is explicit compatibility behavior, not a requirement of canonical Household loading.
 - [x] `HKernel.Spike.HouseholdConsumption` is marked as a temporary adapter in its own module documentation but is on the current production typed report path: `buildHouseholdReportSurfaceFromAdmitted` calls `deriveHouseholdBudgetObservation`. This is architecture-history naming/location residue, not dead code.
+- [x] `HKernel.Editor.ActualWorkspace.transactionsForAccount` is explicit migration residue: its module says the Transaction-only projection remains while delivery code migrates, while current Brick and `EditorActualWorkspaceSpec` use the identity-preserving `transactionEntriesForAccount` path.
 - [x] `h-kernel.cabal` makes the transitional packaging visible: the production `h-kernel`, editor CLI, and editor TUI depend on `h-kernel-spike-household-report`; that component exposes `HKernel.Household.Application`, `HKernel.Spike.HouseholdReport`, and its renderer while keeping `HKernel.Spike.HouseholdConsumption` internal.
 - [x] `docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md` is useful historical evidence but no longer describes the canonical source composition: it still records `accounts.tsv`, `budget_alloc.tsv`, and `daily_target_scope.tsv` as current Household Report inputs. Treat it as architecture-history residue until updated or superseded, not as present source authority.
 
@@ -114,9 +115,13 @@ The primary measure is not deleted lines. It is the reader distance required to 
   - legacy `Plan Finish` from resolved Journals admits Plan once and Actual once, then `prepareActualAppendFromResolvedJournal` admits the same existing Actual root again and the candidate Actual root once more;
   - Complete & Advance starts from typed Plan/Actual values, but reads target Plan metadata once; when a successor is requested it calls safety assessment, which reads target metadata again and, for a series relation, calls `sourceSeriesFor` once per active candidate, each rebuilding `sourceBlocks`; candidate Plan admission adds another Plan-root scan;
   - TUI publication intentionally performs time-separated post-publication admission for writer safety, then `reloadWorkspaceContext` performs another canonical Household load to obtain the fresh UI observation. These two loads have different correctness meanings and must not be labeled removable duplication merely from count alone.
-- [x] The narrowest ownership statement is now clear enough for a future cleanup decision: the missing shared evidence is root Journal source structure / coordinates, not Actual, Plan, Daily Target, or Budget semantics. Domain-specific metadata admission should remain with those named owners. No implementation is approved yet.
-- [ ] Decide whether canonical `HKernel.Journal` should retain enough root transaction source evidence to support those projections, or whether a separate narrowly named root-source observation type is clearer. Compare reader distance before choosing.
-- [ ] Do not introduce a generic metadata framework merely to reduce duplication; require a named source-structure ownership reason first.
+- [x] The narrowest ownership statement is now clear enough for a future cleanup decision: the missing shared evidence is root Journal source structure / coordinates, not Actual, Plan, Daily Target, or Budget semantics. Domain-specific metadata admission should remain with those named owners.
+- [x] Preferred source-structure owner is the existing `JournalDocument`, not a new generic metadata/source framework.
+  - `JournalDocument` is already documented as the pure syntax of one source document, before validation; that is exactly the layer that should know transaction headers, indented source lines, and physical coordinates.
+  - enriching its private parsed transaction representation preserves the current `Journal` meaning and need not expose metadata semantics to Journal itself.
+  - `Loader` currently parses a root `JournalDocument`, recursively resolves includes, flattens included blocks into one resolved document, validates it, and returns only `Journal`. Therefore root-local source evidence is discarded at the IO boundary.
+  - a future implementation should preserve the original root-document evidence alongside the resolved `Journal` when source-specific admission needs it. Exact API shape remains an implementation choice; no second generic metadata abstraction is justified by current evidence.
+- [x] Do not introduce a generic metadata framework merely to reduce duplication; `JournalDocument` should own structure while Actual / Plan / Daily Target continue to own metadata meaning.
 
 ### Projection / report work
 
@@ -153,9 +158,11 @@ The primary measure is not deleted lines. It is the reader distance required to 
   - **evidence boundary**: `ActualJournal`, `PlanJournal`, `IdentifiedPlanTransaction`, `ClassifiedPlanTransaction`, `ProjectedCommittedOutgoingPlan`, `PreparedTransactionBlock`, `HouseholdWriteSnapshot`.
   - **projection**: `PlanFact`, `AdmittedPlans`, `HouseholdBackingPlan`, TUI workspace/open-Plan lists.
   - **adapter/ceremony**: Brick `Form`, `Name`, flow constructors, delivery preview wrappers, transient `ActualAddState` bridge.
-  - **compatibility**: source-reading `buildHouseholdReportSurfaceFromPlanJournal` and its old Account/Budget/DailyTarget TSV inputs.
-- [x] Identify an adjacent type/value that restates already-proven meaning without adding evidence: `PlanFact` plus `openEligiblePlans` repeats outgoing role evidence already retained inside `CommittedOutgoingPlan`.
-- [ ] Continue identifying other adjacent types that represent the same semantic concept without adding evidence; do not generalize from `PlanFact` alone.
+  - **compatibility**: source-reading `buildHouseholdReportSurfaceFromPlanJournal`, old Account/Budget/DailyTarget TSV inputs, and transitional Transaction-only Actual workspace projection.
+- [x] Identify adjacent values that restate already-proven meaning without adding much evidence.
+  - `PlanFact` plus `openEligiblePlans` repeats outgoing role evidence already retained inside `CommittedOutgoingPlan`.
+  - `ActualWorkspace.transactionsForAccount` is an older Transaction-only sibling of the identity-preserving `transactionEntriesForAccount`; current delivery/test paths inspected use the latter.
+- [ ] Continue identifying other adjacent types that represent the same semantic concept without adding evidence; do not generalize from these two examples alone.
 - [x] Generic/local helper names such as `mapLeft`, `singleLeft`, `tshow`, and local scan helpers are mostly private implementation vocabulary and therefore low reader-distance risk. The more important teaching-surface problem is generic public/application names that hide a domain meaning, not small local helpers.
 - [x] `PlanFact` is the clearest current example of a name hiding its actual semantic role: it is not an arbitrary Plan fact, but a report/backing projection of an already committed outgoing Plan with routing Accounts copied out for later use.
 
@@ -186,8 +193,11 @@ The primary measure is not deleted lines. It is the reader distance required to 
 
 ### Helpers / abstractions / compatibility
 
-- [ ] Inventory generic helpers and polymorphic wrappers in `src`, `household-src`, `spike-src`, and `editor-src` that are used by only one semantic owner.
-- [ ] Identify abstraction layers whose only purpose is forwarding or renaming without validation, ownership, or projection.
+- [ ] Inventory generic helpers and polymorphic wrappers in `src`, `household-src`, `spike-src`, and `editor-src` that are used by only one semantic owner. Prefer recording concrete examples over a blanket helper hunt.
+- [x] Identify current abstraction layers whose purpose is forwarding/retained compatibility rather than adding evidence, where evidence is already sufficient.
+  - `ActualWorkspace.transactionsForAccount` is explicitly retained during migration to identity-preserving entries and can be treated as transition rather than domain architecture.
+  - the transient Daily `ActualAddState` preview bridge mirrors Brick-owned flow rather than owning it.
+  - `PlanFact` adds a projection wrapper but then enables a role recheck already proven by `CommittedOutgoingPlan`; its exact replacement still needs design care because Backing consumes routing coordinates.
 - [x] Identify compatibility entry points that duplicate canonical APIs and record their remaining callers: `buildHouseholdReportSurfaceFromPlanJournal` is the clearest current case; canonical production uses `Household.Application` plus the typed admitted path, while `HouseholdReportSpec` retains the old source contract.
 - [x] Review public/exposed modules against the teaching surface far enough to classify the main seam.
   - Cabal already intentionally hides several implementation kernels (`HKernel.Engine.Facts`, `HKernel.Report.Flow`, `HKernel.Report.RecentTransactions`, `HKernel.Editor.SourceAppend`, `HKernel.Spike.HouseholdConsumption`). This is evidence of deliberate API curation, not indiscriminate exposure.
@@ -204,8 +214,11 @@ The primary measure is not deleted lines. It is the reader distance required to 
   - standalone report APIs prepare their own facts once per independently requested report;
   - no evidence currently supports fusing the already-shared ReportBook further.
 - [x] Record source parse/admission repetition reachable from one canonical Household load/reload and the current editor publication paths; see the source-observation section above.
-- [ ] Record repeated list scans over Plans / Actual completions / account declarations in high-frequency TUI paths beyond the known context-rebuild case.
-- [x] `makeWorkspaceContext` computes open Plans by `filter` plus `notElem` against a list of closed PlanIds, so rebuild cost is O(plan-transactions × completion-declarations). It runs on context construction/reload, not on every redraw; record it as a possible scale hotspot, not a current optimization target without measurement.
+- [x] Record repeated Plan/completion/account list scans in currently relevant TUI/operation paths and classify frequency.
+  - `makeWorkspaceContext` computes open Plans by filtering Plan transactions against completion IDs with list `notElem`, O(P × C), but only on context construction/reload, not redraw.
+  - `PlanCompleteAdvance.findPlan` and `ensureOpen` are ordinary linear operation-time scans.
+  - `relatedActivePlans` also uses list completion membership, but the larger structural cost for series relations is candidate-wise `sourceSeriesFor`: each candidate rebuilds `sourceBlocks` over the entire immutable Plan root.
+  - current evidence therefore prioritizes shared root source observation over micro-optimizing ordinary Plan/completion lists. A `Set PlanId` may later be a small local improvement if measurement/data size justifies it.
 - [x] Distinguish harmless/necessary repeated validation from suspicious whole-source repetition: writer post-admission and reload are time-separated correctness/UI observations, while `PlanCompleteAdvance` rebuilding the same immutable `planSource` once per series candidate occurs inside one pure observation and is the clearest current performance smell.
 - [x] Prefer moving computation to the correct observation boundary over introducing mutable caches.
 
@@ -213,10 +226,11 @@ The primary measure is not deleted lines. It is the reader distance required to 
 
 These are hypotheses only. They become implementation TODOs only after the evidence above is checked.
 
-- [ ] Shared Journal root source-structure observation with domain-specific metadata admission layered on top. Evidence is now strong; exact owner/type shape still undecided.
+- [ ] Enrich the existing `JournalDocument` root syntax observation so transaction source structure/coordinates survive long enough for domain-specific metadata admission. Preserve the unflattened root evidence across Loader admission; do not create a generic metadata framework.
 - [ ] Graduate canonical Household application/report owners out of `Spike` naming/component boundaries. Evidence is now strong that current production semantics and old source compatibility are co-located.
 - [ ] Reduce duplicate state/projection inside TUI observation context. Current evidence says the source-byte duplication is temporal evidence, while the more suspicious duplication is the transient single-entry `ActualAddState` bridge.
 - [ ] Re-examine `PlanFact` / `openEligiblePlans`: preserve open/completed selection and report needs, but avoid copying and then re-proving outgoing Account roles if `CommittedOutgoingPlan` already carries that evidence.
+- [ ] Retire `ActualWorkspace.transactionsForAccount` once any remaining non-observed caller is ruled out; current production/test paths inspected use `transactionEntriesForAccount`.
 - [ ] Shrink compatibility entry points once all current callers are known. The old Household Report source-reading entrypoint now has a known compatibility-test role; old Budget TSV also has an explicit non-canonical editor CLI role.
 - [ ] Define a small documented teaching surface before changing Cabal exposure; do not hide useful adapters merely because they are not first-chapter concepts.
 - [ ] Simplify reader paths where adjacent types/files do not add a new invariant, evidence, or accounting meaning.
@@ -236,10 +250,13 @@ These are hypotheses only. They become implementation TODOs only after the evide
 - [x] Completed the first Journal-root scanner inventory and classified physical-coordinate evidence versus repeated source-structure observation.
 - [x] Recorded canonical Household/editor parse repetition and isolated `PlanCompleteAdvance` per-series-candidate root rescanning as the strongest current pure repeated-scan hotspot.
 - [x] Established why `JournalDocument` cannot currently replace the downstream scanners: required transaction metadata/source evidence is discarded at canonical parse time.
+- [x] Chose existing `JournalDocument` as the preferred structural owner rather than inventing a second generic source-observation abstraction; Loader must preserve root-local evidence if this is implemented.
 - [x] Split `Spike.HouseholdReport` into its current typed production role versus its retained source-reading compatibility role, and classified current versus retired TSV source paths.
 - [x] Classified Household/TUI state overlap and isolated the Daily Actual pure interaction-state bridge as a reader-distance hotspot rather than treating all copied state as duplication.
 - [x] Traced representative Actual, outgoing Plan, and Budget/Backing reader paths and separated long proof/domain paths from adapter/projection repetition.
 - [x] Isolated `PlanFact` role re-proof as the strongest current adjacent-type/value duplication in the report path.
 - [x] Confirmed ReportBook fact/basis sharing and separated the #135 redraw-lifetime issue from report arithmetic/query-plan design.
 - [x] Classified Cabal exposure versus the intended Haskell teaching surface without assuming every exposed adapter should be hidden.
+- [x] Classified current list-scan costs and confirmed whole-root source rescanning is the stronger performance concern.
+- [x] Recorded `ActualWorkspace.transactionsForAccount` as explicit migration residue.
 - [ ] Continue from this checklist; do not restart with a blanket repository audit.
