@@ -38,6 +38,7 @@ import HKernel.Plan (PlanId, mkPlanId)
 import HKernel.Plan.Journal
   ( PlanJournal
   , admitPlanJournalFromResolvedJournal
+  , identifiedPlanId
   )
 
 main :: IO ()
@@ -50,6 +51,10 @@ main = do
         , ("daily-target identity refreshes", testDailyTargetRefresh)
         , ("once recurrence forbids successor", testOnceNoSuccessor)
         , ("cycle recurrence requires explicit date", testCycleManualDate)
+        , ("series relation derives active members and latest", testSeriesSafetyAssessment)
+        , ("duplicate-looking active successor fails closed", testDuplicateActiveSuccessor)
+        , ("closed duplicate no longer blocks successor", testClosedDuplicateIgnored)
+        , ("exact relation fallback guards duplicate without series", testExactFallbackDuplicate)
         ]
   writerResults <- sequence
     [ namedIO "coordinated writer publishes both" testWriterSuccess
@@ -82,6 +87,65 @@ monthlyPlanSource = T.unlines
   , "  ; currency: JPY"
   , "  expenses:test-service  1234 JPY"
   , "  assets:test-bank  -1234 JPY"
+  ]
+
+duplicateSeriesPlanSource :: Text
+duplicateSeriesPlanSource = monthlyPlanSource <> T.unlines
+  [ ""
+  , "2031-02-17 sample recurring payment"
+  , "  ; plan-id: plan-2031-02-17-sample-series-existing"
+  , "  ; series: sample-series"
+  , "  ; recur: monthly"
+  , "  expenses:test-service  1234 JPY"
+  , "  assets:test-bank  -1234 JPY"
+  , ""
+  , "2031-02-17 sample recurring payment"
+  , "  ; plan-id: plan-2031-02-17-other-series"
+  , "  ; series: other-series"
+  , "  ; recur: monthly"
+  , "  expenses:test-service  1234 JPY"
+  , "  assets:test-bank  -1234 JPY"
+  ]
+
+seriesSafetyPlanSource :: Text
+seriesSafetyPlanSource = monthlyPlanSource <> T.unlines
+  [ ""
+  , "2031-02-17 changed amount in same series"
+  , "  ; plan-id: plan-2031-02-17-sample-series-changed"
+  , "  ; series: sample-series"
+  , "  ; recur: monthly"
+  , "  expenses:test-service  1300 JPY"
+  , "  assets:test-bank  -1300 JPY"
+  , ""
+  , "2031-03-17 later member in same series"
+  , "  ; plan-id: plan-2031-03-17-sample-series-latest"
+  , "  ; series: sample-series"
+  , "  ; recur: monthly"
+  , "  expenses:test-service  1400 JPY"
+  , "  assets:test-bank  -1400 JPY"
+  , ""
+  , "2031-04-17 unrelated member"
+  , "  ; plan-id: plan-2031-04-17-other-series"
+  , "  ; series: other-series"
+  , "  ; recur: monthly"
+  , "  expenses:test-service  1500 JPY"
+  , "  assets:test-bank  -1500 JPY"
+  ]
+
+exactFallbackPlanSource :: Text
+exactFallbackPlanSource = T.unlines
+  [ "include accounts.journal"
+  , ""
+  , "2031-04-10 exact fallback payment"
+  , "  ; plan-id: exact-fallback-current"
+  , "  ; recur: monthly"
+  , "  expenses:test-service  777 JPY"
+  , "  assets:test-bank  -777 JPY"
+  , ""
+  , "2031-05-10 exact fallback payment"
+  , "  ; plan-id: exact-fallback-existing"
+  , "  expenses:test-service  777 JPY"
+  , "  assets:test-bank  -777 JPY"
   ]
 
 oncePlanSource :: Text
@@ -125,6 +189,16 @@ accountsResolved = T.unlines
 actualRoot :: Text
 actualRoot = "include accounts.journal\n"
 
+closedDuplicateActualSource :: Text
+closedDuplicateActualSource = T.unlines
+  [ "include accounts.journal"
+  , ""
+  , "2031-02-17 sample recurring payment"
+  , "  ; plan-id: plan-2031-02-17-sample-series-existing"
+  , "  expenses:test-service  1234 JPY"
+  , "  assets:test-bank  -1234 JPY"
+  ]
+
 resolvedSource :: Text -> Text
 resolvedSource root = accountsResolved <> "\n" <> T.unlines (drop 1 (T.lines root))
 
@@ -133,10 +207,13 @@ admitPlan root = do
   journal <- either (const Nothing) Just (parseJournal (resolvedSource root))
   either (const Nothing) Just (admitPlanJournalFromResolvedJournal journal root)
 
+admitActualSource :: Text -> Maybe ActualJournal
+admitActualSource root = do
+  journal <- either (const Nothing) Just (parseJournal (resolvedSource root))
+  either (const Nothing) Just (admitActualJournalFromResolvedJournal journal root)
+
 admitActual :: Maybe ActualJournal
-admitActual = do
-  journal <- either (const Nothing) Just (parseJournal accountsResolved)
-  either (const Nothing) Just (admitActualJournalFromResolvedJournal journal actualRoot)
+admitActual = admitActualSource actualRoot
 
 planId :: Text -> Maybe PlanId
 planId value = either (const Nothing) Just (mkPlanId value)
@@ -294,6 +371,97 @@ testCycleManualDate = case
                 ("2031-05-07 sample cycle payment" `T.isInfixOf`)
                 (completeAdvanceSuccessorBlock preview)
               Left _ -> False
+  _ -> False
+
+testSeriesSafetyAssessment :: Bool
+testSeriesSafetyAssessment = case
+    ( admitPlan seriesSafetyPlanSource
+    , admitActual
+    , planId "plan-2031-01-17-sample-series"
+    , planId "plan-2031-02-17-sample-series-changed"
+    , planId "plan-2031-03-17-sample-series-latest"
+    ) of
+  (Just planJournal, Just actualJournal, Just target, Just februaryId, Just marchId) ->
+    case assessPlanAdvanceSafety planJournal actualJournal seriesSafetyPlanSource target of
+      Left _ -> False
+      Right safety ->
+        map identifiedPlanId (advanceRelatedActivePlans safety) == [februaryId, marchId]
+          && fmap identifiedPlanId (advanceLatestRelatedActivePlan safety) == Just marchId
+  _ -> False
+
+testDuplicateActiveSuccessor :: Bool
+testDuplicateActiveSuccessor = case
+    ( admitPlan duplicateSeriesPlanSource
+    , admitActual
+    , planId "plan-2031-01-17-sample-series"
+    , planId "plan-2031-02-17-sample-series-existing"
+    ) of
+  (Just planJournal, Just actualJournal, Just target, Just conflict) ->
+    case preparePlanCompleteAdvance
+        planJournal
+        actualJournal
+        duplicateSeriesPlanSource
+        actualRoot
+        PlanCompleteAdvanceIntent
+          { completeAdvancePlanId = target
+          , completeAdvanceActualDate = fromGregorian 2031 1 17
+          , completeAdvanceActualAmount = Nothing
+          , completeAdvanceSuccessorDate = Just (fromGregorian 2031 2 17)
+          , completeAdvanceSuccessorAmount = Nothing
+          } of
+      Left errors -> CompleteAdvanceDuplicateLookingSuccessor conflict
+        `elem` NonEmpty.toList errors
+      Right _ -> False
+  _ -> False
+
+testClosedDuplicateIgnored :: Bool
+testClosedDuplicateIgnored = case
+    ( admitPlan duplicateSeriesPlanSource
+    , admitActualSource closedDuplicateActualSource
+    , planId "plan-2031-01-17-sample-series"
+    ) of
+  (Just planJournal, Just actualJournal, Just target) ->
+    case preparePlanCompleteAdvance
+        planJournal
+        actualJournal
+        duplicateSeriesPlanSource
+        closedDuplicateActualSource
+        PlanCompleteAdvanceIntent
+          { completeAdvancePlanId = target
+          , completeAdvanceActualDate = fromGregorian 2031 1 17
+          , completeAdvanceActualAmount = Nothing
+          , completeAdvanceSuccessorDate = Just (fromGregorian 2031 2 17)
+          , completeAdvanceSuccessorAmount = Nothing
+          } of
+      Right preview -> case completeAdvanceSuccessorPlanId preview of
+        Just successorId -> successorId /= target
+        Nothing -> False
+      Left _ -> False
+  _ -> False
+
+testExactFallbackDuplicate :: Bool
+testExactFallbackDuplicate = case
+    ( admitPlan exactFallbackPlanSource
+    , admitActual
+    , planId "exact-fallback-current"
+    , planId "exact-fallback-existing"
+    ) of
+  (Just planJournal, Just actualJournal, Just target, Just conflict) ->
+    case preparePlanCompleteAdvance
+        planJournal
+        actualJournal
+        exactFallbackPlanSource
+        actualRoot
+        PlanCompleteAdvanceIntent
+          { completeAdvancePlanId = target
+          , completeAdvanceActualDate = fromGregorian 2031 4 10
+          , completeAdvanceActualAmount = Nothing
+          , completeAdvanceSuccessorDate = Just (fromGregorian 2031 5 10)
+          , completeAdvanceSuccessorAmount = Nothing
+          } of
+      Left errors -> CompleteAdvanceDuplicateLookingSuccessor conflict
+        `elem` NonEmpty.toList errors
+      Right _ -> False
   _ -> False
 
 actualFixture :: FilePath

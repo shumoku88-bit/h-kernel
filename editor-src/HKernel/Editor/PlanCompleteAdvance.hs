@@ -9,10 +9,12 @@
 module HKernel.Editor.PlanCompleteAdvance
   ( PlanRecurrence(..)
   , PlanAdvanceProposal(..)
+  , PlanAdvanceSafety(..)
   , PlanCompleteAdvanceIntent(..)
   , PlanCompleteAdvancePreview(..)
   , PlanCompleteAdvanceError(..)
   , proposePlanAdvance
+  , assessPlanAdvanceSafety
   , preparePlanCompleteAdvance
   , PlanCompleteAdvanceWriteIntent(..)
   , PlanCompleteAdvanceWriteError(..)
@@ -26,7 +28,7 @@ import Data.Char (isAsciiLower, isAsciiUpper, isSpace, toLower)
 import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Maybe (mapMaybe)
+import Data.Maybe (catMaybes, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, addGregorianMonthsClip)
@@ -113,6 +115,13 @@ data PlanAdvanceProposal = PlanAdvanceProposal
   , proposalOriginalTransaction :: Transaction
   } deriving (Eq, Show)
 
+-- | Current open members of the selected Plan relation. The latest member is
+-- derived from the same list rather than stored as independent state.
+data PlanAdvanceSafety = PlanAdvanceSafety
+  { advanceRelatedActivePlans     :: [IdentifiedPlanTransaction]
+  , advanceLatestRelatedActivePlan :: Maybe IdentifiedPlanTransaction
+  } deriving (Eq, Show)
+
 data PlanCompleteAdvanceIntent = PlanCompleteAdvanceIntent
   { completeAdvancePlanId          :: PlanId
   , completeAdvanceActualDate      :: Day
@@ -139,6 +148,7 @@ data PlanCompleteAdvanceError
   | CompleteAdvanceSuccessorForbiddenForOnce
   | CompleteAdvanceSuccessorAmountWithoutDate
   | CompleteAdvanceAmountOverrideRequiresBinaryPlan
+  | CompleteAdvanceDuplicateLookingSuccessor PlanId
   | CompleteAdvanceActualError (NonEmpty ActualEditError)
   | CompleteAdvanceSuccessorBlockError (NonEmpty TransactionBlockError)
   | CompleteAdvanceSuccessorCandidateError (NonEmpty PlanJournalError)
@@ -168,6 +178,31 @@ proposePlanAdvance planJournal planSource targetId = do
     , proposalSuggestedNextDate = suggested
     , proposalDescription = transactionDescription transaction
     , proposalOriginalTransaction = transaction
+    }
+
+-- | Observe the currently open Plan relation used to make replenishment safe.
+-- A nonblank @series@ is authoritative when present. Without one, relation
+-- identity falls back to exact typed content: description plus complete Posting
+-- shape. Durable Plan identity is never reconstructed from display text.
+assessPlanAdvanceSafety
+  :: PlanJournal
+  -> ActualJournal
+  -> Text
+  -> PlanId
+  -> Either (NonEmpty PlanCompleteAdvanceError) PlanAdvanceSafety
+assessPlanAdvanceSafety planJournal actualJournal planSource targetId = do
+  identified <- findPlan planJournal targetId
+  ensureOpen actualJournal targetId
+  metadata <- sourceMetadataFor targetId planSource
+  related <- relatedActivePlans
+    planJournal
+    actualJournal
+    planSource
+    targetId
+    (planRelation metadata (identifiedPlanTransaction identified))
+  pure PlanAdvanceSafety
+    { advanceRelatedActivePlans = related
+    , advanceLatestRelatedActivePlan = latestRelatedActivePlan related
     }
 
 preparePlanCompleteAdvance
@@ -212,6 +247,12 @@ preparePlanCompleteAdvance planJournal actualJournal planSource actualSource int
         CompleteAdvanceAmountOverrideRequiresBinaryPlan
         (completeAdvanceSuccessorAmount intent)
         (transactionPostings transaction)
+      safety <- assessPlanAdvanceSafety planJournal actualJournal planSource targetId
+      rejectDuplicateLookingSuccessor
+        safety
+        successorDate
+        (transactionDescription transaction)
+        successorPostings
       successorId <- first (pure . CompleteAdvanceGeneratedPlanIdError)
         (generateSuccessorPlanId
           successorDate
@@ -302,6 +343,86 @@ validateSuccessorChoice recurrence intent
       Left (pure CompleteAdvanceSuccessorForbiddenForOnce)
   | otherwise = Right ()
 
+data PlanRelation
+  = PlanSeriesRelation Text
+  | PlanExactRelation Text (NonEmpty Posting)
+
+planRelation :: Metadata -> Transaction -> PlanRelation
+planRelation metadata transaction =
+  case nonBlankMetadataValue "series" metadata of
+    Just series -> PlanSeriesRelation series
+    Nothing -> PlanExactRelation
+      (transactionDescription transaction)
+      (transactionPostings transaction)
+
+relatedActivePlans
+  :: PlanJournal
+  -> ActualJournal
+  -> Text
+  -> PlanId
+  -> PlanRelation
+  -> Either (NonEmpty PlanCompleteAdvanceError) [IdentifiedPlanTransaction]
+relatedActivePlans planJournal actualJournal planSource targetId relation = do
+  candidates <- traverse relatedCandidate activeCandidates
+  pure (catMaybes candidates)
+  where
+    completedIds = map declaredCompletionPlanId
+      (actualJournalCompletionDeclarations actualJournal)
+    activeCandidates =
+      [ candidate
+      | candidate <- planJournalTransactions planJournal
+      , identifiedPlanId candidate /= targetId
+      , identifiedPlanId candidate `notElem` completedIds
+      ]
+    relatedCandidate candidate = do
+      isRelated <- candidateMatchesRelation planSource relation candidate
+      pure (if isRelated then Just candidate else Nothing)
+
+candidateMatchesRelation
+  :: Text
+  -> PlanRelation
+  -> IdentifiedPlanTransaction
+  -> Either (NonEmpty PlanCompleteAdvanceError) Bool
+candidateMatchesRelation planSource relation candidate = case relation of
+  PlanSeriesRelation series -> do
+    candidateSeries <- sourceSeriesFor (identifiedPlanId candidate) planSource
+    pure (candidateSeries == Just series)
+  PlanExactRelation description postings ->
+    let transaction = identifiedPlanTransaction candidate
+    in pure
+      ( transactionDescription transaction == description
+          && transactionPostings transaction == postings
+      )
+
+latestRelatedActivePlan
+  :: [IdentifiedPlanTransaction]
+  -> Maybe IdentifiedPlanTransaction
+latestRelatedActivePlan = foldl' later Nothing
+  where
+    later Nothing candidate = Just candidate
+    later current@(Just latest) candidate
+      | planDate candidate > planDate latest = Just candidate
+      | otherwise = current
+    planDate = transactionDate . identifiedPlanTransaction
+
+rejectDuplicateLookingSuccessor
+  :: PlanAdvanceSafety
+  -> Day
+  -> Text
+  -> NonEmpty Posting
+  -> Either (NonEmpty PlanCompleteAdvanceError) ()
+rejectDuplicateLookingSuccessor safety successorDate description postings =
+  case filter duplicateLooking (advanceRelatedActivePlans safety) of
+    conflict : _ -> Left
+      (pure (CompleteAdvanceDuplicateLookingSuccessor (identifiedPlanId conflict)))
+    [] -> Right ()
+  where
+    duplicateLooking identified =
+      let transaction = identifiedPlanTransaction identified
+      in transactionDate transaction == successorDate
+          && transactionDescription transaction == description
+          && transactionPostings transaction == postings
+
 type Metadata = [(Text, Text)]
 
 sourceMetadataFor :: PlanId -> Text -> Either (NonEmpty PlanCompleteAdvanceError) Metadata
@@ -314,6 +435,26 @@ sourceMetadataFor targetId source =
       in case duplicateKeys of
           key : _ -> Left (pure (CompleteAdvanceDuplicateMetadata key))
           [] -> Right metadata
+
+sourceSeriesFor
+  :: PlanId
+  -> Text
+  -> Either (NonEmpty PlanCompleteAdvanceError) (Maybe Text)
+sourceSeriesFor targetId source =
+  case filter (blockOwns targetId) (sourceBlocks source) of
+    [] -> Left (pure (CompleteAdvanceMetadataMissing targetId))
+    block : _ -> case seriesValues of
+      [] -> Right Nothing
+      [value]
+        | T.null (T.strip value) -> Right Nothing
+        | otherwise -> Right (Just (T.strip value))
+      _ -> Left (pure (CompleteAdvanceDuplicateMetadata "series"))
+      where
+        seriesValues =
+          [ value
+          | (key, value) <- mapMaybe metadataLine (drop 1 block)
+          , key == "series"
+          ]
 
 blockOwns :: PlanId -> [Text] -> Bool
 blockOwns targetId block =
@@ -351,6 +492,12 @@ metadataLine line
 
 metadataValue :: Text -> Metadata -> Maybe Text
 metadataValue key metadata = lookup (T.toCaseFold key) metadata
+
+nonBlankMetadataValue :: Text -> Metadata -> Maybe Text
+nonBlankMetadataValue key metadata = do
+  value <- metadataValue key metadata
+  let stripped = T.strip value
+  if T.null stripped then Nothing else Just stripped
 
 admitRecurrence :: Metadata -> Either (NonEmpty PlanCompleteAdvanceError) PlanRecurrence
 admitRecurrence metadata = case fmap T.toCaseFold (metadataValue "recur" metadata) of
