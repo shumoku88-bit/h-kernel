@@ -30,6 +30,7 @@ import HKernel.Household.Application
   , HouseholdWriteSnapshot(..)
   , loadCanonicalHouseholdWriteSnapshot
   )
+import HKernel.HouseholdIssue (HouseholdIssue)
 import HKernel.Ledger (Transaction)
 import HKernel.Plan.Completion (declaredCompletionPlanId)
 import HKernel.Plan.Journal
@@ -59,6 +60,21 @@ data Name
   | PlanActualAmountField
   | PlanSuccessorDateField
   | PlanSuccessorAmountField
+  | BudgetMemoField
+  | BudgetFromField
+  | BudgetToField
+  | BudgetAmountField
+  | BudgetCommodityField
+  | AccountNameField
+  | AccountTypeField
+  | AccountCommodityField
+  | IssueList
+  | IssueCategoryField
+  | IssueTitleField
+  | IssueAmountField
+  | IssueCommodityField
+  | IssueDetailsField
+  | IssueDecisionMemoField
   | BudgetViewport
   | AccountsViewport
   | IssuesViewport
@@ -102,9 +118,12 @@ data AppContext = AppContext
   , contextWorkspaceList        :: L.List Name Transaction
   , contextWorkspaceFocus       :: WorkspaceFocus
   , contextPlanList             :: L.List Name IdentifiedPlanTransaction
+  , contextIssueList            :: L.List Name HouseholdIssue
   , contextSourcePath           :: FilePath
   , contextSource               :: Text
   , contextPlanSource           :: Text
+  , contextBudgetSource         :: Text
+  , contextIssuesSource         :: Text
   }
 
 type AppEvent = ()
@@ -115,9 +134,11 @@ makeWorkspaceContext
   -> FilePath
   -> Text
   -> Text
+  -> Text
+  -> Text
   -> HouseholdState
   -> AppContext
-makeWorkspaceContext focusLatest today journalFile source planSource state =
+makeWorkspaceContext focusLatest today journalFile source planSource budgetSource issuesSource state =
   AppContext
     { contextHouseholdState = state
     , contextCurrentSection = ActualSection
@@ -128,9 +149,12 @@ makeWorkspaceContext focusLatest today journalFile source planSource state =
     , contextWorkspaceList = workspaceList
     , contextWorkspaceFocus = TransactionsFocus
     , contextPlanList = planList
+    , contextIssueList = issueList
     , contextSourcePath = journalFile
     , contextSource = source
     , contextPlanSource = planSource
+    , contextBudgetSource = budgetSource
+    , contextIssuesSource = issuesSource
     }
   where
     declarations = accountDeclarations (householdStateAccountsRegistry state)
@@ -150,6 +174,7 @@ makeWorkspaceContext focusLatest today journalFile source planSource state =
       (\identified -> identifiedPlanId identified `notElem` closedPlanIds)
       (planJournalTransactions (householdStatePlanJournal state))
     planList = L.list PlanList (Vec.fromList openPlans) 1
+    issueList = L.list IssueList (Vec.fromList (householdStateIssues state)) 1
 
 reloadWorkspaceContext :: AppContext -> IO (Maybe AppContext)
 reloadWorkspaceContext context = do
@@ -163,10 +188,12 @@ reloadWorkspaceContext context = do
           actualPath = householdActualJournalPath freshPaths
           freshActual = householdWriteSnapshotActualSource snapshot
           freshPlan = householdWriteSnapshotPlanSource snapshot
+          freshBudget = householdWriteSnapshotBudgetSource snapshot
+          freshIssues = householdWriteSnapshotIssuesSource snapshot
       pure (Just
         ((makeWorkspaceContext True
             (contextObservationDay context)
-            actualPath freshActual freshPlan freshState)
+            actualPath freshActual freshPlan freshBudget freshIssues freshState)
           { contextEntryDay = contextEntryDay context
           , contextCurrentSection = contextCurrentSection context
           }))

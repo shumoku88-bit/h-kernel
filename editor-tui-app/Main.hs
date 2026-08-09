@@ -22,25 +22,14 @@ import System.Environment (getArgs)
 import System.Exit (die)
 import System.FilePath (takeDirectory)
 
-import HKernel.Account
-  ( AccountDeclaration
-  , accountDeclarations
-  , accountName
-  , declaredAccount
-  , declaredAccountDefaultCommodity
-  , declaredAccountType
-  )
+import HKernel.Account (accountName)
 import qualified HKernel.Account
 import HKernel.Actual.Journal (actualJournalValue)
 import HKernel.Application.Config (HouseholdSourcePaths(..), mkHouseholdRoot)
-import HKernel.Budget.Policy
-  ( EnvelopeDefinition
-  , budgetPolicyEnvelopeDefinitions
-  , envelopeDefinitionExpenseAccounts
-  , envelopeDefinitionId
-  )
+import HKernel.Budget.Policy (budgetPolicyEnvelopeDefinitions)
 import HKernel.Engine (mkDateRange)
 import qualified HKernel.Editor.TUI.Actual as Actual
+import qualified HKernel.Editor.TUI.Maintenance as Maintenance
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
   , AppEvent
@@ -57,21 +46,14 @@ import HKernel.Household.Application
   , buildHouseholdReportSurfaceFromHousehold
   , loadCanonicalHouseholdWriteSnapshot
   )
-import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.Policy
   ( householdAllocationEnvelopes
   , householdCycleIncomeAccount
   , householdPolicyCycle
   , householdUnassignedBudgetAccounts
   )
-import HKernel.HouseholdIssue (HouseholdIssue(..))
+import qualified HKernel.HouseholdIssue
 import qualified HKernel.Ledger
-import HKernel.Money
-  ( amountCommodity
-  , amountQuantity
-  , commodityCode
-  , renderQuantity
-  )
 import qualified HKernel.Plan.Journal
 import HKernel.Render
   ( renderBalanceSheetWithPresentation
@@ -105,6 +87,7 @@ data UIState
   = Workspace
   | ActualFlow (Actual.State AppEvent)
   | PlanFlow (Plan.State AppEvent)
+  | MaintenanceFlow (Maintenance.State AppEvent)
   | ShowWorkspaceReloadFailure
 
 data AppWrapper = AppWrapper AppContext UIState
@@ -118,6 +101,11 @@ zoomPlanFlow :: Traversal' AppWrapper (Plan.State AppEvent)
 zoomPlanFlow f (AppWrapper context (PlanFlow state)) =
   (\updated -> AppWrapper context (PlanFlow updated)) <$> f state
 zoomPlanFlow _ wrapper = pure wrapper
+
+zoomMaintenanceFlow :: Traversal' AppWrapper (Maintenance.State AppEvent)
+zoomMaintenanceFlow f (AppWrapper context (MaintenanceFlow state)) =
+  (\updated -> AppWrapper context (MaintenanceFlow updated)) <$> f state
+zoomMaintenanceFlow _ wrapper = pure wrapper
 
 zoomWorkspaceAccounts :: Traversal' AppWrapper (L.List Name (Maybe HKernel.Account.Account))
 zoomWorkspaceAccounts f (AppWrapper context Workspace) =
@@ -137,10 +125,17 @@ zoomPlanList f (AppWrapper context Workspace) =
     <$> f (contextPlanList context)
 zoomPlanList _ wrapper = pure wrapper
 
+zoomIssueList :: Traversal' AppWrapper (L.List Name HKernel.HouseholdIssue.HouseholdIssue)
+zoomIssueList f (AppWrapper context Workspace) =
+  (\updated -> AppWrapper (context { contextIssueList = updated }) Workspace)
+    <$> f (contextIssueList context)
+zoomIssueList _ wrapper = pure wrapper
+
 drawUI :: AppWrapper -> [Widget Name]
 drawUI (AppWrapper context Workspace) = [drawHouseholdShell context]
 drawUI (AppWrapper context (ActualFlow state)) = [Actual.drawFlow context state]
 drawUI (AppWrapper _ (PlanFlow state)) = [Plan.drawFlow state]
+drawUI (AppWrapper _ (MaintenanceFlow state)) = [Maintenance.drawFlow state]
 drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
   [ center
       (borderWithLabel (str "Household reload")
@@ -186,91 +181,11 @@ drawSectionBody :: AppContext -> Widget Name
 drawSectionBody context = case contextCurrentSection context of
   ActualSection -> Actual.drawWorkspace context
   PlansSection -> Plan.drawWorkspace context
-  BudgetSection -> drawBudgetView context
-  AccountsSection -> drawAccountsView context
-  IssuesSection -> drawIssuesView context
+  BudgetSection -> Maintenance.drawBudgetWorkspace context
+  AccountsSection -> Maintenance.drawAccountsWorkspace context
+  IssuesSection -> Maintenance.drawIssuesWorkspace context
   ReportsSection -> drawReportsView context
   SettingsSection -> drawSettingsView context
-
-drawBudgetView :: AppContext -> Widget Name
-drawBudgetView context =
-  vBox
-    [ borderWithLabel (str "Budget Movements & Policy (budget.journal)")
-        (vLimit 18
-          (viewport BudgetViewport Vertical
-            (vBox
-              [ str "--- Budget Movements ---"
-              , vBox (map renderBudgetMovement (householdStateBudgetMovements state))
-              , str " "
-              , str "--- Spendable Envelopes ---"
-              , vBox (map renderEnvelopeDef
-                  (budgetPolicyEnvelopeDefinitions (householdStateBudgetPolicy state)))
-              ])))
-    , str "[1-7] Switch section   [q] Quit"
-    ]
-  where
-    state = contextHouseholdState context
-
-renderBudgetMovement :: HouseholdBudgetMovement -> Widget Name
-renderBudgetMovement movement =
-  txt (T.pack (show (householdBudgetMovementDate movement)) <> "  "
-        <> householdBudgetMovementMemo movement <> "  "
-        <> accountName (householdBudgetMovementFrom movement) <> " -> "
-        <> accountName (householdBudgetMovementTo movement) <> "  "
-        <> renderQuantity (amountQuantity (householdBudgetMovementAmount movement)) <> " "
-        <> commodityCode (amountCommodity (householdBudgetMovementAmount movement)))
-
-renderEnvelopeDef :: EnvelopeDefinition -> Widget Name
-renderEnvelopeDef definition =
-  txt ("Envelope: " <> T.pack (show (envelopeDefinitionId definition))
-    <> "  Expenses: "
-    <> T.intercalate ", " (map accountName (envelopeDefinitionExpenseAccounts definition)))
-
-drawAccountsView :: AppContext -> Widget Name
-drawAccountsView context =
-  vBox
-    [ borderWithLabel (str "Canonical Account Declarations (accounts.journal)")
-        (vLimit 18
-          (viewport AccountsViewport Vertical
-            (vBox (map renderAccountDecl
-              (accountDeclarations
-                (householdStateAccountsRegistry (contextHouseholdState context)))))))
-    , str "[1-7] Switch section   [q] Quit"
-    ]
-
-renderAccountDecl :: AccountDeclaration -> Widget Name
-renderAccountDecl declaration =
-  txt (accountName (declaredAccount declaration) <> "  type: "
-    <> T.pack (show (declaredAccountType declaration))
-    <> maybe "" (\commodity -> "  default commodity: " <> commodityCode commodity)
-      (declaredAccountDefaultCommodity declaration))
-
-drawIssuesView :: AppContext -> Widget Name
-drawIssuesView context =
-  vBox
-    [ borderWithLabel (str "Household Notebook (issues.tsv)")
-        (vLimit 18
-          (viewport IssuesViewport Vertical
-            (if null issues then str "No issues recorded." else vBox (map renderIssue issues))))
-    , str "[1-7] Switch section   [q] Quit"
-    ]
-  where
-    issues = householdStateIssues (contextHouseholdState context)
-
-renderIssue :: HouseholdIssue -> Widget Name
-renderIssue issue =
-  padBottom (Pad 1)
-    (vBox
-      [ txt ("[" <> T.pack (show (householdIssueStatus issue)) <> "]  "
-          <> T.pack (show (householdIssueRecordedOn issue)) <> "  Due: "
-          <> T.pack (show (householdIssueDue issue)))
-      , txt ("  Text: " <> householdIssueText issue)
-      , maybe emptyWidget
-          (\amount -> txt ("  Amount: " <> renderQuantity (amountQuantity amount)
-            <> " " <> commodityCode (amountCommodity amount)))
-          (householdIssueAmount issue)
-      , txt ("  Details: " <> householdIssueDetails issue)
-      ])
 
 drawReportsView :: AppContext -> Widget Name
 drawReportsView context =
@@ -394,6 +309,7 @@ appEvent event = do
     Workspace -> handleWorkspaceEvent context event
     ActualFlow _ -> handleActualFlow context event
     PlanFlow _ -> handlePlanFlow context event
+    MaintenanceFlow _ -> handleMaintenanceFlow context event
     ShowWorkspaceReloadFailure -> handleExitOnlyEvent event
 
 handleWorkspaceEvent :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
@@ -453,13 +369,31 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey (V.KChar 'r') [])
     | inReports -> selectReport (cycleReport (contextSelectedReport context))
   VtyEvent (V.EvKey (V.KChar 'a') [])
-    | inActual -> put (AppWrapper context (ActualFlow (Actual.startDaily (contextEntryDay context))))
+    | inActual -> openActualDaily
   VtyEvent (V.EvKey (V.KChar 'A') [])
-    | inActual -> put (AppWrapper context (ActualFlow (Actual.startDaily (contextEntryDay context))))
+    | inActual -> openActualDaily
   VtyEvent (V.EvKey (V.KChar 'm') [])
-    | inActual -> put (AppWrapper context (ActualFlow (Actual.startMulti (contextEntryDay context))))
+    | inActual -> openActualMulti
   VtyEvent (V.EvKey (V.KChar 'M') [])
-    | inActual -> put (AppWrapper context (ActualFlow (Actual.startMulti (contextEntryDay context))))
+    | inActual -> openActualMulti
+  VtyEvent (V.EvKey V.KEnter [])
+    | inBudget -> put (AppWrapper context (MaintenanceFlow Maintenance.startBudgetMovement))
+  VtyEvent (V.EvKey (V.KChar 'm') [])
+    | inBudget -> put (AppWrapper context (MaintenanceFlow Maintenance.startBudgetMovement))
+  VtyEvent (V.EvKey (V.KChar 'M') [])
+    | inBudget -> put (AppWrapper context (MaintenanceFlow Maintenance.startBudgetMovement))
+  VtyEvent (V.EvKey V.KEnter [])
+    | inAccounts -> put (AppWrapper context (MaintenanceFlow Maintenance.startAccountAdd))
+  VtyEvent (V.EvKey (V.KChar 'a') [])
+    | inAccounts -> put (AppWrapper context (MaintenanceFlow Maintenance.startAccountAdd))
+  VtyEvent (V.EvKey (V.KChar 'A') [])
+    | inAccounts -> put (AppWrapper context (MaintenanceFlow Maintenance.startAccountAdd))
+  VtyEvent (V.EvKey (V.KChar 'a') [])
+    | inIssues -> put (AppWrapper context (MaintenanceFlow Maintenance.startIssueAdd))
+  VtyEvent (V.EvKey (V.KChar 'A') [])
+    | inIssues -> put (AppWrapper context (MaintenanceFlow Maintenance.startIssueAdd))
+  VtyEvent (V.EvKey V.KEnter [])
+    | inIssues -> openSelectedIssue
   VtyEvent (V.EvKey V.KEnter [])
     | inActual && contextWorkspaceFocus context == AccountsFocus ->
         put (AppWrapper (context { contextWorkspaceFocus = TransactionsFocus }) Workspace)
@@ -481,10 +415,15 @@ handleWorkspaceEvent context event = case event of
     | inActual -> handleActualListEvent context vtyEvent
   VtyEvent vtyEvent
     | inPlans -> zoom zoomPlanList (L.handleListEventVi L.handleListEvent vtyEvent)
+  VtyEvent vtyEvent
+    | inIssues -> zoom zoomIssueList (L.handleListEventVi L.handleListEvent vtyEvent)
   _ -> pure ()
   where
     inActual = contextCurrentSection context == ActualSection
     inPlans = contextCurrentSection context == PlansSection
+    inBudget = contextCurrentSection context == BudgetSection
+    inAccounts = contextCurrentSection context == AccountsSection
+    inIssues = contextCurrentSection context == IssuesSection
     inReports = contextCurrentSection context == ReportsSection
     reportsViewport = viewportScroll ReportsViewport
     switchSection :: HouseholdSection -> EventM Name AppWrapper ()
@@ -495,10 +434,16 @@ handleWorkspaceEvent context event = case event of
       put (AppWrapper (context { contextSelectedReport = report }) Workspace)
       vScrollToBeginning reportsViewport
       hScrollToBeginning reportsViewport
+    openActualDaily = put (AppWrapper context (ActualFlow (Actual.startDaily (contextEntryDay context))))
+    openActualMulti = put (AppWrapper context (ActualFlow (Actual.startMulti (contextEntryDay context))))
     openSelectedPlan :: EventM Name AppWrapper ()
     openSelectedPlan = case Plan.startSelectedCompletion context of
       Nothing -> pure ()
       Just flow -> put (AppWrapper context (PlanFlow flow))
+    openSelectedIssue :: EventM Name AppWrapper ()
+    openSelectedIssue = case Maintenance.startSelectedIssueClose context of
+      Nothing -> pure ()
+      Just flow -> put (AppWrapper context (MaintenanceFlow flow))
 
 handleActualListEvent :: AppContext -> V.Event -> EventM Name AppWrapper ()
 handleActualListEvent context vtyEvent = case contextWorkspaceFocus context of
@@ -539,6 +484,22 @@ handlePlanFlow context event = do
         Plan.PublicationFailed message ->
           put (AppWrapper context (PlanFlow (Plan.WriteOutcome message)))
         Plan.ReloadFailed -> put (AppWrapper context ShowWorkspaceReloadFailure)
+    _ -> pure ()
+
+handleMaintenanceFlow :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
+handleMaintenanceFlow context event = do
+  zoom zoomMaintenanceFlow (Maintenance.handleFlowEvent context event)
+  AppWrapper currentContext state <- get
+  case state of
+    MaintenanceFlow Maintenance.ReturnToWorkspace -> put (AppWrapper currentContext Workspace)
+    MaintenanceFlow Maintenance.QuitRequested -> halt
+    MaintenanceFlow (Maintenance.PublishRequested request) -> do
+      result <- suspendAndResume' (Maintenance.publishCandidate context request)
+      case result of
+        Maintenance.Published freshContext -> put (AppWrapper freshContext Workspace)
+        Maintenance.PublicationFailed message ->
+          put (AppWrapper context (MaintenanceFlow (Maintenance.WriteOutcome message)))
+        Maintenance.ReloadFailed -> put (AppWrapper context ShowWorkspaceReloadFailure)
     _ -> pure ()
 
 handleExitOnlyEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
@@ -598,7 +559,9 @@ main = do
           journalFile = householdActualJournalPath paths
           source = householdWriteSnapshotActualSource snapshot
           planSource = householdWriteSnapshotPlanSource snapshot
-          context = makeWorkspaceContext False today journalFile source planSource state
+          budgetSource = householdWriteSnapshotBudgetSource snapshot
+          issuesSource = householdWriteSnapshotIssuesSource snapshot
+          context = makeWorkspaceContext False today journalFile source planSource budgetSource issuesSource state
           initialState = AppWrapper context Workspace
           buildVty = mkVty V.defaultConfig
       initialVty <- buildVty
