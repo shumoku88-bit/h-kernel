@@ -30,6 +30,7 @@ import HKernel.Account
   , declaredAccountDefaultCommodity
   , declaredAccountType
   )
+import qualified HKernel.Account
 import HKernel.Actual.Journal (actualJournalValue)
 import HKernel.Application.Config (HouseholdSourcePaths(..), mkHouseholdRoot)
 import HKernel.Budget.Policy
@@ -64,12 +65,14 @@ import HKernel.Household.Policy
   , householdUnassignedBudgetAccounts
   )
 import HKernel.HouseholdIssue (HouseholdIssue(..))
+import qualified HKernel.Ledger
 import HKernel.Money
   ( amountCommodity
   , amountQuantity
   , commodityCode
   , renderQuantity
   )
+import qualified HKernel.Plan.Journal
 import HKernel.Render
   ( renderBalanceSheetWithPresentation
   , renderDailyFlowWithPresentation
