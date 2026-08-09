@@ -47,6 +47,8 @@ import HKernel.Editor.ActualAppend
   , ActualAddPreview(..)
   , ActualAddWriteFailure(..)
   , ActualAddWriteOutcome(..)
+  , ActualPostingInput(..)
+  , ActualMultiAddInput(..)
   , ActualMultiAddPreview(..)
   , classifyActualAddWriteResult
   , prepareActualAddPreviewFromResolvedJournal
