@@ -11,7 +11,6 @@ import HKernel.Money
 import HKernel.Period
 import HKernel.Plan
 import HKernel.Plan.Journal
-import HKernel.Render (renderCycleAccountsWithPresentation)
 import HKernel.Report.CycleAccounts
 import HKernel.Report.Presentation (defaultPresentationConfig)
 import HKernel.Spike.HouseholdReport
@@ -27,8 +26,8 @@ main = do
         (buildHouseholdReportSurfaceFromPlanJournal observation actual
           accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
           issuesTSV dailyScopeTSV)
-      cycleReport = householdCycleAccounts surface
-      currentPeriod = cycleAccountsCurrentPeriod cycleReport
+      currentCycle = householdCurrentCycleAccounts surface
+      currentPeriod = currentCycleAccountsPeriod currentCycle
       backing = householdEnvelopeBacking surface
       target = householdDailyTarget surface
       foodLine = exactlyOne (envelopeBackingLines backing)
@@ -43,11 +42,30 @@ main = do
     ( periodStart currentPeriod
     , periodEndExclusive currentPeriod
     )
-  assertEqual "previous cycle is resolved from the two latest Actual anchors"
-    (fromGregorian 2026 4 15, fromGregorian 2026 6 15)
-    ( periodStart (cycleAccountsPreviousPeriod cycleReport)
-    , periodEndExclusive (cycleAccountsPreviousPeriod cycleReport)
-    )
+  assertEqual "precise current-cycle report observes through the Household observation day"
+    observation
+    (currentCycleAccountsObservation currentCycle)
+  assertEqual "precise current-cycle report publishes the complete declared Account axis"
+    8
+    (length (currentCycleAccountsRows currentCycle))
+  case householdCycleComparison surface of
+    HouseholdCycleComparisonAvailable comparison -> do
+      let baseline = cycleComparisonBaseline comparison
+      assertEqual "previous cycle is resolved from the two latest Actual anchors"
+        (fromGregorian 2026 4 15, fromGregorian 2026 6 15)
+        ( periodStart (currentCycleAccountsPeriod baseline)
+        , periodEndExclusive (currentCycleAccountsPeriod baseline)
+        )
+      assertEqual "Household daily comparison uses aligned elapsed policy"
+        AlignedElapsed
+        (cycleComparisonPolicy comparison)
+      assertEqual "Household daily comparison observes the previous cycle at the same elapsed day"
+        (fromGregorian 2026 5 31)
+        (currentCycleAccountsObservation baseline)
+    unavailable -> do
+      putStrLn "  [FAIL] aligned Household Cycle Comparison should be available"
+      putStrLn ("    actual: " ++ show unavailable)
+      exitFailure
   assertEqual "explicit completion removes the completed outgoing Plan without hiding other horizons"
     ["plan-prior", "plan-overdue", "plan-wifi", "plan-next-cycle"]
     (map (planIdText . committedPlanId) openPlans)
@@ -94,9 +112,21 @@ main = do
     (dailyTargetRate target)
 
   let renderedSurface = renderHouseholdReportSections
-        renderCycleAccountsWithPresentation
         defaultPresentationConfig
         surface
+  assertEqual "Household cycle delivery publishes the precise current-cycle report"
+    True
+    ("Current Cycle Accounts" `T.isInfixOf` renderedSurface
+      && "Opening" `T.isInfixOf` renderedSurface
+      && "Closing" `T.isInfixOf` renderedSurface)
+  assertEqual "Household cycle delivery publishes the aligned previous-cycle comparison"
+    True
+    ("Cycle Comparison" `T.isInfixOf` renderedSurface
+      && "Policy: aligned_elapsed" `T.isInfixOf` renderedSurface
+      && "2026-05-31" `T.isInfixOf` renderedSurface)
+  assertEqual "legacy Expense-only matrix no longer owns visible Household cycle output"
+    False
+    ("Cycle Accounts & Comparison Matrix" `T.isInfixOf` renderedSurface)
   assertEqual "Planned Transactions identifies the native Plan Journal source"
     True
     ("Source: plan.journal" `T.isInfixOf` renderedSurface
@@ -111,6 +141,27 @@ main = do
   assertEqual "Planned Transactions keeps the next-cycle payment visible before cycle rollover"
     True
     ("2026-08-20 | plan-next-cycle" `T.isInfixOf` renderedSurface)
+
+  let shortPreviousActual = mustRight
+        (parseActualJournal
+          (T.replace "2026-04-15 Pension" "2026-05-15 Pension" actualJournal))
+      shortPreviousSurface = mustRight
+        (buildHouseholdReportSurfaceFromPlanJournal observation shortPreviousActual
+          accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
+          issuesTSV dailyScopeTSV)
+      shortPreviousRendered = renderHouseholdReportSections
+        defaultPresentationConfig shortPreviousSurface
+  case householdCycleComparison shortPreviousSurface of
+    HouseholdCycleComparisonUnavailable _ -> do
+      assertEqual "unavailable aligned comparison does not fail the Household surface"
+        True
+        ("Status: NOT AVAILABLE" `T.isInfixOf` shortPreviousRendered
+          && "Daily Target" `T.isInfixOf` shortPreviousRendered
+          && "Envelope & Backing" `T.isInfixOf` shortPreviousRendered)
+    available -> do
+      putStrLn "  [FAIL] short previous cycle should make aligned comparison unavailable"
+      putStrLn ("    actual: " ++ show available)
+      exitFailure
 
   let defaultIssues = renderHouseholdIssues OpenIssuesOnly
         (householdIssues surface)
