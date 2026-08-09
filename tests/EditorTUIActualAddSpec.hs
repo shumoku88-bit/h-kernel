@@ -7,7 +7,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Exit (exitFailure, exitSuccess)
 
-import HKernel.Account (accountName, mkAccount)
+import HKernel.Account (AccountType(..), accountName, mkAccount)
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddInputError(..)
@@ -37,6 +37,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , dailyAccountCandidates
   , filterDailyAccountCandidates
   , filterMultiAccountCandidates
+  , groupAccountCandidates
   , enterActualAddPreview
   , initialActualAddState
   , initialActualAddStateForDay
@@ -51,6 +52,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , setSelectedActualMultiAccount
   , setSelectedActualMultiAccountText
   , setSelectedActualMultiAmount
+  , stepAccountCandidate
   , transitionActualAdd
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
@@ -76,9 +78,12 @@ main = do
         , ("daily entry can switch to yesterday", testYesterday)
         , ("expense candidates are typed and recent-first", testExpenseCandidates)
         , ("payment candidates are typed, recent-first, and retain unused Accounts", testPaymentCandidates)
+        , ("candidate groups use typed meaning and preserve order within groups", testCandidateGroups)
+        , ("candidate stepping enters and wraps without selector state", testCandidateStepping)
         , ("candidate search is case-insensitive and order-preserving", testCandidateSearch)
         , ("empty candidate search preserves recent-first list", testEmptyCandidateSearch)
         , ("from Account selection updates input", testFromSelection)
+        , ("daily Account reselection preserves the rest of the draft", testDailyReselectionPreservesDraft)
         , ("cancelled selection preserves input", testCancelSelection)
         , ("preview transition retains candidate block only", testPreviewTransition source)
         , ("preview returns directly to editing input", testPreviewReturn source)
@@ -243,6 +248,39 @@ testPaymentCandidates =
           SelectFromAccount)
         == ["liabilities:card", "assets:cash", "assets:bank"]
 
+testCandidateGroups :: Bool
+testCandidateGroups =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let registry = journalAccountRegistry journal
+          candidates = dailyAccountCandidates registry
+            (journalTransactions journal) SelectFromAccount
+          groups =
+            [ (accountType, map accountName accounts)
+            | (accountType, accounts) <- groupAccountCandidates registry candidates
+            ]
+      in groups
+          == [ (Asset, ["assets:cash", "assets:bank"])
+             , (Liability, ["liabilities:card"])
+             ]
+
+testCandidateStepping :: Bool
+testCandidateStepping =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let registry = journalAccountRegistry journal
+          recent = dailyAccountCandidates registry
+            (journalTransactions journal) SelectFromAccount
+          candidates = concatMap snd (groupAccountCandidates registry recent)
+          stepped offset current = accountName <$> stepAccountCandidate offset current candidates
+      in stepped 1 "" == Just "assets:cash"
+          && stepped 1 "assets:cash" == Just "assets:bank"
+          && stepped 1 "assets:bank" == Just "liabilities:card"
+          && stepped 1 "liabilities:card" == Just "assets:cash"
+          && stepped (-1) "assets:cash" == Just "liabilities:card"
+
 testCandidateSearch :: Bool
 testCandidateSearch =
   case parseJournal candidateSource of
@@ -308,6 +346,25 @@ testFromSelection = case mkAccount "assets:cash" of
         selected = transitionActualAdd (ChooseAccount account) selecting
     in addFromAccountText (actualAddInput selected) == "assets:cash"
         && actualAddMode selected == EditingActualAdd
+
+testDailyReselectionPreservesDraft :: Bool
+testDailyReselectionPreservesDraft =
+  case (mkAccount "expenses:books", mkAccount "expenses:food") of
+    (Right books, Right food) ->
+      let initial = ActualAddState validInput EditingActualAdd
+          choose account state =
+            transitionActualAdd (ChooseAccount account)
+              (transitionActualAdd (BeginAccountSelection SelectToAccount) state)
+          once = choose books initial
+          corrected = choose food once
+          input = actualAddInput corrected
+      in addDateText input == addDateText validInput
+          && addDescriptionText input == addDescriptionText validInput
+          && addFromAccountText input == addFromAccountText validInput
+          && addAmountText input == addAmountText validInput
+          && addToAccountText input == "expenses:food"
+          && actualAddMode corrected == EditingActualAdd
+    _ -> False
 
 testCancelSelection :: Bool
 testCancelSelection =
