@@ -29,19 +29,26 @@ import HKernel.Editor.ActualAccountAppend
   , prepareAccountJournalAppend
   )
 import HKernel.Editor.ActualWriter
-  ( WriteError(..)
+  ( CandidateSource(..)
+  , ExpectedSource(..)
+  , WriteError(..)
+  , WriteIntent(..)
   , publishActualBlockWithPathAdmission
+  , publishWithPathAdmission
   )
 import HKernel.Editor.BudgetMovementAppend
   ( budgetJournalCandidateBlock
+  , budgetJournalCandidateCompleteSource
   , prepareBudgetJournalMovementAppend
   )
 import HKernel.Household.Application
   ( HouseholdLoadError(..)
   , HouseholdState(..)
+  , HouseholdWriteSnapshot(..)
   , admitCanonicalHousehold
   , buildHouseholdReportSurfaceFromHousehold
   , loadCanonicalHousehold
+  , loadCanonicalHouseholdWriteSnapshot
   )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.Config
@@ -55,6 +62,8 @@ main = do
   putStrLn "Running CanonicalHouseholdSpec..."
   testSyntheticRootLoading
   testActualWholeHouseholdRollback
+  testBudgetWriteSnapshotOwnership
+  testBudgetWholeHouseholdRollback
   testRegistryDisagreementFailure
   testInMemoryAdmission
   testNativePlanMetadataFailsClosed
@@ -125,6 +134,87 @@ testActualWholeHouseholdRollback = do
   restoredActual <- TIO.readFile actualPath
   unless (restoredActual == syntheticActual)
     (die "Whole-Household admission failure did not restore actual.journal")
+
+  removeDirectoryRecursive dir
+
+testBudgetWriteSnapshotOwnership :: IO ()
+testBudgetWriteSnapshotOwnership = do
+  let dir = "/tmp/synthetic_household_budget_snapshot_spec"
+  resetDirectory dir
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+
+  root <- case mkHouseholdRoot dir of
+    Left err -> die ("mkHouseholdRoot failed: " <> show err)
+    Right r -> pure r
+
+  snapshotResult <- loadCanonicalHouseholdWriteSnapshot root
+  snapshot <- case snapshotResult of
+    Left errs -> die
+      ("loadCanonicalHouseholdWriteSnapshot failed:\n"
+        <> unlines (map show (NonEmpty.toList errs)))
+    Right value -> pure value
+
+  unless (householdWriteSnapshotBudgetSource snapshot == syntheticBudget)
+    (die "Household write snapshot did not retain exact budget.journal root bytes")
+
+  movement <- syntheticBudgetMovement
+  let registry = householdStateAccountsRegistry (householdWriteSnapshotState snapshot)
+  case prepareBudgetJournalMovementAppend
+      registry
+      (householdWriteSnapshotBudgetSource snapshot)
+      movement of
+    Left errs -> die ("Snapshot-owned Budget preparation failed: " <> show errs)
+    Right preview ->
+      unless ("Budget:Living" `T.isInfixOf` budgetJournalCandidateBlock preview)
+        (die "Snapshot-owned Budget candidate did not use admitted Budget accounts")
+
+  removeDirectoryRecursive dir
+
+testBudgetWholeHouseholdRollback :: IO ()
+testBudgetWholeHouseholdRollback = do
+  let dir = "/tmp/synthetic_household_budget_rollback_spec"
+      budgetPath = dir </> "budget.journal"
+      reportPath = dir </> "report.toml"
+  resetDirectory dir
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+
+  root <- case mkHouseholdRoot dir of
+    Left err -> die ("mkHouseholdRoot failed: " <> show err)
+    Right r -> pure r
+
+  snapshotResult <- loadCanonicalHouseholdWriteSnapshot root
+  snapshot <- case snapshotResult of
+    Left errs -> die
+      ("loadCanonicalHouseholdWriteSnapshot failed:\n"
+        <> unlines (map show (NonEmpty.toList errs)))
+    Right value -> pure value
+
+  movement <- syntheticBudgetMovement
+  let existingSource = householdWriteSnapshotBudgetSource snapshot
+      registry = householdStateAccountsRegistry (householdWriteSnapshotState snapshot)
+  preview <- case prepareBudgetJournalMovementAppend registry existingSource movement of
+    Left errs -> die ("Budget movement preparation failed: " <> show errs)
+    Right value -> pure value
+
+  -- The Budget candidate itself remains valid. Corrupting another canonical
+  -- source after preview must disqualify publication as a Household success and
+  -- trigger the shared writer's checked rollback of just-published Budget bytes.
+  TIO.writeFile reportPath "[reports.trial-balance\n"
+  result <- publishWithPathAdmission
+    (\_ -> loadCanonicalHousehold root)
+    WriteIntent
+      { targetFilePath = budgetPath
+      , expectedOldBytes = ExpectedSource existingSource
+      , candidateNewBytes = CandidateSource
+          (budgetJournalCandidateCompleteSource preview)
+      }
+  case result of
+    Left (PostAdmissionFailed _ True) -> pure ()
+    other -> die ("Expected checked Budget Household rollback, got: " <> show other)
+
+  restoredBudget <- TIO.readFile budgetPath
+  unless (restoredBudget == existingSource)
+    (die "Whole-Household admission failure did not restore budget.journal")
 
   removeDirectoryRecursive dir
 
@@ -255,6 +345,25 @@ testNativeBudgetMovementAppend = do
   case prepareBudgetJournalMovementAppend registry badInclude movement of
     Left _ -> pure ()
     Right _ -> die "Budget preview unexpectedly accepted an unknown include"
+
+syntheticBudgetMovement :: IO HouseholdBudgetMovement
+syntheticBudgetMovement = do
+  fromAcc <- case mkAccount "Budget:Daily" of
+    Left err -> die ("mkAccount from failed: " <> show err)
+    Right account -> pure account
+  toAcc <- case mkAccount "Budget:Living" of
+    Left err -> die ("mkAccount to failed: " <> show err)
+    Right account -> pure account
+  commodity <- case mkCommodity "JPY" of
+    Left err -> die ("mkCommodity failed: " <> show err)
+    Right value -> pure value
+  pure HouseholdBudgetMovement
+    { householdBudgetMovementDate = fromGregorian 2026 7 2
+    , householdBudgetMovementMemo = "Reallocate"
+    , householdBudgetMovementFrom = fromAcc
+    , householdBudgetMovementTo = toAcc
+    , householdBudgetMovementAmount = mkAmount commodity (quantityFromInteger 10000)
+    }
 
 resetDirectory :: FilePath -> IO ()
 resetDirectory dir = do

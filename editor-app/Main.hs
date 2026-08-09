@@ -10,7 +10,6 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 
-import HKernel.Account.Journal (parseAccountJournal)
 import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.Application.Config (HouseholdSourcePaths(..), householdSourcePaths, mkHouseholdRoot)
 import qualified HKernel.Editor.ActualAccountAppend as ActualAccountAppend
@@ -21,7 +20,12 @@ import qualified HKernel.Editor.BudgetMovementAppend as BudgetMovementAppend
 import HKernel.Editor.CLI
 import qualified HKernel.Editor.IssueAppend as IssueAppend
 import qualified HKernel.Editor.PlanLifecycle as PlanLifecycle
-import HKernel.Household.Application (loadCanonicalHousehold)
+import HKernel.Household.Application
+  ( HouseholdState(..)
+  , HouseholdWriteSnapshot(..)
+  , loadCanonicalHousehold
+  , loadCanonicalHouseholdWriteSnapshot
+  )
 import HKernel.Household.BudgetMovement.TSV
   ( parseHouseholdBudgetMovements )
 import HKernel.Household.Issue.TSV (parseHouseholdIssues)
@@ -109,40 +113,45 @@ executeCommand commitMode command = case command of
             commitMode
 
   BudgetMovementCmd targetFile movement -> do
-    existingSource <- TIO.readFile targetFile
     let dir = takeDirectory targetFile
         rootDir = if dir == "" then "." else dir
-        paths = case mkHouseholdRoot rootDir of
-          Right r -> householdSourcePaths r
-          Left _ -> case mkHouseholdRoot "." of
-            Right r -> householdSourcePaths r
-            Left _ -> error "unreachable"
+    root <- case mkHouseholdRoot rootDir of
+      Right r -> pure r
+      Left _ -> case mkHouseholdRoot "." of
+        Right r -> pure r
+        Left _ -> error "unreachable"
+    let paths = householdSourcePaths root
     if normalise targetFile == normalise (householdBudgetJournalPath paths)
       then do
-        accountsText <- TIO.readFile (householdAccountsJournalPath paths)
-        registry <- case parseAccountJournal accountsText of
+        snapshotResult <- loadCanonicalHouseholdWriteSnapshot root
+        snapshot <- case snapshotResult of
           Left errors -> validationFailed errors
-          Right r -> pure r
+          Right value -> pure value
+        let state = householdWriteSnapshotState snapshot
+            registry = householdStateAccountsRegistry state
+            existingSource = householdWriteSnapshotBudgetSource snapshot
         case BudgetMovementAppend.prepareBudgetJournalMovementAppend registry existingSource movement of
           Left errors -> validationFailed errors
           Right preview ->
             executePreview
-              publishBudgetJournalAppend
+              (publishWithPathAdmission (\_ -> loadCanonicalHousehold root))
               targetFile
               existingSource
               (BudgetMovementAppend.budgetJournalCandidateBlock preview)
               (BudgetMovementAppend.budgetJournalCandidateCompleteSource preview)
               commitMode
-      else case BudgetMovementAppend.prepareBudgetMovementAppend existingSource movement of
-        Left errors -> validationFailed errors
-        Right preview ->
-          executePreview
-            (publishWithAdmission parseHouseholdBudgetMovements)
-            targetFile
-            existingSource
-            (BudgetMovementAppend.candidateBlock preview)
-            (BudgetMovementAppend.candidateCompleteSource preview)
-            commitMode
+      else do
+        existingSource <- TIO.readFile targetFile
+        case BudgetMovementAppend.prepareBudgetMovementAppend existingSource movement of
+          Left errors -> validationFailed errors
+          Right preview ->
+            executePreview
+              (publishWithAdmission parseHouseholdBudgetMovements)
+              targetFile
+              existingSource
+              (BudgetMovementAppend.candidateBlock preview)
+              (BudgetMovementAppend.candidateCompleteSource preview)
+              commitMode
 
   IssueCmd tsvFile intent -> do
     existingSource <- TIO.readFile tsvFile

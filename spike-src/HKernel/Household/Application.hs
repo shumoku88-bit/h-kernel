@@ -137,14 +137,16 @@ data HouseholdState = HouseholdState
 -- | One admitted Household observation together with the exact root bytes used
 -- by current coordinated Editor operations.
 --
--- This is deliberately narrower than a repository/session abstraction. Actual
--- and Plan are retained because current TUI mutation paths publish those roots;
+-- This is deliberately narrower than a repository/session abstraction. Actual,
+-- Plan, and Budget are retained because current mutation paths need their exact
+-- roots and typed Household meaning to share the same expected-old observation;
 -- other source families should join only when a concrete operation needs the
--- same expected-old ownership.
+-- same ownership.
 data HouseholdWriteSnapshot = HouseholdWriteSnapshot
   { householdWriteSnapshotState        :: HouseholdState
   , householdWriteSnapshotActualSource :: Text
   , householdWriteSnapshotPlanSource   :: Text
+  , householdWriteSnapshotBudgetSource :: Text
   } deriving (Eq, Show)
 
 -- | Errors during canonical Household loading.
@@ -187,8 +189,8 @@ loadCanonicalHousehold root =
   fmap (fmap householdWriteSnapshotState)
     (loadCanonicalHouseholdWriteSnapshot root)
 
--- | Load one canonical Household observation and retain the exact Actual/Plan
--- root bytes from which its typed meaning was admitted.
+-- | Load one canonical Household observation and retain the exact
+-- Actual/Plan/Budget root bytes from which its typed meaning was admitted.
 --
 -- Journal roots are read once here, then resolved with
 -- 'loadJournalFromRootSource'. This prevents the invalid temporal shape
@@ -294,6 +296,7 @@ loadBudget root paths accountsRegistry actualRootText actualJournal planRootText
                   actualJournal
                   planRootText
                   planJournal
+                  budgetRootText
                   budgetJournal
                   budgetMovements
 
@@ -305,10 +308,11 @@ loadConfigsAndIssues
   -> ActualJournal
   -> Text
   -> PlanJournal
+  -> Text
   -> Journal
   -> [HouseholdBudgetMovement]
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
-loadConfigsAndIssues root paths accountsRegistry actualRootText actualJournal planRootText planJournal budgetJournal budgetMovements = do
+loadConfigsAndIssues root paths accountsRegistry actualRootText actualJournal planRootText planJournal budgetRootText budgetJournal budgetMovements = do
   budgetTextResult <- readHouseholdSource (householdBudgetConfigPath paths)
   case budgetTextResult of
     Left errors -> pure (Left errors)
@@ -366,6 +370,7 @@ loadConfigsAndIssues root paths accountsRegistry actualRootText actualJournal pl
                                       { householdWriteSnapshotState = state
                                       , householdWriteSnapshotActualSource = actualRootText
                                       , householdWriteSnapshotPlanSource = planRootText
+                                      , householdWriteSnapshotBudgetSource = budgetRootText
                                       })
 
 readHouseholdSource
