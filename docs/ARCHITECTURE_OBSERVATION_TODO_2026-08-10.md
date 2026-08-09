@@ -42,7 +42,7 @@ The primary measure is not deleted lines. It is the reader distance required to 
 - [x] `HKernel.Journal` owns pure journal syntax and validation while `HKernel.Loader` owns filesystem/include-graph effects.
 - [x] Writer stale detection / candidate publication / post-admission / rollback are real safety boundaries and must not be simplified away merely for line-count reduction.
 - [x] `HouseholdWriteSnapshot` carries a real temporal invariant: admitted Household meaning and expected-old root bytes belong to the same observation.
-- [x] UI-independent interaction modules are a useful boundary when they keep Brick-specific state out of operation/domain owners.
+- [x] UI-independent interaction modules are a useful boundary when they keep Brick-specific state out of operation/domain owners; individual interaction states still need evidence that a real delivery consumes them rather than reconstructing them transiently.
 
 ### Transition / architecture-history residue
 
@@ -63,6 +63,7 @@ The primary measure is not deleted lines. It is the reader distance required to 
   - native canonical replacements are `accounts.journal`, `budget.journal`, and Plan-owned Daily Target/reservation metadata in `plan.journal` plus `household.toml` asset selection.
   - `HKernel.Household.Issue.TSV` is not compatibility residue: `issues.tsv` remains one of the current canonical Household sources.
   - `HKernel.Budget.TSV` is also outside the current canonical Household load path and should be treated separately as retained core compatibility rather than conflated with `issues.tsv`.
+  - retained does not always mean unreachable: editor CLI still supports a non-canonical Budget movement target by parsing/publishing the old TSV path when the requested target is not canonical `budget.journal`. That is explicit compatibility behavior, not a requirement of canonical Household loading.
 - [x] `HKernel.Spike.HouseholdConsumption` is marked as a temporary adapter in its own module documentation but is on the current production typed report path: `buildHouseholdReportSurfaceFromAdmitted` calls `deriveHouseholdBudgetObservation`. This is architecture-history naming/location residue, not dead code.
 - [x] `h-kernel.cabal` makes the transitional packaging visible: the production `h-kernel`, editor CLI, and editor TUI depend on `h-kernel-spike-household-report`; that component exposes `HKernel.Household.Application`, `HKernel.Spike.HouseholdReport`, and its renderer while keeping `HKernel.Spike.HouseholdConsumption` internal.
 - [x] `docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md` is useful historical evidence but no longer describes the canonical source composition: it still records `accounts.tsv`, `budget_alloc.tsv`, and `daily_target_scope.tsv` as current Household Report inputs. Treat it as architecture-history residue until updated or superseded, not as present source authority.
@@ -138,10 +139,23 @@ The primary measure is not deleted lines. It is the reader distance required to 
 ### Editor / state / adapters
 
 - [x] Brick TUI contains substantial adapter ceremony (`Form`, lenses, traversals, widget names, flow states); size alone is not evidence that domain abstractions should be removed.
-- [ ] Inventory state duplicated between `HouseholdState`, `HouseholdWriteSnapshot`, `AppContext`, operation state, and Brick forms.
-- [ ] Mark cached/derived state versus independent state; derived state should not silently become a second source of truth.
-- [ ] Check whether Actual daily / multi-posting / reverse flows repeat form-state machinery without a meaningful interaction distinction.
-- [ ] Check whether Plan add/edit/complete flows repeat parsing or validation already owned by editor operation modules.
+- [x] State overlap between `HouseholdState`, `HouseholdWriteSnapshot`, and `AppContext` is classified.
+  - `HouseholdState` is the typed canonical Household meaning for one admitted observation.
+  - `HouseholdWriteSnapshot` adds exact mutable root bytes to that state; those bytes are temporal writer evidence and are not a second semantic Household truth.
+  - `AppContext` retains `HouseholdState`, copies the four mutable source texts from the write snapshot, and builds Brick lists plus current section/report/focus/day selections. The copied source bytes are delivery-owned expected-old evidence for preview/publication, while the lists are UI projections.
+  - `reloadWorkspaceContext` rebuilds all of those projections from a fresh `HouseholdWriteSnapshot`, so current code does not independently mutate the derived transaction/Plan/Issue lists as competing domain sources.
+- [x] Cached/derived versus independent state is marked for the current TUI context.
+  - derived: workspace Account list, transaction list, open Plan list, Issue list; these are rebuilt from `HouseholdState`.
+  - temporal evidence: actual/plan/budget/issues exact source texts retained for writer expected-old comparisons.
+  - independent interaction coordinates: section, selected report, observation/entry days, workspace focus and Brick list selections.
+- [x] One concrete interaction-state duplication is established in Daily Actual.
+  - Brick owns `DailyInput (Form ActualAddInput ...)` / `DailyPreview ...` as its real workflow state.
+  - on preview, Brick constructs `ActualAddState input EditingActualAdd`, calls `enterActualAddPreview`, immediately pattern-matches `ShowingActualAddPreview`, and converts back into Brick `DailyPreview`.
+  - the editor CLI does not consume `ActualAddState`; it parses directly into operation intents. Therefore `ActualAddState` is not currently a shared production state machine between the two delivery adapters.
+  - this does not yet prove the interaction module should be removed: candidate ordering/filtering and multi-posting interaction helpers are genuinely reused by Brick. It does show that the single-entry `ActualAddState` transition wrapper adds reader travel without currently carrying the Brick workflow.
+- [x] Multi-posting Actual is materially different: Brick stores `ActualMultiAddState` because selection index and the editable posting collection are real interaction state, while its `MultiEditInput` Form mirrors only the currently edited row plus date/description/count for Brick text editing. This overlap has a delivery reason even if the synchronization code is ceremony.
+- [ ] Check whether Reverse Actual has a similar transient pure-state wrapper or only operation + Brick state.
+- [ ] Check whether Plan add/edit/complete interaction wrappers add evidence or merely bridge immediately into Brick-owned states.
 - [ ] Check whether TUI adapters import deep domain internals that could instead consume a smaller application-facing vocabulary.
 - [ ] Keep UI ceremony local rather than creating a generic UI framework unless at least two stable workflows share the same meaning.
 
@@ -158,6 +172,7 @@ The primary measure is not deleted lines. It is the reader distance required to 
 - [ ] Record every `Journal -> AccountingFacts` preparation reachable from one report request and confirm where lazy sharing actually applies.
 - [x] Record source parse/admission repetition reachable from one canonical Household load/reload and the current editor publication paths; see the source-observation section above.
 - [ ] Record repeated list scans over Plans / Actual completions / account declarations in high-frequency TUI paths.
+- [x] `makeWorkspaceContext` computes open Plans by `filter` plus `notElem` against a list of closed PlanIds, so rebuild cost is O(open-plan-candidates × completion-declarations). It runs on context construction/reload, not on every redraw; record it as a possible scale hotspot, not a current optimization target without measurement.
 - [x] Distinguish harmless/necessary repeated validation from suspicious whole-source repetition: writer post-admission and reload are time-separated correctness/UI observations, while `PlanCompleteAdvance` rebuilding the same immutable `planSource` once per series candidate occurs inside one pure observation and is the clearest current performance smell.
 - [x] Prefer moving computation to the correct observation boundary over introducing mutable caches.
 
@@ -167,8 +182,8 @@ These are hypotheses only. They become implementation TODOs only after the evide
 
 - [ ] Shared Journal root source-structure observation with domain-specific metadata admission layered on top. Evidence is now strong; exact owner/type shape still undecided.
 - [ ] Graduate canonical Household application/report owners out of `Spike` naming/component boundaries. Evidence is now strong that current production semantics and old source compatibility are co-located.
-- [ ] Reduce duplicate state/projection inside TUI observation context.
-- [ ] Shrink compatibility entry points once all current callers are known. The old Household Report source-reading entrypoint now has a known compatibility-test role.
+- [ ] Reduce duplicate state/projection inside TUI observation context. Current evidence says the source-byte duplication is temporal evidence, while the more suspicious duplication is the transient single-entry `ActualAddState` bridge.
+- [ ] Shrink compatibility entry points once all current callers are known. The old Household Report source-reading entrypoint now has a known compatibility-test role; old Budget TSV also has an explicit non-canonical editor CLI role.
 - [ ] Tighten exposed-module surface around the concepts that make h-kernel useful as a Haskell teaching example.
 - [ ] Simplify reader paths where adjacent types/files do not add a new invariant, evidence, or accounting meaning.
 
@@ -188,4 +203,5 @@ These are hypotheses only. They become implementation TODOs only after the evide
 - [x] Recorded canonical Household/editor parse repetition and isolated `PlanCompleteAdvance` per-series-candidate root rescanning as the strongest current pure repeated-scan hotspot.
 - [x] Established why `JournalDocument` cannot currently replace the downstream scanners: required transaction metadata/source evidence is discarded at canonical parse time.
 - [x] Split `Spike.HouseholdReport` into its current typed production role versus its retained source-reading compatibility role, and classified current versus retired TSV source paths.
+- [x] Classified Household/TUI state overlap and isolated the Daily Actual pure interaction-state bridge as a reader-distance hotspot rather than treating all copied state as duplication.
 - [ ] Continue from this checklist; do not restart with a blanket repository audit.
