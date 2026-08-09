@@ -128,13 +128,33 @@ The primary measure is not deleted lines. It is the reader distance required to 
 
 ### Reader-distance / vocabulary
 
-- [ ] Trace Actual transaction from source to validated domain to editor preview to publication and count distinct names/types/files crossed.
-- [ ] Trace one outgoing Plan from source to identity/classification/report projection/completion and count distinct names/types/files crossed.
-- [ ] Trace Budget movement from source to Household policy/observation/backing and count distinct names/types/files crossed.
-- [ ] Mark every intermediate type as `domain`, `evidence boundary`, `projection`, `adapter`, `compatibility`, or `ceremony`.
-- [ ] Identify names that represent the same semantic concept at adjacent layers without adding evidence.
-- [ ] Identify generic/helper names that force readers away from accounting vocabulary.
-- [ ] Identify domain concepts that are currently hidden behind technical names.
+- [x] Trace an ordinary Actual transaction from input/source to validated domain to preview to publication.
+  - main path: Brick `Form ActualAddInput` -> `ActualEditIntent` -> `TransactionBlockIntent` / `IntentPosting` -> `PreparedTransactionBlock` -> `Posting` / `Transaction` -> `ActualAppendPreview` -> delivery `ActualAddPreview` -> safe writer `WriteIntent` -> whole-Household post-admission.
+  - Brick Daily currently also detours through transient `ActualAddState` solely to turn the already prepared `ActualAddPreview` into `ShowingActualAddPreview` before storing its own `DailyPreview` state.
+  - core convergence is good: ordinary two-posting and multi-posting inputs both become the same `ActualEditIntent` / `TransactionBlockIntent` and therefore the same validated `Transaction` construction.
+  - `TransactionBlockIntent` / `PreparedTransactionBlock` add a real source-publication meaning: one source-neutral editor intent is resolved against the admitted Account registry into both a validated `Transaction` and its exact candidate block.
+  - the reader-distance hotspot is mainly around delivery preview/state/writer wrappers, not `Posting` / `Transaction` itself.
+- [x] Trace one outgoing Plan from source to identity/classification/report projection/completion-facing value.
+  - main report path: Journal `Transaction` -> `PlanJournal` -> `IdentifiedPlanTransaction` -> `ClassifiedPlanTransaction` -> `ProjectedCommittedOutgoingPlan` -> `PaymentDirection` -> `DeclaredPaymentDirection` -> `DeclaredOutgoingPaymentDirection` + `PositiveAmount` -> `CommittedOutgoingPlan` -> `PlanFact` -> `AdmittedPlans` -> `HouseholdReportSurface`.
+  - most of the long path adds distinct proof: durable Plan identity, complete multi-posting role classification, explicit binary report limitation, account declaration admission, outgoing Asset-to-Expense/Liability proof, positive amount, and committed Plan semantics.
+  - `ProjectedCommittedOutgoingPlan` is especially useful evidence rather than ceremony because it retains the complete identified source transaction while admitting only the binary subset into the current narrower report type.
+  - `PlanFact` is the strongest questionable adjacent wrapper: it copies source/destination Accounts back out of the already proven `CommittedOutgoingPlan` direction, and `openEligiblePlans` then rechecks those Accounts as Asset -> Expense/Liability even though `DeclaredOutgoingPaymentDirection` already proves exactly that role condition.
+- [x] Trace Budget movement from source to Household policy/observation/backing.
+  - main path: validated Journal `Transaction` -> `HouseholdBudgetMovement` -> `BudgetCycle` / `BudgetObservation` -> ordered `BudgetChange` / `BudgetHistory` -> `BudgetConsumption` + `BudgetEntitlement` -> `BudgetRemaining` -> `HouseholdBudgetObservation` -> `EnvelopeBacking`.
+  - this path is long but overwhelmingly domain vocabulary. Each stage answers a distinct accounting/household question rather than renaming the same value.
+  - `HouseholdBudgetMovement` is a narrow source-independent fact; native `budget.journal` admission verifies the binary Budget-to-Budget shape and exact opposite postings, then later policy decides what the movement means.
+  - `HouseholdBudgetEvidence` is internal alignment glue for observation/policy/history; because it is private and feeds one calculation pipeline, it adds little public reader distance.
+  - `HouseholdBackingPlan` is a purposeful consumer projection: Backing only needs the already-proven positive amount and destination, not the entire committed Plan.
+- [x] Mark major intermediate types in the three representative paths by role.
+  - **domain**: `Posting`, `Transaction`, `PlanId`, `PositiveAmount`, `PaymentDirection`, `DeclaredOutgoingPaymentDirection`, `CommittedOutgoingPlan`, `HouseholdBudgetMovement`, Budget observation/history/consumption/entitlement/remaining, `EnvelopeBacking`.
+  - **evidence boundary**: `ActualJournal`, `PlanJournal`, `IdentifiedPlanTransaction`, `ClassifiedPlanTransaction`, `ProjectedCommittedOutgoingPlan`, `PreparedTransactionBlock`, `HouseholdWriteSnapshot`.
+  - **projection**: `PlanFact`, `AdmittedPlans`, `HouseholdBackingPlan`, TUI workspace/open-Plan lists.
+  - **adapter/ceremony**: Brick `Form`, `Name`, flow constructors, delivery preview wrappers, transient `ActualAddState` bridge.
+  - **compatibility**: source-reading `buildHouseholdReportSurfaceFromPlanJournal` and its old Account/Budget/DailyTarget TSV inputs.
+- [x] Identify an adjacent type/value that restates already-proven meaning without adding evidence: `PlanFact` plus `openEligiblePlans` repeats outgoing role evidence already retained inside `CommittedOutgoingPlan`.
+- [ ] Continue identifying other adjacent types that represent the same semantic concept without adding evidence; do not generalize from `PlanFact` alone.
+- [x] Generic/local helper names such as `mapLeft`, `singleLeft`, `tshow`, and local scan helpers are mostly private implementation vocabulary and therefore low reader-distance risk. The more important teaching-surface problem is generic public/application names that hide a domain meaning, not small local helpers.
+- [x] `PlanFact` is the clearest current example of a name hiding its actual semantic role: it is not an arbitrary Plan fact, but a report/backing projection of an already committed outgoing Plan with routing Accounts copied out for later use.
 
 ### Editor / state / adapters
 
@@ -154,8 +174,9 @@ The primary measure is not deleted lines. It is the reader distance required to 
   - the editor CLI does not consume `ActualAddState`; it parses directly into operation intents. Therefore `ActualAddState` is not currently a shared production state machine between the two delivery adapters.
   - this does not yet prove the interaction module should be removed: candidate ordering/filtering and multi-posting interaction helpers are genuinely reused by Brick. It does show that the single-entry `ActualAddState` transition wrapper adds reader travel without currently carrying the Brick workflow.
 - [x] Multi-posting Actual is materially different: Brick stores `ActualMultiAddState` because selection index and the editable posting collection are real interaction state, while its `MultiEditInput` Form mirrors only the currently edited row plus date/description/count for Brick text editing. This overlap has a delivery reason even if the synchronization code is ceremony.
-- [ ] Check whether Reverse Actual has a similar transient pure-state wrapper or only operation + Brick state.
-- [ ] Check whether Plan add/edit/complete interaction wrappers add evidence or merely bridge immediately into Brick-owned states.
+- [x] Reverse Actual does not show the same transient state-machine duplication. `ActualReverseInput` and its parser live with the operation and Brick can use the delivery-neutral input directly; there is no parallel `ActualReverseState` workflow wrapper.
+- [x] Plan Complete & Advance also has a useful delivery-neutral boundary: Brick can retain `PlanCompleteAdvanceInput` directly and `parsePlanCompleteAdvanceInput` converts it into the typed `PlanCompleteAdvanceIntent`. No second pure workflow-state machine is inserted merely to mirror Brick state.
+- [x] Plan Add/Edit differ from Complete & Advance: their raw `PlanAddInput` / `PlanEditInput` and parsing live in the Brick adapter, which directly constructs editor-owned `PlanAddIntent` / `PlanEditIntent`. This avoids another interaction-state layer but makes TUI responsible for some text-to-domain conversion. Record as a boundary-style inconsistency, not yet a correctness problem.
 - [ ] Check whether TUI adapters import deep domain internals that could instead consume a smaller application-facing vocabulary.
 - [ ] Keep UI ceremony local rather than creating a generic UI framework unless at least two stable workflows share the same meaning.
 
@@ -183,6 +204,7 @@ These are hypotheses only. They become implementation TODOs only after the evide
 - [ ] Shared Journal root source-structure observation with domain-specific metadata admission layered on top. Evidence is now strong; exact owner/type shape still undecided.
 - [ ] Graduate canonical Household application/report owners out of `Spike` naming/component boundaries. Evidence is now strong that current production semantics and old source compatibility are co-located.
 - [ ] Reduce duplicate state/projection inside TUI observation context. Current evidence says the source-byte duplication is temporal evidence, while the more suspicious duplication is the transient single-entry `ActualAddState` bridge.
+- [ ] Re-examine `PlanFact` / `openEligiblePlans`: preserve open/completed selection and report needs, but avoid copying and then re-proving outgoing Account roles if `CommittedOutgoingPlan` already carries that evidence.
 - [ ] Shrink compatibility entry points once all current callers are known. The old Household Report source-reading entrypoint now has a known compatibility-test role; old Budget TSV also has an explicit non-canonical editor CLI role.
 - [ ] Tighten exposed-module surface around the concepts that make h-kernel useful as a Haskell teaching example.
 - [ ] Simplify reader paths where adjacent types/files do not add a new invariant, evidence, or accounting meaning.
@@ -204,4 +226,6 @@ These are hypotheses only. They become implementation TODOs only after the evide
 - [x] Established why `JournalDocument` cannot currently replace the downstream scanners: required transaction metadata/source evidence is discarded at canonical parse time.
 - [x] Split `Spike.HouseholdReport` into its current typed production role versus its retained source-reading compatibility role, and classified current versus retired TSV source paths.
 - [x] Classified Household/TUI state overlap and isolated the Daily Actual pure interaction-state bridge as a reader-distance hotspot rather than treating all copied state as duplication.
+- [x] Traced representative Actual, outgoing Plan, and Budget/Backing reader paths and separated long proof/domain paths from adapter/projection repetition.
+- [x] Isolated `PlanFact` role re-proof as the strongest current adjacent-type/value duplication in the report path.
 - [ ] Continue from this checklist; do not restart with a blanket repository audit.
