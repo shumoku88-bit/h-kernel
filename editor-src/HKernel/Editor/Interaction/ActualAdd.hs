@@ -16,6 +16,8 @@ module HKernel.Editor.Interaction.ActualAdd
   , setActualAddDate
   , dailyAccountCandidates
   , filterDailyAccountCandidates
+  , groupAccountCandidates
+  , stepAccountCandidate
   , enterActualAddPreview
   , transitionActualAdd
   , ActualMultiAddState(..)
@@ -35,6 +37,7 @@ module HKernel.Editor.Interaction.ActualAdd
   , filterMultiAccountCandidates
   ) where
 
+import Data.List (findIndex)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -130,6 +133,37 @@ dailyAccountCandidates registry transactions target =
 -- the recent-first order from 'dailyAccountCandidates'.
 filterDailyAccountCandidates :: Text -> [Account] -> [Account]
 filterDailyAccountCandidates = filterAccountCandidates
+
+-- | Partition an already-admitted candidate set by typed accounting meaning.
+-- Group order is stable and explicit; Account order inside each group preserves
+-- the caller's order, including any recent-first ranking already applied.
+groupAccountCandidates
+  :: AccountRegistry
+  -> [Account]
+  -> [(AccountType, [Account])]
+groupAccountCandidates registry candidates =
+  [ (accountType, matching)
+  | accountType <- [Asset, Liability, Equity, Income, Expense, Budget]
+  , let matching = filter ((== Just accountType) . (`accountTypeFor` registry)) candidates
+  , not (null matching)
+  ]
+
+-- | Move through an exact candidate list without creating separate selector
+-- state. A delivery may use the Account field's current text as the current
+-- selection. Unknown or blank text enters at the nearest end in the requested
+-- direction, while known selections wrap around.
+stepAccountCandidate :: Int -> Text -> [Account] -> Maybe Account
+stepAccountCandidate _ _ [] = Nothing
+stepAccountCandidate offset currentText candidates =
+  Just (candidates !! nextIndex)
+  where
+    currentIndex = findIndex ((== T.strip currentText) . accountName) candidates
+    count = length candidates
+    nextIndex = case currentIndex of
+      Just index -> (index + offset) `mod` count
+      Nothing
+        | offset < 0 -> count - 1
+        | otherwise -> 0
 
 matchesDailyRole
   :: AccountRegistry
