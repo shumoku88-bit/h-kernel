@@ -142,6 +142,27 @@ main = do
     True
     ("2026-08-20 | plan-next-cycle" `T.isInfixOf` renderedSurface)
 
+  let shortPreviousActual = mustRight
+        (parseActualJournal
+          (T.replace "2026-04-15 Pension" "2026-05-15 Pension" actualJournal))
+      shortPreviousSurface = mustRight
+        (buildHouseholdReportSurfaceFromPlanJournal observation shortPreviousActual
+          accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
+          issuesTSV dailyScopeTSV)
+      shortPreviousRendered = renderHouseholdReportSections
+        defaultPresentationConfig shortPreviousSurface
+  case householdCycleComparison shortPreviousSurface of
+    HouseholdCycleComparisonUnavailable _ -> do
+      assertEqual "unavailable aligned comparison does not fail the Household surface"
+        True
+        ("Status: NOT AVAILABLE" `T.isInfixOf` shortPreviousRendered
+          && "Daily Target" `T.isInfixOf` shortPreviousRendered
+          && "Envelope & Backing" `T.isInfixOf` shortPreviousRendered)
+    available -> do
+      putStrLn "  [FAIL] short previous cycle should make aligned comparison unavailable"
+      putStrLn ("    actual: " ++ show available)
+      exitFailure
+
   let defaultIssues = renderHouseholdIssues OpenIssuesOnly
         (householdIssues surface)
       allIssues = renderHouseholdIssues AllIssues
