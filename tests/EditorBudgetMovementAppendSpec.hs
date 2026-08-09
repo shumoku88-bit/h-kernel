@@ -5,13 +5,24 @@ module Main (main) where
 
 import Control.Exception (IOException, catch)
 import Data.List.NonEmpty (NonEmpty(..))
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
-import HKernel.Account (mkAccount)
+import HKernel.Account (Account, AccountRegistry, mkAccount)
+import HKernel.Account.Journal (parseAccountJournal)
+import HKernel.Actual.Journal (ActualJournal, parseActualJournal)
+import HKernel.Budget (Pacing(..), mkEnvelopeId)
+import HKernel.Budget.Policy
+  ( defineBackingPool
+  , defineEnvelope
+  , mkBackingPoolId
+  , mkBudgetPolicy
+  , mkEnvelopeLabel
+  )
 import HKernel.Editor.ActualWriter
   ( CandidateSource(..)
   , ExpectedSource(..)
@@ -26,11 +37,32 @@ import HKernel.Editor.BudgetMovementAppend
   ( BudgetMovementAppendPreview(..)
   , prepareBudgetMovementAppend
   )
+import HKernel.Editor.PlanBudgetSync
+  ( PlanBudgetSyncError(..)
+  , PlanBudgetSyncPreview(..)
+  , PlanBudgetSyncResult(..)
+  , preparePlanBudgetSync
+  )
+import HKernel.Household.AccountProfile
+  ( RetainedBudgetAccountKind(..)
+  , RetainedEnvelopeRole(..)
+  , RetainedSpendClass(..)
+  , HouseholdAccountPolicy
+  , mkHouseholdAccountPolicy
+  )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.BudgetMovement.TSV
   ( parseHouseholdBudgetMovements )
+import HKernel.Household.Policy
+  ( HouseholdPolicy
+  , defineHouseholdEnvelopeCoordinates
+  , incomeAnchorCyclePolicy
+  , mkHouseholdPolicy
+  )
 import HKernel.Loader (loadJournal)
 import HKernel.Money (mkAmount, mkCommodity, quantityFromInteger)
+import HKernel.Plan (PlanId, mkPlanId)
+import HKernel.Plan.Journal (PlanJournal, parsePlanJournal)
 
 main :: IO ()
 main = do
@@ -39,6 +71,15 @@ main = do
         , ("testBudgetMovementCommit", testBudgetMovementCommit)
         , ("testPathAwareJournalCommit", testPathAwareJournalCommit)
         , ("testPathAwareJournalFailureRestores", testPathAwareJournalFailureRestores)
+        , ("plan Budget sync uses completed Actual amount", pure testPlanBudgetSyncUsesActualAmount)
+        , ("plan Budget sync is linkage-idempotent", pure testPlanBudgetSyncIdempotent)
+        , ("plan Budget sync rejects account/order drift", pure testPlanBudgetSyncShapeMismatch)
+        , ("plan Budget sync rejects direction drift", pure testPlanBudgetSyncDirectionMismatch)
+        , ("plan Budget sync rejects commodity drift", pure testPlanBudgetSyncCommodityMismatch)
+        , ("plan Budget sync rejects competing completions", pure testPlanBudgetSyncDuplicateCompletion)
+        , ("plan Budget sync rejects mismatched existing linkage", pure testPlanBudgetSyncExistingLinkageMismatch)
+        , ("plan Budget sync rejects duplicate existing linkage", pure testPlanBudgetSyncDuplicateLinkage)
+        , ("plan Budget sync leaves unlinked Plan untouched", pure testPlanBudgetSyncNotLinked)
         ]
   results <- sequence [action | (_, action) <- tests]
   let namedResults = zip (map fst tests) results
@@ -176,6 +217,312 @@ pathAwareInvalidCandidate = pathAwareRoot <> T.unlines
   , "    budget:from       -500 JPY"
   , "    budget:unknown     500 JPY"
   ]
+
+-- Plan completion -> Budget movement laws
+
+syncAccountsSource :: Text
+syncAccountsSource = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "account assets:backing"
+  , "  type: Asset"
+  , "account expenses:fixed"
+  , "  type: Expense"
+  , "account expenses:other"
+  , "  type: Expense"
+  , "account budget:daily"
+  , "  type: Budget"
+  , "account budget:spent"
+  , "  type: Budget"
+  , "account budget:unassigned"
+  , "  type: Budget"
+  , "account income:pension"
+  , "  type: Income"
+  ]
+
+syncPlanSource :: Text
+syncPlanSource = syncAccountsSource <> T.unlines
+  [ ""
+  , "2031-01-17 planned fixed payment"
+  , "  ; plan-id: plan-fixed"
+  , "  expenses:fixed    300 JPY"
+  , "  assets:cash      -300 JPY"
+  ]
+
+syncActualSource :: Text
+syncActualSource = syncActualSourceWithPostings
+  [ "  expenses:fixed    275 JPY"
+  , "  assets:cash      -275 JPY"
+  ]
+
+syncActualSourceWithPostings :: [Text] -> Text
+syncActualSourceWithPostings postings = syncAccountsSource <> T.unlines
+  ( [ ""
+    , "2031-01-18 * completed fixed payment"
+    , "  ; event-id: actual-fixed"
+    , "  ; plan-id: plan-fixed"
+    ]
+      ++ postings
+  )
+
+syncDuplicateCompletionSource :: Text
+syncDuplicateCompletionSource = syncAccountsSource <> T.unlines
+  [ ""
+  , "2031-01-18 * first completion"
+  , "  ; event-id: actual-first"
+  , "  ; plan-id: plan-fixed"
+  , "  expenses:fixed    275 JPY"
+  , "  assets:cash      -275 JPY"
+  , ""
+  , "2031-01-19 * competing completion"
+  , "  ; event-id: actual-second"
+  , "  ; plan-id: plan-fixed"
+  , "  expenses:fixed    275 JPY"
+  , "  assets:cash      -275 JPY"
+  ]
+
+syncUnlinkedPlanSource :: Text
+syncUnlinkedPlanSource = syncAccountsSource <> T.unlines
+  [ ""
+  , "2031-01-17 planned other payment"
+  , "  ; plan-id: plan-other"
+  , "  expenses:other    300 JPY"
+  , "  assets:cash      -300 JPY"
+  ]
+
+syncUnlinkedActualSource :: Text
+syncUnlinkedActualSource = syncAccountsSource <> T.unlines
+  [ ""
+  , "2031-01-18 * completed other payment"
+  , "  ; event-id: actual-other"
+  , "  ; plan-id: plan-other"
+  , "  expenses:other    275 JPY"
+  , "  assets:cash      -275 JPY"
+  ]
+
+syncBudgetRoot :: Text
+syncBudgetRoot = "include accounts.journal\n"
+
+syncRegistry :: AccountRegistry
+syncRegistry = mustRight (parseAccountJournal syncAccountsSource)
+
+syncPlanJournal :: PlanJournal
+syncPlanJournal = mustRight (parsePlanJournal syncPlanSource)
+
+syncActualJournal :: ActualJournal
+syncActualJournal = mustRight (parseActualJournal syncActualSource)
+
+syncPlanId :: PlanId
+syncPlanId = mustRight (mkPlanId "plan-fixed")
+
+syncUnlinkedPlanId :: PlanId
+syncUnlinkedPlanId = mustRight (mkPlanId "plan-other")
+
+syncHouseholdPolicy :: HouseholdPolicy
+syncHouseholdPolicy =
+  let envelope = mustRight (mkEnvelopeId "daily")
+      label = mustRight (mkEnvelopeLabel "Daily")
+      backingPool = mustRight (mkBackingPoolId "liquid")
+      budgetPolicy = mustRight (mkBudgetPolicy
+        [ defineEnvelope
+            envelope
+            label
+            Daily
+            backingPool
+            [account "expenses:fixed"]
+        ]
+        [ defineBackingPool backingPool [account "assets:backing"] ])
+  in mustRight (mkHouseholdPolicy
+      (incomeAnchorCyclePolicy (account "income:pension"))
+      budgetPolicy
+      [ defineHouseholdEnvelopeCoordinates
+          envelope
+          (account "budget:daily")
+          []
+      ]
+      [account "budget:unassigned"])
+
+syncAccountPolicy :: HouseholdAccountPolicy
+syncAccountPolicy = mustRight (mkHouseholdAccountPolicy
+  []
+  [ (account "budget:daily", RetainedEnvelopeBudgetAccount)
+  , (account "budget:spent", RetainedSpentBudgetAccount)
+  , (account "budget:unassigned", RetainedUnassignedBudgetAccount)
+  ]
+  [ (account "budget:daily", RetainedExecutionEnvelopeRole) ]
+  []
+  [ (account "expenses:fixed", RetainedFixedSpend) ])
+
+expectedSyncMovement :: HouseholdBudgetMovement
+expectedSyncMovement = HouseholdBudgetMovement
+  { householdBudgetMovementDate = fromGregorian 2031 1 18
+  , householdBudgetMovementMemo = "Plan completion Budget sync: plan-fixed"
+  , householdBudgetMovementFrom = account "budget:daily"
+  , householdBudgetMovementTo = account "budget:spent"
+  , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 275)
+  }
+
+prepareSync
+  :: PlanJournal
+  -> ActualJournal
+  -> [HouseholdBudgetMovement]
+  -> Text
+  -> PlanId
+  -> Either (NonEmpty PlanBudgetSyncError) PlanBudgetSyncResult
+prepareSync planJournal actualJournal movements budgetSource target =
+  preparePlanBudgetSync
+    syncRegistry
+    syncHouseholdPolicy
+    (Just syncAccountPolicy)
+    planJournal
+    actualJournal
+    movements
+    budgetSource
+    target
+
+testPlanBudgetSyncUsesActualAmount :: Bool
+testPlanBudgetSyncUsesActualAmount =
+  case prepareSync syncPlanJournal syncActualJournal [] syncBudgetRoot syncPlanId of
+    Right (PlanBudgetSyncAppend preview) ->
+      "plan-id: plan-fixed" `T.isInfixOf` planBudgetSyncCandidateBlock preview
+        && "actual-event-id: actual-fixed" `T.isInfixOf` planBudgetSyncCandidateBlock preview
+        && "275 JPY" `T.isInfixOf` planBudgetSyncCandidateBlock preview
+        && not ("300 JPY" `T.isInfixOf` planBudgetSyncCandidateBlock preview)
+    _ -> False
+
+testPlanBudgetSyncIdempotent :: Bool
+testPlanBudgetSyncIdempotent =
+  case prepareSync syncPlanJournal syncActualJournal [] syncBudgetRoot syncPlanId of
+    Right (PlanBudgetSyncAppend preview) ->
+      prepareSync
+        syncPlanJournal
+        syncActualJournal
+        [expectedSyncMovement]
+        (planBudgetSyncCandidateCompleteSource preview)
+        syncPlanId
+        == Right (PlanBudgetSyncApplied syncPlanId)
+    _ -> False
+
+testPlanBudgetSyncShapeMismatch :: Bool
+testPlanBudgetSyncShapeMismatch =
+  case parseActualJournal (syncActualSourceWithPostings
+      [ "  assets:cash      -275 JPY"
+      , "  expenses:fixed    275 JPY"
+      ]) of
+    Left _ -> False
+    Right actualJournal -> hasSyncError isShape
+      (prepareSync syncPlanJournal actualJournal [] syncBudgetRoot syncPlanId)
+  where
+    isShape err = case err of
+      PlanBudgetSyncShapeMismatch target -> target == syncPlanId
+      _ -> False
+
+testPlanBudgetSyncDirectionMismatch :: Bool
+testPlanBudgetSyncDirectionMismatch =
+  case parseActualJournal (syncActualSourceWithPostings
+      [ "  expenses:fixed   -275 JPY"
+      , "  assets:cash       275 JPY"
+      ]) of
+    Left _ -> False
+    Right actualJournal -> hasSyncError isDirection
+      (prepareSync syncPlanJournal actualJournal [] syncBudgetRoot syncPlanId)
+  where
+    isDirection err = case err of
+      PlanBudgetSyncDirectionMismatch target -> target == syncPlanId
+      _ -> False
+
+testPlanBudgetSyncCommodityMismatch :: Bool
+testPlanBudgetSyncCommodityMismatch =
+  case parseActualJournal (syncActualSourceWithPostings
+      [ "  expenses:fixed    275 USD"
+      , "  assets:cash      -275 USD"
+      ]) of
+    Left _ -> False
+    Right actualJournal -> hasSyncError isCommodity
+      (prepareSync syncPlanJournal actualJournal [] syncBudgetRoot syncPlanId)
+  where
+    isCommodity err = case err of
+      PlanBudgetSyncCommodityMismatch target -> target == syncPlanId
+      _ -> False
+
+testPlanBudgetSyncDuplicateCompletion :: Bool
+testPlanBudgetSyncDuplicateCompletion =
+  case parseActualJournal syncDuplicateCompletionSource of
+    Left _ -> False
+    Right actualJournal -> hasSyncError isDuplicate
+      (prepareSync syncPlanJournal actualJournal [] syncBudgetRoot syncPlanId)
+  where
+    isDuplicate err = case err of
+      PlanBudgetSyncCompletionDuplicate target -> target == syncPlanId
+      _ -> False
+
+testPlanBudgetSyncExistingLinkageMismatch :: Bool
+testPlanBudgetSyncExistingLinkageMismatch =
+  case prepareSync syncPlanJournal syncActualJournal [] syncBudgetRoot syncPlanId of
+    Right (PlanBudgetSyncAppend preview) ->
+      let mismatchedSource = T.replace
+            "actual-event-id: actual-fixed"
+            "actual-event-id: actual-other"
+            (planBudgetSyncCandidateCompleteSource preview)
+      in hasSyncError isMismatch
+          (prepareSync
+            syncPlanJournal
+            syncActualJournal
+            [expectedSyncMovement]
+            mismatchedSource
+            syncPlanId)
+    _ -> False
+  where
+    isMismatch err = case err of
+      PlanBudgetSyncExistingLinkageMismatch target -> target == syncPlanId
+      _ -> False
+
+testPlanBudgetSyncDuplicateLinkage :: Bool
+testPlanBudgetSyncDuplicateLinkage =
+  case prepareSync syncPlanJournal syncActualJournal [] syncBudgetRoot syncPlanId of
+    Right (PlanBudgetSyncAppend preview) ->
+      let duplicateSource = planBudgetSyncCandidateCompleteSource preview
+            <> "\n"
+            <> planBudgetSyncCandidateBlock preview
+      in hasSyncError isDuplicate
+          (prepareSync
+            syncPlanJournal
+            syncActualJournal
+            [expectedSyncMovement, expectedSyncMovement]
+            duplicateSource
+            syncPlanId)
+    _ -> False
+  where
+    isDuplicate err = case err of
+      PlanBudgetSyncDuplicateBudgetLinkage target -> target == syncPlanId
+      _ -> False
+
+testPlanBudgetSyncNotLinked :: Bool
+testPlanBudgetSyncNotLinked =
+  case ( parsePlanJournal syncUnlinkedPlanSource
+       , parseActualJournal syncUnlinkedActualSource
+       ) of
+    (Right planJournal, Right actualJournal) ->
+      prepareSync planJournal actualJournal [] syncBudgetRoot syncUnlinkedPlanId
+        == Right (PlanBudgetSyncNotLinked syncUnlinkedPlanId)
+    _ -> False
+
+hasSyncError
+  :: (PlanBudgetSyncError -> Bool)
+  -> Either (NonEmpty PlanBudgetSyncError) PlanBudgetSyncResult
+  -> Bool
+hasSyncError predicate result = case result of
+  Left errors -> any predicate (NonEmpty.toList errors)
+  Right _ -> False
+
+account :: Text -> Account
+account = mustRight . mkAccount
+
+jpy = mustRight (mkCommodity "JPY")
+
+mustRight :: Show error => Either error value -> value
+mustRight (Right value) = value
+mustRight (Left err) = error ("invalid test fixture: " ++ show err)
 
 cleanup :: FilePath -> IO ()
 cleanup path = do
