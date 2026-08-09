@@ -464,10 +464,13 @@ handleWorkspaceEvent context event = case event of
     inActual = contextCurrentSection context == ActualSection
     inPlans = contextCurrentSection context == PlansSection
     inReports = contextCurrentSection context == ReportsSection
+    switchSection :: HouseholdSection -> EventM Name AppWrapper ()
     switchSection section =
       put (AppWrapper (context { contextCurrentSection = section }) Workspace)
+    selectReport :: ReportChoice -> EventM Name AppWrapper ()
     selectReport report =
       put (AppWrapper (context { contextSelectedReport = report }) Workspace)
+    openSelectedPlan :: EventM Name AppWrapper ()
     openSelectedPlan = case Plan.startSelectedCompletion context of
       Nothing -> pure ()
       Just flow -> put (AppWrapper context (PlanFlow flow))
