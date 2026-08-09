@@ -53,8 +53,18 @@ The primary measure is not deleted lines. It is the reader distance required to 
   - the Brick TUI imports canonical `HKernel.Household.Application`, retains `HouseholdReportSurface`, and uses `HKernel.Spike.HouseholdReport.Render`;
   - `HKernel.Household.Application` itself delegates current typed Household report composition to `HKernel.Spike.HouseholdReport`.
 - [x] Current semantic ownership is clear enough for further classification without moving code: `HKernel.Household.Application` owns canonical Household admission/state; the typed calculation path in `HKernel.Spike.HouseholdReport` owns Household report composition; `Spike` is therefore partly a stale location/name, not a description of runtime status.
-- [ ] Inventory retained compatibility-oriented exports inside `HKernel.Spike.HouseholdReport` and their remaining callers; in particular separate source-reading compatibility entry points from the typed `buildHouseholdReportSurfaceFromAdmitted` path.
-- [ ] Inventory retained TSV compatibility paths that are still required by current canonical Household operation.
+- [x] Compatibility-oriented `HKernel.Spike.HouseholdReport` exports and current callers are classified.
+  - `buildHouseholdReportSurfaceFromPlanJournal` is the old source-reading composition entry point. It accepts retained `accounts.tsv`, Budget movement TSV, Household policy text, Issue TSV, and Daily Target TSV around typed Actual/Plan journals.
+  - current canonical `HKernel.Household.Application` does not call that entry point; it admits the canonical source set itself and calls `buildHouseholdReportSurfaceFromAdmitted`.
+  - `tests/HouseholdReportSpec.hs` still exercises `buildHouseholdReportSurfaceFromPlanJournal` extensively, so the compatibility path remains a tested historical contract even though it is not the current canonical production composition.
+  - `AdmittedPlans`, `admitPlanJournal`, `admittedOutgoingPlanValues`, `HouseholdReportSurface`, and `buildHouseholdReportSurfaceFromAdmitted` are current typed production concepts despite the `Spike` namespace.
+- [x] Retained TSV compatibility paths are classified against current canonical Household operation.
+  - `HKernel.Household.AccountProfile.TSV`, `HKernel.Household.BudgetMovement.TSV`, and `HKernel.Household.DailyTarget.TSV` are imported by the compatibility source-reading Household Report path, not by canonical `Household.Application` loading.
+  - native canonical replacements are `accounts.journal`, `budget.journal`, and Plan-owned Daily Target/reservation metadata in `plan.journal` plus `household.toml` asset selection.
+  - `HKernel.Household.Issue.TSV` is not compatibility residue: `issues.tsv` remains one of the current canonical Household sources.
+  - `HKernel.Budget.TSV` is also outside the current canonical Household load path and should be treated separately as retained core compatibility rather than conflated with `issues.tsv`.
+- [x] `HKernel.Spike.HouseholdConsumption` is marked as a temporary adapter in its own module documentation but is on the current production typed report path: `buildHouseholdReportSurfaceFromAdmitted` calls `deriveHouseholdBudgetObservation`. This is architecture-history naming/location residue, not dead code.
+- [x] `h-kernel.cabal` makes the transitional packaging visible: the production `h-kernel`, editor CLI, and editor TUI depend on `h-kernel-spike-household-report`; that component exposes `HKernel.Household.Application`, `HKernel.Spike.HouseholdReport`, and its renderer while keeping `HKernel.Spike.HouseholdConsumption` internal.
 - [x] `docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md` is useful historical evidence but no longer describes the canonical source composition: it still records `accounts.tsv`, `budget_alloc.tsv`, and `daily_target_scope.tsv` as current Household Report inputs. Treat it as architecture-history residue until updated or superseded, not as present source authority.
 
 ### Repeated source observation / parsing
@@ -139,9 +149,9 @@ The primary measure is not deleted lines. It is the reader distance required to 
 
 - [ ] Inventory generic helpers and polymorphic wrappers in `src`, `household-src`, `spike-src`, and `editor-src` that are used by only one semantic owner.
 - [ ] Identify abstraction layers whose only purpose is forwarding or renaming without validation, ownership, or projection.
-- [ ] Identify compatibility entry points that duplicate canonical APIs and record their remaining callers.
+- [x] Identify compatibility entry points that duplicate canonical APIs and record their remaining callers: `buildHouseholdReportSurfaceFromPlanJournal` is the clearest current case; canonical production uses `Household.Application` plus the typed admitted path, while `HouseholdReportSpec` retains the old source contract.
 - [ ] Identify public exposed modules that are implementation detail rather than useful teaching/API surface.
-- [ ] Review `h-kernel.cabal` exposed-module boundaries against the current domain/application architecture.
+- [x] Review the top-level `h-kernel.cabal` component boundary far enough to establish that production executables depend on a component still named `h-kernel-spike-household-report`; the finer exposed-module teaching/API review remains open below.
 
 ### Performance-sensitive repetition
 
@@ -156,9 +166,9 @@ The primary measure is not deleted lines. It is the reader distance required to 
 These are hypotheses only. They become implementation TODOs only after the evidence above is checked.
 
 - [ ] Shared Journal root source-structure observation with domain-specific metadata admission layered on top. Evidence is now strong; exact owner/type shape still undecided.
-- [ ] Graduate canonical Household application/report owners out of `Spike` naming/component boundaries.
+- [ ] Graduate canonical Household application/report owners out of `Spike` naming/component boundaries. Evidence is now strong that current production semantics and old source compatibility are co-located.
 - [ ] Reduce duplicate state/projection inside TUI observation context.
-- [ ] Shrink compatibility entry points once all current callers are known.
+- [ ] Shrink compatibility entry points once all current callers are known. The old Household Report source-reading entrypoint now has a known compatibility-test role.
 - [ ] Tighten exposed-module surface around the concepts that make h-kernel useful as a Haskell teaching example.
 - [ ] Simplify reader paths where adjacent types/files do not add a new invariant, evidence, or accounting meaning.
 
@@ -177,4 +187,5 @@ These are hypotheses only. They become implementation TODOs only after the evide
 - [x] Completed the first Journal-root scanner inventory and classified physical-coordinate evidence versus repeated source-structure observation.
 - [x] Recorded canonical Household/editor parse repetition and isolated `PlanCompleteAdvance` per-series-candidate root rescanning as the strongest current pure repeated-scan hotspot.
 - [x] Established why `JournalDocument` cannot currently replace the downstream scanners: required transaction metadata/source evidence is discarded at canonical parse time.
+- [x] Split `Spike.HouseholdReport` into its current typed production role versus its retained source-reading compatibility role, and classified current versus retired TSV source paths.
 - [ ] Continue from this checklist; do not restart with a blanket repository audit.
