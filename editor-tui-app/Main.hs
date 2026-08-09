@@ -555,6 +555,8 @@ handlePlanFlow context event = do
       result <- suspendAndResume' (Plan.publishCandidate context request)
       case result of
         Plan.Published freshContext -> put (AppWrapper freshContext Workspace)
+        Plan.BudgetSyncPending freshContext planId message ->
+          put (AppWrapper freshContext (PlanFlow (Plan.BudgetSyncWarning planId message)))
         Plan.PublicationFailed message ->
           put (AppWrapper context (PlanFlow (Plan.WriteOutcome message)))
         Plan.ReloadFailed -> put (AppWrapper context ShowWorkspaceReloadFailure)
