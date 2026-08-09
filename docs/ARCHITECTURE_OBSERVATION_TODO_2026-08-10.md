@@ -122,9 +122,12 @@ The primary measure is not deleted lines. It is the reader distance required to 
 
 - [x] Report internals already share `AccountingFacts` and several point/period/flow bases.
 - [x] #135 records a real adapter-level repeated projection: Brick redraw rebuilt report projections for the same Household observation.
-- [ ] After #135 is merged or otherwise resolved, measure whether report interaction still has observable redraw cost before changing report arithmetic.
-- [ ] Inventory other places where a stable `HouseholdState` is repeatedly projected into the same derived value within one observation.
-- [ ] Separate calculation cost from terminal rendering cost before adding caches.
+- [x] Core Report calculation and terminal rendering are already separate boundaries: `HKernel.Report` constructs pure report models while Render/Presentation modules own terminal output. #135 deliberately retains rendering in draw and moves only stable report-model construction to the Household observation boundary.
+- [x] For one `reportBookWithPlan` request, `prepareAccountingFacts` is called once and the resulting `AccountingFacts` feeds point, period, flow, and recent-transaction bases. Equal point coordinates are shared by `preparePointPair`; compatible period/unclassified values and the shared Flow basis are also reused.
+- [x] Standalone report functions (`trialBalanceAsOf`, `balanceSheetAsOf`, `profitAndLoss`, `dailyFlow`, `monthlyAccounts`, etc.) each prepare their own facts when independently requested. That is an API-boundary cost, not repeated work inside one combined ReportBook request.
+- [x] Re-check of #135 while examining this overlapping TUI report boundary: PR remains open, not merged, with the same head `7b877543c84fc543d05dd81c3c15a5d979cdf9ff`; its stated scope remains retaining `ReportBook` and Household report surface with `AppContext` rather than changing report arithmetic.
+- [ ] After #135 is merged or otherwise resolved, measure whether report interaction still has observable redraw cost before changing report arithmetic or caching rendered `Text`.
+- [x] Current evidence does not justify a generic query-plan/cache layer: the core combined report already shares calculation facts, and the proven TUI problem is lifetime/placement of a stable projection.
 
 ### Reader-distance / vocabulary
 
@@ -177,7 +180,8 @@ The primary measure is not deleted lines. It is the reader distance required to 
 - [x] Reverse Actual does not show the same transient state-machine duplication. `ActualReverseInput` and its parser live with the operation and Brick can use the delivery-neutral input directly; there is no parallel `ActualReverseState` workflow wrapper.
 - [x] Plan Complete & Advance also has a useful delivery-neutral boundary: Brick can retain `PlanCompleteAdvanceInput` directly and `parsePlanCompleteAdvanceInput` converts it into the typed `PlanCompleteAdvanceIntent`. No second pure workflow-state machine is inserted merely to mirror Brick state.
 - [x] Plan Add/Edit differ from Complete & Advance: their raw `PlanAddInput` / `PlanEditInput` and parsing live in the Brick adapter, which directly constructs editor-owned `PlanAddIntent` / `PlanEditIntent`. This avoids another interaction-state layer but makes TUI responsible for some text-to-domain conversion. Record as a boundary-style inconsistency, not yet a correctness problem.
-- [ ] Check whether TUI adapters import deep domain internals that could instead consume a smaller application-facing vocabulary.
+- [x] TUI adapters do import deep domain/source modules. The strongest current example is `TUI.Model`, which imports Account declarations, Actual completion declarations, Plan journal transactions and Plan IDs to derive workspace/open-Plan lists. This is currently localized projection work rather than mutation authority, but it means `AppContext` construction is partly an application projection layer living under the Brick namespace.
+- [ ] Decide later whether those stable workspace projections belong behind an application-facing vocabulary; do not move them merely to reduce imports.
 - [ ] Keep UI ceremony local rather than creating a generic UI framework unless at least two stable workflows share the same meaning.
 
 ### Helpers / abstractions / compatibility
@@ -185,15 +189,23 @@ The primary measure is not deleted lines. It is the reader distance required to 
 - [ ] Inventory generic helpers and polymorphic wrappers in `src`, `household-src`, `spike-src`, and `editor-src` that are used by only one semantic owner.
 - [ ] Identify abstraction layers whose only purpose is forwarding or renaming without validation, ownership, or projection.
 - [x] Identify compatibility entry points that duplicate canonical APIs and record their remaining callers: `buildHouseholdReportSurfaceFromPlanJournal` is the clearest current case; canonical production uses `Household.Application` plus the typed admitted path, while `HouseholdReportSpec` retains the old source contract.
-- [ ] Identify public exposed modules that are implementation detail rather than useful teaching/API surface.
-- [x] Review the top-level `h-kernel.cabal` component boundary far enough to establish that production executables depend on a component still named `h-kernel-spike-household-report`; the finer exposed-module teaching/API review remains open below.
+- [x] Review public/exposed modules against the teaching surface far enough to classify the main seam.
+  - Cabal already intentionally hides several implementation kernels (`HKernel.Engine.Facts`, `HKernel.Report.Flow`, `HKernel.Report.RecentTransactions`, `HKernel.Editor.SourceAppend`, `HKernel.Spike.HouseholdConsumption`). This is evidence of deliberate API curation, not indiscriminate exposure.
+  - exposed modules still combine different audiences: core domain (`Money`, `Ledger`, `Plan`), source adapters (`*.Journal`, `*.TSV`), application/config, CLI, presentation, and rendering.
+  - `h-kernel-household` exposes old TSV adapters because compatibility consumers still cross the package boundary; those modules are therefore technically public without being the concepts a Haskell learner should meet first.
+  - `HKernel.Spike.HouseholdReport` is the strongest exposed-surface problem because one module presents current typed production composition and historical source-reading compatibility together.
+  - conclusion: do not equate Cabal `exposed-modules` with the intended educational API. A later cleanup should first define the teaching surface, then decide whether package exposure must change.
+- [x] Review `h-kernel.cabal` component boundaries: the core, household, editor, and spike components express useful dependency direction, but the production application/report owner living in a component named `spike` is now semantically stale.
 
 ### Performance-sensitive repetition
 
-- [ ] Record every `Journal -> AccountingFacts` preparation reachable from one report request and confirm where lazy sharing actually applies.
+- [x] Record `Journal -> AccountingFacts` preparation reachable from report requests.
+  - one combined `reportBookWithPlan` prepares `AccountingFacts` exactly once and shares it across all report bases;
+  - standalone report APIs prepare their own facts once per independently requested report;
+  - no evidence currently supports fusing the already-shared ReportBook further.
 - [x] Record source parse/admission repetition reachable from one canonical Household load/reload and the current editor publication paths; see the source-observation section above.
-- [ ] Record repeated list scans over Plans / Actual completions / account declarations in high-frequency TUI paths.
-- [x] `makeWorkspaceContext` computes open Plans by `filter` plus `notElem` against a list of closed PlanIds, so rebuild cost is O(open-plan-candidates × completion-declarations). It runs on context construction/reload, not on every redraw; record it as a possible scale hotspot, not a current optimization target without measurement.
+- [ ] Record repeated list scans over Plans / Actual completions / account declarations in high-frequency TUI paths beyond the known context-rebuild case.
+- [x] `makeWorkspaceContext` computes open Plans by `filter` plus `notElem` against a list of closed PlanIds, so rebuild cost is O(plan-transactions × completion-declarations). It runs on context construction/reload, not on every redraw; record it as a possible scale hotspot, not a current optimization target without measurement.
 - [x] Distinguish harmless/necessary repeated validation from suspicious whole-source repetition: writer post-admission and reload are time-separated correctness/UI observations, while `PlanCompleteAdvance` rebuilding the same immutable `planSource` once per series candidate occurs inside one pure observation and is the clearest current performance smell.
 - [x] Prefer moving computation to the correct observation boundary over introducing mutable caches.
 
@@ -206,15 +218,15 @@ These are hypotheses only. They become implementation TODOs only after the evide
 - [ ] Reduce duplicate state/projection inside TUI observation context. Current evidence says the source-byte duplication is temporal evidence, while the more suspicious duplication is the transient single-entry `ActualAddState` bridge.
 - [ ] Re-examine `PlanFact` / `openEligiblePlans`: preserve open/completed selection and report needs, but avoid copying and then re-proving outgoing Account roles if `CommittedOutgoingPlan` already carries that evidence.
 - [ ] Shrink compatibility entry points once all current callers are known. The old Household Report source-reading entrypoint now has a known compatibility-test role; old Budget TSV also has an explicit non-canonical editor CLI role.
-- [ ] Tighten exposed-module surface around the concepts that make h-kernel useful as a Haskell teaching example.
+- [ ] Define a small documented teaching surface before changing Cabal exposure; do not hide useful adapters merely because they are not first-chapter concepts.
 - [ ] Simplify reader paths where adjacent types/files do not add a new invariant, evidence, or accounting meaning.
 
 ## Remote / parallel-work notes
 
 - [x] Baseline remote checked at start of this ledger.
-- [x] #135 was open, Ready, mergeable, CI #466 SUCCESS, head `7b877543c84fc543d05dd81c3c15a5d979cdf9ff`.
+- [x] #135 was re-checked only when report/TUI work overlapped it; it remains open/unmerged at head `7b877543c84fc543d05dd81c3c15a5d979cdf9ff`.
 - [x] #136 is the cumulative observation ledger and remains documentation-only; no implementation semantics are changed here.
-- [ ] Re-check #135 only when work overlaps its two TUI files, when merging it, or when its status matters to another recorded item.
+- [ ] Re-check #135 again only when merging it, its head changes, or another task overlaps its two TUI files.
 
 ## Progress log
 
@@ -228,4 +240,6 @@ These are hypotheses only. They become implementation TODOs only after the evide
 - [x] Classified Household/TUI state overlap and isolated the Daily Actual pure interaction-state bridge as a reader-distance hotspot rather than treating all copied state as duplication.
 - [x] Traced representative Actual, outgoing Plan, and Budget/Backing reader paths and separated long proof/domain paths from adapter/projection repetition.
 - [x] Isolated `PlanFact` role re-proof as the strongest current adjacent-type/value duplication in the report path.
+- [x] Confirmed ReportBook fact/basis sharing and separated the #135 redraw-lifetime issue from report arithmetic/query-plan design.
+- [x] Classified Cabal exposure versus the intended Haskell teaching surface without assuming every exposed adapter should be hidden.
 - [ ] Continue from this checklist; do not restart with a blanket repository audit.
