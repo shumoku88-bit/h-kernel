@@ -182,6 +182,7 @@ data HouseholdCycleComparisonUnavailable
 data HouseholdReportSurface = HouseholdReportSurface
   { householdCurrentCycleAccounts :: CurrentCycleAccounts
   , householdCycleComparison      :: HouseholdCycleComparison
+  , householdCycleAccounts        :: CycleAccounts
   , householdPlannedTransactions  :: [CommittedOutgoingPlan]
   , householdIssues               :: [HouseholdIssue]
   , householdEnvelopeBacking      :: EnvelopeBacking
@@ -294,6 +295,7 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
   pure HouseholdReportSurface
     { householdCurrentCycleAccounts = currentCycle
     , householdCycleComparison = comparison
+    , householdCycleAccounts = cycleAccounts current previous journal
     , householdPlannedTransactions = map planFactValue openPlans
     , householdIssues = issues
     , householdEnvelopeBacking = backing
