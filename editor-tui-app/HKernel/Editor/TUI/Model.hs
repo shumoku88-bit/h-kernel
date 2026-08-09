@@ -83,6 +83,7 @@ data Name
   | IssueCommodityField
   | IssueDetailsField
   | IssueDecisionMemoField
+  | ReportPickerList
   | BudgetViewport
   | AccountsViewport
   | IssuesViewport

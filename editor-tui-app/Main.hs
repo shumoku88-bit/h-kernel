@@ -17,6 +17,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.LocalTime (getZonedTime, localDay, zonedTimeToLocalTime)
+import qualified Data.Vector as Vec
 import System.Directory (doesDirectoryExist)
 import System.Environment (getArgs)
 import System.Exit (die)
@@ -79,6 +80,7 @@ import HKernel.Report.Config
   )
 import HKernel.Spike.HouseholdReport.Render
   ( HouseholdReportSection(..)
+  , IssueVisibility(..)
   , renderHouseholdReportSection
   , renderReportBookWithHouseholdPresentation
   )
@@ -88,6 +90,7 @@ data UIState
   | ActualFlow (Actual.State AppEvent)
   | PlanFlow (Plan.State AppEvent)
   | MaintenanceFlow (Maintenance.State AppEvent)
+  | ReportPicker (L.List Name ReportChoice)
   | ShowWorkspaceReloadFailure
 
 data AppWrapper = AppWrapper AppContext UIState
@@ -106,6 +109,11 @@ zoomMaintenanceFlow :: Traversal' AppWrapper (Maintenance.State AppEvent)
 zoomMaintenanceFlow f (AppWrapper context (MaintenanceFlow state)) =
   (\updated -> AppWrapper context (MaintenanceFlow updated)) <$> f state
 zoomMaintenanceFlow _ wrapper = pure wrapper
+
+zoomReportPicker :: Traversal' AppWrapper (L.List Name ReportChoice)
+zoomReportPicker f (AppWrapper context (ReportPicker choices)) =
+  (\updated -> AppWrapper context (ReportPicker updated)) <$> f choices
+zoomReportPicker _ wrapper = pure wrapper
 
 zoomWorkspaceAccounts :: Traversal' AppWrapper (L.List Name (Maybe HKernel.Account.Account))
 zoomWorkspaceAccounts f (AppWrapper context Workspace) =
@@ -136,6 +144,7 @@ drawUI (AppWrapper context Workspace) = [drawHouseholdShell context]
 drawUI (AppWrapper context (ActualFlow state)) = [Actual.drawFlow context state]
 drawUI (AppWrapper _ (PlanFlow state)) = [Plan.drawFlow state]
 drawUI (AppWrapper _ (MaintenanceFlow state)) = [Maintenance.drawFlow state]
+drawUI (AppWrapper _ (ReportPicker choices)) = [drawReportPicker choices]
 drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
   [ center
       (borderWithLabel (str "Household reload")
@@ -194,29 +203,47 @@ drawReportsView context =
         (withVScrollBars OnRight
           (withHScrollBars OnBottom
             (viewport ReportsViewport Both (renderSelectedReport context))))
-    , str "[↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page   [Home/End] Top/Bottom"
-    , str "[t] Trial   [b] Balance Sheet   [p] P&L   [d] Daily   [m] Monthly   [a] Recent"
-    , str "[c] Cycle   [T] Target   [P] Planned   [E] Envelope   [h] Household   [r] Next"
-    , str "[1-7] Switch section   [q] Quit"
+    , str "[Enter] Choose report   [↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page"
+    , str "[Home/End] Top/Bottom   [r] Next report   [1-7] Switch section   [q] Quit"
     ]
   where
     selected = contextSelectedReport context
 
+drawReportPicker :: L.List Name ReportChoice -> Widget Name
+drawReportPicker choices =
+  center
+    (borderWithLabel (str "Choose Household Report")
+      (hLimit 64
+        (vLimit 22
+          (padAll 1
+            (L.renderList renderReportChoice True choices
+              <=> str " "
+              <=> str "[↑/↓ or j/k] Move   [Enter] Open   [Esc] Back   [Q] Quit")))))
+
+renderReportChoice :: Bool -> ReportChoice -> Widget Name
+renderReportChoice selected choice
+  | selected = withAttr L.listSelectedAttr row
+  | otherwise = row
+  where
+    row = txt (reportChoiceLabel choice)
+
 reportChoiceLabel :: ReportChoice -> Text
 reportChoiceLabel choice = case choice of
-  ReportTrialBalance -> "Trial Balance"
+  ReportTrialBalance -> "Account Balances"
   ReportBalanceSheet -> "Balance Sheet"
   ReportProfitAndLoss -> "Profit & Loss"
   ReportDailyFlow -> "Daily Flow"
   ReportMonthlyAccounts -> "Monthly Accounts"
   ReportHousehold section -> case section of
-    HouseholdCycleAccounts -> "Current Cycle"
+    HouseholdCycleAccounts -> "Cycle Accounts & Comparison"
     HouseholdDailyTarget -> "Daily Target"
     HouseholdPlannedTransactions -> "Planned Transactions"
-    HouseholdIssues _ -> "Household Issues"
+    HouseholdIssues visibility -> case visibility of
+      OpenIssuesOnly -> "Open Issues"
+      AllIssues -> "All Issues"
     HouseholdEnvelopeBacking -> "Envelope & Backing"
   ReportRecentTransactions -> "Recent Actual"
-  ReportCombinedBook -> "Household"
+  ReportCombinedBook -> "Full Household Report"
 
 reportChoices :: [ReportChoice]
 reportChoices =
@@ -228,6 +255,7 @@ reportChoices =
   , ReportHousehold HouseholdCycleAccounts
   , ReportHousehold HouseholdDailyTarget
   , ReportHousehold HouseholdPlannedTransactions
+  , ReportHousehold (HouseholdIssues OpenIssuesOnly)
   , ReportHousehold HouseholdEnvelopeBacking
   , ReportRecentTransactions
   , ReportCombinedBook
@@ -310,6 +338,7 @@ appEvent event = do
     ActualFlow _ -> handleActualFlow context event
     PlanFlow _ -> handlePlanFlow context event
     MaintenanceFlow _ -> handleMaintenanceFlow context event
+    ReportPicker _ -> handleReportPicker context event
     ShowWorkspaceReloadFailure -> handleExitOnlyEvent event
 
 handleWorkspaceEvent :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
@@ -324,6 +353,8 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey (V.KChar '5') []) -> switchSection IssuesSection
   VtyEvent (V.EvKey (V.KChar '6') []) -> switchSection ReportsSection
   VtyEvent (V.EvKey (V.KChar '7') []) -> switchSection SettingsSection
+  VtyEvent (V.EvKey V.KEnter [])
+    | inReports -> openReportPicker
   VtyEvent (V.EvKey V.KUp [])
     | inReports -> vScrollBy reportsViewport (-1)
   VtyEvent (V.EvKey V.KDown [])
@@ -442,6 +473,10 @@ handleWorkspaceEvent context event = case event of
       put (AppWrapper (context { contextSelectedReport = report }) Workspace)
       vScrollToBeginning reportsViewport
       hScrollToBeginning reportsViewport
+    openReportPicker =
+      let picker = L.list ReportPickerList (Vec.fromList reportChoices) 1
+          selectedIndex = reportChoiceIndex (contextSelectedReport context)
+      in put (AppWrapper context (ReportPicker (L.listMoveTo selectedIndex picker)))
     openActualDaily = put (AppWrapper context (ActualFlow (Actual.startDaily (contextEntryDay context))))
     openActualMulti = put (AppWrapper context (ActualFlow (Actual.startMulti (contextEntryDay context))))
     openSelectedPlan :: EventM Name AppWrapper ()
@@ -456,6 +491,33 @@ handleWorkspaceEvent context event = case event of
     openSelectedIssue = case Maintenance.startSelectedIssueClose context of
       Nothing -> pure ()
       Just flow -> put (AppWrapper context (MaintenanceFlow flow))
+
+reportChoiceIndex :: ReportChoice -> Int
+reportChoiceIndex choice = go 0 reportChoices
+  where
+    go _ [] = 0
+    go index (candidate : rest)
+      | candidate == choice = index
+      | otherwise = go (index + 1) rest
+
+handleReportPicker :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
+handleReportPicker context event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> put (AppWrapper context Workspace)
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
+  VtyEvent (V.EvKey V.KEnter []) -> do
+    AppWrapper _ state <- get
+    case state of
+      ReportPicker choices -> case L.listSelectedElement choices of
+        Nothing -> put (AppWrapper context Workspace)
+        Just (_, choice) -> do
+          put (AppWrapper (context { contextSelectedReport = choice }) Workspace)
+          let reportsViewport = viewportScroll ReportsViewport
+          vScrollToBeginning reportsViewport
+          hScrollToBeginning reportsViewport
+      _ -> pure ()
+  VtyEvent vtyEvent -> zoom zoomReportPicker (L.handleListEventVi L.handleListEvent vtyEvent)
+  _ -> pure ()
 
 handleActualListEvent :: AppContext -> V.Event -> EventM Name AppWrapper ()
 handleActualListEvent context vtyEvent = case contextWorkspaceFocus context of
