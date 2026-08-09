@@ -39,6 +39,7 @@ import HKernel.Household.AccountProfile
   )
 import HKernel.Household.BudgetMovement
   ( HouseholdBudgetMovement(..)
+  , HouseholdBudgetMovementJournalError
   , admitHouseholdBudgetMovementJournal
   )
 import HKernel.Household.Policy
@@ -53,19 +54,16 @@ import HKernel.Ledger
   , postingAccount
   , postingAmount
   , transactionDate
-  , transactionDescription
   , transactionPostings
   )
 import HKernel.Money
-  ( Amount
-  , amountCommodity
+  ( amountCommodity
   , amountQuantity
   , quantityToRational
   )
 import HKernel.Plan (PlanId, planIdText)
 import HKernel.Plan.Completion
-  ( actualTransactionIdText
-  , declaredCompletionActualId
+  ( declaredCompletionActualId
   , declaredCompletionPlanId
   )
 import HKernel.Plan.Journal
@@ -96,6 +94,7 @@ data PlanBudgetSyncError
   | PlanBudgetSyncDuplicateMetadataKey Text
   | PlanBudgetSyncDuplicateBudgetLinkage PlanId
   | PlanBudgetSyncExistingLinkageMismatch PlanId
+  | PlanBudgetSyncBudgetJournalError (NonEmpty HouseholdBudgetMovementJournalError)
   | PlanBudgetSyncBudgetCandidateError (NonEmpty BudgetJournalMovementAppendError)
   deriving (Eq, Show)
 
@@ -126,7 +125,8 @@ preparePlanBudgetSync registry policy maybeAccountPolicy planJournal actualJourn
   planTransaction <- uniquePlanTransaction
   (actualIndex, actualTransaction) <- uniqueCompletedActual
   verifyCompletionShape planTransaction actualTransaction
-  case mappedDestination planTransaction of
+  destination <- mappedDestination planTransaction
+  case destination of
     Nothing -> Right (PlanBudgetSyncNotLinked planId)
     Just (postingIndex, expenseAccount, envelopeId) -> do
       accountPolicy <- case maybeAccountPolicy of
@@ -156,7 +156,8 @@ preparePlanBudgetSync registry policy maybeAccountPolicy planJournal actualJourn
             , householdBudgetMovementAmount = actualAmount
             }
           metadata = expectedMetadata planId durableActualId
-      classifyExisting movement metadata
+      budgetMovements <- firstBudgetMovements
+      classifyExisting budgetMovements movement metadata
   where
     failOne = Left . NonEmpty.singleton
 
@@ -233,8 +234,7 @@ preparePlanBudgetSync registry policy maybeAccountPolicy planJournal actualJourn
       [] -> failOne PlanBudgetSyncSpentAccountMissing
       [account] -> Right account
       firstAccount : rest ->
-        Left (NonEmpty.singleton
-          (PlanBudgetSyncSpentAccountDuplicate (firstAccount NonEmpty.:| rest)))
+        failOne (PlanBudgetSyncSpentAccountDuplicate (firstAccount NonEmpty.:| rest))
 
     postingAt index transaction = case drop index (NonEmpty.toList (transactionPostings transaction)) of
       posting : _ -> Right posting
@@ -248,12 +248,13 @@ preparePlanBudgetSync registry policy maybeAccountPolicy planJournal actualJourn
             (length actualEntries) (length actualMetadataBlocks))
       | otherwise = metadataOptional "event-id" (actualMetadataBlocks !! index)
 
-    budgetMovements = case admitHouseholdBudgetMovementJournal budgetJournal of
-      Left _ -> []
-      Right values -> values
+    firstBudgetMovements = case admitHouseholdBudgetMovementJournal budgetJournal of
+      Left errors -> failOne (PlanBudgetSyncBudgetJournalError errors)
+      Right values -> Right values
+
     budgetMetadataBlocks = transactionMetadataBlocks budgetRootSource
 
-    classifyExisting movement metadata
+    classifyExisting budgetMovements movement metadata
       | length budgetMetadataBlocks /= length budgetMovements =
           failOne (PlanBudgetSyncBudgetMetadataAlignmentMismatch
             (length budgetMovements) (length budgetMetadataBlocks))
@@ -277,8 +278,7 @@ preparePlanBudgetSync registry policy maybeAccountPolicy planJournal actualJourn
 
     appendCandidate movement metadata = case
         prepareBudgetJournalMovementAppend registry budgetRootSource movement of
-      Left errors -> Left
-        (NonEmpty.singleton (PlanBudgetSyncBudgetCandidateError errors))
+      Left errors -> failOne (PlanBudgetSyncBudgetCandidateError errors)
       Right basePreview ->
         let block = injectMetadata metadata (budgetJournalCandidateBlock basePreview)
             completeSource = appendSourceBlock budgetRootSource (SourceBlock block)
