@@ -30,15 +30,11 @@ import HKernel.Period
 import HKernel.Plan (CommittedOutgoingPlan)
 import HKernel.Plan.Render (renderCommittedOutgoingPlanLine)
 import HKernel.Render
-  ( renderCycleAccountsWithPresentation
-  , renderReportBookCoreWithPresentation
+  ( renderReportBookCoreWithPresentation
   )
 import HKernel.Render.TerminalStyle
 import HKernel.Report (ReportBook)
 import HKernel.Report.CycleAccounts
-  ( CycleAccounts
-  , cycleAccountsCurrentPeriod
-  )
 import HKernel.Report.Presentation
 import HKernel.Spike.HouseholdReport
 
@@ -66,12 +62,23 @@ renderHouseholdReportSection
   -> HouseholdReportSection
   -> HouseholdReportSurface
   -> Text
-renderHouseholdReportSection =
-  renderHouseholdReportSectionWithCycle renderCycleAccountsWithPresentation
+renderHouseholdReportSection presentation section surface =
+  case section of
+    HouseholdCycleAccounts ->
+      renderHouseholdCycleReports presentation surface
+    HouseholdDailyTarget ->
+      renderDailyTarget presentation (householdDailyTarget surface)
+    HouseholdPlannedTransactions ->
+      renderPlans
+        (currentCycleAccountsPeriod (householdCurrentCycleAccounts surface))
+        (householdPlannedTransactions surface)
+    HouseholdIssues visibility ->
+      renderHouseholdIssues visibility (householdIssues surface)
+    HouseholdEnvelopeBacking ->
+      renderEnvelope presentation (householdEnvelopeBacking surface)
 
 renderHouseholdReportSections
-  :: (PresentationConfig -> CycleAccounts -> Text)
-  -> PresentationConfig
+  :: PresentationConfig
   -> HouseholdReportSurface
   -> Text
 renderHouseholdReportSections =
@@ -79,14 +86,12 @@ renderHouseholdReportSections =
 
 renderHouseholdReportSectionsWithIssueVisibility
   :: IssueVisibility
-  -> (PresentationConfig -> CycleAccounts -> Text)
   -> PresentationConfig
   -> HouseholdReportSurface
   -> Text
-renderHouseholdReportSectionsWithIssueVisibility visibility renderCycle presentation surface =
+renderHouseholdReportSectionsWithIssueVisibility visibility presentation surface =
   T.intercalate "\n"
-    [ renderHouseholdReportSectionWithCycle
-        renderCycle presentation section surface
+    [ renderHouseholdReportSection presentation section surface
     | section <-
         [ HouseholdCycleAccounts
         , HouseholdDailyTarget
@@ -96,26 +101,135 @@ renderHouseholdReportSectionsWithIssueVisibility visibility renderCycle presenta
         ]
     ]
 
-renderHouseholdReportSectionWithCycle
-  :: (PresentationConfig -> CycleAccounts -> Text)
-  -> PresentationConfig
-  -> HouseholdReportSection
+-- | Publish the two distinct cycle meanings restored by the typed report core.
+-- Current-cycle Accounts is an Account-state observation. Cycle Comparison is
+-- the previous cycle at the same elapsed day count, not a second name for the
+-- retained Expense-only compatibility matrix.
+renderHouseholdCycleReports
+  :: PresentationConfig
   -> HouseholdReportSurface
   -> Text
-renderHouseholdReportSectionWithCycle renderCycle presentation section surface =
-  case section of
-    HouseholdCycleAccounts ->
-      renderCycle presentation (householdCycleAccounts surface)
-    HouseholdDailyTarget ->
-      renderDailyTarget presentation (householdDailyTarget surface)
-    HouseholdPlannedTransactions ->
-      renderPlans
-        (cycleAccountsCurrentPeriod (householdCycleAccounts surface))
-        (householdPlannedTransactions surface)
-    HouseholdIssues visibility ->
-      renderHouseholdIssues visibility (householdIssues surface)
-    HouseholdEnvelopeBacking ->
-      renderEnvelope presentation (householdEnvelopeBacking surface)
+renderHouseholdCycleReports presentation surface = T.intercalate "\n"
+  [ renderCurrentCycleAccounts presentation
+      (householdCurrentCycleAccounts surface)
+  , case householdCycleComparison surface of
+      HouseholdCycleComparisonAvailable comparison ->
+        renderAlignedCycleComparison presentation comparison
+      HouseholdCycleComparisonUnavailable reason ->
+        renderUnavailableCycleComparison reason
+  ]
+
+renderCurrentCycleAccounts
+  :: PresentationConfig
+  -> CurrentCycleAccounts
+  -> Text
+renderCurrentCycleAccounts presentation report = T.intercalate "\n"
+  [ terminalHeader "Current Cycle Accounts"
+  , terminalMeta ("Cycle: " <> renderPeriod (currentCycleAccountsPeriod report)
+      <> " | Observed through: "
+      <> renderDay (currentCycleAccountsObservation report))
+  , ""
+  , renderTerminalTable columns rows (Just totalRow)
+  , terminalBoldThen "Double-entry balanced: "
+      (renderYesNo (currentCycleAccountsBalanced report))
+  , ""
+  ]
+  where
+    columns =
+      [ ("Account", AlignLeft)
+      , ("Opening", AlignRight)
+      , ("Debit", AlignRight)
+      , ("Credit", AlignRight)
+      , ("Movement", AlignRight)
+      , ("Closing", AlignRight)
+      ]
+    rows =
+      [ [ plainCell (accountName (currentCycleAccount row))
+        , signedBalanceCellWith presentation (currentCycleAccountOpening row)
+        , signedBalanceCellWith presentation (currentCycleAccountDebit row)
+        , signedBalanceCellWith presentation (currentCycleAccountCredit row)
+        , signedBalanceCellWith presentation (currentCycleAccountRowMovement row)
+        , signedBalanceCellWith presentation (currentCycleAccountRowClosing row)
+        ]
+      | row <- currentCycleAccountsRows report
+      ]
+    totalRow =
+      [ styledCell terminalBold "Total"
+      , signedBalanceCellWith presentation (currentCycleAccountsOpeningTotal report)
+      , signedBalanceCellWith presentation (currentCycleAccountsDebitTotal report)
+      , signedBalanceCellWith presentation (currentCycleAccountsCreditTotal report)
+      , signedBalanceCellWith presentation (currentCycleAccountsMovementTotal report)
+      , signedBalanceCellWith presentation (currentCycleAccountsClosingTotal report)
+      ]
+
+renderAlignedCycleComparison
+  :: PresentationConfig
+  -> CycleComparison
+  -> Text
+renderAlignedCycleComparison presentation report = T.intercalate "\n"
+  [ terminalHeader "Cycle Comparison"
+  , terminalMeta
+      ("Policy: " <> renderComparisonPolicy (cycleComparisonPolicy report)
+        <> " | Current: " <> renderObservation current
+        <> " | Baseline: " <> renderObservation baseline)
+  , ""
+  , renderTerminalTable columns rows (Just totalRow)
+  , terminalBoldThen "Double-entry balanced: "
+      (renderYesNo (cycleComparisonBalanced report))
+  , ""
+  ]
+  where
+    current = cycleComparisonCurrent report
+    baseline = cycleComparisonBaseline report
+    columns =
+      [ ("Account", AlignLeft)
+      , ("Current movement", AlignRight)
+      , ("Previous same-day", AlignRight)
+      , ("Difference", AlignRight)
+      ]
+    rows =
+      [ [ plainCell (accountName (cycleComparisonAccount row))
+        , signedBalanceCellWith presentation (cycleComparisonCurrentMovement row)
+        , signedBalanceCellWith presentation (cycleComparisonBaselineMovement row)
+        , signedBalanceCellWith presentation (cycleComparisonRowDifference row)
+        ]
+      | row <- cycleComparisonRows report
+      ]
+    totalRow =
+      [ styledCell terminalBold "Total"
+      , signedBalanceCellWith presentation (cycleComparisonCurrentTotal report)
+      , signedBalanceCellWith presentation (cycleComparisonBaselineTotal report)
+      , signedBalanceCellWith presentation (cycleComparisonDifferenceTotal report)
+      ]
+
+renderUnavailableCycleComparison
+  :: HouseholdCycleComparisonUnavailable
+  -> Text
+renderUnavailableCycleComparison reason = T.intercalate "\n"
+  [ terminalHeader "Cycle Comparison"
+  , terminalMeta "Status: NOT AVAILABLE"
+  , terminalDim ("Aligned previous-cycle observation is unavailable: " <> tshow reason)
+  , ""
+  ]
+
+renderComparisonPolicy :: CycleComparisonPolicy -> Text
+renderComparisonPolicy policy = case policy of
+  AlignedElapsed -> "aligned_elapsed"
+  CompleteCycles -> "complete_cycles"
+
+renderObservation :: CurrentCycleAccounts -> Text
+renderObservation report =
+  renderPeriod (currentCycleAccountsPeriod report)
+    <> " through " <> renderDay (currentCycleAccountsObservation report)
+
+renderYesNo :: Bool -> Text
+renderYesNo True = terminalGreen "yes"
+renderYesNo False = terminalRed "no"
+
+renderPeriod :: Period -> Text
+renderPeriod period =
+  "[" <> renderDay (periodStart period)
+    <> ", " <> renderDay (periodEndExclusive period) <> ")"
 
 renderDailyTarget :: PresentationConfig -> DailyTarget -> Text
 renderDailyTarget presentation report = T.intercalate "\n"
@@ -386,8 +500,7 @@ renderReportBookWithHouseholdPresentation
 renderReportBookWithHouseholdPresentation presentation report household =
   T.intercalate "\n"
     [ renderReportBookCoreWithPresentation presentation report
-    , renderHouseholdReportSections
-        renderCycleAccountsWithPresentation presentation household
+    , renderHouseholdReportSections presentation household
     ]
 
 tshow :: Show value => value -> Text
