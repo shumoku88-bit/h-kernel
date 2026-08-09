@@ -48,8 +48,12 @@ The primary measure is not deleted lines. It is the reader distance required to 
 
 - [x] Canonical `HKernel.Household.Application` currently lives in `spike-src` and the `h-kernel-spike-household-report` component even though it now owns canonical Household admission/state.
 - [x] `HKernel.Spike.HouseholdReport` contains both retained compatibility/source adapters and current typed Household report composition.
-- [ ] Inventory which `Spike.*` exports are still used by production CLI/TUI and which are compatibility-only.
-- [ ] Determine the current semantic owner for Household application/report composition without moving code yet.
+- [x] Production use of the current `Spike` component is established, so `Spike` cannot be treated as dead experimental code.
+  - the main CLI imports canonical `HKernel.Household.Application`, `HKernel.Spike.HouseholdReport`, and `HKernel.Spike.HouseholdReport.Render` for Household report operation;
+  - the Brick TUI imports canonical `HKernel.Household.Application`, retains `HouseholdReportSurface`, and uses `HKernel.Spike.HouseholdReport.Render`;
+  - `HKernel.Household.Application` itself delegates current typed Household report composition to `HKernel.Spike.HouseholdReport`.
+- [x] Current semantic ownership is clear enough for further classification without moving code: `HKernel.Household.Application` owns canonical Household admission/state; the typed calculation path in `HKernel.Spike.HouseholdReport` owns Household report composition; `Spike` is therefore partly a stale location/name, not a description of runtime status.
+- [ ] Inventory retained compatibility-oriented exports inside `HKernel.Spike.HouseholdReport` and their remaining callers; in particular separate source-reading compatibility entry points from the typed `buildHouseholdReportSurfaceFromAdmitted` path.
 - [ ] Inventory retained TSV compatibility paths that are still required by current canonical Household operation.
 
 ### Repeated source observation / parsing
@@ -138,4 +142,5 @@ These are hypotheses only. They become implementation TODOs only after the evide
 
 - [x] Initial cross-boundary observation recorded instead of leaving results only in chat.
 - [x] Added `Account.Journal` to the source-scan inventory and recorded concrete scanner-rule divergence.
+- [x] Confirmed that `Spike` currently contains production owners, not merely disposable experiments.
 - [ ] Continue from this checklist; do not restart with a blanket repository audit.
