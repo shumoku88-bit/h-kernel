@@ -2,13 +2,16 @@
 {-# LANGUAGE RankNTypes #-}
 
 module HKernel.Editor.TUI.Plan
-  ( PublishResult(..)
+  ( PublishRequest(..)
+  , PublishResult(..)
   , State(..)
   , drawFlow
   , drawWorkspace
   , handleFlowEvent
   , publishCandidate
+  , startAdd
   , startSelectedCompletion
+  , startSelectedEdit
   ) where
 
 import Brick
@@ -19,13 +22,23 @@ import qualified Brick.Widgets.List as L
 import qualified Graphics.Vty as V
 import Lens.Micro (Lens', Traversal')
 
+import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time.Calendar (Day)
+import Data.Time.Calendar (Day, addDays)
+import Data.Time.Format (defaultTimeLocale, parseTimeM)
 
-import HKernel.Account (accountName)
+import HKernel.Account (accountName, mkAccount)
+import HKernel.Actual.Journal (actualJournalValue)
 import HKernel.Application.Config (HouseholdSourcePaths(..))
+import HKernel.Editor.ActualWriter
+  ( CandidateSource(..)
+  , ExpectedSource(..)
+  , WriteIntent(..)
+  , admitPlanJournalRootSource
+  , publishPlanJournalFromResolvedJournal
+  )
 import HKernel.Editor.Interaction.PlanCompleteAdvance
   ( PlanCompleteAdvanceInput(..)
   , initialPlanCompleteAdvanceInput
@@ -41,6 +54,16 @@ import HKernel.Editor.PlanCompleteAdvance
   , proposePlanAdvance
   , publishPlanCompleteAdvance
   )
+import HKernel.Editor.PlanLifecycle
+  ( PlanAddIntent(..)
+  , PlanAddPreview(..)
+  , PlanEditIntent(..)
+  , PlanEditPreview(..)
+  , mkPositivePlanEditAmount
+  , preparePlanAddFromResolvedJournals
+  , preparePlanEditFromResolvedJournals
+  )
+import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
   , AppEvent
@@ -64,6 +87,10 @@ import HKernel.Money
   ( amountCommodity
   , amountQuantity
   , commodityCode
+  , mkCommodity
+  , negateQuantity
+  , parseQuantity
+  , quantityToRational
   , renderQuantity
   )
 import HKernel.Plan (planIdText)
@@ -71,20 +98,44 @@ import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , identifiedPlanId
   , identifiedPlanTransaction
+  , planJournalValue
   )
 
 data PreviewResult
   = PreviewRejected Text
   | PreviewReady PlanCompleteAdvancePreview
 
+data PlanAddInput = PlanAddInput
+  { planAddDateText        :: Text
+  , planAddDescriptionText :: Text
+  , planAddFromText        :: Text
+  , planAddToText          :: Text
+  , planAddAmountText      :: Text
+  , planAddCommodityText   :: Text
+  } deriving (Eq, Show)
+
+data PlanEditInput = PlanEditInput
+  { planEditDateText   :: Text
+  , planEditAmountText :: Text
+  } deriving (Eq, Show)
+
 data State event
   = Input PlanAdvanceProposal (Form PlanCompleteAdvanceInput event Name)
   | Preview PlanAdvanceProposal PreviewResult (Form PlanCompleteAdvanceInput event Name)
   | Confirmation PlanAdvanceProposal PlanCompleteAdvancePreview (Form PlanCompleteAdvanceInput event Name)
+  | AddInput (Form PlanAddInput event Name)
+  | AddPreview PlanAddPreview (Form PlanAddInput event Name)
+  | EditInput IdentifiedPlanTransaction (Form PlanEditInput event Name)
+  | EditPreview IdentifiedPlanTransaction PlanEditPreview (Form PlanEditInput event Name)
   | WriteOutcome Text
   | ReturnToWorkspace
-  | PublishRequested PlanCompleteAdvancePreview
+  | PublishRequested PublishRequest
   | QuitRequested
+
+data PublishRequest
+  = PublishCompleteAdvance PlanCompleteAdvancePreview
+  | PublishAdd PlanAddPreview
+  | PublishEdit PlanEditPreview
 
 data PublishResult
   = Published AppContext
@@ -103,6 +154,14 @@ startSelectedCompletion context = do
     Right proposal -> Input proposal
       (mkPlanCompleteForm (contextObservationDay context) proposal)
 
+startAdd :: AppContext -> State event
+startAdd context = AddInput (mkPlanAddForm (addDays 1 (contextEntryDay context)))
+
+startSelectedEdit :: AppContext -> Maybe (State event)
+startSelectedEdit context = do
+  (_, identified) <- L.listSelectedElement (contextPlanList context)
+  pure (EditInput identified (mkPlanEditForm identified))
+
 planActualDateTextL :: Lens' PlanCompleteAdvanceInput Text
 planActualDateTextL f input =
   (\value -> input { planActualDateText = value }) <$> f (planActualDateText input)
@@ -119,31 +178,105 @@ planSuccessorAmountTextL :: Lens' PlanCompleteAdvanceInput Text
 planSuccessorAmountTextL f input =
   (\value -> input { planSuccessorAmountText = value }) <$> f (planSuccessorAmountText input)
 
+planAddDateTextL :: Lens' PlanAddInput Text
+planAddDateTextL f input =
+  (\value -> input { planAddDateText = value }) <$> f (planAddDateText input)
+
+planAddDescriptionTextL :: Lens' PlanAddInput Text
+planAddDescriptionTextL f input =
+  (\value -> input { planAddDescriptionText = value }) <$> f (planAddDescriptionText input)
+
+planAddFromTextL :: Lens' PlanAddInput Text
+planAddFromTextL f input =
+  (\value -> input { planAddFromText = value }) <$> f (planAddFromText input)
+
+planAddToTextL :: Lens' PlanAddInput Text
+planAddToTextL f input =
+  (\value -> input { planAddToText = value }) <$> f (planAddToText input)
+
+planAddAmountTextL :: Lens' PlanAddInput Text
+planAddAmountTextL f input =
+  (\value -> input { planAddAmountText = value }) <$> f (planAddAmountText input)
+
+planAddCommodityTextL :: Lens' PlanAddInput Text
+planAddCommodityTextL f input =
+  (\value -> input { planAddCommodityText = value }) <$> f (planAddCommodityText input)
+
+planEditDateTextL :: Lens' PlanEditInput Text
+planEditDateTextL f input =
+  (\value -> input { planEditDateText = value }) <$> f (planEditDateText input)
+
+planEditAmountTextL :: Lens' PlanEditInput Text
+planEditAmountTextL f input =
+  (\value -> input { planEditAmountText = value }) <$> f (planEditAmountText input)
+
+labelField :: String -> Widget Name -> Widget Name
+labelField labelText widget =
+  padBottom (Pad 1)
+    ((vLimit 1 (hLimit 23 (str labelText <+> fill ' '))) <+> widget)
+
 mkPlanCompleteForm
   :: Day
   -> PlanAdvanceProposal
   -> Form PlanCompleteAdvanceInput event Name
 mkPlanCompleteForm today proposal =
-  let label labelText widget =
-        padBottom (Pad 1)
-          ((vLimit 1 (hLimit 23 (str labelText <+> fill ' '))) <+> widget)
-      form = newForm
-        [ label "Actual date:"
+  let form = newForm
+        [ labelField "Actual date:"
             @@= editTextField planActualDateTextL PlanActualDateField (Just 1)
-        , label "Actual amount override:"
+        , labelField "Actual amount override:"
             @@= editTextField planActualAmountTextL PlanActualAmountField (Just 1)
-        , label "Next nominal date:"
+        , labelField "Next nominal date:"
             @@= editTextField planSuccessorDateTextL PlanSuccessorDateField (Just 1)
-        , label "Next amount override:"
+        , labelField "Next amount override:"
             @@= editTextField planSuccessorAmountTextL PlanSuccessorAmountField (Just 1)
         ]
   in setFormFocus PlanActualDateField
       (form (initialPlanCompleteAdvanceInput today proposal))
 
+mkPlanAddForm :: Day -> Form PlanAddInput event Name
+mkPlanAddForm day =
+  setFormFocus PlanAddDescriptionField
+    (newForm
+      [ labelField "Plan date:"
+          @@= editTextField planAddDateTextL PlanAddDateField (Just 1)
+      , labelField "Description:"
+          @@= editTextField planAddDescriptionTextL PlanAddDescriptionField (Just 1)
+      , labelField "Pay from:"
+          @@= editTextField planAddFromTextL PlanAddFromField (Just 1)
+      , labelField "Category / to:"
+          @@= editTextField planAddToTextL PlanAddToField (Just 1)
+      , labelField "Amount:"
+          @@= editTextField planAddAmountTextL PlanAddAmountField (Just 1)
+      , labelField "Commodity:"
+          @@= editTextField planAddCommodityTextL PlanAddCommodityField (Just 1)
+      ]
+      (PlanAddInput (T.pack (show day)) "" "" "" "" "JPY"))
+
+mkPlanEditForm :: IdentifiedPlanTransaction -> Form PlanEditInput event Name
+mkPlanEditForm identified =
+  setFormFocus PlanEditDateField
+    (newForm
+      [ labelField "Plan date:"
+          @@= editTextField planEditDateTextL PlanEditDateField (Just 1)
+      , labelField "Amount override:"
+          @@= editTextField planEditAmountTextL PlanEditAmountField (Just 1)
+      ]
+      (PlanEditInput
+        (T.pack (show (transactionDate (identifiedPlanTransaction identified))))
+        ""))
+
 zoomInputForm
   :: Traversal' (State AppEvent) (Form PlanCompleteAdvanceInput AppEvent Name)
 zoomInputForm f (Input proposal form) = Input proposal <$> f form
 zoomInputForm _ state = pure state
+
+zoomAddForm :: Traversal' (State AppEvent) (Form PlanAddInput AppEvent Name)
+zoomAddForm f (AddInput form) = AddInput <$> f form
+zoomAddForm _ state = pure state
+
+zoomEditForm :: Traversal' (State AppEvent) (Form PlanEditInput AppEvent Name)
+zoomEditForm f (EditInput identified form) = EditInput identified <$> f form
+zoomEditForm _ state = pure state
 
 drawFlow :: State AppEvent -> Widget Name
 drawFlow state = case state of
@@ -159,7 +292,6 @@ drawFlow state = case state of
               <=> str "Blank Actual amount uses the planned amount."
               <=> str "Blank Next amount keeps the original planned amount."
               <=> str "Clear Next nominal date to complete without a successor."
-              <=> str "Edit Actual date directly; no modified or function keys are required."
               <=> str "[Tab] Next field | [Esc] Plans | [Enter] Preview"))))
   Preview _ result _ ->
     center
@@ -182,13 +314,50 @@ drawFlow state = case state of
                 <=> renderCompletePreview preview
                 <=> str " "
                 <=> str "[Y] Publish both | [N/Esc] Back | [Q] Quit")))))
+  AddInput form ->
+    center
+      (borderWithLabel (str "Add Plan")
+        (hLimit 82
+          (padAll 1
+            ( renderForm form
+              <=> str " "
+              <=> str "Plan identity is generated by the Plan domain."
+              <=> str "The common daily form creates one balanced two-posting Plan."
+              <=> str "[Tab] Next field | [Esc] Plans | [Enter] Preview"))))
+  AddPreview preview _ ->
+    simplePreview "Add Plan Preview" (txt (addCandidateBlock preview))
+  EditInput identified form ->
+    center
+      (borderWithLabel (str "Edit Selected Plan")
+        (hLimit 82
+          (padAll 1
+            ( renderIdentifiedPlan identified
+              <=> str " "
+              <=> renderForm form
+              <=> str " "
+              <=> str "Blank amount keeps the current amount; amount edits require a binary Plan."
+              <=> str "The selected PlanId is retained automatically."
+              <=> str "[Tab] Next field | [Esc] Plans | [Enter] Preview"))))
+  EditPreview _ preview _ ->
+    simplePreview "Edit Plan Preview"
+      (str "Before" <=> txt (editOriginalBlock preview)
+        <=> str " " <=> str "After" <=> txt (editCandidateBlock preview))
   WriteOutcome message ->
     center
-      (borderWithLabel (str "Plan Complete & Advance Result")
+      (borderWithLabel (str "Plan Result")
         (padAll 1 (txt message <=> str " " <=> str "[Esc] Plans | [Q] Quit")))
   ReturnToWorkspace -> emptyWidget
   PublishRequested _ -> emptyWidget
   QuitRequested -> emptyWidget
+
+simplePreview :: String -> Widget Name -> Widget Name
+simplePreview title body =
+  center
+    (borderWithLabel (str title)
+      (hLimit 88
+        (vLimit 32
+          (padAll 1
+            (body <=> str " " <=> str "[Enter] Publish | [Esc] Back | [Q] Quit")))))
 
 drawWorkspace :: AppContext -> Widget Name
 drawWorkspace context =
@@ -198,7 +367,7 @@ drawWorkspace context =
           (L.renderList renderPlanItem True (contextPlanList context)))
     , borderWithLabel (str "Selected Plan")
         (padAll 1 (renderSelectedPlan context))
-    , str "[j/k/Arrows] Move   [Enter/C] Complete & Advance   [1-7] Sections   [q] Quit"
+    , str "[j/k/Arrows] Move   [Enter/C] Complete & Advance   [A] Add   [E] Edit   [1-7] Sections   [q] Quit"
     ]
 
 handleFlowEvent
@@ -211,6 +380,11 @@ handleFlowEvent context event = do
     Input proposal form -> handleInput context proposal form event
     Preview proposal result form -> handlePreview proposal result form event
     Confirmation proposal preview form -> handleConfirmation proposal preview form event
+    AddInput form -> handleAddInput context form event
+    AddPreview preview form -> handleSimplePreview (AddInput form) (PublishAdd preview) event
+    EditInput identified form -> handleEditInput context identified form event
+    EditPreview identified preview form ->
+      handleSimplePreview (EditInput identified form) (PublishEdit preview) event
     WriteOutcome _ -> case event of
       VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
       VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
@@ -285,16 +459,121 @@ handleConfirmation proposal preview form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> back
   VtyEvent (V.EvKey (V.KChar 'n') []) -> back
   VtyEvent (V.EvKey (V.KChar 'N') []) -> back
-  VtyEvent (V.EvKey (V.KChar 'y') []) -> put (PublishRequested preview)
-  VtyEvent (V.EvKey (V.KChar 'Y') []) -> put (PublishRequested preview)
+  VtyEvent (V.EvKey (V.KChar 'y') []) -> put (PublishRequested (PublishCompleteAdvance preview))
+  VtyEvent (V.EvKey (V.KChar 'Y') []) -> put (PublishRequested (PublishCompleteAdvance preview))
   VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
   _ -> pure ()
   where
     back = put (Preview proposal (PreviewReady preview) form)
 
-publishCandidate :: AppContext -> PlanCompleteAdvancePreview -> IO PublishResult
-publishCandidate context preview = do
+handleAddInput
+  :: AppContext
+  -> Form PlanAddInput AppEvent Name
+  -> BrickEvent Name AppEvent
+  -> EventM Name (State AppEvent) ()
+handleAddInput context form event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
+  VtyEvent (V.EvKey V.KEnter []) -> case prepareAdd context (formState form) of
+    Left message -> put (WriteOutcome message)
+    Right preview -> put (AddPreview preview form)
+  _ -> zoom zoomAddForm (handleFormEvent event)
+
+handleEditInput
+  :: AppContext
+  -> IdentifiedPlanTransaction
+  -> Form PlanEditInput AppEvent Name
+  -> BrickEvent Name AppEvent
+  -> EventM Name (State AppEvent) ()
+handleEditInput context identified form event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
+  VtyEvent (V.EvKey V.KEnter []) -> case prepareEdit context identified (formState form) of
+    Left message -> put (WriteOutcome message)
+    Right preview -> put (EditPreview identified preview form)
+  _ -> zoom zoomEditForm (handleFormEvent event)
+
+handleSimplePreview
+  :: State AppEvent
+  -> PublishRequest
+  -> BrickEvent Name AppEvent
+  -> EventM Name (State AppEvent) ()
+handleSimplePreview back request event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> put back
+  VtyEvent (V.EvKey V.KEnter []) -> put (PublishRequested request)
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
+  _ -> pure ()
+
+prepareAdd :: AppContext -> PlanAddInput -> Either Text PlanAddPreview
+prepareAdd context input = do
+  date <- parseDay (planAddDateText input)
+  let description = T.strip (planAddDescriptionText input)
+  if T.null description then Left "Plan description cannot be blank." else Right ()
+  fromAccount <- either (Left . showText) Right (mkAccount (T.strip (planAddFromText input)))
+  toAccount <- either (Left . showText) Right (mkAccount (T.strip (planAddToText input)))
+  quantity <- either (Left . showText) Right (parseQuantity (T.strip (planAddAmountText input)))
+  if quantityToRational quantity > 0 then Right () else Left "Plan amount must be positive."
+  commodity <- either (Left . showText) Right (mkCommodity (T.strip (planAddCommodityText input)))
+  let intent = PlanAddIntent
+        { addDate = date
+        , addDescription = description
+        , addPostings =
+            IntentPosting fromAccount (negateQuantity quantity) (Just commodity)
+              :| [IntentPosting toAccount quantity (Just commodity)]
+        , addRequestedId = Nothing
+        , addSeries = Nothing
+        }
+      state = contextHouseholdState context
+  case preparePlanAddFromResolvedJournals
+      (planJournalValue (householdStatePlanJournal state))
+      (actualJournalValue (householdStateActualJournal state))
+      (contextPlanSource context)
+      (contextSource context)
+      intent of
+    Left errors -> Left ("Plan add rejected: " <> showText (NonEmpty.toList errors))
+    Right preview -> Right preview
+
+prepareEdit
+  :: AppContext
+  -> IdentifiedPlanTransaction
+  -> PlanEditInput
+  -> Either Text PlanEditPreview
+prepareEdit context identified input = do
+  date <- parseDay (planEditDateText input)
+  amount <- case T.strip (planEditAmountText input) of
+    "" -> Right Nothing
+    amountText -> do
+      quantity <- either (Left . showText) Right (parseQuantity amountText)
+      positive <- either (Left . showText) Right (mkPositivePlanEditAmount quantity)
+      Right (Just positive)
+  let intent = PlanEditIntent
+        { editPlanId = planIdText (identifiedPlanId identified)
+        , editDate = Just date
+        , editAmount = amount
+        }
+      state = contextHouseholdState context
+  case preparePlanEditFromResolvedJournals
+      (planJournalValue (householdStatePlanJournal state))
+      (actualJournalValue (householdStateActualJournal state))
+      (contextPlanSource context)
+      (contextSource context)
+      intent of
+    Left errors -> Left ("Plan edit rejected: " <> showText (NonEmpty.toList errors))
+    Right preview -> Right preview
+
+parseDay :: Text -> Either Text Day
+parseDay text = case parseTimeM True defaultTimeLocale "%Y-%m-%d" (T.unpack (T.strip text)) of
+  Nothing -> Left "Date must be YYYY-MM-DD."
+  Just day -> Right day
+
+publishCandidate :: AppContext -> PublishRequest -> IO PublishResult
+publishCandidate context request = case request of
+  PublishCompleteAdvance preview -> publishCompleteAdvance context preview
+  PublishAdd preview -> publishPlanRoot context (addCandidateCompleteSource preview)
+  PublishEdit preview -> publishPlanRoot context (editCandidateCompleteSource preview)
+
+publishCompleteAdvance :: AppContext -> PlanCompleteAdvancePreview -> IO PublishResult
+publishCompleteAdvance context preview = do
   let state = contextHouseholdState context
       paths = householdStatePaths state
       root = householdStateRoot state
@@ -310,14 +589,35 @@ publishCandidate context preview = do
       postAdmission = loadCanonicalHousehold root
   writeResult <- publishPlanCompleteAdvance postAdmission intent
   case writeResult of
-    Right () -> do
-      reloaded <- reloadWorkspaceContext
-        (context { contextCurrentSection = PlansSection })
-      pure $ case reloaded of
-        Nothing -> ReloadFailed
-        Just freshContext -> Published
-          (freshContext { contextCurrentSection = PlansSection })
+    Right () -> reloadPlans context
     Left writeError -> pure (PublicationFailed (renderWriteError writeError))
+
+publishPlanRoot :: AppContext -> Text -> IO PublishResult
+publishPlanRoot context candidate = do
+  let state = contextHouseholdState context
+      planPath = householdPlanJournalPath (householdStatePaths state)
+  preAdmission <- admitPlanJournalRootSource planPath candidate
+  case preAdmission of
+    Left errors -> pure
+      (PublicationFailed ("Plan candidate path admission failed: " <> showText (NonEmpty.toList errors)))
+    Right _ -> do
+      writeResult <- publishPlanJournalFromResolvedJournal WriteIntent
+        { targetFilePath = planPath
+        , expectedOldBytes = ExpectedSource (contextPlanSource context)
+        , candidateNewBytes = CandidateSource candidate
+        }
+      case writeResult of
+        Left err -> pure (PublicationFailed (showText err))
+        Right () -> reloadPlans context
+
+reloadPlans :: AppContext -> IO PublishResult
+reloadPlans context = do
+  reloaded <- reloadWorkspaceContext
+    (context { contextCurrentSection = PlansSection })
+  pure $ case reloaded of
+    Nothing -> ReloadFailed
+    Just freshContext -> Published
+      (freshContext { contextCurrentSection = PlansSection })
 
 renderWriteError :: PlanCompleteAdvanceWriteError admissionError -> Text
 renderWriteError writeError = case writeError of
@@ -349,14 +649,17 @@ renderPlanItem selected identified
 renderSelectedPlan :: AppContext -> Widget Name
 renderSelectedPlan context = case L.listSelectedElement (contextPlanList context) of
   Nothing -> str "No open Plans."
-  Just (_, identified) ->
-    let transaction = identifiedPlanTransaction identified
-    in vBox
-      ( txt (T.pack (show (transactionDate transaction))
-          <> "  [" <> planIdText (identifiedPlanId identified) <> "]  "
-          <> transactionDescription transaction)
-        : map renderPosting (NonEmpty.toList (transactionPostings transaction))
-      )
+  Just (_, identified) -> renderIdentifiedPlan identified
+
+renderIdentifiedPlan :: IdentifiedPlanTransaction -> Widget Name
+renderIdentifiedPlan identified =
+  let transaction = identifiedPlanTransaction identified
+  in vBox
+    ( txt (T.pack (show (transactionDate transaction))
+        <> "  [" <> planIdText (identifiedPlanId identified) <> "]  "
+        <> transactionDescription transaction)
+      : map renderPosting (NonEmpty.toList (transactionPostings transaction))
+    )
 
 renderPlanProposal :: PlanAdvanceProposal -> Widget Name
 renderPlanProposal proposal =
@@ -406,3 +709,6 @@ renderPosting posting =
     <> commodityCode (amountCommodity amount))
   where
     amount = postingAmount posting
+
+showText :: Show value => value -> Text
+showText = T.pack . show

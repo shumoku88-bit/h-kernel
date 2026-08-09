@@ -394,6 +394,14 @@ handleWorkspaceEvent context event = case event of
     | inIssues -> put (AppWrapper context (MaintenanceFlow Maintenance.startIssueAdd))
   VtyEvent (V.EvKey V.KEnter [])
     | inIssues -> openSelectedIssue
+  VtyEvent (V.EvKey (V.KChar 'a') [])
+    | inPlans -> put (AppWrapper context (PlanFlow (Plan.startAdd context)))
+  VtyEvent (V.EvKey (V.KChar 'A') [])
+    | inPlans -> put (AppWrapper context (PlanFlow (Plan.startAdd context)))
+  VtyEvent (V.EvKey (V.KChar 'e') [])
+    | inPlans -> openSelectedPlanEdit
+  VtyEvent (V.EvKey (V.KChar 'E') [])
+    | inPlans -> openSelectedPlanEdit
   VtyEvent (V.EvKey V.KEnter [])
     | inActual && contextWorkspaceFocus context == AccountsFocus ->
         put (AppWrapper (context { contextWorkspaceFocus = TransactionsFocus }) Workspace)
@@ -440,6 +448,10 @@ handleWorkspaceEvent context event = case event of
     openSelectedPlan = case Plan.startSelectedCompletion context of
       Nothing -> pure ()
       Just flow -> put (AppWrapper context (PlanFlow flow))
+    openSelectedPlanEdit :: EventM Name AppWrapper ()
+    openSelectedPlanEdit = case Plan.startSelectedEdit context of
+      Nothing -> pure ()
+      Just flow -> put (AppWrapper context (PlanFlow flow))
     openSelectedIssue :: EventM Name AppWrapper ()
     openSelectedIssue = case Maintenance.startSelectedIssueClose context of
       Nothing -> pure ()
@@ -477,8 +489,8 @@ handlePlanFlow context event = do
   case state of
     PlanFlow Plan.ReturnToWorkspace -> put (AppWrapper currentContext Workspace)
     PlanFlow Plan.QuitRequested -> halt
-    PlanFlow (Plan.PublishRequested preview) -> do
-      result <- suspendAndResume' (Plan.publishCandidate context preview)
+    PlanFlow (Plan.PublishRequested request) -> do
+      result <- suspendAndResume' (Plan.publishCandidate context request)
       case result of
         Plan.Published freshContext -> put (AppWrapper freshContext Workspace)
         Plan.PublicationFailed message ->
