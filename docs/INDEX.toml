@@ -130,3 +130,7 @@ role = "architecture"
 [[documents]]
 path = "docs/TUI_INPUT_PORTABILITY_DECISION_001.md"
 role = "contract"
+
+[[documents]]
+path = "docs/INLINE_ACCOUNT_DISCOVERY_IMPLEMENTATION_NOTE_2026-08-09.md"
+role = "observation"
