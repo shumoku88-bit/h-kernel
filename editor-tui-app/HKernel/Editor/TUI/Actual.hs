@@ -16,6 +16,7 @@ module HKernel.Editor.TUI.Actual
   ) where
 
 import Brick
+import Brick.Focus (focusGetCurrent)
 import Brick.Forms
 import Brick.Widgets.Border
 import Brick.Widgets.Center
@@ -23,6 +24,7 @@ import qualified Brick.Widgets.List as L
 import qualified Graphics.Vty as V
 import Lens.Micro (Lens', Traversal')
 
+import Data.List (findIndex)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
@@ -63,12 +65,16 @@ import HKernel.Editor.ActualReverse
 import HKernel.Editor.ActualWorkspace (transactionEntriesForAccount)
 import HKernel.Editor.ActualWriter (publishActualBlockWithPathAdmission)
 import HKernel.Editor.Interaction.ActualAdd
-  ( ActualAddMode(..)
+  ( AccountSelectionTarget(..)
+  , ActualAddMode(..)
   , ActualAddState(..)
   , ActualMultiAddState(..)
+  , dailyAccountCandidates
   , enterActualAddPreview
+  , groupAccountCandidates
   , initialActualAddStateForDay
   , initialActualMultiAddStateForDay
+  , multiAccountCandidates
   , resizeActualMultiPostings
   , selectActualMultiPosting
   , selectedActualMultiPosting
@@ -76,6 +82,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , setActualMultiDescription
   , setSelectedActualMultiAccountText
   , setSelectedActualMultiAmount
+  , stepAccountCandidate
   )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
@@ -335,12 +342,12 @@ drawFlow context state = case state of
           (vBox
             [ txt ("Date: " <> dateSummary context (addDateText (formState form)))
             , str "Amount accepts a quantity only when Account defaults determine the commodity."
-            , str "Type canonical Account names directly; no modified or function keys are required."
+            , str "Account fields expose existing typed Accounts inline; exact text remains available."
             , str " "
             , renderForm form
+            , renderDailyInlineAccountSelector context form
             , str " "
-            , str "[Tab] Next field | edit Date directly for another day"
-            , str "[Esc] Workspace | [Enter] Preview"
+            , dailyInputControls form
             ])))
   DailyPreview preview _ ->
     center
@@ -364,10 +371,9 @@ drawFlow context state = case state of
                   <> T.pack (show (NonEmpty.length
                     (multiAddPostings (actualMultiAddInput multiState)))))
               , renderForm form
+              , renderMultiInlineAccountSelector context form
               , str " "
-              , str "[Tab] Next field | [Up/Down] Previous/next posting row"
-              , str "Edit Posting count to add/remove rows; type Account directly."
-              , str "[Esc] Actual | [Enter] Preview"
+              , multiInputControls form
               ]))))
   MultiPreview preview _ _ ->
     center
@@ -415,6 +421,141 @@ drawFlow context state = case state of
   ReturnToWorkspace -> emptyWidget
   PublishRequested _ _ -> emptyWidget
   QuitRequested -> emptyWidget
+
+dailyInputControls :: Form ActualAddInput AppEvent Name -> Widget Name
+dailyInputControls form = case dailySelectionTarget form of
+  Just _ -> str "[Up/Down] Choose Account | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
+  Nothing -> str "[Tab] Next field | [Enter] Preview | [Esc] Actual"
+
+multiInputControls :: Form MultiEditInput AppEvent Name -> Widget Name
+multiInputControls form
+  | multiAccountFocused form =
+      str "[Up/Down] Choose Account | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
+  | otherwise =
+      str "[Tab] Next field | [Up/Down] Previous/next posting row | [Enter] Preview | [Esc] Actual"
+
+renderDailyInlineAccountSelector
+  :: AppContext
+  -> Form ActualAddInput AppEvent Name
+  -> Widget Name
+renderDailyInlineAccountSelector context form = case dailySelectionTarget form of
+  Nothing -> emptyWidget
+  Just target ->
+    renderInlineAccountSelector context label current candidates
+    where
+      input = formState form
+      current = dailyAccountText target input
+      candidates = dailyCandidates context target
+      label = case target of
+        SelectToAccount -> "Expense Accounts"
+        SelectFromAccount -> "Payment Accounts"
+
+renderMultiInlineAccountSelector
+  :: AppContext
+  -> Form MultiEditInput AppEvent Name
+  -> Widget Name
+renderMultiInlineAccountSelector context form
+  | multiAccountFocused form =
+      renderInlineAccountSelector context "Posting Accounts"
+        (multiEditAccountText (formState form)) (multiCandidates context)
+  | otherwise = emptyWidget
+
+renderInlineAccountSelector
+  :: AppContext
+  -> String
+  -> Text
+  -> [HKernel.Account.Account]
+  -> Widget Name
+renderInlineAccountSelector context label current candidates =
+  borderWithLabel (str label)
+    (hLimit 82
+      (padAll 1
+        (vBox
+          ( map renderCandidate visible
+            ++ [ str " "
+               , str "Existing Accounts are grouped by typed meaning; recent use ranks within each group."
+               ]
+          ))))
+  where
+    registry = householdStateAccountsRegistry (contextHouseholdState context)
+    visible = candidateWindow 9 current candidates
+    normalizedCurrent = T.strip current
+    renderCandidate account =
+      let selected = HKernel.Account.accountName account == normalizedCurrent
+          accountType = HKernel.Account.accountTypeFor account registry
+          row = txt
+            (accountTypeLabel accountType <> "  " <> HKernel.Account.accountName account)
+      in if selected then withAttr L.listSelectedAttr row else row
+
+accountTypeLabel :: Maybe HKernel.Account.AccountType -> Text
+accountTypeLabel maybeType = case maybeType of
+  Just HKernel.Account.Asset -> "Assets     "
+  Just HKernel.Account.Liability -> "Liabilities"
+  Just HKernel.Account.Equity -> "Equity     "
+  Just HKernel.Account.Income -> "Income     "
+  Just HKernel.Account.Expense -> "Expenses   "
+  Just HKernel.Account.Budget -> "Budget     "
+  Nothing -> "Unknown    "
+
+candidateWindow
+  :: Int
+  -> Text
+  -> [HKernel.Account.Account]
+  -> [HKernel.Account.Account]
+candidateWindow limit current candidates =
+  take limit (drop start candidates)
+  where
+    selectedIndex = fromMaybe 0
+      (findIndex ((== T.strip current) . HKernel.Account.accountName) candidates)
+    maximumStart = max 0 (length candidates - limit)
+    centeredStart = max 0 (selectedIndex - limit `div` 2)
+    start = min maximumStart centeredStart
+
+dailySelectionTarget
+  :: Form ActualAddInput event Name
+  -> Maybe AccountSelectionTarget
+dailySelectionTarget form = case focusGetCurrent (formFocus form) of
+  Just ToAccountField -> Just SelectToAccount
+  Just FromAccountField -> Just SelectFromAccount
+  _ -> Nothing
+
+multiAccountFocused :: Form MultiEditInput event Name -> Bool
+multiAccountFocused form =
+  focusGetCurrent (formFocus form) == Just MultiAccountField
+
+dailyAccountText :: AccountSelectionTarget -> ActualAddInput -> Text
+dailyAccountText target input = case target of
+  SelectToAccount -> addToAccountText input
+  SelectFromAccount -> addFromAccountText input
+
+dailyCandidates :: AppContext -> AccountSelectionTarget -> [HKernel.Account.Account]
+dailyCandidates context target =
+  flattenCandidateGroups context
+    (dailyAccountCandidates registry (contextActualTransactions context) target)
+  where
+    registry = householdStateAccountsRegistry (contextHouseholdState context)
+
+multiCandidates :: AppContext -> [HKernel.Account.Account]
+multiCandidates context =
+  flattenCandidateGroups context
+    (multiAccountCandidates registry (contextActualTransactions context))
+  where
+    registry = householdStateAccountsRegistry (contextHouseholdState context)
+
+flattenCandidateGroups
+  :: AppContext
+  -> [HKernel.Account.Account]
+  -> [HKernel.Account.Account]
+flattenCandidateGroups context candidates =
+  concatMap snd (groupAccountCandidates registry candidates)
+  where
+    registry = householdStateAccountsRegistry (contextHouseholdState context)
+
+contextActualTransactions :: AppContext -> [Transaction]
+contextActualTransactions context =
+  map actualTransactionEntryTransaction
+    (actualJournalTransactionEntries
+      (householdStateActualJournal (contextHouseholdState context)))
 
 drawWorkspace :: AppContext -> Widget Name
 drawWorkspace context =
@@ -477,6 +618,15 @@ handleDailyInput
   -> EventM Name (State AppEvent) ()
 handleDailyInput context form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
+  VtyEvent (V.EvKey V.KUp [])
+    | Just target <- dailySelectionTarget form ->
+        moveDailyAccountCandidate context (-1) target form
+  VtyEvent (V.EvKey V.KDown [])
+    | Just target <- dailySelectionTarget form ->
+        moveDailyAccountCandidate context 1 target form
+  VtyEvent (V.EvKey V.KEnter [])
+    | Just target <- dailySelectionTarget form ->
+        acceptDailyAccount target form
   VtyEvent (V.EvKey V.KEnter []) -> do
     let input = formState form
         resolvedJournal = actualJournalValue
@@ -488,6 +638,46 @@ handleDailyInput context form event = case event of
       ShowingActualAddPreview shownPreview -> put (DailyPreview shownPreview form)
       _ -> put (DailyInput form)
   _ -> zoom zoomDailyForm (handleFormEvent event)
+
+moveDailyAccountCandidate
+  :: AppContext
+  -> Int
+  -> AccountSelectionTarget
+  -> Form ActualAddInput AppEvent Name
+  -> EventM Name (State AppEvent) ()
+moveDailyAccountCandidate context offset target form =
+  case stepAccountCandidate offset current candidates of
+    Nothing -> pure ()
+    Just account ->
+      let updatedInput = case target of
+            SelectToAccount -> input
+              { addToAccountText = HKernel.Account.accountName account }
+            SelectFromAccount -> input
+              { addFromAccountText = HKernel.Account.accountName account }
+          updatedForm = setFormFocus (dailyFieldName target)
+            (updateFormState updatedInput form)
+      in put (DailyInput updatedForm)
+  where
+    input = formState form
+    current = dailyAccountText target input
+    candidates = dailyCandidates context target
+
+acceptDailyAccount
+  :: AccountSelectionTarget
+  -> Form ActualAddInput AppEvent Name
+  -> EventM Name (State AppEvent) ()
+acceptDailyAccount target form
+  | T.null (T.strip (dailyAccountText target (formState form))) = pure ()
+  | otherwise = put (DailyInput (setFormFocus nextField form))
+  where
+    nextField = case target of
+      SelectToAccount -> FromAccountField
+      SelectFromAccount -> DateField
+
+dailyFieldName :: AccountSelectionTarget -> Name
+dailyFieldName target = case target of
+  SelectToAccount -> ToAccountField
+  SelectFromAccount -> FromAccountField
 
 handleDailyPreview
   :: AppContext
@@ -524,10 +714,44 @@ handleMultiInput
   -> EventM Name (State AppEvent) ()
 handleMultiInput context state form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
+  VtyEvent (V.EvKey V.KUp [])
+    | multiAccountFocused form -> moveMultiAccountCandidate context (-1) state form
+  VtyEvent (V.EvKey V.KDown [])
+    | multiAccountFocused form -> moveMultiAccountCandidate context 1 state form
+  VtyEvent (V.EvKey V.KEnter [])
+    | multiAccountFocused form -> acceptMultiAccount state form
   VtyEvent (V.EvKey V.KEnter []) -> prepareMultiPreview context state form
   VtyEvent (V.EvKey V.KUp []) -> moveMultiSelection (-1) state form
   VtyEvent (V.EvKey V.KDown []) -> moveMultiSelection 1 state form
   _ -> zoom zoomMultiForm (handleFormEvent event)
+
+moveMultiAccountCandidate
+  :: AppContext
+  -> Int
+  -> ActualMultiAddState
+  -> Form MultiEditInput AppEvent Name
+  -> EventM Name (State AppEvent) ()
+moveMultiAccountCandidate context offset state form =
+  case stepAccountCandidate offset current candidates of
+    Nothing -> pure ()
+    Just account ->
+      let updatedEdit = editInput
+            { multiEditAccountText = HKernel.Account.accountName account }
+          updatedForm = setFormFocus MultiAccountField
+            (updateFormState updatedEdit form)
+      in put (MultiInput state updatedForm)
+  where
+    editInput = formState form
+    current = multiEditAccountText editInput
+    candidates = multiCandidates context
+
+acceptMultiAccount
+  :: ActualMultiAddState
+  -> Form MultiEditInput AppEvent Name
+  -> EventM Name (State AppEvent) ()
+acceptMultiAccount state form
+  | T.null (T.strip (multiEditAccountText (formState form))) = pure ()
+  | otherwise = put (MultiInput state (setFormFocus MultiAmountField form))
 
 moveMultiSelection
   :: Int
