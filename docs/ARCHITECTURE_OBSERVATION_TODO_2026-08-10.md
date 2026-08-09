@@ -55,6 +55,7 @@ The primary measure is not deleted lines. It is the reader distance required to 
 ### Repeated source observation / parsing
 
 - [x] `HKernel.Journal` already performs top-level journal block collection.
+- [x] `HKernel.Account.Journal` performs an additional declaration-source shape scan before delegating declaration semantics to `HKernel.Journal`.
 - [x] `HKernel.Actual.Journal` independently reconstructs transaction blocks to project Actual metadata.
 - [x] `HKernel.Plan.Journal` independently reconstructs transaction blocks to project `plan-id` metadata.
 - [x] `HKernel.Household.DailyTarget` independently reconstructs Plan transaction blocks for Daily Target / reservation metadata.
@@ -62,7 +63,12 @@ The primary measure is not deleted lines. It is the reader distance required to 
 - [x] `HKernel.Editor.PlanLifecycle` independently locates physical Plan blocks / `plan-id` coordinates for edit operations.
 - [ ] Record every current raw journal root scanner and the metadata/source coordinate it extracts.
 - [ ] Mark which scans add genuinely new source-location evidence and which only rediscover structure already observed earlier.
-- [ ] Check whether scanner rules disagree on comments, directives, indentation, blank lines, or transaction boundaries.
+- [x] Scanner rules are not fully identical across owners.
+  - canonical `HKernel.Journal` ends the current block on a blank line;
+  - Actual / Plan / Daily Target metadata scanners retain blank lines inside the current reconstructed block and continue until another top-level line;
+  - `HKernel.Editor.PlanCompleteAdvance` follows the same continue-until-top-level shape;
+  - `HKernel.Editor.PlanLifecycle` treats both `;` and `#` as comment prefixes for physical source location, while the canonical Journal and the other inspected metadata scanners use `;` comments.
+  These differences do not yet prove a user-visible bug, but they are repeated evidence that source structure has more than one operational definition.
 - [ ] Count repeated full-root passes in canonical Household load, report construction, Actual add, Plan add/edit/complete, Daily Target, and reload paths.
 - [ ] Identify the narrowest existing representation that could carry shared source structure without stealing metadata meaning from Actual / Plan / Daily Target owners.
 - [ ] Do not introduce a generic metadata framework merely to reduce duplication; require a named source-structure ownership reason first.
@@ -131,4 +137,5 @@ These are hypotheses only. They become implementation TODOs only after the evide
 ## Progress log
 
 - [x] Initial cross-boundary observation recorded instead of leaving results only in chat.
+- [x] Added `Account.Journal` to the source-scan inventory and recorded concrete scanner-rule divergence.
 - [ ] Continue from this checklist; do not restart with a blanket repository audit.
