@@ -417,7 +417,7 @@ drawFlow context state = case state of
   WriteOutcome outcome ->
     center
       (borderWithLabel (str "Actual Write Result")
-        (padAll 1 (renderWriteOutcome outcome <=> str " " <=> str "[Esc/Q] Quit")))
+        (padAll 1 (renderWriteOutcome outcome <=> str " " <=> str "[Esc] Actual | [Q] Quit")))
   ReturnToWorkspace -> emptyWidget
   PublishRequested _ _ -> emptyWidget
   QuitRequested -> emptyWidget
@@ -603,7 +603,7 @@ handleFlowEvent context event = do
       VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
       _ -> pure ()
     WriteOutcome _ -> case event of
-      VtyEvent (V.EvKey V.KEsc []) -> put QuitRequested
+      VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
       VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
       VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
       _ -> pure ()
@@ -1072,7 +1072,7 @@ renderWriteOutcome outcome = case outcome of
   ActualAddWriteStale -> withAttr (attrName "error")
     (vBox
       [ str "Source changed after preview. Nothing was written."
-      , str "Restart the TUI and preview the current source before retrying."
+      , str "Return to Actual and preview the current source before retrying."
       ])
   ActualAddWriteRecovered failure -> withAttr (attrName "warning")
     (vBox [str "Publication failed, and the backup was restored.", txt (writeFailureText failure)])
