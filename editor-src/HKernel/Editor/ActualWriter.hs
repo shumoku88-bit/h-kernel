@@ -19,6 +19,10 @@ module HKernel.Editor.ActualWriter
   , publishActualBlock
   , publishActualBlockWithPathAdmission
   , publishActualBlockFromResolvedJournal
+  , PlanJournalSourceAdmissionError(..)
+  , admitPlanJournalRootSource
+  , admitPlanJournalPath
+  , publishPlanJournalFromResolvedJournal
   , BudgetJournalSourceAdmissionError(..)
   , admitBudgetJournalPath
   , publishBudgetJournalAppend
@@ -43,7 +47,12 @@ import HKernel.Household.BudgetMovement
   , HouseholdBudgetMovementJournalError
   , admitHouseholdBudgetMovementJournal
   )
-import HKernel.Loader (LoadError, loadJournal)
+import HKernel.Loader (LoadError, loadJournal, loadJournalFromRootSource)
+import HKernel.Plan.Journal
+  ( PlanJournal
+  , PlanJournalError
+  , admitPlanJournalFromResolvedJournal
+  )
 
 -- | The complete source snapshot that the caller observed before preview.
 --
@@ -202,6 +211,41 @@ publishActualAppendFromResolvedJournal
   -> IO (Either (WriteError ActualSourceAdmissionError) ())
 publishActualAppendFromResolvedJournal =
   publishWithPathAdmission admitActualJournalPath
+
+data PlanJournalSourceAdmissionError
+  = PlanJournalSourceLoadError LoadError
+  | PlanJournalSourceAdmissionError PlanJournalError
+  deriving (Show)
+
+-- | Admit exact Plan root bytes together with the include graph resolved from
+-- the root path. This can validate an in-memory candidate before publication
+-- without replacing the current root file.
+admitPlanJournalRootSource
+  :: FilePath
+  -> Text
+  -> IO (Either (NonEmpty PlanJournalSourceAdmissionError) PlanJournal)
+admitPlanJournalRootSource sourceFile source = do
+  resolved <- loadJournalFromRootSource sourceFile source
+  pure $ case resolved of
+    Left loadError -> Left (pure (PlanJournalSourceLoadError loadError))
+    Right journal -> case admitPlanJournalFromResolvedJournal journal source of
+      Left errors -> Left (fmap PlanJournalSourceAdmissionError errors)
+      Right planJournal -> Right planJournal
+
+-- | Admit one Plan root using exactly the root bytes read for this observation.
+admitPlanJournalPath
+  :: FilePath
+  -> IO (Either (NonEmpty PlanJournalSourceAdmissionError) PlanJournal)
+admitPlanJournalPath sourceFile = do
+  source <- TextIO.readFile sourceFile
+  admitPlanJournalRootSource sourceFile source
+
+-- | Publish a Plan root and re-admit the complete include-resolved Plan graph.
+publishPlanJournalFromResolvedJournal
+  :: WriteIntent
+  -> IO (Either (WriteError PlanJournalSourceAdmissionError) ())
+publishPlanJournalFromResolvedJournal =
+  publishWithPathAdmission admitPlanJournalPath
 
 data BudgetJournalSourceAdmissionError
   = BudgetJournalSourceLoadError LoadError

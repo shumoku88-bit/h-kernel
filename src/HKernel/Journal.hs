@@ -18,6 +18,7 @@ module HKernel.Journal
   , Journal
   , journalFromTransactions
   , appendJournalTransaction
+  , replaceJournalTransactionAt
   , journalAccountRegistry
   , journalTransactions
   , JournalError(..)
@@ -99,6 +100,20 @@ appendJournalTransaction :: Transaction -> Journal -> Journal
 appendJournalTransaction transaction journal = journal
   { journalTransactions = journalTransactions journal ++ [transaction]
   }
+
+-- | Replace one transaction at an already established structural coordinate
+-- while retaining the declaration registry of a resolved Journal.
+--
+-- Domain owners such as Plan must derive the coordinate from their own durable
+-- identity before calling this operation. The Journal layer does not invent
+-- identity from transaction equality or source text.
+replaceJournalTransactionAt :: Int -> Transaction -> Journal -> Maybe Journal
+replaceJournalTransactionAt index transaction journal
+  | index < 0 = Nothing
+  | otherwise = case splitAt index (journalTransactions journal) of
+      (before, _ : after) -> Just journal
+        { journalTransactions = before ++ (transaction : after) }
+      _ -> Nothing
 
 data JournalError = JournalError
   { journalErrorLine   :: Int

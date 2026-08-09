@@ -6,6 +6,7 @@ module HKernel.Editor.PlanLifecycle
   , PlanAddError(..)
   , preparePlanAdd
   , preparePlanAddFromResolvedActualJournal
+  , preparePlanAddFromResolvedJournals
 
   , PositivePlanEditAmount
   , PlanEditAmountError(..)
@@ -16,6 +17,7 @@ module HKernel.Editor.PlanLifecycle
   , PlanEditError(..)
   , preparePlanEdit
   , preparePlanEditFromResolvedActualJournal
+  , preparePlanEditFromResolvedJournals
 
   , PositivePlanFinishAmount
   , PlanFinishAmountError(..)
@@ -61,11 +63,18 @@ import HKernel.Editor.TransactionBlock
   , TransactionBlockIntent(..)
   , prepareTransactionBlock
   )
-import HKernel.Journal (Journal, journalAccountRegistry)
+import HKernel.Journal
+  ( Journal
+  , appendJournalTransaction
+  , journalAccountRegistry
+  , replaceJournalTransactionAt
+  )
 import HKernel.Ledger
   ( Posting
   , Transaction
+  , TransactionError
   , mkPosting
+  , mkTransaction
   , postingAccount
   , postingAmount
   , transactionDate
@@ -92,7 +101,9 @@ import HKernel.Plan
 import HKernel.Plan.Completion (declaredCompletionPlanId)
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
+  , PlanJournal
   , PlanJournalError
+  , admitPlanJournalFromResolvedJournal
   , identifiedPlanId
   , identifiedPlanTransaction
   , parsePlanJournal
@@ -166,9 +177,11 @@ preparePlanAdd
   -> PlanAddIntent
   -> Either (NonEmpty PlanAddError) PlanAddPreview
 preparePlanAdd planSource actualSource intent = do
+  planJ <- first (pure . AddPlanJournalSyntaxError)
+    (parsePlanJournal planSource)
   actualJ <- first (pure . AddActualJournalSyntaxError)
     (parseActualJournal actualSource)
-  preparePlanAddFromJournals planSource actualJ intent
+  preparePlanAddFromJournals planJ planSource actualJ intent
 
 preparePlanAddFromResolvedActualJournal
   :: Journal
@@ -177,18 +190,37 @@ preparePlanAddFromResolvedActualJournal
   -> PlanAddIntent
   -> Either (NonEmpty PlanAddError) PlanAddPreview
 preparePlanAddFromResolvedActualJournal resolvedActual planSource actualSource intent = do
+  planJ <- first (pure . AddPlanJournalSyntaxError)
+    (parsePlanJournal planSource)
   actualJ <- first (pure . AddActualJournalSyntaxError)
     (admitActualJournalFromResolvedJournal resolvedActual actualSource)
-  preparePlanAddFromJournals planSource actualJ intent
+  preparePlanAddFromJournals planJ planSource actualJ intent
+
+-- | Prepare Plan Add from the same resolved Plan graph and root Plan text that
+-- canonical path admission observes. Plan-owned metadata is admitted by
+-- 'HKernel.Plan.Journal'; include-resolved accounting meaning stays in the
+-- supplied Journal.
+preparePlanAddFromResolvedJournals
+  :: Journal
+  -> Journal
+  -> Text
+  -> Text
+  -> PlanAddIntent
+  -> Either (NonEmpty PlanAddError) PlanAddPreview
+preparePlanAddFromResolvedJournals resolvedPlan resolvedActual planSource actualSource intent = do
+  planJ <- first (pure . AddPlanJournalSyntaxError)
+    (admitPlanJournalFromResolvedJournal resolvedPlan planSource)
+  actualJ <- first (pure . AddActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanAddFromJournals planJ planSource actualJ intent
 
 preparePlanAddFromJournals
-  :: Text
+  :: PlanJournal
+  -> Text
   -> ActualJournal
   -> PlanAddIntent
   -> Either (NonEmpty PlanAddError) PlanAddPreview
-preparePlanAddFromJournals planSource actualJ intent = do
-  planJ <- first (pure . AddPlanJournalSyntaxError) (parsePlanJournal planSource)
-
+preparePlanAddFromJournals planJ planSource actualJ intent = do
   let existingPlanIds = map identifiedPlanId (planJournalTransactions planJ)
                         ++ map declaredCompletionPlanId (actualJournalCompletionDeclarations actualJ)
 
@@ -218,13 +250,17 @@ preparePlanAddFromJournals planSource actualJ intent = do
       blockIntent)
 
   let block = preparedTransactionBlock prepared
+      candidateSource = appendSourceBlock planSource (SourceBlock block)
+      candidateResolvedPlan = appendJournalTransaction
+        (preparedTransaction prepared)
+        (planJournalValue planJ)
       preview = PlanAddPreview
         { addCandidateBlock = block
-        , addCandidateCompleteSource =
-            appendSourceBlock planSource (SourceBlock block)
+        , addCandidateCompleteSource = candidateSource
         }
 
-  _ <- first (pure . AddCandidateParseError) (parsePlanJournal (addCandidateCompleteSource preview))
+  _ <- first (pure . AddCandidateParseError)
+    (admitPlanJournalFromResolvedJournal candidateResolvedPlan candidateSource)
 
   pure preview
 
@@ -264,6 +300,7 @@ data PlanEditError
   = EditPlanJournalSyntaxError (NonEmpty PlanJournalError)
   | EditActualJournalSyntaxError (NonEmpty ActualJournalError)
   | EditCandidateParseError (NonEmpty PlanJournalError)
+  | EditCandidateTransactionError TransactionError
   | EditInvalidId PlanIdError
   | EditPlanNotFound PlanId
   | EditPlanAlreadyClosed PlanId
@@ -291,9 +328,11 @@ preparePlanEdit
   -> PlanEditIntent
   -> Either (NonEmpty PlanEditError) PlanEditPreview
 preparePlanEdit planSource actualSource intent = do
+  planJ <- first (pure . EditPlanJournalSyntaxError)
+    (parsePlanJournal planSource)
   actualJ <- first (pure . EditActualJournalSyntaxError)
     (parseActualJournal actualSource)
-  preparePlanEditFromJournals planSource actualJ intent
+  preparePlanEditFromJournals planJ planSource actualJ intent
 
 preparePlanEditFromResolvedActualJournal
   :: Journal
@@ -302,21 +341,39 @@ preparePlanEditFromResolvedActualJournal
   -> PlanEditIntent
   -> Either (NonEmpty PlanEditError) PlanEditPreview
 preparePlanEditFromResolvedActualJournal resolvedActual planSource actualSource intent = do
+  planJ <- first (pure . EditPlanJournalSyntaxError)
+    (parsePlanJournal planSource)
   actualJ <- first (pure . EditActualJournalSyntaxError)
     (admitActualJournalFromResolvedJournal resolvedActual actualSource)
-  preparePlanEditFromJournals planSource actualJ intent
+  preparePlanEditFromJournals planJ planSource actualJ intent
+
+-- | Prepare Plan Edit from include-resolved Plan and Actual Journals while root
+-- Plan text remains the owner of physical Plan metadata/source placement.
+preparePlanEditFromResolvedJournals
+  :: Journal
+  -> Journal
+  -> Text
+  -> Text
+  -> PlanEditIntent
+  -> Either (NonEmpty PlanEditError) PlanEditPreview
+preparePlanEditFromResolvedJournals resolvedPlan resolvedActual planSource actualSource intent = do
+  planJ <- first (pure . EditPlanJournalSyntaxError)
+    (admitPlanJournalFromResolvedJournal resolvedPlan planSource)
+  actualJ <- first (pure . EditActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanEditFromJournals planJ planSource actualJ intent
 
 preparePlanEditFromJournals
-  :: Text
+  :: PlanJournal
+  -> Text
   -> ActualJournal
   -> PlanEditIntent
   -> Either (NonEmpty PlanEditError) PlanEditPreview
-preparePlanEditFromJournals planSource actualJ intent = do
-  planJ <- first (pure . EditPlanJournalSyntaxError) (parsePlanJournal planSource)
+preparePlanEditFromJournals planJ planSource actualJ intent = do
   pId <- first (pure . EditInvalidId) (mkPlanId (editPlanId intent))
 
-  identified <- case filter ((== pId) . identifiedPlanId)
-      (planJournalTransactions planJ) of
+  (targetIndex, identified) <- case filter ((== pId) . identifiedPlanId . snd)
+      (zip [0..] (planJournalTransactions planJ)) of
     [] -> Left (pure (EditPlanNotFound pId))
     [value] -> Right value
     values -> Left (pure (EditSourcePlanIdCoordinateAmbiguous pId (length values)))
@@ -351,8 +408,19 @@ preparePlanEditFromJournals planSource actualJ intent = do
         , editCandidateCompleteSource = candidateSource
         }
 
+  candidateTransaction <- first (pure . EditCandidateTransactionError)
+    (mkTransaction
+      targetDate
+      (transactionDescription transaction)
+      updatedPostings)
+  candidateResolvedPlan <- case replaceJournalTransactionAt
+      targetIndex
+      candidateTransaction
+      (planJournalValue planJ) of
+    Just journal -> Right journal
+    Nothing -> Left (pure (EditCandidateSemanticMismatch pId))
   candidateJournal <- first (pure . EditCandidateParseError)
-    (parsePlanJournal candidateSource)
+    (admitPlanJournalFromResolvedJournal candidateResolvedPlan candidateSource)
   candidateTarget <- case filter ((== pId) . identifiedPlanId)
       (planJournalTransactions candidateJournal) of
     [value] -> Right (identifiedPlanTransaction value)

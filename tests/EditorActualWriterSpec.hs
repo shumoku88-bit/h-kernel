@@ -57,6 +57,9 @@ main = do
         , ("testResolvedActualStaleReject", testResolvedActualStaleReject)
         , ("testResolvedActualPostAdmissionRollback", testResolvedActualPostAdmissionRollback)
         , ("testResolvedAccountTypeMismatch", testResolvedAccountTypeMismatch)
+        , ("testResolvedPlanRootAdmission", testResolvedPlanRootAdmission)
+        , ("testResolvedPlanWrite", testResolvedPlanWrite)
+        , ("testResolvedPlanPostAdmissionRollback", testResolvedPlanPostAdmissionRollback)
         ]
   rs <- sequence [action | (_, action) <- results]
   let namedResults = zip (map fst results) rs
@@ -377,6 +380,46 @@ testResolvedAccountTypeMismatch =
         Left (ActualSourceLoadError _ NonEmpty.:| []) -> True
         _ -> False)
 
+testResolvedPlanRootAdmission :: IO Bool
+testResolvedPlanRootAdmission =
+  withResolvedFixture
+    "tests/fixtures/resolved-writer-plan-admission.journal"
+    resolvedPlanOld
+    (\path -> do
+      result <- admitPlanJournalRootSource path resolvedPlanNew
+      case result of
+        Right _ -> pure True
+        Left err -> print err >> pure False)
+
+testResolvedPlanWrite :: IO Bool
+testResolvedPlanWrite =
+  withResolvedFixture
+    "tests/fixtures/resolved-writer-plan-write.journal"
+    resolvedPlanOld
+    (\path -> do
+      result <- publishPlanJournalFromResolvedJournal
+        (WriteIntent path
+          (ExpectedSource resolvedPlanOld)
+          (CandidateSource resolvedPlanNew))
+      case result of
+        Right () -> (== resolvedPlanNew) <$> TIO.readFile path
+        Left err -> print err >> pure False)
+
+testResolvedPlanPostAdmissionRollback :: IO Bool
+testResolvedPlanPostAdmissionRollback =
+  withResolvedFixture
+    "tests/fixtures/resolved-writer-plan-rollback.journal"
+    resolvedPlanOld
+    (\path -> do
+      result <- publishPlanJournalFromResolvedJournal
+        (WriteIntent path
+          (ExpectedSource resolvedPlanOld)
+          (CandidateSource resolvedPlanInvalid))
+      current <- TIO.readFile path
+      pure $ case result of
+        Left (PostAdmissionFailed _ True) -> current == resolvedPlanOld
+        _ -> False)
+
 testActualSemanticAddParity :: IO Bool
 testActualSemanticAddParity =
   pure $
@@ -472,6 +515,35 @@ resolvedWriterTypeMismatch = Text.unlines
   , "  ; event-id: existing-event"
   , "  assets:bank  -100 JPY"
   , "  expenses:food  100 JPY"
+  ]
+
+resolvedPlanOld :: Text
+resolvedPlanOld = Text.unlines
+  [ "include resolved-writer-accounts.journal"
+  , ""
+  , "2026-08-04 planned"
+  , "  ; plan-id: plan-2026-08-04-planned"
+  , "  assets:bank  -100 JPY"
+  , "  expenses:food  100 JPY"
+  ]
+
+resolvedPlanBlock :: Text
+resolvedPlanBlock = Text.unlines
+  [ "2026-08-05 next planned"
+  , "  ; plan-id: plan-2026-08-05-next-planned"
+  , "  assets:bank  -50 JPY"
+  , "  expenses:food  50 JPY"
+  ]
+
+resolvedPlanNew :: Text
+resolvedPlanNew = resolvedPlanOld <> "\n" <> resolvedPlanBlock
+
+resolvedPlanInvalid :: Text
+resolvedPlanInvalid = resolvedPlanOld <> Text.unlines
+  [ ""
+  , "2026-08-05 missing plan id"
+  , "  assets:bank  -50 JPY"
+  , "  expenses:food  50 JPY"
   ]
 
 actualOld :: Text
