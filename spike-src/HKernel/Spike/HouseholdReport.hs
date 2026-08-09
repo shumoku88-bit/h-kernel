@@ -7,6 +7,8 @@
 -- compatibility sources; it does not write, migrate, or generate any source.
 module HKernel.Spike.HouseholdReport
   ( HouseholdSourceError(..)
+  , HouseholdCycleComparison(..)
+  , HouseholdCycleComparisonUnavailable(..)
   , HouseholdReportSurface(..)
   , PlannedTransactionHorizon(..)
   , ClassifiedPlannedTransaction(..)
@@ -35,7 +37,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time.Calendar (Day)
+import Data.Time.Calendar (Day, addDays, diffDays)
 import HKernel.Account
 import HKernel.Actual.Journal
   ( ActualJournal
@@ -161,12 +163,29 @@ data ClassifiedPlannedTransaction = ClassifiedPlannedTransaction
   , classifiedPlanValue   :: CommittedOutgoingPlan
   } deriving (Eq, Show)
 
+-- | Availability of the daily current-vs-previous cycle comparison.
+--
+-- The Household surface uses the old BQN daily-use meaning: compare the current
+-- cycle with the previous cycle at the same elapsed day count. If the previous
+-- cycle cannot supply that aligned observation, only this comparison is marked
+-- unavailable; the rest of the admitted Household surface remains usable.
+data HouseholdCycleComparison
+  = HouseholdCycleComparisonAvailable CycleComparison
+  | HouseholdCycleComparisonUnavailable HouseholdCycleComparisonUnavailable
+  deriving (Eq, Show)
+
+data HouseholdCycleComparisonUnavailable
+  = HouseholdCycleBaselineUnavailable CurrentCycleAccountsError
+  | HouseholdCycleComparisonRejected CycleComparisonError
+  deriving (Eq, Show)
+
 data HouseholdReportSurface = HouseholdReportSurface
-  { householdCycleAccounts       :: CycleAccounts
-  , householdPlannedTransactions :: [CommittedOutgoingPlan]
-  , householdIssues              :: [HouseholdIssue]
-  , householdEnvelopeBacking     :: EnvelopeBacking
-  , householdDailyTarget         :: DailyTarget
+  { householdCurrentCycleAccounts :: CurrentCycleAccounts
+  , householdCycleComparison      :: HouseholdCycleComparison
+  , householdPlannedTransactions  :: [CommittedOutgoingPlan]
+  , householdIssues               :: [HouseholdIssue]
+  , householdEnvelopeBacking      :: EnvelopeBacking
+  , householdDailyTarget          :: DailyTarget
   } deriving (Eq, Show)
 
 buildHouseholdReportSurfaceFromPlanJournal
@@ -232,6 +251,9 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
       cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
   (current, previous) <- resolveCycles observation journal cycleAccount
     (admittedIncomingAnchors admittedPlans)
+  currentCycle <- mapLeft
+    (NonEmpty.singleton . sourceError "cycle" 0 . tshow)
+    (currentCycleAccounts observation current journal)
   let outgoingPlans = admittedOutgoingPlans admittedPlans
   outgoingDeclarations <- completionDeclarationsForOutgoingPlans admittedPlans
     (actualJournalCompletionDeclarations actualJournal)
@@ -267,13 +289,38 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
         budget entitlement consumption remaining backingPlans
       target = deriveDailyTarget observation current journal
         dailyScope (map planFactValue currentOpenPlans)
+      comparison = alignedHouseholdCycleComparison
+        observation current previous journal currentCycle
   pure HouseholdReportSurface
-    { householdCycleAccounts = cycleAccounts current previous journal
+    { householdCurrentCycleAccounts = currentCycle
+    , householdCycleComparison = comparison
     , householdPlannedTransactions = map planFactValue openPlans
     , householdIssues = issues
     , householdEnvelopeBacking = backing
     , householdDailyTarget = target
     }
+
+-- | Compare the previous cycle at the same elapsed day count as the current
+-- observation. An unavailable aligned baseline is retained as typed evidence
+-- instead of clipping the window or failing unrelated Household reports.
+alignedHouseholdCycleComparison
+  :: Day
+  -> Period
+  -> Period
+  -> Journal
+  -> CurrentCycleAccounts
+  -> HouseholdCycleComparison
+alignedHouseholdCycleComparison observation current previous journal currentCycle =
+  case currentCycleAccounts baselineObservation previous journal of
+    Left err -> HouseholdCycleComparisonUnavailable
+      (HouseholdCycleBaselineUnavailable err)
+    Right baseline -> case cycleComparison AlignedElapsed currentCycle baseline of
+      Left err -> HouseholdCycleComparisonUnavailable
+        (HouseholdCycleComparisonRejected err)
+      Right comparison -> HouseholdCycleComparisonAvailable comparison
+  where
+    baselineObservation = addDays elapsedDays (periodStart previous)
+    elapsedDays = diffDays observation (periodStart current)
 
 -- | Classify already admitted open outgoing Plans without changing which Plans
 -- participate in current-cycle accounting calculations.
