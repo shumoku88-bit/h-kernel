@@ -41,6 +41,7 @@ import HKernel.Editor.BudgetMovementAppend
   , budgetJournalCandidateCompleteSource
   , prepareBudgetJournalMovementAppend
   )
+import qualified HKernel.Editor.IssueAppend as IssueAppend
 import HKernel.Household.Application
   ( HouseholdLoadError(..)
   , HouseholdState(..)
@@ -55,6 +56,7 @@ import HKernel.Household.Config
   ( householdConfigurationAccountPolicy
   , householdConfigurationDailyTargetAssets
   )
+import HKernel.HouseholdIssue (IssueStatus(..), mkIssueId)
 import HKernel.Money (mkAmount, mkCommodity, quantityFromInteger)
 
 main :: IO ()
@@ -64,6 +66,8 @@ main = do
   testActualWholeHouseholdRollback
   testBudgetWriteSnapshotOwnership
   testBudgetWholeHouseholdRollback
+  testIssueWriteSnapshotOwnership
+  testIssueWholeHouseholdRollback
   testRegistryDisagreementFailure
   testInMemoryAdmission
   testNativePlanMetadataFailsClosed
@@ -118,9 +122,6 @@ testActualWholeHouseholdRollback = do
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
     Right r -> pure r
 
-  -- Keep the Actual candidate valid while making another canonical source
-  -- inadmissible. Actual-only post-admission could accept this publication;
-  -- whole-Household post-admission must reject and restore the original Actual.
   TIO.writeFile reportPath "[reports.trial-balance\n"
   result <- publishActualBlockWithPathAdmission
     (\_ -> loadCanonicalHousehold root)
@@ -196,9 +197,6 @@ testBudgetWholeHouseholdRollback = do
     Left errs -> die ("Budget movement preparation failed: " <> show errs)
     Right value -> pure value
 
-  -- The Budget candidate itself remains valid. Corrupting another canonical
-  -- source after preview must disqualify publication as a Household success and
-  -- trigger the shared writer's checked rollback of just-published Budget bytes.
   TIO.writeFile reportPath "[reports.trial-balance\n"
   result <- publishWithPathAdmission
     (\_ -> loadCanonicalHousehold root)
@@ -215,6 +213,83 @@ testBudgetWholeHouseholdRollback = do
   restoredBudget <- TIO.readFile budgetPath
   unless (restoredBudget == existingSource)
     (die "Whole-Household admission failure did not restore budget.journal")
+
+  removeDirectoryRecursive dir
+
+testIssueWriteSnapshotOwnership :: IO ()
+testIssueWriteSnapshotOwnership = do
+  let dir = "/tmp/synthetic_household_issue_snapshot_spec"
+  resetDirectory dir
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+
+  root <- case mkHouseholdRoot dir of
+    Left err -> die ("mkHouseholdRoot failed: " <> show err)
+    Right r -> pure r
+
+  snapshotResult <- loadCanonicalHouseholdWriteSnapshot root
+  snapshot <- case snapshotResult of
+    Left errs -> die
+      ("loadCanonicalHouseholdWriteSnapshot failed:\n"
+        <> unlines (map show (NonEmpty.toList errs)))
+    Right value -> pure value
+
+  unless (householdWriteSnapshotIssuesSource snapshot == syntheticIssues)
+    (die "Household write snapshot did not retain exact issues.tsv bytes")
+
+  removeDirectoryRecursive dir
+
+testIssueWholeHouseholdRollback :: IO ()
+testIssueWholeHouseholdRollback = do
+  let dir = "/tmp/synthetic_household_issue_rollback_spec"
+      issuesPath = dir </> "issues.tsv"
+      reportPath = dir </> "report.toml"
+  resetDirectory dir
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+
+  root <- case mkHouseholdRoot dir of
+    Left err -> die ("mkHouseholdRoot failed: " <> show err)
+    Right r -> pure r
+
+  snapshotResult <- loadCanonicalHouseholdWriteSnapshot root
+  snapshot <- case snapshotResult of
+    Left errs -> die
+      ("loadCanonicalHouseholdWriteSnapshot failed:\n"
+        <> unlines (map show (NonEmpty.toList errs)))
+    Right value -> pure value
+
+  issueId <- case mkIssueId "ISS2" of
+    Left err -> die ("mkIssueId failed: " <> show err)
+    Right value -> pure value
+  let existingSource = householdWriteSnapshotIssuesSource snapshot
+      intent = IssueAppend.IssueAppendIntent
+        { IssueAppend.intentIssueId = issueId
+        , IssueAppend.intentStatus = Open
+        , IssueAppend.intentDate = fromGregorian 2026 7 20
+        , IssueAppend.intentCategory = "general"
+        , IssueAppend.intentTitle = "Rollback probe"
+        , IssueAppend.intentAmount = Nothing
+        , IssueAppend.intentDetails = "Issue publication probe"
+        }
+  preview <- case IssueAppend.prepareIssueAppend existingSource intent of
+    Left errs -> die ("Issue append preparation failed: " <> show errs)
+    Right value -> pure value
+
+  TIO.writeFile reportPath "[reports.trial-balance\n"
+  result <- publishWithPathAdmission
+    (\_ -> loadCanonicalHousehold root)
+    WriteIntent
+      { targetFilePath = issuesPath
+      , expectedOldBytes = ExpectedSource existingSource
+      , candidateNewBytes = CandidateSource
+          (IssueAppend.candidateCompleteSource preview)
+      }
+  case result of
+    Left (PostAdmissionFailed _ True) -> pure ()
+    other -> die ("Expected checked Issue Household rollback, got: " <> show other)
+
+  restoredIssues <- TIO.readFile issuesPath
+  unless (restoredIssues == existingSource)
+    (die "Whole-Household admission failure did not restore issues.tsv")
 
   removeDirectoryRecursive dir
 

@@ -138,15 +138,16 @@ data HouseholdState = HouseholdState
 -- by current coordinated Editor operations.
 --
 -- This is deliberately narrower than a repository/session abstraction. Actual,
--- Plan, and Budget are retained because current mutation paths need their exact
--- roots and typed Household meaning to share the same expected-old observation;
--- other source families should join only when a concrete operation needs the
--- same ownership.
+-- Plan, Budget, and Issues are retained because current mutation paths need
+-- their exact roots and typed Household meaning to share the same expected-old
+-- observation; other source families should join only when a concrete operation
+-- needs the same ownership.
 data HouseholdWriteSnapshot = HouseholdWriteSnapshot
   { householdWriteSnapshotState        :: HouseholdState
   , householdWriteSnapshotActualSource :: Text
   , householdWriteSnapshotPlanSource   :: Text
   , householdWriteSnapshotBudgetSource :: Text
+  , householdWriteSnapshotIssuesSource :: Text
   } deriving (Eq, Show)
 
 -- | Errors during canonical Household loading.
@@ -189,11 +190,12 @@ loadCanonicalHousehold root =
   fmap (fmap householdWriteSnapshotState)
     (loadCanonicalHouseholdWriteSnapshot root)
 
--- | Load one canonical Household observation and retain the exact
--- Actual/Plan/Budget root bytes from which its typed meaning was admitted.
+-- | Load one canonical Household observation and retain the exact mutable root
+-- bytes from which its typed meaning was admitted.
 --
 -- Journal roots are read once here, then resolved with
--- 'loadJournalFromRootSource'. This prevents the invalid temporal shape
+-- 'loadJournalFromRootSource'. Issues are likewise parsed from the exact bytes
+-- retained for publication. This prevents the invalid temporal shape
 -- @HouseholdState from observation A / expected root bytes from observation B@
 -- without restricting ordinary include graphs.
 loadCanonicalHouseholdWriteSnapshot
@@ -371,6 +373,7 @@ loadConfigsAndIssues root paths accountsRegistry actualRootText actualJournal pl
                                       , householdWriteSnapshotActualSource = actualRootText
                                       , householdWriteSnapshotPlanSource = planRootText
                                       , householdWriteSnapshotBudgetSource = budgetRootText
+                                      , householdWriteSnapshotIssuesSource = issuesText
                                       })
 
 readHouseholdSource
