@@ -31,7 +31,6 @@ import HKernel.Actual.Journal
   )
 import HKernel.Application.Config (HouseholdSourcePaths(..), mkHouseholdRoot)
 import HKernel.Budget.Policy (budgetPolicyEnvelopeDefinitions)
-import HKernel.Engine (mkDateRange)
 import qualified HKernel.Editor.TUI.Actual as Actual
 import qualified HKernel.Editor.TUI.Maintenance as Maintenance
 import HKernel.Editor.TUI.Model
@@ -70,18 +69,16 @@ import HKernel.Render
   , renderTrialBalanceWithPresentation
   )
 import HKernel.Report
-  ( balanceSheetAsOf
-  , dailyFlow
-  , defaultRecentCount
-  , monthlyAccounts
-  , profitAndLoss
-  , recentTransactions
-  , reportBook
-  , trialBalanceAsOf
+  ( ReportBook(..)
+  , reportBookWithPlan
   )
 import HKernel.Report.Config
   ( reportConfigurationPlan
   , reportConfigurationPresentation
+  )
+import HKernel.Report.Plan
+  ( ReportPlanError(..)
+  , resolveReportPlan
   )
 import HKernel.Spike.HouseholdReport.Render
   ( HouseholdReportSection(..)
@@ -303,34 +300,45 @@ reportChoices =
 
 renderSelectedReport :: AppContext -> Widget Name
 renderSelectedReport context = case contextSelectedReport context of
-  ReportTrialBalance ->
-    txt (renderTrialBalanceWithPresentation pres (trialBalanceAsOf day journal))
-  ReportBalanceSheet ->
-    txt (renderBalanceSheetWithPresentation pres (balanceSheetAsOf day journal))
-  ReportProfitAndLoss ->
-    txt (renderProfitAndLossWithPresentation pres (profitAndLoss (defaultDateRange day) journal))
-  ReportDailyFlow ->
-    txt (renderDailyFlowWithPresentation pres (dailyFlow (defaultDateRange day) journal))
-  ReportMonthlyAccounts ->
-    txt (renderMonthlyAccountsWithPresentation pres (monthlyAccounts (defaultDateRange day) journal))
-  ReportHousehold section -> case buildHouseholdReportSurfaceFromHousehold day state of
-    Left err -> txt ("Report surface error: " <> T.pack (show err))
-    Right surface -> txt (renderHouseholdReportSection pres section surface)
-  ReportRecentTransactions ->
-    txt (renderRecentTransactionsWithPresentation pres
-      (recentTransactions defaultRecentCount day journal))
-  ReportCombinedBook -> case buildHouseholdReportSurfaceFromHousehold day state of
+  ReportTrialBalance -> withReportBook $ \(ReportBook trial _ _ _ _ _) ->
+    txt (renderTrialBalanceWithPresentation pres trial)
+  ReportBalanceSheet -> withReportBook $ \(ReportBook _ balance _ _ _ _) ->
+    txt (renderBalanceSheetWithPresentation pres balance)
+  ReportProfitAndLoss -> withReportBook $ \(ReportBook _ _ profit _ _ _) ->
+    txt (renderProfitAndLossWithPresentation pres profit)
+  ReportDailyFlow -> withReportBook $ \(ReportBook _ _ _ daily _ _) ->
+    txt (renderDailyFlowWithPresentation pres daily)
+  ReportMonthlyAccounts -> withReportBook $ \(ReportBook _ _ _ _ _ monthly) ->
+    txt (renderMonthlyAccountsWithPresentation pres monthly)
+  ReportHousehold section -> renderHouseholdSection section
+  ReportRecentTransactions -> withReportBook $ \(ReportBook _ _ _ _ recent _) ->
+    txt (renderRecentTransactionsWithPresentation pres recent)
+  ReportCombinedBook -> withReportBook $ \book -> case householdSurface of
     Left err -> txt ("Report surface error: " <> T.pack (show err))
     Right surface -> txt
-      (renderReportBookWithHouseholdPresentation pres (reportBook (defaultDateRange day) journal) surface)
+      (renderReportBookWithHouseholdPresentation pres book surface)
   where
     state = contextHouseholdState context
     day = contextObservationDay context
     journal = actualJournalValue (householdStateActualJournal state)
-    pres = reportConfigurationPresentation (householdStateReportConfig state)
-    defaultDateRange value = case mkDateRange value value of
-      Right range -> range
-      Left _ -> error "unreachable date range"
+    reportConfig = householdStateReportConfig state
+    pres = reportConfigurationPresentation reportConfig
+    householdSurface = buildHouseholdReportSurfaceFromHousehold day state
+    resolvedReportBook = case resolveReportPlan
+        day journal (reportConfigurationPlan reportConfig) of
+      Left err -> Left err
+      Right plan -> Right (reportBookWithPlan plan journal)
+    withReportBook renderBook = case resolvedReportBook of
+      Left err -> txt ("Report plan error: " <> renderReportPlanError err)
+      Right book -> renderBook book
+    renderHouseholdSection section = case householdSurface of
+      Left err -> txt ("Report surface error: " <> T.pack (show err))
+      Right surface -> txt (renderHouseholdReportSection pres section surface)
+
+renderReportPlanError :: ReportPlanError -> Text
+renderReportPlanError (InvalidReportRange reportName start end) =
+  "invalid " <> reportName <> " range: start " <> T.pack (show start)
+    <> " is after end " <> T.pack (show end)
 
 drawSettingsView :: AppContext -> Widget Name
 drawSettingsView context =
