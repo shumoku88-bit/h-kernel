@@ -311,7 +311,7 @@ drawFlow state = case state of
             (padAll 1
               (renderPreviewResult renderCompletePreview result
                 <=> str " "
-                <=> str (previewControls result))))))
+                <=> str (completionPreviewControls result))))))
   Confirmation _ preview _ ->
     center
       (borderWithLabel (str "Confirm Complete & Advance")
@@ -337,7 +337,7 @@ drawFlow state = case state of
   AddPreview result _ ->
     simplePreview "Add Plan Preview"
       (renderPreviewResult (txt . addCandidateBlock) result)
-      (previewControls result)
+      (simplePreviewControls result)
   EditInput identified form ->
     center
       (borderWithLabel (str "Edit Selected Plan")
@@ -353,7 +353,7 @@ drawFlow state = case state of
   EditPreview _ result _ ->
     simplePreview "Edit Plan Preview"
       (renderPreviewResult renderEditPreview result)
-      (previewControls result)
+      (simplePreviewControls result)
   BudgetSyncWarning planId message ->
     center
       (borderWithLabel (str "Plan Completed / Budget Sync Pending")
@@ -790,10 +790,15 @@ renderCompletePreview preview =
         Just block -> txt block
     ]
 
-previewControls :: PreviewResult preview -> String
-previewControls result = case result of
-  PreviewReady _ -> "[Esc/B] Back | [Enter] Publish | [Q] Quit"
+completionPreviewControls :: PreviewResult PlanCompleteAdvancePreview -> String
+completionPreviewControls result = case result of
+  PreviewReady _ -> "[Esc/B] Back | [C] Continue to confirmation | [Q] Quit"
   PreviewRejected _ -> "[Esc/B] Back | [Q] Quit"
+
+simplePreviewControls :: PreviewResult preview -> String
+simplePreviewControls result = case result of
+  PreviewReady _ -> "[Enter] Publish | [Esc] Back | [Q] Quit"
+  PreviewRejected _ -> "[Esc] Back | [Q] Quit"
 
 renderPosting :: Posting -> Widget Name
 renderPosting posting =
