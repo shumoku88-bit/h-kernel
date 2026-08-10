@@ -14,9 +14,13 @@ module HKernel.Journal
   , journalMetadataLine
   , journalMetadataKey
   , journalMetadataValue
+  , JournalPostingSource
+  , journalPostingSourceLine
+  , journalPostingSourceQuantityColumns
   , JournalTransactionSource
   , journalTransactionSourceHeaderLine
   , journalTransactionSourceLastLine
+  , journalTransactionSourcePostings
   , journalTransactionSourcePostingLines
   , journalTransactionSourceMetadata
   , journalDocumentTransactionSources
@@ -106,18 +110,32 @@ data JournalMetadata = JournalMetadata
   , journalMetadataValue :: Text
   } deriving (Eq, Show)
 
+-- | Parser-owned physical evidence for one posting source line.
+--
+-- Quantity columns are zero-based and end-exclusive within the original source
+-- line. An elided posting amount has no quantity coordinate. Journal assigns no
+-- editing meaning to the coordinate; writers decide whether and how to use it.
+data JournalPostingSource = JournalPostingSource
+  { journalPostingSourceLine            :: Int
+  , journalPostingSourceQuantityColumns :: Maybe (Int, Int)
+  } deriving (Eq, Show)
+
 -- | Root-document evidence for one transaction block in source order.
 --
--- Header, final block line, and posting lines are parser-owned physical source
--- coordinates. Metadata remains generic and may contain keys that a particular
--- domain intentionally ignores. Downstream writers can therefore target the
--- canonical syntax already observed here without rediscovering block grammar.
+-- Header, final block line, posting syntax coordinates, and metadata are owned
+-- by the canonical parser. Domain modules assign meaning to metadata while
+-- source writers can target already-observed syntax without rediscovering it.
 data JournalTransactionSource = JournalTransactionSource
-  { journalTransactionSourceHeaderLine  :: Int
-  , journalTransactionSourceLastLine    :: Int
-  , journalTransactionSourcePostingLines :: [Int]
-  , journalTransactionSourceMetadata    :: [JournalMetadata]
+  { journalTransactionSourceHeaderLine :: Int
+  , journalTransactionSourceLastLine   :: Int
+  , journalTransactionSourcePostings   :: [JournalPostingSource]
+  , journalTransactionSourceMetadata   :: [JournalMetadata]
   } deriving (Eq, Show)
+
+-- | Compatibility projection for callers that need only posting line numbers.
+journalTransactionSourcePostingLines :: JournalTransactionSource -> [Int]
+journalTransactionSourcePostingLines =
+  map journalPostingSourceLine . journalTransactionSourcePostings
 
 data Journal = Journal
   { journalAccountRegistry :: AccountRegistry
@@ -182,7 +200,7 @@ data JournalErrorReason
   deriving (Eq, Show)
 
 type LocatedLine = (Int, Text)
-type LocatedPosting = (Int, Posting)
+type LocatedPosting = (JournalPostingSource, Posting)
 
 data Block = Block LocatedLine [LocatedLine]
 
@@ -197,9 +215,10 @@ data ParsedAccountMetadata
   | ParsedAccountDefaultCommodity Int Commodity
 
 data PartialPosting = PartialPosting
-  { partialLine    :: Int
-  , partialAccount :: Account
-  , partialAmount  :: Maybe Amount
+  { partialLine            :: Int
+  , partialAccount         :: Account
+  , partialAmount          :: Maybe Amount
+  , partialQuantityColumns :: Maybe (Int, Int)
   }
 
 journalDocumentTransactionSources :: JournalDocument -> [JournalTransactionSource]
@@ -207,7 +226,7 @@ journalDocumentTransactionSources (JournalDocument blocks) =
   [ JournalTransactionSource
       { journalTransactionSourceHeaderLine = headerLine
       , journalTransactionSourceLastLine = lastLine
-      , journalTransactionSourcePostingLines = map fst locatedPostings
+      , journalTransactionSourcePostings = map fst locatedPostings
       , journalTransactionSourceMetadata = metadata
       }
   | ParsedTransaction headerLine lastLine _ locatedPostings metadata <- blocks
@@ -478,7 +497,7 @@ validatePostings registry = concatMap validateBlock
     validateBlock (ParsedTransaction _ _ _ locatedPostings _) =
       concatMap validatePosting locatedPostings
 
-    validatePosting (lineNumber, posting) =
+    validatePosting (postingSource, posting) =
       case lookupAccountDeclaration account registry of
         Nothing ->
           [JournalError lineNumber (UndeclaredPostingAccount account)]
@@ -491,6 +510,7 @@ validatePostings registry = concatMap validateBlock
                   ]
             _ -> []
       where
+        lineNumber = journalPostingSourceLine postingSource
         account = postingAccount posting
         actual = amountCommodity (postingAmount posting)
 
@@ -513,12 +533,17 @@ parseTransactionBlock (Block header bodyLines) = do
             Left err -> Left (at header (InvalidTransaction err) :| [])
             Right transaction -> Right
               ( transaction
-              , zip (map partialLine partials) (NonEmpty.toList postings)
+              , zip (map partialPostingSource partials) (NonEmpty.toList postings)
               , metadata
               )
   where
     postingLines = filter (not . isComment . snd) bodyLines
     metadata = mapMaybe parseJournalMetadata bodyLines
+
+    partialPostingSource partial = JournalPostingSource
+      { journalPostingSourceLine = partialLine partial
+      , journalPostingSourceQuantityColumns = partialQuantityColumns partial
+      }
 
 parseJournalMetadata :: LocatedLine -> Maybe JournalMetadata
 parseJournalMetadata (lineNumber, line)
@@ -555,13 +580,23 @@ parseHeader located@(_, line) =
 
 parsePosting :: LocatedLine -> Either JournalError PartialPosting
 parsePosting located@(lineNumber, originalLine) = do
-  let body = T.stripEnd (T.takeWhile (/= ';') (T.dropWhile isSpace originalLine))
-      (accountText, amountText) = splitPosting body
+  let sourceBody = T.dropWhile isSpace originalLine
+      leadingColumns = T.length originalLine - T.length sourceBody
+      body = T.stripEnd (T.takeWhile (/= ';') sourceBody)
+      (accountText, amountSource) = splitPostingSource body
+      amountText = snd <$> amountSource
+      quantityColumns = do
+        (amountStart, amountBody) <- amountSource
+        quantityText <- case T.words amountBody of
+          value : _ -> Just value
+          [] -> Nothing
+        let start = leadingColumns + amountStart
+        pure (start, start + T.length quantityText)
   account <- case mkAccount accountText of
     Left err -> Left (at located (InvalidPostingAccount err))
     Right value -> Right value
   amount <- traverse (parseAmount located) amountText
-  Right (PartialPosting lineNumber account amount)
+  Right (PartialPosting lineNumber account amount quantityColumns)
 
 parseAmount :: LocatedLine -> Text -> Either JournalError Amount
 parseAmount located amountText = case T.words amountText of
@@ -590,10 +625,10 @@ completePostings header partials =
     _ -> Left (at header (MultipleElidedAmounts (map partialLine missing)) :| [])
   where
     missing = filter (maybe True (const False) . partialAmount) partials
-    explicitAmounts = [amount | PartialPosting _ _ (Just amount) <- partials]
+    explicitAmounts = [amount | PartialPosting _ _ (Just amount) _ <- partials]
     explicitBalance = balanceFromAmounts explicitAmounts
 
-    explicitPosting (PartialPosting _ account amount) =
+    explicitPosting (PartialPosting _ account amount _) =
       mkPosting account <$> amount
 
     complete omitted inferred partial
@@ -610,13 +645,16 @@ completePostings header partials =
       Just values -> Right values
       Nothing -> Left (at header TransactionHasNoPostings :| [])
 
-splitPosting :: Text -> (Text, Maybe Text)
-splitPosting body = case separatorIndex body of
+splitPostingSource :: Text -> (Text, Maybe (Int, Text))
+splitPostingSource body = case separatorIndex body of
   Nothing -> (body, Nothing)
   Just index ->
     let account = T.take index body
-        remainder = T.dropWhile isSpace (T.drop index body)
-    in (account, if T.null remainder then Nothing else Just remainder)
+        afterSeparator = T.drop index body
+        remainder = T.dropWhile isSpace afterSeparator
+        skippedColumns = T.length afterSeparator - T.length remainder
+        amountStart = index + skippedColumns
+    in (account, if T.null remainder then Nothing else Just (amountStart, remainder))
 
 -- A tab or two consecutive spaces separate an account name from its amount.
 -- A single ordinary space remains legal inside an account name.
