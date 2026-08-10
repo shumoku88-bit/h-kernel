@@ -40,7 +40,7 @@ data ReportConfiguration = ReportConfiguration
 
 data RawConfig = RawConfig (Maybe RawPresentation) RawReports
 
-data RawPresentation = RawPresentation (Maybe RawHierarchy) RawAmounts
+data RawPresentation = RawPresentation (Maybe RawHierarchy) (Maybe RawAmounts)
 
 data RawHierarchy = RawHierarchy (Maybe Text) (Maybe Text)
 
@@ -70,7 +70,7 @@ instance FromValue RawPresentation where
   fromValue = parseTableFromValue
     (RawPresentation
       <$> optKey "hierarchy"
-      <*> reqKey "amounts")
+      <*> optKey "amounts")
 
 instance FromValue RawHierarchy where
   fromValue = parseTableFromValue
@@ -274,7 +274,8 @@ rawConfigToConfiguration (RawConfig rawPresentation reports) = case reports of
 
 parseNegativeStyle :: Maybe RawPresentation -> Either [Text] NegativeStyle
 parseNegativeStyle Nothing = Right AccountingParentheses
-parseNegativeStyle (Just (RawPresentation _ (RawAmounts value _ _))) = case value of
+parseNegativeStyle (Just (RawPresentation _ Nothing)) = Right AccountingParentheses
+parseNegativeStyle (Just (RawPresentation _ (Just (RawAmounts value _ _)))) = case value of
   "parentheses" -> Right AccountingParentheses
   "minus" -> Right LeadingMinus
   _ -> Left
@@ -300,7 +301,8 @@ parseAmountColor
   -> (RawAmounts -> Maybe Text)
   -> Either [Text] PresentationColor
 parseAmountColor _ fallback Nothing _ = Right fallback
-parseAmountColor path fallback (Just (RawPresentation _ amounts)) select =
+parseAmountColor _ fallback (Just (RawPresentation _ Nothing)) _ = Right fallback
+parseAmountColor path fallback (Just (RawPresentation _ (Just amounts))) select =
   parseOptionalPresentationColor path fallback (select amounts)
 
 hierarchyHeadingColor :: RawHierarchy -> Maybe Text
