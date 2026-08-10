@@ -84,6 +84,7 @@ import HKernel.Editor.TUI.Model
   )
 import HKernel.Household.Application
   ( HouseholdState(..)
+  , householdStateBudgetMovements
   , loadCanonicalHousehold
   )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
