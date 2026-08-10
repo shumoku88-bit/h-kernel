@@ -26,14 +26,15 @@ import HKernel.Account
 import HKernel.Editor.ActualAppend (ActualEditIntent(..))
 import HKernel.Editor.ActualReverse (ActualReverseIntent(..))
 import HKernel.Editor.IssueAppend (IssueAppendIntent(..))
+import HKernel.Editor.PlanCompleteAdvance
+  ( PositivePlanMagnitude
+  , mkPositivePlanMagnitude
+  )
 import HKernel.Editor.PlanLifecycle
   ( PlanAddIntent(..)
   , PlanEditIntent(..)
-  , PlanFinishIntent(..)
   , PositivePlanEditAmount
-  , PositivePlanFinishAmount
   , mkPositivePlanEditAmount
-  , mkPositivePlanFinishAmount
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
@@ -61,7 +62,7 @@ data EditorCommand
   | IssueCmd FilePath IssueAppendIntent
   | PlanAddCmd FilePath FilePath PlanAddIntent
   | PlanEditCmd FilePath FilePath PlanEditIntent
-  | PlanFinishCmd FilePath FilePath PlanFinishIntent
+  | PlanFinishCmd FilePath FilePath Text Day (Maybe PositivePlanMagnitude)
   deriving (Eq, Show)
 
 data CliError
@@ -316,7 +317,7 @@ parsePlanEditOptions _ _ = Left CliPlanEditOptionInvalid
 data PlanFinishFields = PlanFinishFields
   { planFinishIdField     :: Maybe Text
   , planFinishDateField   :: Maybe Day
-  , planFinishAmountField :: Maybe PositivePlanFinishAmount
+  , planFinishAmountField :: Maybe PositivePlanMagnitude
   }
 
 emptyPlanFinishFields :: PlanFinishFields
@@ -331,8 +332,12 @@ parsePlanFinish (planFile:actualFile:optionArgs) = do
   actualDate <- maybe (Left CliPlanFinishDateRequired) Right
     (planFinishDateField fields)
   pure
-    (PlanFinishCmd planFile actualFile
-      (PlanFinishIntent planId actualDate (planFinishAmountField fields)))
+    (PlanFinishCmd
+      planFile
+      actualFile
+      planId
+      actualDate
+      (planFinishAmountField fields))
 parsePlanFinish _ = Left CliUsage
 
 parsePlanFinishOptions
@@ -352,7 +357,7 @@ parsePlanFinishOptions fields ("--actual-date":dateText:rest) = do
 parsePlanFinishOptions fields ("--actual-amount":quantityText:rest) = do
   quantity <- parseQuantityValue quantityText
   positiveAmount <- mapDomainError CliPlanFinishAmountMustBePositive
-    (mkPositivePlanFinishAmount quantity)
+    (mkPositivePlanMagnitude quantity)
   parsePlanFinishOptions fields
     { planFinishAmountField = Just positiveAmount }
     rest

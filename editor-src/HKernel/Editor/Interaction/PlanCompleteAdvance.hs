@@ -1,14 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Delivery-neutral input state for the everyday Plan complete/advance flow.
+-- | Delivery-neutral interaction input for Plan Complete & Advance.
+--
+-- The TUI owns focus and event routing; this module owns only the editable
+-- coordinates and their admission into the typed operation intent.
 module HKernel.Editor.Interaction.PlanCompleteAdvance
   ( PlanCompleteAdvanceInput(..)
   , PlanCompleteAdvanceInputError(..)
   , initialPlanCompleteAdvanceInput
-  , setPlanActualDate
   , parsePlanCompleteAdvanceInput
   ) where
 
+import Data.Bifunctor (first)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -17,10 +20,8 @@ import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import HKernel.Editor.PlanCompleteAdvance
   ( PlanAdvanceProposal(..)
   , PlanCompleteAdvanceIntent(..)
-  )
-import HKernel.Editor.PlanLifecycle
-  ( PositivePlanFinishAmount
-  , mkPositivePlanFinishAmount
+  , PositivePlanMagnitude
+  , mkPositivePlanMagnitude
   )
 import HKernel.Money (parseQuantity)
 
@@ -32,11 +33,10 @@ data PlanCompleteAdvanceInput = PlanCompleteAdvanceInput
   } deriving (Eq, Show)
 
 data PlanCompleteAdvanceInputError
-  = InvalidPlanActualDate
-  | InvalidPlanActualAmount
-  | InvalidPlanSuccessorDate
-  | InvalidPlanSuccessorAmount
-  | PlanSuccessorAmountWithoutDate
+  = PlanCompleteAdvanceInvalidActualDate
+  | PlanCompleteAdvanceInvalidActualAmount
+  | PlanCompleteAdvanceInvalidSuccessorDate
+  | PlanCompleteAdvanceInvalidSuccessorAmount
   deriving (Eq, Show)
 
 initialPlanCompleteAdvanceInput
@@ -51,56 +51,51 @@ initialPlanCompleteAdvanceInput today proposal = PlanCompleteAdvanceInput
   , planSuccessorAmountText = ""
   }
 
-setPlanActualDate
-  :: Day
-  -> PlanCompleteAdvanceInput
-  -> PlanCompleteAdvanceInput
-setPlanActualDate day input =
-  input { planActualDateText = T.pack (show day) }
-
 parsePlanCompleteAdvanceInput
   :: PlanAdvanceProposal
   -> PlanCompleteAdvanceInput
   -> Either PlanCompleteAdvanceInputError PlanCompleteAdvanceIntent
 parsePlanCompleteAdvanceInput proposal input = do
-  actualDate <- parseDay InvalidPlanActualDate (planActualDateText input)
-  actualAmount <- parseOptionalAmount InvalidPlanActualAmount
+  actualDate <- parseDate PlanCompleteAdvanceInvalidActualDate
+    (planActualDateText input)
+  actualAmount <- parseOptionalAmount PlanCompleteAdvanceInvalidActualAmount
     (planActualAmountText input)
-  successorDate <- parseOptionalDay (planSuccessorDateText input)
-  successorAmount <- parseOptionalAmount InvalidPlanSuccessorAmount
+  successorDate <- parseOptionalDate PlanCompleteAdvanceInvalidSuccessorDate
+    (planSuccessorDateText input)
+  successorAmount <- parseOptionalAmount PlanCompleteAdvanceInvalidSuccessorAmount
     (planSuccessorAmountText input)
-  case (successorDate, successorAmount) of
-    (Nothing, Just _) -> Left PlanSuccessorAmountWithoutDate
-    _ -> Right PlanCompleteAdvanceIntent
-      { completeAdvancePlanId = proposalPlanId proposal
-      , completeAdvanceActualDate = actualDate
-      , completeAdvanceActualAmount = actualAmount
-      , completeAdvanceSuccessorDate = successorDate
-      , completeAdvanceSuccessorAmount = successorAmount
-      }
+  pure PlanCompleteAdvanceIntent
+    { completeAdvancePlanId = proposalPlanId proposal
+    , completeAdvanceActualDate = actualDate
+    , completeAdvanceActualAmount = actualAmount
+    , completeAdvanceSuccessorDate = successorDate
+    , completeAdvanceSuccessorAmount = successorAmount
+    }
 
-parseOptionalDay :: Text -> Either PlanCompleteAdvanceInputError (Maybe Day)
-parseOptionalDay value
-  | T.null (T.strip value) = Right Nothing
-  | otherwise = Just <$> parseDay InvalidPlanSuccessorDate value
+parseDate :: PlanCompleteAdvanceInputError -> Text -> Either PlanCompleteAdvanceInputError Day
+parseDate errorValue value =
+  maybe (Left errorValue) Right
+    (parseTimeM True defaultTimeLocale "%Y-%m-%d" (T.unpack (T.strip value)))
 
-parseDay
+parseOptionalDate
   :: PlanCompleteAdvanceInputError
   -> Text
-  -> Either PlanCompleteAdvanceInputError Day
-parseDay errorValue value =
-  case parseTimeM True defaultTimeLocale "%Y-%m-%d" (T.unpack (T.strip value)) of
-    Just day -> Right day
-    Nothing -> Left errorValue
+  -> Either PlanCompleteAdvanceInputError (Maybe Day)
+parseOptionalDate errorValue value
+  | T.null stripped = Right Nothing
+  | otherwise = Just <$> parseDate errorValue stripped
+  where
+    stripped = T.strip value
 
 parseOptionalAmount
   :: PlanCompleteAdvanceInputError
   -> Text
-  -> Either PlanCompleteAdvanceInputError (Maybe PositivePlanFinishAmount)
+  -> Either PlanCompleteAdvanceInputError (Maybe PositivePlanMagnitude)
 parseOptionalAmount errorValue value
-  | T.null (T.strip value) = Right Nothing
-  | otherwise = case parseQuantity (T.strip value) of
-      Left _ -> Left errorValue
-      Right quantity -> case mkPositivePlanFinishAmount quantity of
-        Left _ -> Left errorValue
-        Right amount -> Right (Just amount)
+  | T.null stripped = Right Nothing
+  | otherwise = do
+      quantity <- first (const errorValue) (parseQuantity stripped)
+      positive <- first (const errorValue) (mkPositivePlanMagnitude quantity)
+      pure (Just positive)
+  where
+    stripped = T.strip value

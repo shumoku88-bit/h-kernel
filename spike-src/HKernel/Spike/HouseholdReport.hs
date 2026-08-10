@@ -103,7 +103,6 @@ import HKernel.Plan.Completion
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , PlanJournal
-  , ProjectedCommittedOutgoingPlan
   , classifiedIncomingPlanTransactions
   , classifyPlanJournal
   , identifiedPlanId
@@ -138,15 +137,9 @@ data IncomingCycleAnchor = IncomingCycleAnchor
   , incomingAnchorSource :: Account
   } deriving (Eq, Show)
 
-data PlanFact = PlanFact
-  { planFactValue :: CommittedOutgoingPlan
-  , planFactFrom  :: Account
-  , planFactTo    :: Account
-  } deriving (Eq, Show)
-
 data AdmittedPlans = AdmittedPlans
   { admittedIncomingAnchors :: [IncomingCycleAnchor]
-  , admittedOutgoingPlans   :: [PlanFact]
+  , admittedOutgoingPlans   :: [CommittedOutgoingPlan]
   } deriving (Eq, Show)
 
 -- | Display relation of an open outgoing Plan to the resolved current cycle.
@@ -260,7 +253,7 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
   openPlanValues <- mapLeft
     (fmap (sourceError "actual.journal" 0 . tshow))
     (resolveOpenCommittedOutgoingPlans
-      (map planFactValue outgoingPlans)
+      outgoingPlans
       (actualJournalIdentifiedTransactions actualJournal)
       outgoingDeclarations)
   budgetObservation <- mapLeft
@@ -272,15 +265,14 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
       entitlement = householdBudgetEntitlement budgetObservation
       remaining = householdBudgetRemaining budgetObservation
       openPlanIds = Set.fromList (map committedPlanId openPlanValues)
-      openPlans = openEligiblePlans
-        (journalAccountRegistry journal) openPlanIds outgoingPlans
+      openPlans = openOutgoingPlans openPlanIds outgoingPlans
       currentOpenPlans = filter
-        (periodContains current . committedPlanDate . planFactValue)
+        (periodContains current . committedPlanDate)
         openPlans
       backingPlans =
         [ HouseholdBackingPlan
-            { householdBackingPlanDestination = planFactTo plan
-            , householdBackingPlanAmount = committedPlanAmount (planFactValue plan)
+            { householdBackingPlanDestination = committedPlanDestination plan
+            , householdBackingPlanAmount = committedPlanAmount plan
             }
         | plan <- currentOpenPlans
         ]
@@ -288,13 +280,13 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
         observation current journal admittedPolicy
         budget entitlement consumption remaining backingPlans
       target = deriveDailyTarget observation current journal
-        dailyScope (map planFactValue currentOpenPlans)
+        dailyScope currentOpenPlans
       comparison = alignedHouseholdCycleComparison
         observation current previous journal currentCycle
   pure HouseholdReportSurface
     { householdCurrentCycleAccounts = currentCycle
     , householdCycleComparison = comparison
-    , householdPlannedTransactions = map planFactValue openPlans
+    , householdPlannedTransactions = openPlans
     , householdIssues = issues
     , householdEnvelopeBacking = backing
     , householdDailyTarget = target
@@ -375,13 +367,13 @@ admitPlanJournal planJournal = do
     (projectCommittedOutgoingPlans planJournal classified)
   pure AdmittedPlans
     { admittedIncomingAnchors = incoming
-    , admittedOutgoingPlans = map projectPlanFact projected
+    , admittedOutgoingPlans = map projectedCommittedOutgoingPlan projected
     }
   where
     registry = journalAccountRegistry (planJournalValue planJournal)
 
 admittedOutgoingPlanValues :: AdmittedPlans -> [CommittedOutgoingPlan]
-admittedOutgoingPlanValues = map planFactValue . admittedOutgoingPlans
+admittedOutgoingPlanValues = admittedOutgoingPlans
 
 projectIncomingCycleAnchor
   :: AccountRegistry
@@ -405,14 +397,10 @@ projectIncomingCycleAnchor registry identified =
       , amountQuantity (postingAmount posting) < zeroQuantity
       ]
 
-projectPlanFact :: ProjectedCommittedOutgoingPlan -> PlanFact
-projectPlanFact projected = PlanFact
-  { planFactValue = plan
-  , planFactFrom = declaredAccount (declaredPaymentSource direction)
-  , planFactTo = declaredAccount (declaredPaymentDestination direction)
-  }
+committedPlanDestination :: CommittedOutgoingPlan -> Account
+committedPlanDestination plan =
+  declaredAccount (declaredPaymentDestination direction)
   where
-    plan = projectedCommittedOutgoingPlan projected
     direction =
       declaredOutgoingPaymentDirection (committedPlanDirection plan)
 
@@ -432,7 +420,7 @@ completionDeclarationsForOutgoingPlans plans declarations =
     incomingPlanIds = Set.fromList
       (map incomingAnchorId (admittedIncomingAnchors plans))
     outgoingPlanIds = Set.fromList
-      (map (committedPlanId . planFactValue) (admittedOutgoingPlans plans))
+      (map committedPlanId (admittedOutgoingPlans plans))
     knownPlanIds = Set.union incomingPlanIds outgoingPlanIds
     unknownErrors =
       [ sourceError "actual.journal" 0
@@ -534,20 +522,13 @@ resolveCycles observation journal incomeAccount anchors =
       (NonEmpty.singleton . sourceError "household.toml" 0 . tshow)
       (mkPeriod start end)
 
-openEligiblePlans
-  :: AccountRegistry
-  -> Set.Set PlanId
-  -> [PlanFact]
-  -> [PlanFact]
-openEligiblePlans registry openPlanIds =
-  sortOn (committedPlanDate . planFactValue)
-    . filter eligible
-  where
-    eligible plan =
-      Set.member (committedPlanId (planFactValue plan)) openPlanIds
-        && accountTypeFor (planFactFrom plan) registry == Just Asset
-        && accountTypeFor (planFactTo plan) registry
-          `elem` [Just Expense, Just Liability]
+openOutgoingPlans
+  :: Set.Set PlanId
+  -> [CommittedOutgoingPlan]
+  -> [CommittedOutgoingPlan]
+openOutgoingPlans openPlanIds =
+  sortOn committedPlanDate
+    . filter (\plan -> Set.member (committedPlanId plan) openPlanIds)
 
 mapLeft :: (left -> right) -> Either left value -> Either right value
 mapLeft f result = case result of
