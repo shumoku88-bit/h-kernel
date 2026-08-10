@@ -237,7 +237,7 @@ executeCommand commitMode command = case command of
           (PlanLifecycle.editCandidateCompleteSource preview)
           commitMode
 
-  PlanFinishCmd planFile actualFile intent -> do
+  PlanFinishCmd planFile actualFile planIdText actualDate actualAmount -> do
     planSource <- TIO.readFile planFile
     actualSource <- TIO.readFile actualFile
     resolvedPlan <- loadResolvedPlanJournal planFile planSource
@@ -248,15 +248,13 @@ executeCommand commitMode command = case command of
     actualJournal <- case admitActualJournalFromResolvedJournal resolvedActual actualSource of
       Left errors -> validationFailed errors
       Right value -> pure value
-    planId <- case mkPlanId (PlanLifecycle.finishPlanId intent) of
+    planId <- case mkPlanId planIdText of
       Left planIdError -> validationFailed (pure planIdError)
       Right value -> pure value
     let completeIntent = PlanCompleteAdvance.PlanCompleteAdvanceIntent
           { PlanCompleteAdvance.completeAdvancePlanId = planId
-          , PlanCompleteAdvance.completeAdvanceActualDate =
-              PlanLifecycle.finishActualDate intent
-          , PlanCompleteAdvance.completeAdvanceActualAmount =
-              PlanLifecycle.finishActualAmount intent
+          , PlanCompleteAdvance.completeAdvanceActualDate = actualDate
+          , PlanCompleteAdvance.completeAdvanceActualAmount = actualAmount
           , PlanCompleteAdvance.completeAdvanceSuccessorDate = Nothing
           , PlanCompleteAdvance.completeAdvanceSuccessorAmount = Nothing
           }
