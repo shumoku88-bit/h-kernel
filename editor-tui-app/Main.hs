@@ -25,10 +25,7 @@ import System.FilePath (takeDirectory)
 
 import HKernel.Account (accountName)
 import qualified HKernel.Account
-import HKernel.Actual.Journal
-  ( actualJournalCompletionDeclarations
-  , actualJournalValue
-  )
+import HKernel.Actual.Journal (actualJournalCompletionDeclarations)
 import HKernel.Application.Config (HouseholdSourcePaths(..), mkHouseholdRoot)
 import HKernel.Budget.Policy (budgetPolicyEnvelopeDefinitions)
 import qualified HKernel.Editor.TUI.Actual as Actual
@@ -46,7 +43,6 @@ import qualified HKernel.Editor.TUI.Plan as Plan
 import HKernel.Household.Application
   ( HouseholdState(..)
   , HouseholdWriteSnapshot(..)
-  , buildHouseholdReportSurfaceFromHousehold
   , loadCanonicalHouseholdWriteSnapshot
   )
 import HKernel.Household.Policy
@@ -68,18 +64,12 @@ import HKernel.Render
   , renderRecentTransactionsWithPresentation
   , renderTrialBalanceWithPresentation
   )
-import HKernel.Report
-  ( ReportBook(..)
-  , reportBookWithPlan
-  )
+import HKernel.Report (ReportBook(..))
 import HKernel.Report.Config
   ( reportConfigurationPlan
   , reportConfigurationPresentation
   )
-import HKernel.Report.Plan
-  ( ReportPlanError(..)
-  , resolveReportPlan
-  )
+import HKernel.Report.Plan (ReportPlanError(..))
 import HKernel.Spike.HouseholdReport.Render
   ( HouseholdReportSection(..)
   , IssueVisibility(..)
@@ -319,15 +309,10 @@ renderSelectedReport context = case contextSelectedReport context of
       (renderReportBookWithHouseholdPresentation pres book surface)
   where
     state = contextHouseholdState context
-    day = contextObservationDay context
-    journal = actualJournalValue (householdStateActualJournal state)
     reportConfig = householdStateReportConfig state
     pres = reportConfigurationPresentation reportConfig
-    householdSurface = buildHouseholdReportSurfaceFromHousehold day state
-    resolvedReportBook = case resolveReportPlan
-        day journal (reportConfigurationPlan reportConfig) of
-      Left err -> Left err
-      Right plan -> Right (reportBookWithPlan plan journal)
+    householdSurface = contextHouseholdReportSurface context
+    resolvedReportBook = contextResolvedReportBook context
     withReportBook renderBook = case resolvedReportBook of
       Left err -> txt ("Report plan error: " <> renderReportPlanError err)
       Right book -> renderBook book
