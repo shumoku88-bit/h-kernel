@@ -29,7 +29,6 @@ import HKernel.Editor.IssueAppend (IssueAppendIntent(..))
 import HKernel.Editor.PlanLifecycle
   ( PlanAddIntent(..)
   , PlanEditIntent(..)
-  , PlanFinishIntent(..)
   , PositivePlanEditAmount
   , PositivePlanFinishAmount
   , mkPositivePlanEditAmount
@@ -61,7 +60,7 @@ data EditorCommand
   | IssueCmd FilePath IssueAppendIntent
   | PlanAddCmd FilePath FilePath PlanAddIntent
   | PlanEditCmd FilePath FilePath PlanEditIntent
-  | PlanFinishCmd FilePath FilePath PlanFinishIntent
+  | PlanFinishCmd FilePath FilePath Text Day (Maybe PositivePlanFinishAmount)
   deriving (Eq, Show)
 
 data CliError
@@ -331,8 +330,12 @@ parsePlanFinish (planFile:actualFile:optionArgs) = do
   actualDate <- maybe (Left CliPlanFinishDateRequired) Right
     (planFinishDateField fields)
   pure
-    (PlanFinishCmd planFile actualFile
-      (PlanFinishIntent planId actualDate (planFinishAmountField fields)))
+    (PlanFinishCmd
+      planFile
+      actualFile
+      planId
+      actualDate
+      (planFinishAmountField fields))
 parsePlanFinish _ = Left CliUsage
 
 parsePlanFinishOptions
