@@ -4,15 +4,16 @@
 -- projection from a validated Journal source.
 --
 -- The canonical Journal parser owns declarations, postings, exact amounts,
--- balancing, and transaction validation. This module adds the Plan-specific
--- boundaries: every Plan transaction carries exactly one unique @plan-id@,
--- then its complete Posting shape may be classified from signed Account roles.
+-- balancing, transaction validation, and lexical transaction metadata. This
+-- module adds the Plan-specific boundaries: every Plan transaction carries
+-- exactly one unique @plan-id@, then its complete Posting shape may be
+-- classified from signed Account roles.
 --
--- The whole validated 'Transaction' is retained throughout. Neither admission
--- nor classification flattens a multi-posting Plan into one source, one
--- destination, or one amount. The current report projection accepts only the
--- binary subset and retains the original whole transaction beside the narrower
--- 'CommittedOutgoingPlan'.
+-- The whole validated 'Transaction' and its parser-produced source metadata are
+-- retained throughout. Neither admission nor classification flattens a
+-- multi-posting Plan into one source, one destination, or one amount. The
+-- current report projection accepts only the binary subset and retains the
+-- original whole transaction beside the narrower 'CommittedOutgoingPlan'.
 module HKernel.Plan.Journal
   ( PlanJournal
   , planJournalValue
@@ -20,6 +21,7 @@ module HKernel.Plan.Journal
   , IdentifiedPlanTransaction
   , identifiedPlanId
   , identifiedPlanTransaction
+  , identifiedPlanSourceMetadata
   , PlanJournalError(..)
   , parsePlanJournal
   , admitPlanJournalFromResolvedJournal
@@ -51,6 +53,7 @@ import HKernel.Journal
   ( Journal
   , JournalDocument
   , JournalError
+  , JournalMetadata
   , JournalTransactionSource
   , journalAccountRegistry
   , journalDocumentTransactionSources
@@ -91,10 +94,13 @@ data PlanJournal = PlanJournal
   , planJournalTransactions :: [IdentifiedPlanTransaction]
   } deriving (Eq, Show)
 
--- | A whole validated transaction paired with its durable Plan identity.
+-- | A whole validated transaction paired with its durable Plan identity and
+-- canonical read-only source metadata evidence. Metadata meaning remains with
+-- downstream domain owners.
 data IdentifiedPlanTransaction = IdentifiedPlanTransaction
-  { identifiedPlanId          :: PlanId
-  , identifiedPlanTransaction :: Transaction
+  { identifiedPlanId             :: PlanId
+  , identifiedPlanTransaction    :: Transaction
+  , identifiedPlanSourceMetadata :: [JournalMetadata]
   } deriving (Eq, Show)
 
 -- | Failure to admit accounting syntax or required Plan identity metadata.
@@ -110,7 +116,8 @@ data PlanJournalError
 -- | Parse accounting syntax, then require one unique @plan-id@ per transaction.
 --
 -- Output order follows transaction source order. Unrelated metadata remains
--- outside this narrow projection and receives no invented runtime meaning.
+-- outside this narrow projection's meaning, but its canonical parser-produced
+-- evidence is retained for later domain-specific admission.
 parsePlanJournal
   :: Text
   -> Either (NonEmpty PlanJournalError) PlanJournal
@@ -124,7 +131,8 @@ parsePlanJournal input = case parseJournalDocument input of
 --
 -- The root document is parsed with the canonical Journal structural parser so
 -- includes may still contribute declarations without silently contributing
--- hidden Plan transactions. Metadata meaning remains owned by this module.
+-- hidden Plan transactions. Metadata meaning remains owned by downstream Plan
+-- consumers rather than by the lexical parser.
 admitPlanJournalFromResolvedJournal
   :: Journal
   -> Text
@@ -200,6 +208,8 @@ admitPlanMetadata transaction source = case metadataEntries of
         , locatedPlanValue = IdentifiedPlanTransaction
             { identifiedPlanId = planId
             , identifiedPlanTransaction = transaction
+            , identifiedPlanSourceMetadata =
+                journalTransactionSourceMetadata source
             }
         }
   where
