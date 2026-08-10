@@ -27,6 +27,7 @@ module HKernel.Plan.Journal
   , PlanJournalError(..)
   , parsePlanJournal
   , admitPlanJournalFromResolvedJournal
+  , admitPlanJournalFromResolvedSources
   , ClassifiedPlanTransaction(..)
   , PlanClassificationError(..)
   , classifyPlanJournal
@@ -158,10 +159,9 @@ parsePlanJournal input = case parseJournalDocument input of
 
 -- | Admit root-owned Plan metadata against an already resolved Journal.
 --
--- The root document is parsed with the canonical Journal structural parser so
--- includes may still contribute declarations without silently contributing
--- hidden Plan transactions. Metadata meaning remains owned by downstream Plan
--- consumers rather than by the lexical parser.
+-- This compatibility entry point reparses the supplied root text with the
+-- canonical Journal parser, then delegates to parser-owned transaction source
+-- evidence. Metadata meaning remains owned by downstream Plan consumers.
 admitPlanJournalFromResolvedJournal
   :: Journal
   -> Text
@@ -171,11 +171,31 @@ admitPlanJournalFromResolvedJournal journal input =
     Left journalErrors -> Left (fmap PlanJournalSyntaxError journalErrors)
     Right document -> admitPlanJournalFromDocument journal document
 
+-- | Admit Plan meaning from parser-owned root transaction evidence retained by
+-- the same loading observation as the resolved Journal.
+--
+-- This boundary stays pure: Loader owns source observation while Plan owns
+-- durable Plan identity, source-evidence indexing, and fail-closed alignment.
+admitPlanJournalFromResolvedSources
+  :: Journal
+  -> [JournalTransactionSource]
+  -> Either (NonEmpty PlanJournalError) PlanJournal
+admitPlanJournalFromResolvedSources = admitPlanJournalFromSources
+
 admitPlanJournalFromDocument
   :: Journal
   -> JournalDocument
   -> Either (NonEmpty PlanJournalError) PlanJournal
-admitPlanJournalFromDocument journal document
+admitPlanJournalFromDocument journal document =
+  admitPlanJournalFromSources
+    journal
+    (journalDocumentTransactionSources document)
+
+admitPlanJournalFromSources
+  :: Journal
+  -> [JournalTransactionSource]
+  -> Either (NonEmpty PlanJournalError) PlanJournal
+admitPlanJournalFromSources journal metadataBlocks
   | transactionCount /= metadataCount = Left
       (PlanJournalTransactionMetadataAlignmentMismatch
         transactionCount metadataCount NonEmpty.:| [])
@@ -191,7 +211,6 @@ admitPlanJournalFromDocument journal document
         }
   where
     transactions = journalTransactions journal
-    metadataBlocks = journalDocumentTransactionSources document
     transactionCount = length transactions
     metadataCount = length metadataBlocks
     admissions = zipWith admitPlanMetadata transactions metadataBlocks

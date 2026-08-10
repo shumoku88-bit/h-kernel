@@ -6,8 +6,12 @@ module HKernel.Loader
   ( IncludeTrace(..)
   , JournalReadFailure(..)
   , LoadError(..)
+  , JournalRootObservation
+  , journalRootObservationJournal
+  , journalRootObservationTransactionSources
   , loadJournal
   , loadJournalFromRootSource
+  , loadJournalRootObservationFromSource
   ) where
 
 import Control.Exception (IOException, try)
@@ -28,7 +32,9 @@ import HKernel.Journal
   , Journal
   , JournalDocument
   , JournalError
+  , JournalTransactionSource
   , includePath
+  , journalDocumentTransactionSources
   , parseJournalDocument
   , resolveJournalDocumentIncludes
   , validateJournalDocument
@@ -61,6 +67,24 @@ data LoadError
   | IncludeCycle (NonEmpty FilePath)
   deriving (Show)
 
+-- | One short-lived root-source observation.
+--
+-- The resolved Journal and the root transaction-source evidence are produced
+-- from one parse of the supplied root bytes. Included documents still resolve
+-- from the filesystem, but their physical coordinates never enter the root
+-- evidence. The positional constructor stays private so callers cannot create
+-- or record-update a mismatched pairing directly.
+data JournalRootObservation
+  = JournalRootObservation Journal [JournalTransactionSource]
+
+journalRootObservationJournal :: JournalRootObservation -> Journal
+journalRootObservationJournal (JournalRootObservation journal _) = journal
+
+journalRootObservationTransactionSources
+  :: JournalRootObservation
+  -> [JournalTransactionSource]
+journalRootObservationTransactionSources (JournalRootObservation _ sources) = sources
+
 newtype LoadedFiles = LoadedFiles (Map FilePath IncludeTrace)
 
 type Loader = StateT LoadedFiles (ExceptT LoadError IO)
@@ -82,15 +106,39 @@ loadJournal rootPath =
 -- exact root bytes for this admission. Included files are still resolved from
 -- disk relative to the supplied root path.
 --
--- This is the filesystem counterpart of a write snapshot: callers can bind a
--- preview or application state to the same root bytes later used as
--- expected-old without re-reading the root during graph admission.
+-- This compatibility projection keeps callers that need only the resolved
+-- Journal while the richer root observation remains available to domain
+-- admissions that also consume parser-owned root source evidence.
 loadJournalFromRootSource
   :: FilePath
   -> Text
   -> IO (Either LoadError Journal)
 loadJournalFromRootSource rootPath rootSource =
-  runLoader (loadRootDocument (rootTrace rootPath) rootSource)
+  fmap (fmap journalRootObservationJournal)
+    (loadJournalRootObservationFromSource rootPath rootSource)
+
+-- | Load exact root bytes once, retain their root-only transaction evidence,
+-- resolve includes, and validate the complete Journal graph.
+--
+-- This is intentionally not a source cache or full provenance map. It preserves
+-- only the parser evidence needed by current root-owned domain admission while
+-- keeping include resolution and validation unchanged.
+loadJournalRootObservationFromSource
+  :: FilePath
+  -> Text
+  -> IO (Either LoadError JournalRootObservation)
+loadJournalRootObservationFromSource rootPath rootSource = runExceptT
+  (evalStateT load emptyLoadedFiles)
+  where
+    load = do
+      (rootDocument, resolvedDocument) <-
+        loadRootDocuments (rootTrace rootPath) rootSource
+      journal <- fromEither
+        (first JournalValidationFailed (validateJournalDocument resolvedDocument))
+      pure
+        (JournalRootObservation
+          journal
+          (journalDocumentTransactionSources rootDocument))
 
 runLoader :: Loader JournalDocument -> IO (Either LoadError Journal)
 runLoader loadRoot = runExceptT
@@ -101,16 +149,20 @@ runLoader loadRoot = runExceptT
       fromEither
         (first JournalValidationFailed (validateJournalDocument document))
 
-loadRootDocument :: IncludeTrace -> Text -> Loader JournalDocument
-loadRootDocument trace source = do
+loadRootDocuments
+  :: IncludeTrace
+  -> Text
+  -> Loader (JournalDocument, JournalDocument)
+loadRootDocuments trace source = do
   loadedFiles <- get
   admittedFiles <- fromEither (admitFile trace loadedFiles)
   put admittedFiles
   document <- fromEither
     (first (JournalParseFailed path) (parseJournalDocument source))
-  resolveJournalDocumentIncludes
+  resolved <- resolveJournalDocumentIncludes
     (loadDocument . extendTrace trace . resolveInclude path)
     document
+  pure (document, resolved)
   where
     path = traceDestination trace
 
