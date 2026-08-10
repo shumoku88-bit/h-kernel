@@ -88,6 +88,23 @@ main = do
     YellowColor
     (presentationSectionColor defaultHierarchyPresentation)
 
+  let hierarchyOnlyConfiguration = mustRight
+        (parseReportConfiguration
+          (T.replace amountsTable "" validConfig))
+      hierarchyOnlyPresentation =
+        reportConfigurationPresentation hierarchyOnlyConfiguration
+  assertEqual "hierarchy remains configurable without an amounts table"
+    (BlueColor, CyanColor)
+    ( presentationHeadingColor hierarchyOnlyPresentation
+    , presentationSectionColor hierarchyOnlyPresentation
+    )
+  assertEqual "amount presentation defaults when only hierarchy is configured"
+    (AccountingParentheses, GreenColor, RedColor)
+    ( presentationNegativeStyle hierarchyOnlyPresentation
+    , presentationPositiveAmountColor hierarchyOnlyPresentation
+    , presentationNegativeAmountColor hierarchyOnlyPresentation
+    )
+
   let defaultPresentationConfiguration = mustRight
         (parseReportConfiguration
           (T.replace presentationTable "" validConfig))
@@ -150,14 +167,17 @@ hierarchyTable = T.unlines
   , ""
   ]
 
-presentationTable :: T.Text
-presentationTable = hierarchyTable <> T.unlines
+amountsTable :: T.Text
+amountsTable = T.unlines
   [ "[presentation.amounts]"
   , "negative-style = \"minus\""
   , "positive-color = \"yellow\""
   , "negative-color = \"magenta\""
   , ""
   ]
+
+presentationTable :: T.Text
+presentationTable = hierarchyTable <> amountsTable
 
 validConfig :: T.Text
 validConfig = presentationTable <> T.unlines
