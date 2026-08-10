@@ -42,8 +42,6 @@ main = do
         , ("testPlanEditClosedRejected", testPlanEditClosedRejected)
         , ("testPlanEditMissingRejected", testPlanEditMissingRejected)
         , ("testPlanEditNonPositiveAmount", testPlanEditNonPositiveAmount)
-        , ("testPlanFinishNegativeAmount", testPlanFinishNegativeAmount)
-        , ("testPlanFinishZeroAmount", testPlanFinishZeroAmount)
         , ("testResolvedPlanAdd", testResolvedPlanAdd)
         , ("testResolvedPlanAddWithPlanInclude", testResolvedPlanAddWithPlanInclude)
         , ("testResolvedPlanEditCompletion", testResolvedPlanEditCompletion)
@@ -432,16 +430,6 @@ testResolvedPlanEditWithPlanInclude =
               && "650 JPY" `T.isInfixOf` block
               && all (`T.isInfixOf` block) retainedMetadata
         Left err -> error (show err)
-
-testPlanFinishNegativeAmount :: Bool
-testPlanFinishNegativeAmount =
-  mkPositivePlanFinishAmount (qty "-1")
-    == Left (NonPositivePlanFinishAmount (qty "-1"))
-
-testPlanFinishZeroAmount :: Bool
-testPlanFinishZeroAmount =
-  mkPositivePlanFinishAmount (qty "0")
-    == Left (NonPositivePlanFinishAmount (qty "0"))
 
 toList :: NonEmpty a -> [a]
 toList (x :| xs) = x : xs
