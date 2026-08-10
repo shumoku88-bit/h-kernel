@@ -261,7 +261,7 @@ withMonthly check = case
 
 testMonthlyNominalDate :: Bool
 testMonthlyNominalDate = withMonthly $ \planJournal _ target ->
-  case proposePlanAdvance planJournal monthlyPlanSource target of
+  case proposePlanAdvance planJournal target of
     Right proposal ->
       proposalNominalDate proposal == fromGregorian 2031 1 17
         && proposalSuggestedNextDate proposal == Just (fromGregorian 2031 2 17)
@@ -270,7 +270,7 @@ testMonthlyNominalDate = withMonthly $ \planJournal _ target ->
 
 testInteractionDefaults :: Bool
 testInteractionDefaults = withMonthly $ \planJournal _ target ->
-  case proposePlanAdvance planJournal monthlyPlanSource target of
+  case proposePlanAdvance planJournal target of
     Left _ -> False
     Right proposal ->
       let input = initialPlanCompleteAdvanceInput (fromGregorian 2031 1 16) proposal
@@ -281,7 +281,7 @@ testInteractionDefaults = withMonthly $ \planJournal _ target ->
 
 testInteractionOverrides :: Bool
 testInteractionOverrides = withMonthly $ \planJournal _ target ->
-  case proposePlanAdvance planJournal monthlyPlanSource target of
+  case proposePlanAdvance planJournal target of
     Left _ -> False
     Right proposal ->
       let input = PlanCompleteAdvanceInput
@@ -485,7 +485,7 @@ testOnceNoSuccessor :: Bool
 testOnceNoSuccessor = case
     (admitPlan oncePlanSource, admitActual, planId "plan-2031-02-03-sample-once") of
   (Just planJournal, Just actualJournal, Just target) ->
-    case proposePlanAdvance planJournal oncePlanSource target of
+    case proposePlanAdvance planJournal target of
       Left _ -> False
       Right proposal ->
         proposalSuggestedNextDate proposal == Nothing
@@ -511,7 +511,7 @@ testCycleManualDate :: Bool
 testCycleManualDate = case
     (admitPlan cyclePlanSource, admitActual, planId "plan-2031-03-05-sample-cycle") of
   (Just planJournal, Just actualJournal, Just target) ->
-    case proposePlanAdvance planJournal cyclePlanSource target of
+    case proposePlanAdvance planJournal target of
       Left _ -> False
       Right proposal ->
         proposalRecurrence proposal == PlanRecursByHouseholdCycle
@@ -543,7 +543,7 @@ testSeriesSafetyAssessment = case
     , planId "plan-2031-03-17-sample-series-latest"
     ) of
   (Just planJournal, Just actualJournal, Just target, Just februaryId, Just marchId) ->
-    case assessPlanAdvanceSafety planJournal actualJournal seriesSafetyPlanSource target of
+    case assessPlanAdvanceSafety planJournal actualJournal target of
       Left _ -> False
       Right safety ->
         map identifiedPlanId (advanceRelatedActivePlans safety) == [februaryId, marchId]
