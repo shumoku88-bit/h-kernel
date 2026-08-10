@@ -104,16 +104,14 @@ characterizeNativeResolvedSourceAdmission = do
     1
     (length (householdBudgetMovementJournalMovements admitted))
 
-  assertLeftSatisfies
+  assertEqual
     "resolved native Budget admission rejects equal-count source evidence for a different transaction"
-    (any isSourceMismatch . NonEmpty.toList)
+    (Left
+      (BudgetMovementJournalTransactionSourceAlignmentMismatch 1
+        NonEmpty.:| []))
     (admitHouseholdBudgetMovementJournalFromResolvedJournal
       resolvedJournal
       equalCountDifferentBudgetSource)
-  where
-    isSourceMismatch err = case err of
-      BudgetMovementJournalTransactionSourceAlignmentMismatch 1 -> True
-      _ -> False
 
 characterizeNativeJournalFailures :: IO ()
 characterizeNativeJournalFailures = do
@@ -244,24 +242,6 @@ mustRight :: Show error => Either error value -> value
 mustRight result = case result of
   Right value -> value
   Left err -> error ("invalid test fixture: " ++ show err)
-
-assertLeftSatisfies
-  :: (Show error, Show value)
-  => String
-  -> (NonEmpty.NonEmpty error -> Bool)
-  -> Either (NonEmpty.NonEmpty error) value
-  -> IO ()
-assertLeftSatisfies label predicate result = case result of
-  Left errors
-    | predicate errors -> putStrLn ("  [PASS] " ++ label)
-    | otherwise -> do
-        putStrLn ("  [FAIL] " ++ label)
-        putStrLn ("    errors did not satisfy predicate: " ++ show errors)
-        exitFailure
-  Right value -> do
-    putStrLn ("  [FAIL] " ++ label)
-    putStrLn ("    unexpectedly accepted: " ++ show value)
-    exitFailure
 
 assertLeftAt
   :: String
