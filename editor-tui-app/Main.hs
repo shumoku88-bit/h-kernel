@@ -205,7 +205,7 @@ drawReportsView context =
     [ borderWithLabel (txt ("Household Report: " <> reportChoiceLabel selected))
         (viewport ReportsViewport Both (renderSelectedReport context))
     , str "[Enter] Choose report   [↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page"
-    , str "[Home/End] Top/Bottom   [r] Next report   [1-7] Switch section   [q] Quit"
+    , str "[Home/End] Top/Bottom   [r/R] Next/Previous report   [1-7] Switch section   [q] Quit"
     ]
   where
     selected = contextSelectedReport context
@@ -435,6 +435,8 @@ handleWorkspaceEvent context event = case event of
     | inReports -> selectReport ReportCombinedBook
   VtyEvent (V.EvKey (V.KChar 'r') [])
     | inReports -> selectReport (cycleReport (contextSelectedReport context))
+  VtyEvent (V.EvKey (V.KChar 'R') [])
+    | inReports -> selectReport (cycleReportBack (contextSelectedReport context))
   VtyEvent (V.EvKey (V.KChar 'a') [])
     | inActual -> openActualDaily
   VtyEvent (V.EvKey (V.KChar 'A') [])
@@ -666,6 +668,14 @@ cycleReport choice = go reportChoices
     go (current : next : rest)
       | current == choice = next
       | otherwise = go (next : rest)
+
+cycleReportBack :: ReportChoice -> ReportChoice
+cycleReportBack choice = go ReportCombinedBook reportChoices
+  where
+    go previous [] = previous
+    go previous (current : rest)
+      | current == choice = previous
+      | otherwise = go current rest
 
 app :: App AppWrapper AppEvent Name
 app = App
