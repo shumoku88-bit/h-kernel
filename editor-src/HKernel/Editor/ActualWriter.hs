@@ -13,6 +13,7 @@ module HKernel.Editor.ActualWriter
   , publishWithPathAdmission
   , publishWithPathAdmissionUsing
   , ActualSourceAdmissionError(..)
+  , admitActualJournalRootSource
   , admitActualJournalPath
   , publishActualAppend
   , publishActualAppendFromResolvedJournal
@@ -185,20 +186,28 @@ data ActualSourceAdmissionError
   | ActualSourceJournalError ActualJournalError
   deriving (Show)
 
--- | Admit an Actual root through its filesystem-resolved Journal graph.
--- Accounting declarations and transactions come from the resolved Journal;
--- Actual-owned metadata comes from the root source bytes.
-admitActualJournalPath
+-- | Admit exact Actual root bytes together with the include graph resolved from
+-- the root path. The root text and the accounting graph therefore belong to one
+-- observation instead of permitting a second root-file read to drift in time.
+admitActualJournalRootSource
   :: FilePath
+  -> Text
   -> IO (Either (NonEmpty ActualSourceAdmissionError) ActualJournal)
-admitActualJournalPath sourceFile = do
-  source <- TextIO.readFile sourceFile
-  resolved <- loadJournal sourceFile
+admitActualJournalRootSource sourceFile source = do
+  resolved <- loadJournalFromRootSource sourceFile source
   pure $ case resolved of
     Left loadError -> Left (pure (ActualSourceLoadError loadError))
     Right journal -> case admitActualJournalFromResolvedJournal journal source of
       Left errors -> Left (fmap ActualSourceJournalError errors)
       Right actualJournal -> Right actualJournal
+
+-- | Admit one Actual root using exactly the root bytes read for this observation.
+admitActualJournalPath
+  :: FilePath
+  -> IO (Either (NonEmpty ActualSourceAdmissionError) ActualJournal)
+admitActualJournalPath sourceFile = do
+  source <- TextIO.readFile sourceFile
+  admitActualJournalRootSource sourceFile source
 
 publishActualAppend
   :: WriteIntent
