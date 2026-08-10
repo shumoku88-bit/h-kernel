@@ -35,15 +35,13 @@ module HKernel.Plan.Journal
   , projectCommittedOutgoingPlans
   ) where
 
-import Data.Char (isSpace)
 import Data.Either (partitionEithers)
-import Data.List (foldl', sort)
+import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
-import qualified Data.Text as T
 import HKernel.Account
   ( AccountRegistry
   , AccountType(..)
@@ -51,10 +49,15 @@ import HKernel.Account
   )
 import HKernel.Journal
   ( Journal
+  , JournalDocument
   , JournalError
+  , JournalMetadata(..)
+  , JournalTransactionSource(..)
   , journalAccountRegistry
+  , journalDocumentTransactionSources
   , journalTransactions
-  , parseJournal
+  , parseJournalDocument
+  , validateJournalDocument
   )
 import HKernel.Ledger
   ( Posting
@@ -107,15 +110,31 @@ data PlanJournalError
 parsePlanJournal
   :: Text
   -> Either (NonEmpty PlanJournalError) PlanJournal
-parsePlanJournal input = case parseJournal input of
+parsePlanJournal input = case parseJournalDocument input of
   Left journalErrors -> Left (fmap PlanJournalSyntaxError journalErrors)
-  Right journal -> admitPlanJournalFromResolvedJournal journal input
+  Right document -> case validateJournalDocument document of
+    Left journalErrors -> Left (fmap PlanJournalSyntaxError journalErrors)
+    Right journal -> admitPlanJournalFromDocument journal document
 
+-- | Admit root-owned Plan metadata against an already resolved Journal.
+--
+-- The root document is parsed with the canonical Journal structural parser so
+-- includes may still contribute declarations without silently contributing
+-- hidden Plan transactions. Metadata meaning remains owned by this module.
 admitPlanJournalFromResolvedJournal
   :: Journal
   -> Text
   -> Either (NonEmpty PlanJournalError) PlanJournal
-admitPlanJournalFromResolvedJournal journal input
+admitPlanJournalFromResolvedJournal journal input =
+  case parseJournalDocument input of
+    Left journalErrors -> Left (fmap PlanJournalSyntaxError journalErrors)
+    Right document -> admitPlanJournalFromDocument journal document
+
+admitPlanJournalFromDocument
+  :: Journal
+  -> JournalDocument
+  -> Either (NonEmpty PlanJournalError) PlanJournal
+admitPlanJournalFromDocument journal document
   | transactionCount /= metadataCount = Left
       (PlanJournalTransactionMetadataAlignmentMismatch
         transactionCount metadataCount NonEmpty.:| [])
@@ -127,7 +146,7 @@ admitPlanJournalFromResolvedJournal journal input
         }
   where
     transactions = journalTransactions journal
-    metadataBlocks = transactionMetadataBlocks input
+    metadataBlocks = journalDocumentTransactionSources document
     transactionCount = length transactions
     metadataCount = length metadataBlocks
     admissions = zipWith admitPlanMetadata transactions metadataBlocks
@@ -135,19 +154,6 @@ admitPlanJournalFromResolvedJournal journal input
     allErrors =
       concatMap admissionErrors admissions
         ++ duplicatePlanIdErrors locatedPlans
-
-type LocatedLine = (Int, Text)
-
-data LocatedMetadata = LocatedMetadata
-  { locatedMetadataLine  :: Int
-  , locatedMetadataKey   :: Text
-  , locatedMetadataValue :: Text
-  }
-
-data TransactionMetadataBlock = TransactionMetadataBlock
-  { transactionHeaderLine :: Int
-  , transactionMetadata   :: [LocatedMetadata]
-  }
 
 data LocatedPlanTransaction = LocatedPlanTransaction
   { locatedPlanLine  :: Int
@@ -159,73 +165,13 @@ data PlanMetadataAdmission = PlanMetadataAdmission
   , admissionPlan   :: Maybe LocatedPlanTransaction
   }
 
-transactionMetadataBlocks :: Text -> [TransactionMetadataBlock]
-transactionMetadataBlocks input =
-  [ TransactionMetadataBlock
-      { transactionHeaderLine = lineNumber
-      , transactionMetadata = mapMaybe relevantMetadata (drop 1 block)
-      }
-  | block@((lineNumber, header) : _) <- sourceBlocks input
-  , not (isNonTransactionDirective header)
-  ]
-
-sourceBlocks :: Text -> [[LocatedLine]]
-sourceBlocks = map reverse . reverse . foldl' addLine [] . zip [1..] . T.lines
-  where
-    addLine blocks located@(_, line)
-      | startsBlock line = [located] : blocks
-      | otherwise = case blocks of
-          [] -> []
-          block : rest -> (located : block) : rest
-
-startsBlock :: Text -> Bool
-startsBlock line =
-  not (T.null (T.strip line))
-    && not (isIndented line)
-    && not (isComment line)
-
-relevantMetadata :: LocatedLine -> Maybe LocatedMetadata
-relevantMetadata (lineNumber, line)
-  | not (isIndented line && isComment line) = Nothing
-  | normalizedKey /= "plan-id" = Nothing
-  | otherwise = Just LocatedMetadata
-      { locatedMetadataLine = lineNumber
-      , locatedMetadataKey = normalizedKey
-      , locatedMetadataValue = T.strip (T.drop 1 remainder)
-      }
-  where
-    cleanLine = T.strip
-      (T.dropWhile (\character -> character == ';' || isSpace character)
-        (T.strip line))
-    (key, remainder) = T.breakOn ":" cleanLine
-    normalizedKey = T.toCaseFold (T.strip key)
-
-isNonTransactionDirective :: Text -> Bool
-isNonTransactionDirective line =
-  any (`isDirective` line) ["account", "include", "commodity"]
-
-isDirective :: Text -> Text -> Bool
-isDirective keyword line = case T.stripPrefix keyword (T.stripStart line) of
-  Nothing -> False
-  Just remainder ->
-    T.null remainder
-      || maybe False (isSpace . fst) (T.uncons remainder)
-
-isComment :: Text -> Bool
-isComment = T.isPrefixOf ";" . T.stripStart
-
-isIndented :: Text -> Bool
-isIndented line = case T.uncons line of
-  Just (character, _) -> isSpace character
-  Nothing -> False
-
 admitPlanMetadata
   :: Transaction
-  -> TransactionMetadataBlock
+  -> JournalTransactionSource
   -> PlanMetadataAdmission
-admitPlanMetadata transaction block = case metadataEntries of
+admitPlanMetadata transaction source = case metadataEntries of
   [] -> PlanMetadataAdmission
-    { admissionErrors = [MissingPlanId (transactionHeaderLine block)]
+    { admissionErrors = [MissingPlanId (journalTransactionSourceHeaderLine source)]
     , admissionPlan = Nothing
     }
   firstEntry : duplicateEntries -> PlanMetadataAdmission
@@ -233,12 +179,12 @@ admitPlanMetadata transaction block = case metadataEntries of
     , admissionPlan = either (const Nothing) (Just . located) parsed
     }
     where
-      lineNumber = locatedMetadataLine firstEntry
-      parsed = mkPlanId (locatedMetadataValue firstEntry)
+      lineNumber = journalMetadataLine firstEntry
+      parsed = mkPlanId (journalMetadataValue firstEntry)
       duplicateErrors =
         [ DuplicatePlanJournalMetadataKey
-            (locatedMetadataLine entry)
-            (locatedMetadataKey entry)
+            (journalMetadataLine entry)
+            (journalMetadataKey entry)
         | entry <- duplicateEntries
         ]
       parseErrors = either
@@ -253,7 +199,8 @@ admitPlanMetadata transaction block = case metadataEntries of
             }
         }
   where
-    metadataEntries = transactionMetadata block
+    metadataEntries = filter ((== "plan-id") . journalMetadataKey)
+      (journalTransactionSourceMetadata source)
 
 duplicatePlanIdErrors
   :: [LocatedPlanTransaction]
