@@ -358,7 +358,7 @@ pad alignment width value = case alignment of
   where
     spaces = T.replicate (max 0 (width - displayWidth value)) " "
 
-padStyled :: Alignment -> Int -> Cell -> Text -> Text
+padStyled :: Alignment -> Int -> Cell -> Text
 padStyled alignment width cell = case alignment of
   AlignLeft  -> cellStyled cell <> spaces
   AlignRight -> spaces <> cellStyled cell
