@@ -4,7 +4,7 @@ module Main (main) where
 
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
-import HKernel.Journal (journalTransactions)
+import HKernel.Journal (journalTransactions, parseJournal)
 import HKernel.Ledger (transactionPostings)
 import HKernel.Plan (committedPlanId, planIdText)
 import HKernel.Plan.Journal
@@ -13,6 +13,8 @@ import System.Exit (exitFailure)
 main :: IO ()
 main = do
   characterizeWholePlanTransactions
+  characterizeResolvedJournalAdmission
+  rejectResolvedJournalTransactionDrift
   rejectMissingPlanIdentity
   rejectDuplicatePlanMetadata
   rejectInvalidPlanIdentity
@@ -41,6 +43,30 @@ characterizeWholePlanTransactions = do
     [2, 3]
     (map (NonEmpty.length . transactionPostings . identifiedPlanTransaction)
       identified)
+
+characterizeResolvedJournalAdmission :: IO ()
+characterizeResolvedJournalAdmission = do
+  let resolvedJournal = mustRight (parseJournal resolvedAccountingJournal)
+      admitted = mustRight
+        (admitPlanJournalFromResolvedJournal resolvedJournal resolvedPlanRoot)
+      direct = mustRight (parsePlanJournal resolvedAccountingJournal)
+
+  assertEqual
+    "resolved Account includes preserve the complete Plan semantic projection"
+    direct
+    admitted
+
+rejectResolvedJournalTransactionDrift :: IO ()
+rejectResolvedJournalTransactionDrift =
+  assertLeftSatisfies
+    "resolved admission rejects transactions not represented by the Plan root"
+    (any isAlignmentMismatch . NonEmpty.toList)
+    (admitPlanJournalFromResolvedJournal driftedJournal resolvedPlanRoot)
+  where
+    driftedJournal = mustRight (parseJournal driftedResolvedAccountingJournal)
+    isAlignmentMismatch err = case err of
+      PlanJournalTransactionMetadataAlignmentMismatch 2 1 -> True
+      _ -> False
 
 rejectMissingPlanIdentity :: IO ()
 rejectMissingPlanIdentity =
@@ -238,6 +264,34 @@ planJournal = declarations <> T.unlines
   , "    expenses:food   600 JPY"
   , "    expenses:books  400 JPY"
   , "    assets:cash    -1000 JPY"
+  ]
+
+resolvedPlanRoot :: T.Text
+resolvedPlanRoot = T.unlines
+  [ "include accounts.journal"
+  , ""
+  , "2026-08-08 Wi-Fi payment"
+  , "    ; plan-id: plan-wifi"
+  , "    ; note: unrelated metadata remains unrelated"
+  , "    expenses:food  200 JPY"
+  , "    assets:cash"
+  ]
+
+resolvedAccountingJournal :: T.Text
+resolvedAccountingJournal = declarations <> T.unlines
+  [ "2026-08-08 Wi-Fi payment"
+  , "    ; plan-id: plan-wifi"
+  , "    ; note: unrelated metadata remains unrelated"
+  , "    expenses:food  200 JPY"
+  , "    assets:cash"
+  ]
+
+driftedResolvedAccountingJournal :: T.Text
+driftedResolvedAccountingJournal = resolvedAccountingJournal <> T.unlines
+  [ ""
+  , "2026-08-09 Included transaction must not hide here"
+  , "    expenses:food  100 JPY"
+  , "    assets:cash"
   ]
 
 supportedPlanJournal :: T.Text
