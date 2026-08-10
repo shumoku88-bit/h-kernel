@@ -26,13 +26,15 @@ import HKernel.Account
 import HKernel.Editor.ActualAppend (ActualEditIntent(..))
 import HKernel.Editor.ActualReverse (ActualReverseIntent(..))
 import HKernel.Editor.IssueAppend (IssueAppendIntent(..))
+import HKernel.Editor.PlanCompleteAdvance
+  ( PositivePlanMagnitude
+  , mkPositivePlanMagnitude
+  )
 import HKernel.Editor.PlanLifecycle
   ( PlanAddIntent(..)
   , PlanEditIntent(..)
   , PositivePlanEditAmount
-  , PositivePlanFinishAmount
   , mkPositivePlanEditAmount
-  , mkPositivePlanFinishAmount
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
@@ -60,7 +62,7 @@ data EditorCommand
   | IssueCmd FilePath IssueAppendIntent
   | PlanAddCmd FilePath FilePath PlanAddIntent
   | PlanEditCmd FilePath FilePath PlanEditIntent
-  | PlanFinishCmd FilePath FilePath Text Day (Maybe PositivePlanFinishAmount)
+  | PlanFinishCmd FilePath FilePath Text Day (Maybe PositivePlanMagnitude)
   deriving (Eq, Show)
 
 data CliError
@@ -113,8 +115,6 @@ parseLeaf parser args = do
   command <- parser commandArgs
   pure (commitMode, command)
 
--- | The mutation flag belongs to one leaf command and is admitted only in the
--- first position after that leaf. Later occurrences remain ordinary user data.
 admitCommit :: [String] -> (CommitMode, [String])
 admitCommit ("--commit":rest) = (CommitRequested, rest)
 admitCommit rest = (PreviewOnly, rest)
@@ -125,9 +125,8 @@ parseAppend (journalFile:dateText:description:postingArgs) = do
   postings <- parsePostings postingArgs
   nonEmptyPostings <- maybe (Left CliPostingRequired) Right
     (NonEmpty.nonEmpty postings)
-  pure
-    (AppendCmd journalFile
-      (ActualEditIntent date (T.pack description) nonEmptyPostings []))
+  pure (AppendCmd journalFile
+    (ActualEditIntent date (T.pack description) nonEmptyPostings []))
 parseAppend _ = Left CliUsage
 
 parseReverse :: [String] -> Either CliError EditorCommand
@@ -138,13 +137,8 @@ parseReverse
   targetId <- mapDomainError CliInvalidActualTransactionId
     (mkActualTransactionId (T.pack targetIdText))
   date <- parseDate dateText
-  pure
-    (ReverseCmd journalFile
-      (ActualReverseIntent
-        reversalId
-        targetId
-        date
-        (T.pack (unwords descriptionWords))))
+  pure (ReverseCmd journalFile
+    (ActualReverseIntent reversalId targetId date (T.pack (unwords descriptionWords))))
 parseReverse _ = Left CliUsage
 
 parseAccount :: [String] -> Either CliError EditorCommand
@@ -167,14 +161,9 @@ parseBudget [tsvFile, dateText, memo, fromText, toText, quantityText, commodityT
   toAccount <- parseAccountValue toText
   quantity <- parseQuantityValue quantityText
   commodity <- parseCommodity commodityText
-  pure
-    (BudgetMovementCmd tsvFile
-      (HouseholdBudgetMovement
-        date
-        (T.pack memo)
-        fromAccount
-        toAccount
-        (mkAmount commodity quantity)))
+  pure (BudgetMovementCmd tsvFile
+    (HouseholdBudgetMovement date (T.pack memo) fromAccount toAccount
+      (mkAmount commodity quantity)))
 parseBudget _ = Left CliInvalidBudgetArguments
 
 parseIssue :: [String] -> Either CliError EditorCommand
@@ -183,16 +172,9 @@ parseIssue (tsvFile:idText:statusText:dateText:category:title:quantityText:commo
   status <- parseIssueStatus statusText
   date <- parseDate dateText
   amount <- parseIssueAmount quantityText commodityText
-  pure
-    (IssueCmd tsvFile
-      (IssueAppendIntent
-        issueId
-        status
-        date
-        (T.pack category)
-        (T.pack title)
-        amount
-        (T.pack (unwords detailsWords))))
+  pure (IssueCmd tsvFile
+    (IssueAppendIntent issueId status date (T.pack category) (T.pack title)
+      amount (T.pack (unwords detailsWords))))
 parseIssue _ = Left CliInvalidIssueArguments
 
 parseIssueAmount :: String -> String -> Either CliError (Maybe Amount)
@@ -224,44 +206,29 @@ parsePlanAdd (planFile:actualFile:optionArgs) = do
     _ -> Left CliPlanAddDescriptionRequired
   postings <- maybe (Left CliPlanAddPostingRequired) Right
     (NonEmpty.nonEmpty (reverse (planAddPostingsReversed fields)))
-  pure
-    (PlanAddCmd planFile actualFile
-      (PlanAddIntent
-        date
-        description
-        postings
-        (planAddRequestedIdField fields)
-        (planAddSeriesField fields)))
+  pure (PlanAddCmd planFile actualFile
+    (PlanAddIntent date description postings
+      (planAddRequestedIdField fields) (planAddSeriesField fields)))
 parsePlanAdd _ = Left CliUsage
 
-parsePlanAddOptions
-  :: PlanAddFields
-  -> [String]
-  -> Either CliError PlanAddFields
+parsePlanAddOptions :: PlanAddFields -> [String] -> Either CliError PlanAddFields
 parsePlanAddOptions fields [] = Right fields
 parsePlanAddOptions fields ("--date":dateText:rest) = do
   date <- parseDate dateText
   parsePlanAddOptions fields { planAddDateField = Just date } rest
 parsePlanAddOptions fields ("--description":description:rest) =
-  parsePlanAddOptions fields
-    { planAddDescriptionField = Just (T.pack description) }
-    rest
+  parsePlanAddOptions fields { planAddDescriptionField = Just (T.pack description) } rest
 parsePlanAddOptions fields ("--posting":accountText:quantityText:commodityText:rest) = do
   account <- parseAccountValue accountText
   quantity <- parseQuantityValue quantityText
   commodity <- parseCommodity commodityText
-  let posting = IntentPosting account quantity (Just commodity)
   parsePlanAddOptions fields
-    { planAddPostingsReversed = posting : planAddPostingsReversed fields }
-    rest
+    { planAddPostingsReversed = IntentPosting account quantity (Just commodity)
+        : planAddPostingsReversed fields } rest
 parsePlanAddOptions fields ("--id":requestedId:rest) =
-  parsePlanAddOptions fields
-    { planAddRequestedIdField = Just (T.pack requestedId) }
-    rest
+  parsePlanAddOptions fields { planAddRequestedIdField = Just (T.pack requestedId) } rest
 parsePlanAddOptions fields ("--series":series:rest) =
-  parsePlanAddOptions fields
-    { planAddSeriesField = Just (T.pack series) }
-    rest
+  parsePlanAddOptions fields { planAddSeriesField = Just (T.pack series) } rest
 parsePlanAddOptions _ _ = Left CliPlanAddOptionInvalid
 
 data PlanEditFields = PlanEditFields
@@ -281,41 +248,28 @@ parsePlanEdit (planFile:actualFile:optionArgs) = do
     _ -> Left CliPlanEditIdRequired
   case (planEditDateField fields, planEditAmountField fields) of
     (Nothing, Nothing) -> Left CliPlanEditChangeRequired
-    _ -> Right
-      (PlanEditCmd planFile actualFile
-        (PlanEditIntent
-          planId
-          (planEditDateField fields)
-          (planEditAmountField fields)))
+    _ -> Right (PlanEditCmd planFile actualFile
+      (PlanEditIntent planId (planEditDateField fields) (planEditAmountField fields)))
 parsePlanEdit _ = Left CliUsage
 
-parsePlanEditOptions
-  :: PlanEditFields
-  -> [String]
-  -> Either CliError PlanEditFields
+parsePlanEditOptions :: PlanEditFields -> [String] -> Either CliError PlanEditFields
 parsePlanEditOptions fields [] = Right fields
 parsePlanEditOptions fields ("--id":planId:rest) =
-  parsePlanEditOptions fields
-    { planEditIdField = Just (T.pack planId) }
-    rest
+  parsePlanEditOptions fields { planEditIdField = Just (T.pack planId) } rest
 parsePlanEditOptions fields ("--date":dateText:rest) = do
   date <- parseDate dateText
-  parsePlanEditOptions fields
-    { planEditDateField = Just date }
-    rest
+  parsePlanEditOptions fields { planEditDateField = Just date } rest
 parsePlanEditOptions fields ("--amount":quantityText:rest) = do
   quantity <- parseQuantityValue quantityText
   positiveAmount <- mapDomainError CliPlanEditAmountMustBePositive
     (mkPositivePlanEditAmount quantity)
-  parsePlanEditOptions fields
-    { planEditAmountField = Just positiveAmount }
-    rest
+  parsePlanEditOptions fields { planEditAmountField = Just positiveAmount } rest
 parsePlanEditOptions _ _ = Left CliPlanEditOptionInvalid
 
 data PlanFinishFields = PlanFinishFields
   { planFinishIdField     :: Maybe Text
   , planFinishDateField   :: Maybe Day
-  , planFinishAmountField :: Maybe PositivePlanFinishAmount
+  , planFinishAmountField :: Maybe PositivePlanMagnitude
   }
 
 emptyPlanFinishFields :: PlanFinishFields
@@ -329,36 +283,22 @@ parsePlanFinish (planFile:actualFile:optionArgs) = do
     _ -> Left CliPlanFinishIdRequired
   actualDate <- maybe (Left CliPlanFinishDateRequired) Right
     (planFinishDateField fields)
-  pure
-    (PlanFinishCmd
-      planFile
-      actualFile
-      planId
-      actualDate
-      (planFinishAmountField fields))
+  pure (PlanFinishCmd planFile actualFile planId actualDate
+    (planFinishAmountField fields))
 parsePlanFinish _ = Left CliUsage
 
-parsePlanFinishOptions
-  :: PlanFinishFields
-  -> [String]
-  -> Either CliError PlanFinishFields
+parsePlanFinishOptions :: PlanFinishFields -> [String] -> Either CliError PlanFinishFields
 parsePlanFinishOptions fields [] = Right fields
 parsePlanFinishOptions fields ("--id":planId:rest) =
-  parsePlanFinishOptions fields
-    { planFinishIdField = Just (T.pack planId) }
-    rest
+  parsePlanFinishOptions fields { planFinishIdField = Just (T.pack planId) } rest
 parsePlanFinishOptions fields ("--actual-date":dateText:rest) = do
   date <- parseDate dateText
-  parsePlanFinishOptions fields
-    { planFinishDateField = Just date }
-    rest
+  parsePlanFinishOptions fields { planFinishDateField = Just date } rest
 parsePlanFinishOptions fields ("--actual-amount":quantityText:rest) = do
   quantity <- parseQuantityValue quantityText
   positiveAmount <- mapDomainError CliPlanFinishAmountMustBePositive
-    (mkPositivePlanFinishAmount quantity)
-  parsePlanFinishOptions fields
-    { planFinishAmountField = Just positiveAmount }
-    rest
+    (mkPositivePlanMagnitude quantity)
+  parsePlanFinishOptions fields { planFinishAmountField = Just positiveAmount } rest
 parsePlanFinishOptions _ _ = Left CliPlanFinishOptionInvalid
 
 parsePostings :: [String] -> Either CliError [IntentPosting]
@@ -366,9 +306,7 @@ parsePostings [] = Right []
 parsePostings (accountText:quantityText:commodityText:rest) = do
   account <- parseAccountValue accountText
   quantity <- parseQuantityValue quantityText
-  commodity <- if commodityText == "-"
-    then Right Nothing
-    else Just <$> parseCommodity commodityText
+  commodity <- if commodityText == "-" then Right Nothing else Just <$> parseCommodity commodityText
   remaining <- parsePostings rest
   pure (IntentPosting account quantity commodity : remaining)
 parsePostings _ = Left CliPostingTripletsRequired
@@ -379,16 +317,13 @@ parseDate value = case parseTimeM True defaultTimeLocale "%Y-%m-%d" value of
   Nothing -> Left CliInvalidDate
 
 parseAccountValue :: String -> Either CliError Account
-parseAccountValue value =
-  mapDomainError CliInvalidAccount (mkAccount (T.pack value))
+parseAccountValue value = mapDomainError CliInvalidAccount (mkAccount (T.pack value))
 
 parseQuantityValue :: String -> Either CliError Quantity
-parseQuantityValue value =
-  mapDomainError CliInvalidQuantity (parseQuantity (T.pack value))
+parseQuantityValue value = mapDomainError CliInvalidQuantity (parseQuantity (T.pack value))
 
 parseCommodity :: String -> Either CliError Commodity
-parseCommodity value =
-  mapDomainError CliInvalidCommodity (mkCommodity (T.pack value))
+parseCommodity value = mapDomainError CliInvalidCommodity (mkCommodity (T.pack value))
 
 parseIssueStatus :: String -> Either CliError IssueStatus
 parseIssueStatus "open" = Right Open
