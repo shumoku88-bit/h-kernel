@@ -45,6 +45,7 @@ import HKernel.Journal
   , journalMetadataKey
   , journalMetadataValue
   , journalTransactionSourceMetadata
+  , journalTransactionSourceTransaction
   , journalTransactions
   , parseJournalDocument
   )
@@ -123,6 +124,7 @@ instance Eq HouseholdBudgetMovementJournal where
 data HouseholdBudgetMovementJournalError
   = BudgetMovementJournalSyntaxError JournalError
   | BudgetMovementJournalMetadataAlignmentMismatch Int Int
+  | BudgetMovementJournalTransactionSourceAlignmentMismatch Int
   | BudgetMovementJournalRequiresBinaryTransaction Int Int
   | BudgetMovementJournalPostingNotBudget Int Int
   | BudgetMovementJournalPostingsNotExactOpposites Int
@@ -203,7 +205,8 @@ admitHouseholdBudgetMovementJournalFromResolvedJournal journal rootSource = do
 --
 -- Included Account declarations may contribute to the resolved Journal, but a
 -- hidden included transaction cannot silently acquire root-local metadata. The
--- transaction/source count fence therefore mirrors Actual and Plan admission.
+-- count fence rejects missing/extra sources, while the semantic fence rejects
+-- equal-count evidence from a different transaction observation.
 admitHouseholdBudgetMovementJournalFromResolvedSources
   :: Journal
   -> [JournalTransactionSource]
@@ -211,13 +214,21 @@ admitHouseholdBudgetMovementJournalFromResolvedSources
       (NonEmpty HouseholdBudgetMovementJournalError)
       HouseholdBudgetMovementJournal
 admitHouseholdBudgetMovementJournalFromResolvedSources journal sources = do
-  let transactionCount = length (journalTransactions journal)
+  let transactions = journalTransactions journal
+      transactionCount = length transactions
       sourceCount = length sources
+      sourceAlignmentErrors =
+        [ BudgetMovementJournalTransactionSourceAlignmentMismatch index
+        | (index, transaction, source) <- zip3 [1..] transactions sources
+        , transaction /= journalTransactionSourceTransaction source
+        ]
   if transactionCount /= sourceCount
     then Left (pure
       (BudgetMovementJournalMetadataAlignmentMismatch
         transactionCount sourceCount))
-    else Right ()
+    else case NonEmpty.nonEmpty sourceAlignmentErrors of
+      Just errors -> Left errors
+      Nothing -> Right ()
   movements <- admitHouseholdBudgetMovementJournal journal
   pure HouseholdBudgetMovementJournal
     { householdBudgetMovementJournalValue = journal
