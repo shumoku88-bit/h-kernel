@@ -19,6 +19,7 @@ main = do
   characterizeCompletionMetadataAdmission
   characterizeResolvedJournalAdmission
   rejectResolvedJournalTransactionDrift
+  characterizeDetachedMetadataBoundary
   characterizeExplicitCompletionResolution
   characterizePlanReferenceWithoutEventIdentity
   characterizeReversalMetadataAdmission
@@ -75,6 +76,15 @@ rejectResolvedJournalTransactionDrift =
     isAlignmentMismatch err = case err of
       ActualTransactionMetadataAlignmentMismatch 2 1 -> True
       _ -> False
+
+characterizeDetachedMetadataBoundary :: IO ()
+characterizeDetachedMetadataBoundary = do
+  let admitted = mustRight (parseActualJournal detachedEventMetadataJournal)
+  assertEqual
+    "metadata detached by a blank line does not identify the preceding Actual transaction"
+    []
+    (map (actualTransactionIdText . identifiedActualId)
+      (actualJournalIdentifiedTransactions admitted))
 
 characterizeExplicitCompletionResolution :: IO ()
 characterizeExplicitCompletionResolution = do
@@ -255,6 +265,15 @@ driftedResolvedAccountingJournal = resolvedAccountingJournal <> T.unlines
   , "2026-08-04 * included transaction must not hide here"
   , "  assets:cash      -100 JPY"
   , "  expenses:wifi    100 JPY"
+  ]
+
+detachedEventMetadataJournal :: T.Text
+detachedEventMetadataJournal = declarations <> T.unlines
+  [ "2026-08-02 * ordinary"
+  , "  assets:cash      -100 JPY"
+  , "  expenses:wifi    100 JPY"
+  , ""
+  , "  ; event-id: actual-detached"
   ]
 
 planWithoutEventIdJournal :: T.Text
