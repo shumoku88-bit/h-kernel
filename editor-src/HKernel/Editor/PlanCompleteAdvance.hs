@@ -31,11 +31,11 @@ module HKernel.Editor.PlanCompleteAdvance
 
 import Control.Exception (IOException, catch, onException)
 import Data.Bifunctor (first)
-import Data.Char (isAsciiLower, isAsciiUpper, isSpace, toLower)
+import Data.Char (isAsciiLower, isAsciiUpper, toLower)
 import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Maybe (catMaybes, mapMaybe)
+import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, addGregorianMonthsClip)
@@ -66,6 +66,9 @@ import HKernel.Editor.TransactionBlock
 import HKernel.Journal
   ( appendJournalTransaction
   , journalAccountRegistry
+  , journalMetadataKey
+  , journalMetadataValue
+  , journalTransactionSourceMetadata
   )
 import HKernel.Ledger
   ( Posting
@@ -100,6 +103,7 @@ import HKernel.Plan.Journal
   , admitPlanJournalFromResolvedJournal
   , identifiedPlanId
   , identifiedPlanTransaction
+  , planJournalTransactionSourceFor
   , planJournalTransactions
   , planJournalValue
   )
@@ -182,9 +186,9 @@ proposePlanAdvance
   -> Text
   -> PlanId
   -> Either (NonEmpty PlanCompleteAdvanceError) PlanAdvanceProposal
-proposePlanAdvance planJournal planSource targetId = do
+proposePlanAdvance planJournal _planSource targetId = do
   identified <- findPlan planJournal targetId
-  metadata <- sourceMetadataFor targetId planSource
+  metadata <- sourceMetadataFor planJournal targetId
   recurrence <- admitRecurrence metadata
   let transaction = identifiedPlanTransaction identified
       nominalDate = transactionDate transaction
@@ -212,14 +216,13 @@ assessPlanAdvanceSafety
   -> Text
   -> PlanId
   -> Either (NonEmpty PlanCompleteAdvanceError) PlanAdvanceSafety
-assessPlanAdvanceSafety planJournal actualJournal planSource targetId = do
+assessPlanAdvanceSafety planJournal actualJournal _planSource targetId = do
   identified <- findPlan planJournal targetId
   ensureOpen actualJournal targetId
-  metadata <- sourceMetadataFor targetId planSource
+  metadata <- sourceMetadataFor planJournal targetId
   related <- relatedActivePlans
     planJournal
     actualJournal
-    planSource
     targetId
     (planRelation metadata (identifiedPlanTransaction identified))
   pure PlanAdvanceSafety
@@ -262,7 +265,7 @@ preparePlanCompleteAdvance planJournal actualJournal planSource actualSource int
       , completeAdvanceSuccessorPlanId = Nothing
       }
     Just successorDate -> do
-      metadata <- sourceMetadataFor targetId planSource
+      metadata <- sourceMetadataFor planJournal targetId
       recurrence <- admitRecurrence metadata
       validateSuccessorRecurrence recurrence
       successorPostings <- replaceBinaryMagnitude
@@ -386,11 +389,10 @@ planRelation metadata transaction =
 relatedActivePlans
   :: PlanJournal
   -> ActualJournal
-  -> Text
   -> PlanId
   -> PlanRelation
   -> Either (NonEmpty PlanCompleteAdvanceError) [IdentifiedPlanTransaction]
-relatedActivePlans planJournal actualJournal planSource targetId relation = do
+relatedActivePlans planJournal actualJournal targetId relation = do
   candidates <- traverse relatedCandidate activeCandidates
   pure (catMaybes candidates)
   where
@@ -403,17 +405,17 @@ relatedActivePlans planJournal actualJournal planSource targetId relation = do
       , identifiedPlanId candidate `notElem` completedIds
       ]
     relatedCandidate candidate = do
-      isRelated <- candidateMatchesRelation planSource relation candidate
+      isRelated <- candidateMatchesRelation planJournal relation candidate
       pure (if isRelated then Just candidate else Nothing)
 
 candidateMatchesRelation
-  :: Text
+  :: PlanJournal
   -> PlanRelation
   -> IdentifiedPlanTransaction
   -> Either (NonEmpty PlanCompleteAdvanceError) Bool
-candidateMatchesRelation planSource relation candidate = case relation of
+candidateMatchesRelation planJournal relation candidate = case relation of
   PlanSeriesRelation series -> do
-    candidateSeries <- sourceSeriesFor (identifiedPlanId candidate) planSource
+    candidateSeries <- sourceSeriesFor planJournal (identifiedPlanId candidate)
     pure (candidateSeries == Just series)
   PlanExactRelation description postings ->
     let transaction = identifiedPlanTransaction candidate
@@ -453,25 +455,31 @@ rejectDuplicateLookingSuccessor safety successorDate description postings =
 
 type Metadata = [(Text, Text)]
 
-sourceMetadataFor :: PlanId -> Text -> Either (NonEmpty PlanCompleteAdvanceError) Metadata
-sourceMetadataFor targetId source =
-  case filter (blockOwns targetId) (sourceBlocks source) of
-    [] -> Left (pure (CompleteAdvanceMetadataMissing targetId))
-    block : _ ->
-      let metadata = mapMaybe metadataLine (drop 1 block)
+sourceMetadataFor
+  :: PlanJournal
+  -> PlanId
+  -> Either (NonEmpty PlanCompleteAdvanceError) Metadata
+sourceMetadataFor planJournal targetId =
+  case planJournalTransactionSourceFor targetId planJournal of
+    Nothing -> Left (pure (CompleteAdvanceMetadataMissing targetId))
+    Just source ->
+      let metadata =
+            [ (journalMetadataKey entry, journalMetadataValue entry)
+            | entry <- journalTransactionSourceMetadata source
+            ]
           duplicateKeys = duplicates (map fst metadata)
       in case duplicateKeys of
           key : _ -> Left (pure (CompleteAdvanceDuplicateMetadata key))
           [] -> Right metadata
 
 sourceSeriesFor
-  :: PlanId
-  -> Text
+  :: PlanJournal
+  -> PlanId
   -> Either (NonEmpty PlanCompleteAdvanceError) (Maybe Text)
-sourceSeriesFor targetId source =
-  case filter (blockOwns targetId) (sourceBlocks source) of
-    [] -> Left (pure (CompleteAdvanceMetadataMissing targetId))
-    block : _ -> case seriesValues of
+sourceSeriesFor planJournal targetId =
+  case planJournalTransactionSourceFor targetId planJournal of
+    Nothing -> Left (pure (CompleteAdvanceMetadataMissing targetId))
+    Just source -> case seriesValues of
       [] -> Right Nothing
       [value]
         | T.null (T.strip value) -> Right Nothing
@@ -479,44 +487,10 @@ sourceSeriesFor targetId source =
       _ -> Left (pure (CompleteAdvanceDuplicateMetadata "series"))
       where
         seriesValues =
-          [ value
-          | (key, value) <- mapMaybe metadataLine (drop 1 block)
-          , key == "series"
+          [ journalMetadataValue entry
+          | entry <- journalTransactionSourceMetadata source
+          , journalMetadataKey entry == "series"
           ]
-
-blockOwns :: PlanId -> [Text] -> Bool
-blockOwns targetId block =
-  metadataValue "plan-id" (mapMaybe metadataLine (drop 1 block)) == Just (planIdText targetId)
-
-sourceBlocks :: Text -> [[Text]]
-sourceBlocks = map reverse . reverse . foldl' addLine [] . T.lines
-  where
-    addLine blocks line
-      | startsBlock line = [line] : blocks
-      | otherwise = case blocks of
-          [] -> []
-          block : rest -> (line : block) : rest
-
-startsBlock :: Text -> Bool
-startsBlock line =
-  not (T.null (T.strip line)) && not (isIndented line) && not (isComment line)
-
-isIndented :: Text -> Bool
-isIndented line = case T.uncons line of
-  Just (character, _) -> isSpace character
-  Nothing -> False
-
-isComment :: Text -> Bool
-isComment = T.isPrefixOf ";" . T.stripStart
-
-metadataLine :: Text -> Maybe (Text, Text)
-metadataLine line
-  | not (isIndented line && isComment line) = Nothing
-  | T.null remainder = Nothing
-  | otherwise = Just (T.toCaseFold (T.strip key), T.strip (T.drop 1 remainder))
-  where
-    clean = T.dropWhile (\character -> character == ';' || isSpace character) (T.strip line)
-    (key, remainder) = T.breakOn ":" clean
 
 metadataValue :: Text -> Metadata -> Maybe Text
 metadataValue key metadata = lookup (T.toCaseFold key) metadata
