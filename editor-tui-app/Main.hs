@@ -441,6 +441,10 @@ handleWorkspaceEvent context event = case event of
     | inActual -> openActualDaily
   VtyEvent (V.EvKey (V.KChar 'A') [])
     | inActual -> openActualDaily
+  VtyEvent (V.EvKey (V.KChar 'i') [])
+    | inActual -> openActualIncome
+  VtyEvent (V.EvKey (V.KChar 'I') [])
+    | inActual -> openActualIncome
   VtyEvent (V.EvKey (V.KChar 'm') [])
     | inActual -> openActualMulti
   VtyEvent (V.EvKey (V.KChar 'M') [])
@@ -532,6 +536,7 @@ handleWorkspaceEvent context event = case event of
           _ -> put (AppWrapper context
             (PlanBudgetSyncPicker (L.list PlanList (Vec.fromList completedPlans) 1)))
     openActualDaily = put (AppWrapper context (ActualFlow (Actual.startDaily (contextEntryDay context))))
+    openActualIncome = put (AppWrapper context (ActualFlow (Actual.startIncome (contextEntryDay context))))
     openActualMulti = put (AppWrapper context (ActualFlow (Actual.startMulti (contextEntryDay context))))
     openSelectedPlan :: EventM Name AppWrapper ()
     openSelectedPlan = case Plan.startSelectedCompletion context of

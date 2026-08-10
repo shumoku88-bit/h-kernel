@@ -13,6 +13,7 @@ module HKernel.Editor.Interaction.ActualAdd
   , initialActualAddInputForDay
   , selectActualAddAccount
   , dailyAccountCandidates
+  , incomeAccountCandidates
   , filterDailyAccountCandidates
   , groupAccountCandidates
   , stepAccountCandidate
@@ -103,6 +104,21 @@ dailyAccountCandidates registry transactions target =
       filter (matchesDailyRole registry target)
         (map declaredAccount (accountDeclarations registry))
 
+-- | Daily income entry exposes Income sources and Asset destinations while
+-- reusing the same ordinary two-posting Actual input. Account-role meaning
+-- stays here rather than in the Brick delivery adapter.
+incomeAccountCandidates
+  :: AccountRegistry
+  -> [Transaction]
+  -> AccountSelectionTarget
+  -> [Account]
+incomeAccountCandidates registry transactions target =
+  recentFirstCandidates transactions allMatching
+  where
+    allMatching =
+      filter (matchesIncomeRole registry target)
+        (map declaredAccount (accountDeclarations registry))
+
 -- | Case-insensitive substring search over Account names. Empty search preserves
 -- the recent-first order from 'dailyAccountCandidates'.
 filterDailyAccountCandidates :: Text -> [Account] -> [Account]
@@ -149,6 +165,17 @@ matchesDailyRole registry target account =
     (SelectToAccount, Just Expense) -> True
     (SelectFromAccount, Just Asset) -> True
     (SelectFromAccount, Just Liability) -> True
+    _ -> False
+
+matchesIncomeRole
+  :: AccountRegistry
+  -> AccountSelectionTarget
+  -> Account
+  -> Bool
+matchesIncomeRole registry target account =
+  case (target, accountTypeFor account registry) of
+    (SelectToAccount, Just Asset) -> True
+    (SelectFromAccount, Just Income) -> True
     _ -> False
 
 -- Multi-posting daily interaction

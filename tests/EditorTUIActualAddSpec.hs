@@ -33,6 +33,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , filterDailyAccountCandidates
   , filterMultiAccountCandidates
   , groupAccountCandidates
+  , incomeAccountCandidates
   , initialActualAddInputForDay
   , initialActualMultiAddStateForDay
   , multiAccountCandidates
@@ -69,6 +70,9 @@ main = do
         , ("daily input starts on supplied day", testInitialDay)
         , ("expense candidates are typed and recent-first", testExpenseCandidates)
         , ("payment candidates are typed, recent-first, and retain unused Accounts", testPaymentCandidates)
+        , ("income receiving candidates are Asset-only and recent-first", testIncomeReceivingCandidates)
+        , ("income source candidates are Income-only", testIncomeSourceCandidates)
+        , ("daily income reuses ordinary balanced posting direction", testIncomeDirection)
         , ("candidate groups use typed meaning and preserve order within groups", testCandidateGroups)
         , ("candidate stepping enters and wraps without selector state", testCandidateStepping)
         , ("candidate search is case-insensitive and order-preserving", testCandidateSearch)
@@ -105,6 +109,15 @@ validInput = ActualAddInput
   , addFromAccountText = "assets:cash"
   , addToAccountText = "expenses:food"
   , addAmountText = "100 JPY"
+  }
+
+incomeInput :: ActualAddInput
+incomeInput = ActualAddInput
+  { addDateText = "2026-08-08"
+  , addDescriptionText = "Pension"
+  , addFromAccountText = "income:pension"
+  , addToAccountText = "assets:bank"
+  , addAmountText = "100"
   }
 
 testPositiveMagnitude :: Bool
@@ -217,6 +230,46 @@ testPaymentCandidates =
           (journalTransactions journal)
           SelectFromAccount)
         == ["liabilities:card", "assets:cash", "assets:bank"]
+
+testIncomeReceivingCandidates :: Bool
+testIncomeReceivingCandidates =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      map accountName
+        (incomeAccountCandidates
+          (journalAccountRegistry journal)
+          (journalTransactions journal)
+          SelectToAccount)
+        == ["assets:cash", "assets:bank"]
+
+testIncomeSourceCandidates :: Bool
+testIncomeSourceCandidates =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      map accountName
+        (incomeAccountCandidates
+          (journalAccountRegistry journal)
+          (journalTransactions journal)
+          SelectFromAccount)
+        == ["income:pension"]
+
+testIncomeDirection :: Bool
+testIncomeDirection =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      case buildActualAddIntentWithRegistry
+          (journalAccountRegistry journal) incomeInput of
+        Left _ -> False
+        Right intent -> case NonEmpty.toList (intentPostings intent) of
+          [destination, source] ->
+            accountName (intentAccount destination) == "assets:bank"
+              && renderQuantity (intentQuantity destination) == "100"
+              && accountName (intentAccount source) == "income:pension"
+              && renderQuantity (intentQuantity source) == "-100"
+          _ -> False
 
 testCandidateGroups :: Bool
 testCandidateGroups =
