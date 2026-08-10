@@ -9,19 +9,21 @@
 -- exactly one unique @plan-id@, then its complete Posting shape may be
 -- classified from signed Account roles.
 --
--- The whole validated 'Transaction' and its parser-produced source metadata are
--- retained throughout. Neither admission nor classification flattens a
--- multi-posting Plan into one source, one destination, or one amount. The
--- current report projection accepts only the binary subset and retains the
--- original whole transaction beside the narrower 'CommittedOutgoingPlan'.
+-- The whole validated 'Transaction' is retained throughout. Canonical source
+-- evidence remains attached to the admitted 'PlanJournal' by durable PlanId so
+-- downstream domain owners can interpret metadata without rescanning raw text.
+-- Neither admission nor classification flattens a multi-posting Plan into one
+-- source, one destination, or one amount. The current report projection accepts
+-- only the binary subset and retains the original whole transaction beside the
+-- narrower 'CommittedOutgoingPlan'.
 module HKernel.Plan.Journal
   ( PlanJournal
   , planJournalValue
   , planJournalTransactions
+  , planJournalTransactionSourceFor
   , IdentifiedPlanTransaction
   , identifiedPlanId
   , identifiedPlanTransaction
-  , identifiedPlanSourceMetadata
   , PlanJournalError(..)
   , parsePlanJournal
   , admitPlanJournalFromResolvedJournal
@@ -41,6 +43,7 @@ import Data.Either (partitionEithers)
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
@@ -53,7 +56,6 @@ import HKernel.Journal
   ( Journal
   , JournalDocument
   , JournalError
-  , JournalMetadata
   , JournalTransactionSource
   , journalAccountRegistry
   , journalDocumentTransactionSources
@@ -88,19 +90,29 @@ import HKernel.Plan
   , mkPositiveAmount
   )
 
--- | One validated Plan Journal and its durable transaction identities.
+-- | One validated Plan Journal and its durable transaction identities. Root
+-- source evidence is indexed privately by the same admitted PlanId.
 data PlanJournal = PlanJournal
-  { planJournalValue        :: Journal
-  , planJournalTransactions :: [IdentifiedPlanTransaction]
+  { planJournalValue              :: Journal
+  , planJournalTransactions       :: [IdentifiedPlanTransaction]
+  , planJournalTransactionSources :: Map PlanId JournalTransactionSource
   } deriving (Eq, Show)
 
--- | A whole validated transaction paired with its durable Plan identity and
--- canonical read-only source metadata evidence. Metadata meaning remains with
--- downstream domain owners.
+-- | Read canonical root-source evidence for one admitted Plan identity.
+--
+-- Consumers receive parser-produced structure, not a new raw-source grammar.
+-- Metadata meaning remains with the requesting domain owner.
+planJournalTransactionSourceFor
+  :: PlanId
+  -> PlanJournal
+  -> Maybe JournalTransactionSource
+planJournalTransactionSourceFor planId =
+  Map.lookup planId . planJournalTransactionSources
+
+-- | A whole validated transaction paired with its durable Plan identity.
 data IdentifiedPlanTransaction = IdentifiedPlanTransaction
-  { identifiedPlanId             :: PlanId
-  , identifiedPlanTransaction    :: Transaction
-  , identifiedPlanSourceMetadata :: [JournalMetadata]
+  { identifiedPlanId          :: PlanId
+  , identifiedPlanTransaction :: Transaction
   } deriving (Eq, Show)
 
 -- | Failure to admit accounting syntax or required Plan identity metadata.
@@ -115,9 +127,9 @@ data PlanJournalError
 
 -- | Parse accounting syntax, then require one unique @plan-id@ per transaction.
 --
--- Output order follows transaction source order. Unrelated metadata remains
--- outside this narrow projection's meaning, but its canonical parser-produced
--- evidence is retained for later domain-specific admission.
+-- Output order follows transaction source order. Unrelated metadata receives no
+-- invented Plan meaning, while its canonical source evidence remains available
+-- from the admitted PlanJournal for later domain-specific interpretation.
 parsePlanJournal
   :: Text
   -> Either (NonEmpty PlanJournalError) PlanJournal
@@ -155,6 +167,10 @@ admitPlanJournalFromDocument journal document
       Nothing -> Right PlanJournal
         { planJournalValue = journal
         , planJournalTransactions = map locatedPlanValue locatedPlans
+        , planJournalTransactionSources = Map.fromList
+            [ (identifiedPlanId (locatedPlanValue located), locatedPlanSource located)
+            | located <- locatedPlans
+            ]
         }
   where
     transactions = journalTransactions journal
@@ -168,8 +184,9 @@ admitPlanJournalFromDocument journal document
         ++ duplicatePlanIdErrors locatedPlans
 
 data LocatedPlanTransaction = LocatedPlanTransaction
-  { locatedPlanLine  :: Int
-  , locatedPlanValue :: IdentifiedPlanTransaction
+  { locatedPlanLine   :: Int
+  , locatedPlanValue  :: IdentifiedPlanTransaction
+  , locatedPlanSource :: JournalTransactionSource
   }
 
 data PlanMetadataAdmission = PlanMetadataAdmission
@@ -208,9 +225,8 @@ admitPlanMetadata transaction source = case metadataEntries of
         , locatedPlanValue = IdentifiedPlanTransaction
             { identifiedPlanId = planId
             , identifiedPlanTransaction = transaction
-            , identifiedPlanSourceMetadata =
-                journalTransactionSourceMetadata source
             }
+        , locatedPlanSource = source
         }
   where
     metadataEntries = filter ((== "plan-id") . journalMetadataKey)
