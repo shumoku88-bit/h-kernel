@@ -4,19 +4,23 @@
 -- projection from a validated Journal source.
 --
 -- The canonical Journal parser owns declarations, postings, exact amounts,
--- balancing, and transaction validation. This module adds the Plan-specific
--- boundaries: every Plan transaction carries exactly one unique @plan-id@,
--- then its complete Posting shape may be classified from signed Account roles.
+-- balancing, transaction validation, and lexical transaction metadata. This
+-- module adds the Plan-specific boundaries: every Plan transaction carries
+-- exactly one unique @plan-id@, then its complete Posting shape may be
+-- classified from signed Account roles.
 --
--- The whole validated 'Transaction' is retained throughout. Neither admission
--- nor classification flattens a multi-posting Plan into one source, one
--- destination, or one amount. The current report projection accepts only the
--- binary subset and retains the original whole transaction beside the narrower
--- 'CommittedOutgoingPlan'.
+-- The whole validated 'Transaction' is retained throughout. Canonical source
+-- evidence remains attached to the admitted 'PlanJournal' by durable PlanId so
+-- downstream domain owners can interpret metadata without rescanning raw text.
+-- Neither admission nor classification flattens a multi-posting Plan into one
+-- source, one destination, or one amount. The current report projection accepts
+-- only the binary subset and retains the original whole transaction beside the
+-- narrower 'CommittedOutgoingPlan'.
 module HKernel.Plan.Journal
   ( PlanJournal
   , planJournalValue
   , planJournalTransactions
+  , planJournalTransactionSourceFor
   , IdentifiedPlanTransaction
   , identifiedPlanId
   , identifiedPlanTransaction
@@ -39,6 +43,7 @@ import Data.Either (partitionEithers)
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
@@ -85,11 +90,41 @@ import HKernel.Plan
   , mkPositiveAmount
   )
 
--- | One validated Plan Journal and its durable transaction identities.
+-- | One validated Plan Journal and its durable transaction identities. Root
+-- source evidence is indexed privately by the same admitted PlanId.
 data PlanJournal = PlanJournal
-  { planJournalValue        :: Journal
-  , planJournalTransactions :: [IdentifiedPlanTransaction]
-  } deriving (Eq, Show)
+  { planJournalValue              :: Journal
+  , planJournalTransactions       :: [IdentifiedPlanTransaction]
+  , planJournalTransactionSources :: Map PlanId JournalTransactionSource
+  } deriving (Show)
+
+-- Physical source coordinates are provenance rather than semantic equality.
+-- Metadata key/value evidence is semantic here because downstream Plan domains
+-- may interpret it, while direct and resolved roots can legitimately place the
+-- same evidence at different line numbers.
+instance Eq PlanJournal where
+  left == right =
+    planJournalValue left == planJournalValue right
+      && planJournalTransactions left == planJournalTransactions right
+      && fmap sourceMetadataMeaning (planJournalTransactionSources left)
+          == fmap sourceMetadataMeaning (planJournalTransactionSources right)
+
+sourceMetadataMeaning :: JournalTransactionSource -> [(Text, Text)]
+sourceMetadataMeaning source =
+  [ (journalMetadataKey entry, journalMetadataValue entry)
+  | entry <- journalTransactionSourceMetadata source
+  ]
+
+-- | Read canonical root-source evidence for one admitted Plan identity.
+--
+-- Consumers receive parser-produced structure, not a new raw-source grammar.
+-- Metadata meaning remains with the requesting domain owner.
+planJournalTransactionSourceFor
+  :: PlanId
+  -> PlanJournal
+  -> Maybe JournalTransactionSource
+planJournalTransactionSourceFor planId =
+  Map.lookup planId . planJournalTransactionSources
 
 -- | A whole validated transaction paired with its durable Plan identity.
 data IdentifiedPlanTransaction = IdentifiedPlanTransaction
@@ -109,8 +144,9 @@ data PlanJournalError
 
 -- | Parse accounting syntax, then require one unique @plan-id@ per transaction.
 --
--- Output order follows transaction source order. Unrelated metadata remains
--- outside this narrow projection and receives no invented runtime meaning.
+-- Output order follows transaction source order. Unrelated metadata receives no
+-- invented Plan meaning, while its canonical source evidence remains available
+-- from the admitted PlanJournal for later domain-specific interpretation.
 parsePlanJournal
   :: Text
   -> Either (NonEmpty PlanJournalError) PlanJournal
@@ -124,7 +160,8 @@ parsePlanJournal input = case parseJournalDocument input of
 --
 -- The root document is parsed with the canonical Journal structural parser so
 -- includes may still contribute declarations without silently contributing
--- hidden Plan transactions. Metadata meaning remains owned by this module.
+-- hidden Plan transactions. Metadata meaning remains owned by downstream Plan
+-- consumers rather than by the lexical parser.
 admitPlanJournalFromResolvedJournal
   :: Journal
   -> Text
@@ -147,6 +184,10 @@ admitPlanJournalFromDocument journal document
       Nothing -> Right PlanJournal
         { planJournalValue = journal
         , planJournalTransactions = map locatedPlanValue locatedPlans
+        , planJournalTransactionSources = Map.fromList
+            [ (identifiedPlanId (locatedPlanValue located), locatedPlanSource located)
+            | located <- locatedPlans
+            ]
         }
   where
     transactions = journalTransactions journal
@@ -160,8 +201,9 @@ admitPlanJournalFromDocument journal document
         ++ duplicatePlanIdErrors locatedPlans
 
 data LocatedPlanTransaction = LocatedPlanTransaction
-  { locatedPlanLine  :: Int
-  , locatedPlanValue :: IdentifiedPlanTransaction
+  { locatedPlanLine   :: Int
+  , locatedPlanValue  :: IdentifiedPlanTransaction
+  , locatedPlanSource :: JournalTransactionSource
   }
 
 data PlanMetadataAdmission = PlanMetadataAdmission
@@ -201,6 +243,7 @@ admitPlanMetadata transaction source = case metadataEntries of
             { identifiedPlanId = planId
             , identifiedPlanTransaction = transaction
             }
+        , locatedPlanSource = source
         }
   where
     metadataEntries = filter ((== "plan-id") . journalMetadataKey)
