@@ -10,6 +10,7 @@ import HKernel.Account
 import HKernel.Budget.Config (parseBudgetPolicy)
 import HKernel.Household.Config
   ( householdConfigurationDailyTargetAssets
+  , householdConfigurationPrimaryCommodity
   , parseHouseholdConfiguration
   )
 import HKernel.Household.DailyTarget
@@ -86,6 +87,8 @@ characterizeNativeSourceParity registry plan retainedScope = do
   let budgetPolicy = mustRight (parseBudgetPolicy nativeBudgetConfig)
       householdConfiguration = mustRight
         (parseHouseholdConfiguration budgetPolicy nativeHouseholdConfig)
+      preCutoverConfiguration = mustRight
+        (parseHouseholdConfiguration budgetPolicy nativeHouseholdConfigWithoutMoney)
       planJournal = mustRight (parsePlanJournal nativePlanJournal)
       obligationSelections = mustRight
         (admitDailyTargetPlanJournalSelections planJournal)
@@ -95,6 +98,17 @@ characterizeNativeSourceParity registry plan retainedScope = do
           [plan]
           (householdConfigurationDailyTargetAssets householdConfiguration)
           obligationSelections)
+      jpy = mustRight (mkCommodity "JPY")
+
+  assertEqual
+    "household.toml admits an explicit primary Commodity"
+    (Just jpy)
+    (householdConfigurationPrimaryCommodity householdConfiguration)
+
+  assertEqual
+    "pre-cutover household.toml remains valid without inventing a Commodity fallback"
+    Nothing
+    (householdConfigurationPrimaryCommodity preCutoverConfiguration)
 
   assertEqual
     "household.toml + plan.journal reproduce retained Daily Target semantics"
@@ -234,6 +248,15 @@ nativeBudgetConfig = T.unlines
 
 nativeHouseholdConfig :: T.Text
 nativeHouseholdConfig = T.unlines
+  ( [ "[money]"
+    , "primary-commodity = \"JPY\""
+    , ""
+    ]
+      ++ T.lines nativeHouseholdConfigWithoutMoney
+  )
+
+nativeHouseholdConfigWithoutMoney :: T.Text
+nativeHouseholdConfigWithoutMoney = T.unlines
   [ "[cycle]"
   , "mode = \"income-anchor\""
   , "income-account = \"income:benefit\""
