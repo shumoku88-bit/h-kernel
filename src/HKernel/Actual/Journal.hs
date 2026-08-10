@@ -33,6 +33,7 @@ module HKernel.Actual.Journal
   , ActualJournalError(..)
   , parseActualJournal
   , admitActualJournalFromResolvedJournal
+  , admitActualJournalFromResolvedSources
   ) where
 
 import Data.List (sort)
@@ -141,13 +142,8 @@ parseActualJournal input = case parseJournalDocument input of
 -- The supplied Journal is expected to be the result of admitting the same root
 -- source after its include graph has been resolved. Accounting declarations,
 -- postings, exact amounts, and transaction validation therefore remain owned by
--- 'HKernel.Journal'; this function reads only Actual-owned meaning from
--- canonical root-document metadata evidence.
---
--- The transaction count must match exactly. This permits includes to contribute
--- declarations such as canonical Account ownership, but fails closed if an
--- include contributes hidden transactions or if the supplied Journal does not
--- correspond to the root source shape.
+-- 'HKernel.Journal'; this compatibility entry point reparses the supplied root
+-- text and then delegates to parser-owned source evidence.
 admitActualJournalFromResolvedJournal
   :: Journal
   -> Text
@@ -157,11 +153,31 @@ admitActualJournalFromResolvedJournal journal input =
     Left journalErrors -> Left (fmap ActualJournalSyntaxError journalErrors)
     Right document -> admitActualJournalFromDocument journal document
 
+-- | Project Actual meaning from parser-owned root transaction evidence that was
+-- retained by the same loading observation as the resolved Journal.
+--
+-- This boundary is pure: the Loader owns filesystem observation while Actual
+-- owns event identity, Plan completion, reversal provenance, and alignment.
+admitActualJournalFromResolvedSources
+  :: Journal
+  -> [JournalTransactionSource]
+  -> Either (NonEmpty ActualJournalError) ActualJournal
+admitActualJournalFromResolvedSources = admitActualJournalFromSources
+
 admitActualJournalFromDocument
   :: Journal
   -> JournalDocument
   -> Either (NonEmpty ActualJournalError) ActualJournal
-admitActualJournalFromDocument journal document
+admitActualJournalFromDocument journal document =
+  admitActualJournalFromSources
+    journal
+    (journalDocumentTransactionSources document)
+
+admitActualJournalFromSources
+  :: Journal
+  -> [JournalTransactionSource]
+  -> Either (NonEmpty ActualJournalError) ActualJournal
+admitActualJournalFromSources journal metadataBlocks
   | transactionCount /= metadataCount = Left
       (ActualTransactionMetadataAlignmentMismatch
         transactionCount metadataCount NonEmpty.:| [])
@@ -176,7 +192,6 @@ admitActualJournalFromDocument journal document
         }
   where
     transactions = journalTransactions journal
-    metadataBlocks = journalDocumentTransactionSources document
     transactionCount = length transactions
     metadataCount = length metadataBlocks
     admissions = zipWith admitTransactionMetadata transactions metadataBlocks
