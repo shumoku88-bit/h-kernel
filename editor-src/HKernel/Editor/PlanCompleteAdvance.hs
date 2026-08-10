@@ -4,8 +4,11 @@
 -- | One household operation for closing a Plan with an Actual transaction and,
 -- when requested, appending its next occurrence.
 --
--- The nominal Plan date and the Actual date deliberately remain separate. A
--- payment brought forward for a weekend must not make a monthly series drift.
+-- Completion meaning does not depend on recurrence metadata. Recurrence,
+-- relation, and successor metadata are admitted only when an advance is
+-- requested. The nominal Plan date and the Actual date deliberately remain
+-- separate. A payment brought forward for a weekend must not make a monthly
+-- series drift.
 module HKernel.Editor.PlanCompleteAdvance
   ( PlanRecurrence(..)
   , PlanAdvanceProposal(..)
@@ -118,7 +121,7 @@ data PlanAdvanceProposal = PlanAdvanceProposal
 -- | Current open members of the selected Plan relation. The latest member is
 -- derived from the same list rather than stored as independent state.
 data PlanAdvanceSafety = PlanAdvanceSafety
-  { advanceRelatedActivePlans     :: [IdentifiedPlanTransaction]
+  { advanceRelatedActivePlans      :: [IdentifiedPlanTransaction]
   , advanceLatestRelatedActivePlan :: Maybe IdentifiedPlanTransaction
   } deriving (Eq, Show)
 
@@ -131,12 +134,11 @@ data PlanCompleteAdvanceIntent = PlanCompleteAdvanceIntent
   } deriving (Eq, Show)
 
 data PlanCompleteAdvancePreview = PlanCompleteAdvancePreview
-  { completeAdvanceActualBlock        :: Text
-  , completeAdvanceActualSource       :: Text
-  , completeAdvanceSuccessorBlock     :: Maybe Text
-  , completeAdvancePlanSource         :: Text
-  , completeAdvanceSuccessorPlanId    :: Maybe PlanId
-  , completeAdvanceRecurrence         :: PlanRecurrence
+  { completeAdvanceActualBlock     :: Text
+  , completeAdvanceActualSource    :: Text
+  , completeAdvanceSuccessorBlock  :: Maybe Text
+  , completeAdvancePlanSource      :: Text
+  , completeAdvanceSuccessorPlanId :: Maybe PlanId
   } deriving (Eq, Show)
 
 data PlanCompleteAdvanceError
@@ -216,9 +218,7 @@ preparePlanCompleteAdvance planJournal actualJournal planSource actualSource int
   identified <- findPlan planJournal targetId
   let transaction = identifiedPlanTransaction identified
   ensureOpen actualJournal targetId
-  metadata <- sourceMetadataFor targetId planSource
-  recurrence <- admitRecurrence metadata
-  validateSuccessorChoice recurrence intent
+  validateSuccessorAmountChoice intent
   actualPostings <- replaceBinaryMagnitude
     CompleteAdvanceAmountOverrideRequiresBinaryPlan
     (completeAdvanceActualAmount intent)
@@ -240,9 +240,11 @@ preparePlanCompleteAdvance planJournal actualJournal planSource actualSource int
       , completeAdvanceSuccessorBlock = Nothing
       , completeAdvancePlanSource = planSource
       , completeAdvanceSuccessorPlanId = Nothing
-      , completeAdvanceRecurrence = recurrence
       }
     Just successorDate -> do
+      metadata <- sourceMetadataFor targetId planSource
+      recurrence <- admitRecurrence metadata
+      validateSuccessorRecurrence recurrence
       successorPostings <- replaceBinaryMagnitude
         CompleteAdvanceAmountOverrideRequiresBinaryPlan
         (completeAdvanceSuccessorAmount intent)
@@ -288,7 +290,6 @@ preparePlanCompleteAdvance planJournal actualJournal planSource actualSource int
         , completeAdvanceSuccessorBlock = Just successorBlock
         , completeAdvancePlanSource = candidatePlanSource
         , completeAdvanceSuccessorPlanId = Just successorId
-        , completeAdvanceRecurrence = recurrence
         }
   where
     targetId = completeAdvancePlanId intent
@@ -333,13 +334,20 @@ ensureOpen actualJournal targetId
       Left (pure (CompleteAdvancePlanAlreadyClosed targetId))
   | otherwise = Right ()
 
-validateSuccessorChoice :: PlanRecurrence -> PlanCompleteAdvanceIntent -> Either (NonEmpty PlanCompleteAdvanceError) ()
-validateSuccessorChoice recurrence intent
+validateSuccessorAmountChoice
+  :: PlanCompleteAdvanceIntent
+  -> Either (NonEmpty PlanCompleteAdvanceError) ()
+validateSuccessorAmountChoice intent
   | completeAdvanceSuccessorDate intent == Nothing
       && completeAdvanceSuccessorAmount intent /= Nothing =
       Left (pure CompleteAdvanceSuccessorAmountWithoutDate)
-  | recurrence == PlanRecursOnce
-      && completeAdvanceSuccessorDate intent /= Nothing =
+  | otherwise = Right ()
+
+validateSuccessorRecurrence
+  :: PlanRecurrence
+  -> Either (NonEmpty PlanCompleteAdvanceError) ()
+validateSuccessorRecurrence recurrence
+  | recurrence == PlanRecursOnce =
       Left (pure CompleteAdvanceSuccessorForbiddenForOnce)
   | otherwise = Right ()
 
