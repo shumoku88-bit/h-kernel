@@ -19,6 +19,7 @@ main = do
   characterizeCompletionMetadataAdmission
   characterizeResolvedJournalAdmission
   rejectResolvedJournalTransactionDrift
+  rejectResolvedJournalEqualCountTransactionDrift
   characterizeDetachedMetadataBoundary
   characterizeExplicitCompletionResolution
   characterizePlanReferenceWithoutEventIdentity
@@ -75,6 +76,20 @@ rejectResolvedJournalTransactionDrift =
     driftedJournal = mustRight (parseJournal driftedResolvedAccountingJournal)
     isAlignmentMismatch err = case err of
       ActualTransactionMetadataAlignmentMismatch 2 1 -> True
+      _ -> False
+
+rejectResolvedJournalEqualCountTransactionDrift :: IO ()
+rejectResolvedJournalEqualCountTransactionDrift =
+  assertLeftSatisfies
+    "resolved admission rejects equal-count source evidence for a different Actual transaction"
+    (any isSourceMismatch . NonEmpty.toList)
+    (admitActualJournalFromResolvedJournal
+      resolvedJournal
+      equalCountDifferentActualRoot)
+  where
+    resolvedJournal = mustRight (parseJournal resolvedAccountingJournal)
+    isSourceMismatch err = case err of
+      ActualTransactionSourceAlignmentMismatch 1 -> True
       _ -> False
 
 characterizeDetachedMetadataBoundary :: IO ()
@@ -248,6 +263,17 @@ resolvedActualRoot = T.unlines
   , "  ; plan-id: plan-wifi"
   , "  assets:cash      -300 JPY"
   , "  expenses:wifi    300 JPY"
+  ]
+
+equalCountDifferentActualRoot :: T.Text
+equalCountDifferentActualRoot = T.unlines
+  [ "include accounts.journal"
+  , ""
+  , "2026-08-03 * different payment"
+  , "  ; event-id: actual-wrong-source"
+  , "  ; plan-id: plan-wifi"
+  , "  assets:cash      -301 JPY"
+  , "  expenses:wifi    301 JPY"
   ]
 
 resolvedAccountingJournal :: T.Text
