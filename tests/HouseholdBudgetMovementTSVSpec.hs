@@ -17,6 +17,7 @@ main = do
   characterizeAcceptedMovements
   characterizeSourceFailures
   characterizeNativeJournalRoundTrip
+  characterizeNativeResolvedSourceAdmission
   characterizeNativeJournalFailures
 
 characterizeAcceptedMovements :: IO ()
@@ -90,6 +91,30 @@ characterizeNativeJournalRoundTrip = do
     (map householdBudgetMovementMemo retained)
     (map householdBudgetMovementMemo native)
 
+characterizeNativeResolvedSourceAdmission :: IO ()
+characterizeNativeResolvedSourceAdmission = do
+  let resolvedJournal = mustRight (parseJournal nativeResolvedBudgetJournal)
+      admitted = mustRight
+        (admitHouseholdBudgetMovementJournalFromResolvedJournal
+          resolvedJournal
+          nativeResolvedBudgetJournal)
+
+  assertEqual
+    "resolved native Budget admission accepts matching transaction evidence"
+    1
+    (length (householdBudgetMovementJournalMovements admitted))
+
+  assertLeftSatisfies
+    "resolved native Budget admission rejects equal-count source evidence for a different transaction"
+    (any isSourceMismatch . NonEmpty.toList)
+    (admitHouseholdBudgetMovementJournalFromResolvedJournal
+      resolvedJournal
+      equalCountDifferentBudgetSource)
+  where
+    isSourceMismatch err = case err of
+      BudgetMovementJournalTransactionSourceAlignmentMismatch 1 -> True
+      _ -> False
+
 characterizeNativeJournalFailures :: IO ()
 characterizeNativeJournalFailures = do
   assertEqual
@@ -154,6 +179,20 @@ budgetDeclarations = T.unlines
   , "  type: asset"
   ]
 
+nativeResolvedBudgetJournal :: T.Text
+nativeResolvedBudgetJournal = budgetDeclarations <> T.unlines
+  [ "2026-06-15 move-to-reserve"
+  , "    budget:opening    -100 JPY"
+  , "    budget:reserve     100 JPY"
+  ]
+
+equalCountDifferentBudgetSource :: T.Text
+equalCountDifferentBudgetSource = budgetDeclarations <> T.unlines
+  [ "2026-06-15 different-move"
+  , "    budget:opening    -101 JPY"
+  , "    budget:reserve     101 JPY"
+  ]
+
 nonBudgetJournal :: T.Text
 nonBudgetJournal = budgetDeclarations <> T.unlines
   [ "2026-06-15 invalid-role"
@@ -205,6 +244,24 @@ mustRight :: Show error => Either error value -> value
 mustRight result = case result of
   Right value -> value
   Left err -> error ("invalid test fixture: " ++ show err)
+
+assertLeftSatisfies
+  :: (Show error, Show value)
+  => String
+  -> (NonEmpty.NonEmpty error -> Bool)
+  -> Either (NonEmpty.NonEmpty error) value
+  -> IO ()
+assertLeftSatisfies label predicate result = case result of
+  Left errors
+    | predicate errors -> putStrLn ("  [PASS] " ++ label)
+    | otherwise -> do
+        putStrLn ("  [FAIL] " ++ label)
+        putStrLn ("    errors did not satisfy predicate: " ++ show errors)
+        exitFailure
+  Right value -> do
+    putStrLn ("  [FAIL] " ++ label)
+    putStrLn ("    unexpectedly accepted: " ++ show value)
+    exitFailure
 
 assertLeftAt
   :: String
