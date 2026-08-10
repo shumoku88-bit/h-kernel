@@ -49,6 +49,7 @@ main = do
         , ("interaction keeps four editable coordinates independent", testInteractionOverrides)
         , ("actual amount does not rewrite successor default", testAmountSeparation)
         , ("daily-target identity refreshes", testDailyTargetRefresh)
+        , ("completion ignores advance-only recurrence admission", testCompletionDoesNotAdmitRecurrence)
         , ("once recurrence forbids successor", testOnceNoSuccessor)
         , ("cycle recurrence requires explicit date", testCycleManualDate)
         , ("series relation derives active members and latest", testSeriesSafetyAssessment)
@@ -88,6 +89,12 @@ monthlyPlanSource = T.unlines
   , "  expenses:test-service  1234 JPY"
   , "  assets:test-bank  -1234 JPY"
   ]
+
+invalidRecurrencePlanSource :: Text
+invalidRecurrencePlanSource = T.replace
+  "  ; recur: monthly"
+  "  ; recur: every-third-moon"
+  monthlyPlanSource
 
 duplicateSeriesPlanSource :: Text
 duplicateSeriesPlanSource = monthlyPlanSource <> T.unlines
@@ -319,6 +326,46 @@ testDailyTargetRefresh = withMonthly $ \planJournal actualJournal target ->
           && not ("daily-target-id: sample-target-001" `T.isInfixOf` block)
           && "recur: monthly" `T.isInfixOf` block
           && "series: sample-series" `T.isInfixOf` block
+
+testCompletionDoesNotAdmitRecurrence :: Bool
+testCompletionDoesNotAdmitRecurrence = case
+    ( admitPlan invalidRecurrencePlanSource
+    , admitActual
+    , planId "plan-2031-01-17-sample-series"
+    ) of
+  (Just planJournal, Just actualJournal, Just target) ->
+    let completionOnly = preparePlanCompleteAdvance
+          planJournal
+          actualJournal
+          invalidRecurrencePlanSource
+          actualRoot
+          PlanCompleteAdvanceIntent
+            { completeAdvancePlanId = target
+            , completeAdvanceActualDate = fromGregorian 2031 1 16
+            , completeAdvanceActualAmount = Nothing
+            , completeAdvanceSuccessorDate = Nothing
+            , completeAdvanceSuccessorAmount = Nothing
+            }
+        advanceRequested = preparePlanCompleteAdvance
+          planJournal
+          actualJournal
+          invalidRecurrencePlanSource
+          actualRoot
+          PlanCompleteAdvanceIntent
+            { completeAdvancePlanId = target
+            , completeAdvanceActualDate = fromGregorian 2031 1 16
+            , completeAdvanceActualAmount = Nothing
+            , completeAdvanceSuccessorDate = Just (fromGregorian 2031 2 17)
+            , completeAdvanceSuccessorAmount = Nothing
+            }
+    in case (completionOnly, advanceRequested) of
+      (Right preview, Left errors) ->
+        completeAdvanceSuccessorBlock preview == Nothing
+          && completeAdvancePlanSource preview == invalidRecurrencePlanSource
+          && CompleteAdvanceInvalidRecurrence "every-third-moon"
+            `elem` NonEmpty.toList errors
+      _ -> False
+  _ -> False
 
 testOnceNoSuccessor :: Bool
 testOnceNoSuccessor = case
