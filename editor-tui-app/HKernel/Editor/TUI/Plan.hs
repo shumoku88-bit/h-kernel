@@ -650,7 +650,7 @@ syncCompletedPlanBudget context planId =
       (householdConfigurationAccountPolicy (householdStateConfiguration state))
       (householdStatePlanJournal state)
       (householdStateActualJournal state)
-      (householdStateBudgetMovements state)
+      (householdStateBudgetMovementJournal state)
       (contextBudgetSource context)
       planId of
     Left errors -> pure (BudgetSyncPending context planId
