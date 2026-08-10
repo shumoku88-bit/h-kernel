@@ -11,7 +11,6 @@ import HKernel.Account (AccountType(..), accountName, mkAccount)
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddInputError(..)
-  , ActualAddPreview(..)
   , ActualAddWriteFailure(..)
   , ActualAddWriteOutcome(..)
   , ActualEditIntent(..)
@@ -23,37 +22,30 @@ import HKernel.Editor.ActualAppend
   , buildActualAddIntentWithRegistry
   , buildActualMultiAddIntentWithRegistry
   , classifyActualAddWriteResult
-  , prepareActualAddPreview
   , prepareActualMultiAddPreviewFromResolvedJournal
   )
 import HKernel.Editor.ActualWriter (WriteError(..))
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
-  , ActualAddAction(..)
-  , ActualAddMode(..)
-  , ActualAddState(..)
   , ActualMultiAddState(..)
   , appendActualMultiPosting
   , dailyAccountCandidates
   , filterDailyAccountCandidates
   , filterMultiAccountCandidates
   , groupAccountCandidates
-  , enterActualAddPreview
-  , initialActualAddState
-  , initialActualAddStateForDay
+  , initialActualAddInputForDay
   , initialActualMultiAddStateForDay
   , multiAccountCandidates
   , removeSelectedActualMultiPosting
   , resizeActualMultiPostings
+  , selectActualAddAccount
   , selectActualMultiPosting
   , selectedActualMultiPosting
-  , setActualAddDate
   , setActualMultiDateText
   , setSelectedActualMultiAccount
   , setSelectedActualMultiAccountText
   , setSelectedActualMultiAmount
   , stepAccountCandidate
-  , transitionActualAdd
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Journal
@@ -74,8 +66,7 @@ main = do
         , ("daily amount infers canonical default commodity", testDefaultCommodityInference source)
         , ("conflicting defaults fail before candidate creation", testConflictingDefaults)
         , ("missing defaults fail before candidate creation", testMissingDefaults)
-        , ("daily entry starts on supplied day", testInitialDay)
-        , ("daily entry can switch to yesterday", testYesterday)
+        , ("daily input starts on supplied day", testInitialDay)
         , ("expense candidates are typed and recent-first", testExpenseCandidates)
         , ("payment candidates are typed, recent-first, and retain unused Accounts", testPaymentCandidates)
         , ("candidate groups use typed meaning and preserve order within groups", testCandidateGroups)
@@ -84,9 +75,6 @@ main = do
         , ("empty candidate search preserves recent-first list", testEmptyCandidateSearch)
         , ("from Account selection updates input", testFromSelection)
         , ("daily Account reselection preserves the rest of the draft", testDailyReselectionPreservesDraft)
-        , ("cancelled selection preserves input", testCancelSelection)
-        , ("preview transition retains candidate block only", testPreviewTransition source)
-        , ("preview returns directly to editing input", testPreviewReturn source)
         , ("multi input builds signed three-posting intent", testMultiBuild)
         , ("multi input requires at least three postings", testMultiRequiresThree)
         , ("multi input rejects zero posting with row coordinate", testMultiRejectsZero)
@@ -118,13 +106,6 @@ validInput = ActualAddInput
   , addToAccountText = "expenses:food"
   , addAmountText = "100 JPY"
   }
-
-expectedBlock :: T.Text
-expectedBlock = T.unlines
-  [ "2026-08-05 Groceries"
-  , "  expenses:food  100 JPY"
-  , "  assets:cash  -100 JPY"
-  ]
 
 testPositiveMagnitude :: Bool
 testPositiveMagnitude = case buildActualAddIntent validInput of
@@ -210,19 +191,8 @@ missingDefaultSource = T.unlines
 
 testInitialDay :: Bool
 testInitialDay =
-  let today = read "2026-08-08"
-      state = initialActualAddStateForDay today
-  in addDateText (actualAddInput state) == "2026-08-08"
-      && actualAddMode state == EditingActualAdd
-
-testYesterday :: Bool
-testYesterday =
-  let today = read "2026-08-08"
-      yesterday = read "2026-08-07"
-      initial = initialActualAddStateForDay today
-      changed = setActualAddDate yesterday initial
-  in addDateText (actualAddInput changed) == "2026-08-07"
-      && actualAddMode changed == EditingActualAdd
+  addDateText (initialActualAddInputForDay (read "2026-08-08"))
+    == "2026-08-08"
 
 testExpenseCandidates :: Bool
 testExpenseCandidates =
@@ -340,63 +310,25 @@ testFromSelection :: Bool
 testFromSelection = case mkAccount "assets:cash" of
   Left _ -> False
   Right account ->
-    let selecting = transitionActualAdd
-          (BeginAccountSelection SelectFromAccount)
-          initialActualAddState
-        selected = transitionActualAdd (ChooseAccount account) selecting
-    in addFromAccountText (actualAddInput selected) == "assets:cash"
-        && actualAddMode selected == EditingActualAdd
+    let selected = selectActualAddAccount SelectFromAccount account validInput
+    in addFromAccountText selected == "assets:cash"
+        && addDateText selected == addDateText validInput
+        && addDescriptionText selected == addDescriptionText validInput
+        && addToAccountText selected == addToAccountText validInput
+        && addAmountText selected == addAmountText validInput
 
 testDailyReselectionPreservesDraft :: Bool
 testDailyReselectionPreservesDraft =
   case (mkAccount "expenses:books", mkAccount "expenses:food") of
     (Right books, Right food) ->
-      let initial = ActualAddState validInput EditingActualAdd
-          choose account state =
-            transitionActualAdd (ChooseAccount account)
-              (transitionActualAdd (BeginAccountSelection SelectToAccount) state)
-          once = choose books initial
-          corrected = choose food once
-          input = actualAddInput corrected
-      in addDateText input == addDateText validInput
-          && addDescriptionText input == addDescriptionText validInput
-          && addFromAccountText input == addFromAccountText validInput
-          && addAmountText input == addAmountText validInput
-          && addToAccountText input == "expenses:food"
-          && actualAddMode corrected == EditingActualAdd
+      let once = selectActualAddAccount SelectToAccount books validInput
+          corrected = selectActualAddAccount SelectToAccount food once
+      in addDateText corrected == addDateText validInput
+          && addDescriptionText corrected == addDescriptionText validInput
+          && addFromAccountText corrected == addFromAccountText validInput
+          && addAmountText corrected == addAmountText validInput
+          && addToAccountText corrected == "expenses:food"
     _ -> False
-
-testCancelSelection :: Bool
-testCancelSelection =
-  let initial = ActualAddState validInput EditingActualAdd
-      selecting = transitionActualAdd
-        (BeginAccountSelection SelectToAccount)
-        initial
-      cancelled = transitionActualAdd CancelAccountSelection selecting
-  in actualAddInput cancelled == validInput
-      && actualAddMode cancelled == EditingActualAdd
-
-testPreviewTransition :: T.Text -> Bool
-testPreviewTransition source =
-  let previewState = readyPreviewState source
-      stateRendering = T.pack (show previewState)
-  in case actualAddMode previewState of
-      ShowingActualAddPreview (ActualAddCandidateReady block) ->
-        block == expectedBlock
-          && not ("Opening Balance" `T.isInfixOf` stateRendering)
-      _ -> False
-
-testPreviewReturn :: T.Text -> Bool
-testPreviewReturn source =
-  let returned = transitionActualAdd ReturnToActualAddInput (readyPreviewState source)
-  in actualAddInput returned == validInput
-      && actualAddMode returned == EditingActualAdd
-
-readyPreviewState :: T.Text -> ActualAddState
-readyPreviewState source =
-  enterActualAddPreview
-    (prepareActualAddPreview source validInput)
-    (ActualAddState validInput EditingActualAdd)
 
 multiSource :: T.Text
 multiSource = T.unlines
