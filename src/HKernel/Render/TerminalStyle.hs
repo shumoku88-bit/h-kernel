@@ -82,6 +82,9 @@ presentationBoldColorControl :: PresentationColor -> Text
 presentationBoldColorControl color =
   "\ESC[1;" <> presentationColorCode color <> "m"
 
+terminalColor :: PresentationColor -> Text -> Text
+terminalColor color = wrap (presentationColorControl color)
+
 terminalHeader :: Text -> Text
 terminalHeader = terminalHeaderWith defaultPresentationConfig
 
@@ -108,8 +111,7 @@ terminalYellow :: Text -> Text
 terminalYellow = wrap clrYellow
 
 terminalSectionWith :: PresentationConfig -> Text -> Text
-terminalSectionWith config =
-  wrap (presentationColorControl (presentationSectionColor config))
+terminalSectionWith config = terminalColor (presentationSectionColor config)
 
 -- | Fixed success status tone. Amount-positive presentation uses
 -- 'terminalPositiveAmountWith' instead.
@@ -123,14 +125,14 @@ terminalRed = wrap clrRed
 
 terminalPositiveAmountWith :: PresentationConfig -> Text -> Text
 terminalPositiveAmountWith config =
-  wrap (presentationColorControl (presentationPositiveAmountColor config))
+  terminalColor (presentationPositiveAmountColor config)
 
 terminalNegativeAmountWith :: PresentationConfig -> Text -> Text
 terminalNegativeAmountWith config =
-  wrap (presentationColorControl (presentationNegativeAmountColor config))
+  terminalColor (presentationNegativeAmountColor config)
 
 terminalRedWith :: PresentationColor -> Text -> Text
-terminalRedWith color = wrap (presentationColorControl color)
+terminalRedWith = terminalColor
 
 wrap :: Text -> Text -> Text
 wrap code value = code <> value <> clrReset
@@ -241,8 +243,8 @@ balanceCell config tone balance = case balanceEntries balance of
 styleZero :: BalanceTone -> Text
 styleZero tone = case tone of
   PlainTone -> "0"
-  PositiveTone color -> terminalRedWith color "0"
-  NegativeTone color -> terminalRedWith color "0"
+  PositiveTone color -> terminalColor color "0"
+  NegativeTone color -> terminalColor color "0"
   SignedTone _ _ -> terminalDim "0"
 
 styleBalance
@@ -253,11 +255,11 @@ styleBalance
   -> Text
 styleBalance config tone entries plain = case tone of
   PlainTone -> plain
-  PositiveTone color -> terminalRedWith color plain
-  NegativeTone color -> terminalRedWith color plain
+  PositiveTone color -> terminalColor color plain
+  NegativeTone color -> terminalColor color plain
   SignedTone positiveColor negativeColor
-    | all ((> zeroQuantity) . snd) entries -> terminalRedWith positiveColor plain
-    | all ((< zeroQuantity) . snd) entries -> terminalRedWith negativeColor plain
+    | all ((> zeroQuantity) . snd) entries -> terminalColor positiveColor plain
+    | all ((< zeroQuantity) . snd) entries -> terminalColor negativeColor plain
     | all ((== zeroQuantity) . snd) entries -> terminalDim plain
     | otherwise -> T.intercalate ", "
         [ styleQuantity positiveColor negativeColor quantity
@@ -287,8 +289,8 @@ styleQuantity
   -> Text
   -> Text
 styleQuantity positiveColor negativeColor quantity value
-  | quantity < zeroQuantity = terminalRedWith negativeColor value
-  | quantity > zeroQuantity = terminalRedWith positiveColor value
+  | quantity < zeroQuantity = terminalColor negativeColor value
+  | quantity > zeroQuantity = terminalColor positiveColor value
   | otherwise = terminalDim value
 
 formatQuantityMagnitude :: Quantity -> Text
