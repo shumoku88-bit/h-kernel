@@ -1,16 +1,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Source-independent household Budget movement fact together with the narrow
--- native Journal boundary for that fact.
+-- | Source-independent household Budget movement facts together with their
+-- narrow native Journal admission boundary.
 --
 -- The accounting Journal parser owns syntax, Account declarations, exact
--- amounts, and balancing. This module adds only the household Budget movement
--- shape. Retained TSV admission remains a compatibility adapter.
+-- amounts, balancing, and root source coordinates. This module adds only the
+-- household Budget movement shape and retains the root transaction evidence
+-- that belongs to the same admitted observation. Retained TSV admission remains
+-- a compatibility adapter.
 module HKernel.Household.BudgetMovement
   ( HouseholdBudgetMovement(..)
   , householdBudgetMovement
+  , HouseholdBudgetMovementJournal
+  , householdBudgetMovementJournalValue
+  , householdBudgetMovementJournalMovements
+  , householdBudgetMovementJournalTransactionSources
   , HouseholdBudgetMovementJournalError(..)
   , admitHouseholdBudgetMovementJournal
+  , admitHouseholdBudgetMovementJournalFromResolvedJournal
   , HouseholdBudgetMovementJournalRenderError(..)
   , renderHouseholdBudgetMovementTransactions
   ) where
@@ -30,8 +37,15 @@ import HKernel.Account
   )
 import HKernel.Journal
   ( Journal
+  , JournalError
+  , JournalTransactionSource
   , journalAccountRegistry
+  , journalDocumentTransactionSources
+  , journalMetadataKey
+  , journalMetadataValue
+  , journalTransactionSourceMetadata
   , journalTransactions
+  , parseJournalDocument
   )
 import HKernel.Ledger
   ( Posting
@@ -71,17 +85,55 @@ householdBudgetMovement
   -> HouseholdBudgetMovement
 householdBudgetMovement = HouseholdBudgetMovement
 
--- | Privacy-preserving failure to project one validated Journal transaction as
--- a household Budget movement. Diagnostics retain only transaction/posting
--- coordinates, never private Account names, descriptions, or amounts.
+-- | One admitted native @budget.journal@ observation.
+--
+-- The resolved Journal owns accounting meaning. Ordered movements own the
+-- household Budget projection. Root transaction source evidence is retained so
+-- later operations such as Plan completion linkage can inspect metadata without
+-- parsing the same root bytes again.
+data HouseholdBudgetMovementJournal = HouseholdBudgetMovementJournal
+  { householdBudgetMovementJournalValue              :: Journal
+  , householdBudgetMovementJournalMovements          :: [HouseholdBudgetMovement]
+  , householdBudgetMovementJournalTransactionSources :: [JournalTransactionSource]
+  } deriving (Show)
+
+-- Source line numbers and lexical columns are diagnostic coordinates rather
+-- than household Budget meaning. Equality therefore compares the admitted
+-- Journal/movements and ordered metadata meaning, not physical coordinates.
+instance Eq HouseholdBudgetMovementJournal where
+  left == right =
+    householdBudgetMovementJournalValue left
+      == householdBudgetMovementJournalValue right
+      && householdBudgetMovementJournalMovements left
+        == householdBudgetMovementJournalMovements right
+      && map sourceMetadataMeaning
+          (householdBudgetMovementJournalTransactionSources left)
+        == map sourceMetadataMeaning
+          (householdBudgetMovementJournalTransactionSources right)
+    where
+      sourceMetadataMeaning source =
+        [ (journalMetadataKey entry, journalMetadataValue entry)
+        | entry <- journalTransactionSourceMetadata source
+        ]
+
+-- | Privacy-preserving failures to admit one native Budget Journal observation.
+-- Diagnostics retain only structural coordinates or parser-owned errors, never
+-- private Account names, descriptions, or amounts.
 data HouseholdBudgetMovementJournalError
-  = BudgetMovementJournalRequiresBinaryTransaction Int Int
+  = BudgetMovementJournalSyntaxError JournalError
+  | BudgetMovementJournalMetadataAlignmentMismatch Int Int
+  | BudgetMovementJournalRequiresBinaryTransaction Int Int
   | BudgetMovementJournalPostingNotBudget Int Int
   | BudgetMovementJournalPostingsNotExactOpposites Int
   deriving (Eq, Show)
 
 -- | Admit a validated accounting Journal as an ordered sequence of household
 -- Budget movements.
+--
+-- This source-independent projection remains useful to compatibility callers.
+-- Canonical native loading should prefer
+-- 'admitHouseholdBudgetMovementJournalFromResolvedJournal' so root source
+-- evidence and movement meaning remain one observation.
 --
 -- Posting order is meaningful at this boundary: posting 1 is @from@ and posting
 -- 2 is @to@. This preserves the source-independent movement value even for a
@@ -126,6 +178,38 @@ admitHouseholdBudgetMovementJournal journal =
       ++ [ BudgetMovementJournalPostingsNotExactOpposites transactionIndex
          | postingAmount fromPosting /= negateAmount (postingAmount toPosting)
          ]
+
+-- | Admit one resolved Budget Journal together with the exact root bytes from
+-- which root-local metadata evidence was observed.
+--
+-- Included Account declarations may contribute to the resolved Journal, but a
+-- hidden included transaction cannot silently acquire root-local metadata. The
+-- transaction/source count fence therefore mirrors the root-ownership rule used
+-- by Plan Journal admission.
+admitHouseholdBudgetMovementJournalFromResolvedJournal
+  :: Journal
+  -> Text
+  -> Either
+      (NonEmpty HouseholdBudgetMovementJournalError)
+      HouseholdBudgetMovementJournal
+admitHouseholdBudgetMovementJournalFromResolvedJournal journal rootSource = do
+  document <- case parseJournalDocument rootSource of
+    Left errors -> Left (fmap BudgetMovementJournalSyntaxError errors)
+    Right value -> Right value
+  let sources = journalDocumentTransactionSources document
+      transactionCount = length (journalTransactions journal)
+      sourceCount = length sources
+  if transactionCount /= sourceCount
+    then Left (pure
+      (BudgetMovementJournalMetadataAlignmentMismatch
+        transactionCount sourceCount))
+    else Right ()
+  movements <- admitHouseholdBudgetMovementJournal journal
+  pure HouseholdBudgetMovementJournal
+    { householdBudgetMovementJournalValue = journal
+    , householdBudgetMovementJournalMovements = movements
+    , householdBudgetMovementJournalTransactionSources = sources
+    }
 
 -- | Privacy-preserving rendering rejection. The transaction index identifies
 -- the coordinate without retaining source text.
