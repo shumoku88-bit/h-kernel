@@ -28,10 +28,6 @@ import HKernel.Editor.Interaction.PlanCompleteAdvance
   , parsePlanCompleteAdvanceInput
   )
 import HKernel.Editor.PlanCompleteAdvance
-import HKernel.Editor.PlanLifecycle
-  ( PositivePlanFinishAmount
-  , mkPositivePlanFinishAmount
-  )
 import HKernel.Journal (parseJournal)
 import HKernel.Money (parseQuantity)
 import HKernel.Plan (PlanId, mkPlanId)
@@ -47,8 +43,14 @@ main = do
         [ ("monthly proposal uses nominal date", testMonthlyNominalDate)
         , ("interaction defaults to today and nominal successor", testInteractionDefaults)
         , ("interaction keeps four editable coordinates independent", testInteractionOverrides)
+        , ("Plan magnitude requires positive quantity", testPlanMagnitudeAdmission)
         , ("actual amount does not rewrite successor default", testAmountSeparation)
         , ("daily-target identity refreshes", testDailyTargetRefresh)
+        , ("completion ignores advance-only recurrence admission", testCompletionDoesNotAdmitRecurrence)
+        , ("completion keeps original amount and Plan source", testCompletionUsesOriginalAmount)
+        , ("completion applies explicit binary amount", testCompletionAmountOverride)
+        , ("completion rejects already closed Plan", testCompletionClosed)
+        , ("completion rejects missing Plan", testCompletionMissing)
         , ("once recurrence forbids successor", testOnceNoSuccessor)
         , ("cycle recurrence requires explicit date", testCycleManualDate)
         , ("series relation derives active members and latest", testSeriesSafetyAssessment)
@@ -88,6 +90,12 @@ monthlyPlanSource = T.unlines
   , "  expenses:test-service  1234 JPY"
   , "  assets:test-bank  -1234 JPY"
   ]
+
+invalidRecurrencePlanSource :: Text
+invalidRecurrencePlanSource = T.replace
+  "  ; recur: monthly"
+  "  ; recur: every-third-moon"
+  monthlyPlanSource
 
 duplicateSeriesPlanSource :: Text
 duplicateSeriesPlanSource = monthlyPlanSource <> T.unlines
@@ -189,6 +197,16 @@ accountsResolved = T.unlines
 actualRoot :: Text
 actualRoot = "include accounts.journal\n"
 
+closedMonthlyActualSource :: Text
+closedMonthlyActualSource = T.unlines
+  [ "include accounts.journal"
+  , ""
+  , "2031-01-17 sample recurring payment"
+  , "  ; plan-id: plan-2031-01-17-sample-series"
+  , "  expenses:test-service  1234 JPY"
+  , "  assets:test-bank  -1234 JPY"
+  ]
+
 closedDuplicateActualSource :: Text
 closedDuplicateActualSource = T.unlines
   [ "include accounts.journal"
@@ -218,10 +236,19 @@ admitActual = admitActualSource actualRoot
 planId :: Text -> Maybe PlanId
 planId value = either (const Nothing) Just (mkPlanId value)
 
-positive :: Text -> Maybe PositivePlanFinishAmount
+positive :: Text -> Maybe PositivePlanMagnitude
 positive value = do
   quantity <- either (const Nothing) Just (parseQuantity value)
-  either (const Nothing) Just (mkPositivePlanFinishAmount quantity)
+  either (const Nothing) Just (mkPositivePlanMagnitude quantity)
+
+testPlanMagnitudeAdmission :: Bool
+testPlanMagnitudeAdmission =
+  case (parseQuantity "0", parseQuantity "-1") of
+    (Right zero, Right negative) ->
+      mkPositivePlanMagnitude zero == Left (NonPositivePlanMagnitude zero)
+        && mkPositivePlanMagnitude negative
+          == Left (NonPositivePlanMagnitude negative)
+    _ -> False
 
 withMonthly
   :: (PlanJournal -> ActualJournal -> PlanId -> Bool)
@@ -319,6 +346,140 @@ testDailyTargetRefresh = withMonthly $ \planJournal actualJournal target ->
           && not ("daily-target-id: sample-target-001" `T.isInfixOf` block)
           && "recur: monthly" `T.isInfixOf` block
           && "series: sample-series" `T.isInfixOf` block
+
+testCompletionDoesNotAdmitRecurrence :: Bool
+testCompletionDoesNotAdmitRecurrence = case
+    ( admitPlan invalidRecurrencePlanSource
+    , admitActual
+    , planId "plan-2031-01-17-sample-series"
+    ) of
+  (Just planJournal, Just actualJournal, Just target) ->
+    let completionOnly = preparePlanCompleteAdvance
+          planJournal
+          actualJournal
+          invalidRecurrencePlanSource
+          actualRoot
+          PlanCompleteAdvanceIntent
+            { completeAdvancePlanId = target
+            , completeAdvanceActualDate = fromGregorian 2031 1 16
+            , completeAdvanceActualAmount = Nothing
+            , completeAdvanceSuccessorDate = Nothing
+            , completeAdvanceSuccessorAmount = Nothing
+            }
+        advanceRequested = preparePlanCompleteAdvance
+          planJournal
+          actualJournal
+          invalidRecurrencePlanSource
+          actualRoot
+          PlanCompleteAdvanceIntent
+            { completeAdvancePlanId = target
+            , completeAdvanceActualDate = fromGregorian 2031 1 16
+            , completeAdvanceActualAmount = Nothing
+            , completeAdvanceSuccessorDate = Just (fromGregorian 2031 2 17)
+            , completeAdvanceSuccessorAmount = Nothing
+            }
+    in case (completionOnly, advanceRequested) of
+      (Right preview, Left errors) ->
+        completeAdvanceSuccessorBlock preview == Nothing
+          && completeAdvancePlanSource preview == invalidRecurrencePlanSource
+          && CompleteAdvanceInvalidRecurrence "every-third-moon"
+            `elem` NonEmpty.toList errors
+      _ -> False
+  _ -> False
+
+testCompletionUsesOriginalAmount :: Bool
+testCompletionUsesOriginalAmount = withMonthly $ \planJournal actualJournal target ->
+  case preparePlanCompleteAdvance
+      planJournal
+      actualJournal
+      monthlyPlanSource
+      actualRoot
+      PlanCompleteAdvanceIntent
+        { completeAdvancePlanId = target
+        , completeAdvanceActualDate = fromGregorian 2031 1 16
+        , completeAdvanceActualAmount = Nothing
+        , completeAdvanceSuccessorDate = Nothing
+        , completeAdvanceSuccessorAmount = Nothing
+        } of
+    Right preview ->
+      "; plan-id: plan-2031-01-17-sample-series"
+        `T.isInfixOf` completeAdvanceActualBlock preview
+        && "1234 JPY" `T.isInfixOf` completeAdvanceActualBlock preview
+        && "-1234 JPY" `T.isInfixOf` completeAdvanceActualBlock preview
+        && completeAdvanceSuccessorBlock preview == Nothing
+        && completeAdvancePlanSource preview == monthlyPlanSource
+    Left _ -> False
+
+testCompletionAmountOverride :: Bool
+testCompletionAmountOverride = withMonthly $ \planJournal actualJournal target ->
+  case positive "1300" of
+    Nothing -> False
+    Just replacement -> case preparePlanCompleteAdvance
+        planJournal
+        actualJournal
+        monthlyPlanSource
+        actualRoot
+        PlanCompleteAdvanceIntent
+          { completeAdvancePlanId = target
+          , completeAdvanceActualDate = fromGregorian 2031 1 16
+          , completeAdvanceActualAmount = Just replacement
+          , completeAdvanceSuccessorDate = Nothing
+          , completeAdvanceSuccessorAmount = Nothing
+          } of
+      Right preview ->
+        "1300 JPY" `T.isInfixOf` completeAdvanceActualBlock preview
+          && "-1300 JPY" `T.isInfixOf` completeAdvanceActualBlock preview
+          && not ("1234 JPY" `T.isInfixOf` completeAdvanceActualBlock preview)
+          && completeAdvancePlanSource preview == monthlyPlanSource
+      Left _ -> False
+
+testCompletionClosed :: Bool
+testCompletionClosed = case
+    ( admitPlan monthlyPlanSource
+    , admitActualSource closedMonthlyActualSource
+    , planId "plan-2031-01-17-sample-series"
+    ) of
+  (Just planJournal, Just actualJournal, Just target) ->
+    case preparePlanCompleteAdvance
+        planJournal
+        actualJournal
+        monthlyPlanSource
+        closedMonthlyActualSource
+        PlanCompleteAdvanceIntent
+          { completeAdvancePlanId = target
+          , completeAdvanceActualDate = fromGregorian 2031 1 18
+          , completeAdvanceActualAmount = Nothing
+          , completeAdvanceSuccessorDate = Nothing
+          , completeAdvanceSuccessorAmount = Nothing
+          } of
+      Left errors -> CompleteAdvancePlanAlreadyClosed target
+        `elem` NonEmpty.toList errors
+      Right _ -> False
+  _ -> False
+
+testCompletionMissing :: Bool
+testCompletionMissing = case
+    ( admitPlan monthlyPlanSource
+    , admitActual
+    , planId "plan-missing"
+    ) of
+  (Just planJournal, Just actualJournal, Just missing) ->
+    case preparePlanCompleteAdvance
+        planJournal
+        actualJournal
+        monthlyPlanSource
+        actualRoot
+        PlanCompleteAdvanceIntent
+          { completeAdvancePlanId = missing
+          , completeAdvanceActualDate = fromGregorian 2031 1 16
+          , completeAdvanceActualAmount = Nothing
+          , completeAdvanceSuccessorDate = Nothing
+          , completeAdvanceSuccessorAmount = Nothing
+          } of
+      Left errors -> CompleteAdvancePlanNotFound missing
+        `elem` NonEmpty.toList errors
+      Right _ -> False
+  _ -> False
 
 testOnceNoSuccessor :: Bool
 testOnceNoSuccessor = case
@@ -527,9 +688,6 @@ testWriterStale = withWriterFixtures $ \actualPath planPath -> do
       actual == "actual-old" && plan == "plan-old"
     _ -> False
 
--- | A change that lands while the four unique sibling files are being staged
--- must be observed by the immediate pre-publication fence. Neither candidate is
--- installed, and every staged sibling created by this attempt is removed.
 testWriterPrePublishStale :: IO Bool
 testWriterPrePublishStale = withWriterFixtures $ \actualPath planPath -> do
   stageCount <- newIORef (0 :: Int)
@@ -559,9 +717,6 @@ testWriterPrePublishStale = withWriterFixtures $ \actualPath planPath -> do
         && not (or leftovers)
     _ -> False
 
--- | A Plan write that lands after Actual has been installed but before Plan is
--- installed must win. The operation restores its own Actual candidate and never
--- overwrites the later Plan bytes.
 testWriterPlanChangesBetweenInstalls :: IO Bool
 testWriterPlanChangesBetweenInstalls = withWriterFixtures $ \actualPath planPath -> do
   renameCount <- newIORef (0 :: Int)
@@ -584,9 +739,6 @@ testWriterPlanChangesBetweenInstalls = withWriterFixtures $ \actualPath planPath
       actual == "actual-old" && plan == laterPlan
     _ -> False
 
--- | An Actual write that lands after both candidate renames but before whole-
--- Household admission must also win. The candidate fence restores Plan only and
--- preserves the later Actual bytes.
 testWriterActualChangesBeforeAdmission :: IO Bool
 testWriterActualChangesBeforeAdmission = withWriterFixtures $ \actualPath planPath -> do
   renameCount <- newIORef (0 :: Int)
@@ -609,9 +761,6 @@ testWriterActualChangesBeforeAdmission = withWriterFixtures $ \actualPath planPa
       actual == laterActual && plan == "plan-old"
     _ -> False
 
--- | Whole-Household admission can itself overlap a later writer. Even when the
--- admission result is successful, success belongs to this operation only while
--- both published roots are still its exact candidates.
 testWriterSuccessAdmissionDoesNotMaskLaterActual :: IO Bool
 testWriterSuccessAdmissionDoesNotMaskLaterActual =
   withWriterFixtures $ \actualPath planPath -> do
@@ -641,9 +790,6 @@ testWriterRollback = withWriterFixtures $ \actualPath planPath -> do
       actual == "actual-old" && plan == "plan-old"
     _ -> False
 
--- | If another writer replaces Actual during whole-Household admission, the
--- coordinated rollback must not overwrite it. Plan is still this operation's
--- candidate, so only Plan is restored to the expected source.
 testWriterRollbackProtectsLaterWrite :: IO Bool
 testWriterRollbackProtectsLaterWrite = withWriterFixtures $ \actualPath planPath -> do
   let laterActual = "actual-from-later-writer"
@@ -660,9 +806,6 @@ testWriterRollbackProtectsLaterWrite = withWriterFixtures $ \actualPath planPath
       actual == laterActual && plan == "plan-old"
     _ -> False
 
--- | Failure of the second install rename leaves Actual temporarily published.
--- Recovery is candidate-guarded and returns both sources to their expected
--- bytes without relying on fixed staging filenames.
 testWriterPartialInstallFailure :: IO Bool
 testWriterPartialInstallFailure = withWriterFixtures $ \actualPath planPath -> do
   renameCount <- newIORef (0 :: Int)

@@ -42,17 +42,10 @@ main = do
         , ("testPlanEditClosedRejected", testPlanEditClosedRejected)
         , ("testPlanEditMissingRejected", testPlanEditMissingRejected)
         , ("testPlanEditNonPositiveAmount", testPlanEditNonPositiveAmount)
-        , ("testPlanFinishSuccess", testPlanFinishSuccess)
-        , ("testPlanFinishMissingAmount", testPlanFinishMissingAmount)
-        , ("testPlanFinishNegativeAmount", testPlanFinishNegativeAmount)
-        , ("testPlanFinishZeroAmount", testPlanFinishZeroAmount)
         , ("testResolvedPlanAdd", testResolvedPlanAdd)
         , ("testResolvedPlanAddWithPlanInclude", testResolvedPlanAddWithPlanInclude)
         , ("testResolvedPlanEditCompletion", testResolvedPlanEditCompletion)
         , ("testResolvedPlanEditWithPlanInclude", testResolvedPlanEditWithPlanInclude)
-        , ("testResolvedPlanFinish", testResolvedPlanFinish)
-        , ("testResolvedPlanFinishWithPlanInclude", testResolvedPlanFinishWithPlanInclude)
-        , ("testResolvedPlanFinishInvalidId", testResolvedPlanFinishInvalidId)
         ]
   mapM_ print results
   if all snd results
@@ -203,11 +196,6 @@ accFood = either (error "bad account") id (mkAccount "expenses:food")
 
 qty :: Text -> Quantity
 qty = either (error "bad qty") id . parseQuantity
-
-positiveQty :: Text -> PositivePlanFinishAmount
-positiveQty value =
-  either (error "bad positive qty") id
-    (mkPositivePlanFinishAmount (qty value))
 
 positiveEditQty :: Text -> PositivePlanEditAmount
 positiveEditQty value =
@@ -371,36 +359,6 @@ testPlanEditNonPositiveAmount =
     && mkPositivePlanEditAmount (qty "-1")
       == Left (NonPositivePlanEditAmount (qty "-1"))
 
-testPlanFinishSuccess :: Bool
-testPlanFinishSuccess =
-  let intent = PlanFinishIntent
-        { finishPlanId = "plan-2023-01-01-lunch"
-        , finishActualDate = fromGregorian 2023 1 2
-        , finishActualAmount = Just (positiveQty "600")
-        }
-  in case preparePlanFinish planFixture actualFixture intent of
-       Right preview ->
-         let block = finishCandidateBlock preview
-         in "plan-2023-01-01-lunch" `T.isInfixOf` block
-              && "600 JPY" `T.isInfixOf` block
-              && "-600 JPY" `T.isInfixOf` block
-       Left err -> error (show err)
-
-testPlanFinishMissingAmount :: Bool
-testPlanFinishMissingAmount =
-  let intent = PlanFinishIntent
-        { finishPlanId = "plan-2023-01-01-lunch"
-        , finishActualDate = fromGregorian 2023 1 2
-        , finishActualAmount = Nothing
-        }
-  in case preparePlanFinish planFixture actualFixture intent of
-       Right preview ->
-         let block = finishCandidateBlock preview
-         in "plan-2023-01-01-lunch" `T.isInfixOf` block
-              && "500 JPY" `T.isInfixOf` block
-              && "-500 JPY" `T.isInfixOf` block
-       Left err -> error (show err)
-
 testResolvedPlanAdd :: Bool
 testResolvedPlanAdd =
   isRight (preparePlanAddFromResolvedActualJournal
@@ -472,63 +430,6 @@ testResolvedPlanEditWithPlanInclude =
               && "650 JPY" `T.isInfixOf` block
               && all (`T.isInfixOf` block) retainedMetadata
         Left err -> error (show err)
-
-testResolvedPlanFinish :: Bool
-testResolvedPlanFinish =
-  let intent = PlanFinishIntent
-        { finishPlanId = "plan-2023-01-01-lunch"
-        , finishActualDate = fromGregorian 2023 1 4
-        , finishActualAmount = Just (positiveQty "600")
-        }
-  in case preparePlanFinishFromResolvedActualJournal
-      resolvedActualJournal planFixture actualRootFixture intent of
-    Right preview ->
-      "; plan-id: plan-2023-01-01-lunch"
-        `T.isInfixOf` finishCandidateBlock preview
-    Left err -> error (show err)
-
-testResolvedPlanFinishWithPlanInclude :: Bool
-testResolvedPlanFinishWithPlanInclude =
-  let intent = PlanFinishIntent
-        { finishPlanId = "plan-2023-01-01-lunch"
-        , finishActualDate = fromGregorian 2023 1 4
-        , finishActualAmount = Just (positiveQty "600")
-        }
-  in isLeft (parsePlanJournal planRootFixture)
-      && case preparePlanFinishFromResolvedJournals
-          resolvedPlanJournal
-          resolvedActualJournal
-          planRootFixture
-          actualRootFixture
-          intent of
-        Right preview ->
-          "include accounts.journal" `T.isPrefixOf`
-            finishCandidateCompleteSource preview
-            && "; plan-id: plan-2023-01-01-lunch"
-              `T.isInfixOf` finishCandidateBlock preview
-        Left err -> error (show err)
-
-testResolvedPlanFinishInvalidId :: Bool
-testResolvedPlanFinishInvalidId =
-  let intent = PlanFinishIntent
-        { finishPlanId = "invalid plan id"
-        , finishActualDate = fromGregorian 2023 1 4
-        , finishActualAmount = Nothing
-        }
-  in case preparePlanFinishFromResolvedActualJournal
-      resolvedActualJournal planFixture actualRootFixture intent of
-    Left (FinishInvalidId _ :| []) -> True
-    _ -> False
-
-testPlanFinishNegativeAmount :: Bool
-testPlanFinishNegativeAmount =
-  mkPositivePlanFinishAmount (qty "-1")
-    == Left (NonPositivePlanFinishAmount (qty "-1"))
-
-testPlanFinishZeroAmount :: Bool
-testPlanFinishZeroAmount =
-  mkPositivePlanFinishAmount (qty "0")
-    == Left (NonPositivePlanFinishAmount (qty "0"))
 
 toList :: NonEmpty a -> [a]
 toList (x :| xs) = x : xs

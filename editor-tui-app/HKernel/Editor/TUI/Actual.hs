@@ -66,16 +66,14 @@ import HKernel.Editor.ActualWorkspace (transactionEntriesForAccount)
 import HKernel.Editor.ActualWriter (publishActualBlockWithPathAdmission)
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
-  , ActualAddMode(..)
-  , ActualAddState(..)
   , ActualMultiAddState(..)
   , dailyAccountCandidates
-  , enterActualAddPreview
   , groupAccountCandidates
-  , initialActualAddStateForDay
+  , initialActualAddInputForDay
   , initialActualMultiAddStateForDay
   , multiAccountCandidates
   , resizeActualMultiPostings
+  , selectActualAddAccount
   , selectActualMultiPosting
   , selectedActualMultiPosting
   , setActualMultiDateText
@@ -238,7 +236,7 @@ mkForm =
 mkDailyForm :: Day -> Form ActualAddInput event Name
 mkDailyForm day =
   setFormFocus AmountField
-    (mkForm (actualAddInput (initialActualAddStateForDay day)))
+    (mkForm (initialActualAddInputForDay day))
 
 multiEditInputFor :: ActualMultiAddState -> MultiEditInput
 multiEditInputFor state = MultiEditInput
@@ -633,10 +631,7 @@ handleDailyInput context form event = case event of
           (householdStateActualJournal (contextHouseholdState context))
         preview = prepareActualAddPreviewFromResolvedJournal
           resolvedJournal (contextSource context) input
-        pureState = enterActualAddPreview preview (ActualAddState input EditingActualAdd)
-    case actualAddMode pureState of
-      ShowingActualAddPreview shownPreview -> put (DailyPreview shownPreview form)
-      _ -> put (DailyInput form)
+    put (DailyPreview preview form)
   _ -> zoom zoomDailyForm (handleFormEvent event)
 
 moveDailyAccountCandidate
@@ -649,11 +644,7 @@ moveDailyAccountCandidate context offset target form =
   case stepAccountCandidate offset current candidates of
     Nothing -> pure ()
     Just account ->
-      let updatedInput = case target of
-            SelectToAccount -> input
-              { addToAccountText = HKernel.Account.accountName account }
-            SelectFromAccount -> input
-              { addFromAccountText = HKernel.Account.accountName account }
+      let updatedInput = selectActualAddAccount target account input
           updatedForm = setFormFocus (dailyFieldName target)
             (updateFormState updatedInput form)
       in put (DailyInput updatedForm)

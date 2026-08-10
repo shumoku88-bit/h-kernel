@@ -4,12 +4,19 @@
 -- | One household operation for closing a Plan with an Actual transaction and,
 -- when requested, appending its next occurrence.
 --
--- The nominal Plan date and the Actual date deliberately remain separate. A
--- payment brought forward for a weekend must not make a monthly series drift.
+-- Completion meaning does not depend on recurrence metadata. Recurrence,
+-- relation, and successor metadata are admitted only when an advance is
+-- requested. The nominal Plan date and the Actual date deliberately remain
+-- separate. A payment brought forward for a weekend must not make a monthly
+-- series drift.
 module HKernel.Editor.PlanCompleteAdvance
   ( PlanRecurrence(..)
   , PlanAdvanceProposal(..)
   , PlanAdvanceSafety(..)
+  , PositivePlanMagnitude
+  , PlanMagnitudeError(..)
+  , mkPositivePlanMagnitude
+  , positivePlanMagnitudeQuantity
   , PlanCompleteAdvanceIntent(..)
   , PlanCompleteAdvancePreview(..)
   , PlanCompleteAdvanceError(..)
@@ -48,10 +55,6 @@ import HKernel.Editor.ActualWriter
   ( WriterFileSystem(..)
   , defaultWriterFileSystem
   )
-import HKernel.Editor.PlanLifecycle
-  ( PositivePlanFinishAmount
-  , positivePlanFinishAmountQuantity
-  )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Editor.TransactionBlock
   ( IntentPosting(..)
@@ -75,11 +78,13 @@ import HKernel.Ledger
   , transactionPostings
   )
 import HKernel.Money
-  ( amountCommodity
+  ( Quantity
+  , amountCommodity
   , amountQuantity
   , mkAmount
   , negateQuantity
   , quantityToRational
+  , zeroQuantity
   )
 import HKernel.Plan
   ( PlanId
@@ -118,25 +123,42 @@ data PlanAdvanceProposal = PlanAdvanceProposal
 -- | Current open members of the selected Plan relation. The latest member is
 -- derived from the same list rather than stored as independent state.
 data PlanAdvanceSafety = PlanAdvanceSafety
-  { advanceRelatedActivePlans     :: [IdentifiedPlanTransaction]
+  { advanceRelatedActivePlans      :: [IdentifiedPlanTransaction]
   , advanceLatestRelatedActivePlan :: Maybe IdentifiedPlanTransaction
   } deriving (Eq, Show)
+
+-- | Strictly positive replacement magnitude for binary Plan completion and
+-- successor overrides. Existing posting signs and commodities remain the owners
+-- of direction and commodity; this value carries only the replacement Quantity.
+newtype PositivePlanMagnitude = PositivePlanMagnitude
+  { positivePlanMagnitudeQuantity :: Quantity
+  } deriving (Eq, Show)
+
+data PlanMagnitudeError
+  = NonPositivePlanMagnitude Quantity
+  deriving (Eq, Show)
+
+mkPositivePlanMagnitude
+  :: Quantity
+  -> Either PlanMagnitudeError PositivePlanMagnitude
+mkPositivePlanMagnitude quantity
+  | quantity <= zeroQuantity = Left (NonPositivePlanMagnitude quantity)
+  | otherwise = Right (PositivePlanMagnitude quantity)
 
 data PlanCompleteAdvanceIntent = PlanCompleteAdvanceIntent
   { completeAdvancePlanId          :: PlanId
   , completeAdvanceActualDate      :: Day
-  , completeAdvanceActualAmount    :: Maybe PositivePlanFinishAmount
+  , completeAdvanceActualAmount    :: Maybe PositivePlanMagnitude
   , completeAdvanceSuccessorDate   :: Maybe Day
-  , completeAdvanceSuccessorAmount :: Maybe PositivePlanFinishAmount
+  , completeAdvanceSuccessorAmount :: Maybe PositivePlanMagnitude
   } deriving (Eq, Show)
 
 data PlanCompleteAdvancePreview = PlanCompleteAdvancePreview
-  { completeAdvanceActualBlock        :: Text
-  , completeAdvanceActualSource       :: Text
-  , completeAdvanceSuccessorBlock     :: Maybe Text
-  , completeAdvancePlanSource         :: Text
-  , completeAdvanceSuccessorPlanId    :: Maybe PlanId
-  , completeAdvanceRecurrence         :: PlanRecurrence
+  { completeAdvanceActualBlock     :: Text
+  , completeAdvanceActualSource    :: Text
+  , completeAdvanceSuccessorBlock  :: Maybe Text
+  , completeAdvancePlanSource      :: Text
+  , completeAdvanceSuccessorPlanId :: Maybe PlanId
   } deriving (Eq, Show)
 
 data PlanCompleteAdvanceError
@@ -216,9 +238,7 @@ preparePlanCompleteAdvance planJournal actualJournal planSource actualSource int
   identified <- findPlan planJournal targetId
   let transaction = identifiedPlanTransaction identified
   ensureOpen actualJournal targetId
-  metadata <- sourceMetadataFor targetId planSource
-  recurrence <- admitRecurrence metadata
-  validateSuccessorChoice recurrence intent
+  validateSuccessorAmountChoice intent
   actualPostings <- replaceBinaryMagnitude
     CompleteAdvanceAmountOverrideRequiresBinaryPlan
     (completeAdvanceActualAmount intent)
@@ -240,9 +260,11 @@ preparePlanCompleteAdvance planJournal actualJournal planSource actualSource int
       , completeAdvanceSuccessorBlock = Nothing
       , completeAdvancePlanSource = planSource
       , completeAdvanceSuccessorPlanId = Nothing
-      , completeAdvanceRecurrence = recurrence
       }
     Just successorDate -> do
+      metadata <- sourceMetadataFor targetId planSource
+      recurrence <- admitRecurrence metadata
+      validateSuccessorRecurrence recurrence
       successorPostings <- replaceBinaryMagnitude
         CompleteAdvanceAmountOverrideRequiresBinaryPlan
         (completeAdvanceSuccessorAmount intent)
@@ -288,7 +310,6 @@ preparePlanCompleteAdvance planJournal actualJournal planSource actualSource int
         , completeAdvanceSuccessorBlock = Just successorBlock
         , completeAdvancePlanSource = candidatePlanSource
         , completeAdvanceSuccessorPlanId = Just successorId
-        , completeAdvanceRecurrence = recurrence
         }
   where
     targetId = completeAdvancePlanId intent
@@ -301,7 +322,7 @@ postingIntent posting = IntentPosting
 
 replaceBinaryMagnitude
   :: PlanCompleteAdvanceError
-  -> Maybe PositivePlanFinishAmount
+  -> Maybe PositivePlanMagnitude
   -> NonEmpty Posting
   -> Either (NonEmpty PlanCompleteAdvanceError) (NonEmpty Posting)
 replaceBinaryMagnitude _ Nothing postings = Right postings
@@ -309,7 +330,7 @@ replaceBinaryMagnitude errorValue (Just replacement) postings
   | NonEmpty.length postings /= 2 = Left (pure errorValue)
   | otherwise = Right (fmap replace postings)
   where
-    magnitude = positivePlanFinishAmountQuantity replacement
+    magnitude = positivePlanMagnitudeQuantity replacement
     replace posting =
       let oldAmount = postingAmount posting
           oldQuantity = amountQuantity oldAmount
@@ -333,13 +354,20 @@ ensureOpen actualJournal targetId
       Left (pure (CompleteAdvancePlanAlreadyClosed targetId))
   | otherwise = Right ()
 
-validateSuccessorChoice :: PlanRecurrence -> PlanCompleteAdvanceIntent -> Either (NonEmpty PlanCompleteAdvanceError) ()
-validateSuccessorChoice recurrence intent
+validateSuccessorAmountChoice
+  :: PlanCompleteAdvanceIntent
+  -> Either (NonEmpty PlanCompleteAdvanceError) ()
+validateSuccessorAmountChoice intent
   | completeAdvanceSuccessorDate intent == Nothing
       && completeAdvanceSuccessorAmount intent /= Nothing =
       Left (pure CompleteAdvanceSuccessorAmountWithoutDate)
-  | recurrence == PlanRecursOnce
-      && completeAdvanceSuccessorDate intent /= Nothing =
+  | otherwise = Right ()
+
+validateSuccessorRecurrence
+  :: PlanRecurrence
+  -> Either (NonEmpty PlanCompleteAdvanceError) ()
+validateSuccessorRecurrence recurrence
+  | recurrence == PlanRecursOnce =
       Left (pure CompleteAdvanceSuccessorForbiddenForOnce)
   | otherwise = Right ()
 

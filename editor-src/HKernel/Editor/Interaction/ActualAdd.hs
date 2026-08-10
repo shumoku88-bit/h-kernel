@@ -1,25 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | UI-independent interaction state for Actual add workflows.
+-- | UI-independent interaction helpers for Actual add workflows.
 --
--- Brick, Haskeline, or another delivery adapter may map its own events and
--- widgets onto these states. Candidate preparation and write outcome meaning
--- remain owned by 'HKernel.Editor.ActualAppend'. This module owns no terminal
--- toolkit, cursor, widget, filesystem effect, or publication loop.
+-- Delivery adapters own their workflow state and map their own events and
+-- widgets onto these pure input/candidate transformations. Candidate
+-- preparation and write outcome meaning remain owned by
+-- 'HKernel.Editor.ActualAppend'. This module owns no terminal toolkit, cursor,
+-- widget, filesystem effect, publication loop, or duplicate single-entry state
+-- machine.
 module HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
-  , ActualAddMode(..)
-  , ActualAddState(..)
-  , ActualAddAction(..)
-  , initialActualAddState
-  , initialActualAddStateForDay
-  , setActualAddDate
+  , initialActualAddInputForDay
+  , selectActualAddAccount
   , dailyAccountCandidates
   , filterDailyAccountCandidates
   , groupAccountCandidates
   , stepAccountCandidate
-  , enterActualAddPreview
-  , transitionActualAdd
   , ActualMultiAddState(..)
   , initialActualMultiAddStateForDay
   , setActualMultiAddDate
@@ -55,7 +51,6 @@ import HKernel.Account
   )
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
-  , ActualAddPreview(..)
   , ActualMultiAddInput(..)
   , ActualPostingInput(..)
   , emptyActualAddInput
@@ -71,44 +66,23 @@ data AccountSelectionTarget
   | SelectToAccount
   deriving (Eq, Show)
 
-data ActualAddMode
-  = EditingActualAdd
-  | SelectingActualAccount AccountSelectionTarget
-  | ShowingActualAddPreview ActualAddPreview
-  deriving (Eq, Show)
+-- | Start one ordinary Actual input with its accounting day already chosen.
+-- Delivery adapters can use today's local Day without turning "today" into
+-- persisted metadata or mirroring their own workflow state here.
+initialActualAddInputForDay :: Day -> ActualAddInput
+initialActualAddInputForDay day =
+  emptyActualAddInput { addDateText = renderDay day }
 
-data ActualAddState = ActualAddState
-  { actualAddInput :: ActualAddInput
-  , actualAddMode  :: ActualAddMode
-  } deriving (Eq, Show)
-
-data ActualAddAction
-  = BeginAccountSelection AccountSelectionTarget
-  | ChooseAccount Account
-  | CancelAccountSelection
-  | ReturnToActualAddInput
-  deriving (Eq, Show)
-
-initialActualAddState :: ActualAddState
-initialActualAddState = ActualAddState emptyActualAddInput EditingActualAdd
-
--- | Start a daily entry with its ordinary day already chosen. Delivery adapters
--- can use today's local Day without turning "today" into persisted metadata.
-initialActualAddStateForDay :: Day -> ActualAddState
-initialActualAddStateForDay day =
-  ActualAddState
-    (emptyActualAddInput { addDateText = renderDay day })
-    EditingActualAdd
-
--- | Replace only the chosen accounting day. Delivery adapters may still offer
--- convenience controls, but ordinary text-field editing must remain sufficient
--- to reach every valid date.
-setActualAddDate :: Day -> ActualAddState -> ActualAddState
-setActualAddDate day state =
-  state
-    { actualAddInput =
-        (actualAddInput state) { addDateText = renderDay day }
-    }
+-- | Replace only the selected Account field in one ordinary Actual input.
+-- Delivery focus/cursor state remains outside this module.
+selectActualAddAccount
+  :: AccountSelectionTarget
+  -> Account
+  -> ActualAddInput
+  -> ActualAddInput
+selectActualAddAccount target account input = case target of
+  SelectFromAccount -> input { addFromAccountText = accountName account }
+  SelectToAccount -> input { addToAccountText = accountName account }
 
 renderDay :: Day -> Text
 renderDay = T.pack . show
@@ -176,45 +150,6 @@ matchesDailyRole registry target account =
     (SelectFromAccount, Just Asset) -> True
     (SelectFromAccount, Just Liability) -> True
     _ -> False
-
--- | Enter preview mode with a preview prepared by the Actual operation owner.
--- Interaction does not need the complete source that produced this value.
--- A ready preview is already the single human confirmation surface; delivery
--- adapters may explicitly publish its candidate block without introducing a
--- second interaction state containing the same information.
-enterActualAddPreview :: ActualAddPreview -> ActualAddState -> ActualAddState
-enterActualAddPreview preview state =
-  state { actualAddMode = ShowingActualAddPreview preview }
-
--- | Apply one source-independent interaction action to the ordinary Actual add
--- workflow. Candidate preparation remains owned by 'HKernel.Editor.ActualAppend';
--- publication is an explicit delivery effect from a ready preview, not another
--- duplicated state transition.
-transitionActualAdd
-  :: ActualAddAction
-  -> ActualAddState
-  -> ActualAddState
-transitionActualAdd action state = case action of
-  BeginAccountSelection target ->
-    state { actualAddMode = SelectingActualAccount target }
-  ChooseAccount account -> case actualAddMode state of
-    SelectingActualAccount SelectFromAccount ->
-      state
-        { actualAddInput =
-            (actualAddInput state) { addFromAccountText = accountName account }
-        , actualAddMode = EditingActualAdd
-        }
-    SelectingActualAccount SelectToAccount ->
-      state
-        { actualAddInput =
-            (actualAddInput state) { addToAccountText = accountName account }
-        , actualAddMode = EditingActualAdd
-        }
-    _ -> state
-  CancelAccountSelection -> case actualAddMode state of
-    SelectingActualAccount _ -> state { actualAddMode = EditingActualAdd }
-    _ -> state
-  ReturnToActualAddInput -> state { actualAddMode = EditingActualAdd }
 
 -- Multi-posting daily interaction
 
