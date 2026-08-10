@@ -50,7 +50,10 @@ import HKernel.Household.AccountProfile
   , HouseholdAccountPolicy
   , mkHouseholdAccountPolicy
   )
-import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
+import HKernel.Household.BudgetMovement
+  ( HouseholdBudgetMovement(..)
+  , admitHouseholdBudgetMovementJournalFromResolvedJournal
+  )
 import HKernel.Household.BudgetMovement.TSV
   ( parseHouseholdBudgetMovements )
 import HKernel.Household.Policy
@@ -59,6 +62,7 @@ import HKernel.Household.Policy
   , incomeAnchorCyclePolicy
   , mkHouseholdPolicy
   )
+import HKernel.Journal (parseJournal)
 import HKernel.Loader (loadJournal)
 import HKernel.Money (mkAmount, mkCommodity, quantityFromInteger)
 import HKernel.Plan (PlanId, mkPlanId)
@@ -353,36 +357,35 @@ syncAccountPolicy = mustRight (mkHouseholdAccountPolicy
   []
   [ (account "expenses:fixed", RetainedFixedSpend) ])
 
-expectedSyncMovement :: HouseholdBudgetMovement
-expectedSyncMovement = HouseholdBudgetMovement
-  { householdBudgetMovementDate = fromGregorian 2031 1 18
-  , householdBudgetMovementMemo = "Plan completion Budget sync: plan-fixed"
-  , householdBudgetMovementFrom = account "budget:daily"
-  , householdBudgetMovementTo = account "budget:spent"
-  , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 275)
-  }
+syncBudgetJournal source =
+  mustRight
+    (admitHouseholdBudgetMovementJournalFromResolvedJournal
+      resolved
+      source)
+  where
+    rootTransactions = T.unlines (drop 1 (T.lines source))
+    resolved = mustRight (parseJournal (syncAccountsSource <> rootTransactions))
 
 prepareSync
   :: PlanJournal
   -> ActualJournal
-  -> [HouseholdBudgetMovement]
   -> Text
   -> PlanId
   -> Either (NonEmpty PlanBudgetSyncError) PlanBudgetSyncResult
-prepareSync planJournal actualJournal movements budgetSource target =
+prepareSync planJournal actualJournal budgetSource target =
   preparePlanBudgetSync
     syncRegistry
     syncHouseholdPolicy
     (Just syncAccountPolicy)
     planJournal
     actualJournal
-    movements
+    (syncBudgetJournal budgetSource)
     budgetSource
     target
 
 testPlanBudgetSyncUsesActualAmount :: Bool
 testPlanBudgetSyncUsesActualAmount =
-  case prepareSync syncPlanJournal syncActualJournal [] syncBudgetRoot syncPlanId of
+  case prepareSync syncPlanJournal syncActualJournal syncBudgetRoot syncPlanId of
     Right (PlanBudgetSyncAppend preview) ->
       "plan-id: plan-fixed" `T.isInfixOf` planBudgetSyncCandidateBlock preview
         && "actual-event-id: actual-fixed" `T.isInfixOf` planBudgetSyncCandidateBlock preview
@@ -392,12 +395,11 @@ testPlanBudgetSyncUsesActualAmount =
 
 testPlanBudgetSyncIdempotent :: Bool
 testPlanBudgetSyncIdempotent =
-  case prepareSync syncPlanJournal syncActualJournal [] syncBudgetRoot syncPlanId of
+  case prepareSync syncPlanJournal syncActualJournal syncBudgetRoot syncPlanId of
     Right (PlanBudgetSyncAppend preview) ->
       prepareSync
         syncPlanJournal
         syncActualJournal
-        [expectedSyncMovement]
         (planBudgetSyncCandidateCompleteSource preview)
         syncPlanId
         == Right (PlanBudgetSyncApplied syncPlanId)
@@ -411,7 +413,7 @@ testPlanBudgetSyncShapeMismatch =
       ]) of
     Left _ -> False
     Right actualJournal -> hasSyncError isShape
-      (prepareSync syncPlanJournal actualJournal [] syncBudgetRoot syncPlanId)
+      (prepareSync syncPlanJournal actualJournal syncBudgetRoot syncPlanId)
   where
     isShape err = case err of
       PlanBudgetSyncShapeMismatch target -> target == syncPlanId
@@ -425,7 +427,7 @@ testPlanBudgetSyncDirectionMismatch =
       ]) of
     Left _ -> False
     Right actualJournal -> hasSyncError isDirection
-      (prepareSync syncPlanJournal actualJournal [] syncBudgetRoot syncPlanId)
+      (prepareSync syncPlanJournal actualJournal syncBudgetRoot syncPlanId)
   where
     isDirection err = case err of
       PlanBudgetSyncDirectionMismatch target -> target == syncPlanId
@@ -439,7 +441,7 @@ testPlanBudgetSyncCommodityMismatch =
       ]) of
     Left _ -> False
     Right actualJournal -> hasSyncError isCommodity
-      (prepareSync syncPlanJournal actualJournal [] syncBudgetRoot syncPlanId)
+      (prepareSync syncPlanJournal actualJournal syncBudgetRoot syncPlanId)
   where
     isCommodity err = case err of
       PlanBudgetSyncCommodityMismatch target -> target == syncPlanId
@@ -450,7 +452,7 @@ testPlanBudgetSyncDuplicateCompletion =
   case parseActualJournal syncDuplicateCompletionSource of
     Left _ -> False
     Right actualJournal -> hasSyncError isDuplicate
-      (prepareSync syncPlanJournal actualJournal [] syncBudgetRoot syncPlanId)
+      (prepareSync syncPlanJournal actualJournal syncBudgetRoot syncPlanId)
   where
     isDuplicate err = case err of
       PlanBudgetSyncCompletionDuplicate target -> target == syncPlanId
@@ -458,7 +460,7 @@ testPlanBudgetSyncDuplicateCompletion =
 
 testPlanBudgetSyncExistingLinkageMismatch :: Bool
 testPlanBudgetSyncExistingLinkageMismatch =
-  case prepareSync syncPlanJournal syncActualJournal [] syncBudgetRoot syncPlanId of
+  case prepareSync syncPlanJournal syncActualJournal syncBudgetRoot syncPlanId of
     Right (PlanBudgetSyncAppend preview) ->
       let mismatchedSource = T.replace
             "actual-event-id: actual-fixed"
@@ -468,7 +470,6 @@ testPlanBudgetSyncExistingLinkageMismatch =
           (prepareSync
             syncPlanJournal
             syncActualJournal
-            [expectedSyncMovement]
             mismatchedSource
             syncPlanId)
     _ -> False
@@ -479,7 +480,7 @@ testPlanBudgetSyncExistingLinkageMismatch =
 
 testPlanBudgetSyncDuplicateLinkage :: Bool
 testPlanBudgetSyncDuplicateLinkage =
-  case prepareSync syncPlanJournal syncActualJournal [] syncBudgetRoot syncPlanId of
+  case prepareSync syncPlanJournal syncActualJournal syncBudgetRoot syncPlanId of
     Right (PlanBudgetSyncAppend preview) ->
       let duplicateSource = planBudgetSyncCandidateCompleteSource preview
             <> "\n"
@@ -488,7 +489,6 @@ testPlanBudgetSyncDuplicateLinkage =
           (prepareSync
             syncPlanJournal
             syncActualJournal
-            [expectedSyncMovement, expectedSyncMovement]
             duplicateSource
             syncPlanId)
     _ -> False
@@ -503,7 +503,7 @@ testPlanBudgetSyncNotLinked =
        , parseActualJournal syncUnlinkedActualSource
        ) of
     (Right planJournal, Right actualJournal) ->
-      prepareSync planJournal actualJournal [] syncBudgetRoot syncUnlinkedPlanId
+      prepareSync planJournal actualJournal syncBudgetRoot syncUnlinkedPlanId
         == Right (PlanBudgetSyncNotLinked syncUnlinkedPlanId)
     _ -> False
 

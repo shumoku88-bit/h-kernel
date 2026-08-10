@@ -38,19 +38,21 @@ import HKernel.Household.AccountProfile
   , householdEnvelopeRoleByAccount
   , householdSpendClassByAccount
   )
-import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
+import HKernel.Household.BudgetMovement
+  ( HouseholdBudgetMovement(..)
+  , HouseholdBudgetMovementJournal
+  , householdBudgetMovementJournalMovements
+  , householdBudgetMovementJournalTransactionSources
+  )
 import HKernel.Household.Policy
   ( HouseholdPolicy
   , householdAllocationEnvelopes
   , householdEnvelopeForPlanDestination
   )
 import HKernel.Journal
-  ( journalDocumentTransactionSources
-  , journalErrorLine
-  , journalMetadataKey
+  ( journalMetadataKey
   , journalMetadataValue
   , journalTransactionSourceMetadata
-  , parseJournalDocument
   )
 import HKernel.Ledger
   ( Transaction
@@ -94,8 +96,6 @@ data PlanBudgetSyncError
   | PlanBudgetSyncSpentAccountDuplicate (NonEmpty Account)
   | PlanBudgetSyncActualAmountNotPositive PlanId
   | PlanBudgetSyncCommodityMismatch PlanId
-  | PlanBudgetSyncBudgetJournalSyntaxError Int
-  | PlanBudgetSyncBudgetMetadataAlignmentMismatch Int Int
   | PlanBudgetSyncDuplicateMetadataKey Text
   | PlanBudgetSyncDuplicateBudgetLinkage PlanId
   | PlanBudgetSyncExistingLinkageMismatch PlanId
@@ -120,11 +120,11 @@ preparePlanBudgetSync
   -> Maybe HouseholdAccountPolicy
   -> PlanJournal
   -> ActualJournal
-  -> [HouseholdBudgetMovement]
+  -> HouseholdBudgetMovementJournal
   -> Text
   -> PlanId
   -> Either (NonEmpty PlanBudgetSyncError) PlanBudgetSyncResult
-preparePlanBudgetSync registry policy maybeAccountPolicy planJournal actualJournal budgetMovements budgetRootSource planId = do
+preparePlanBudgetSync registry policy maybeAccountPolicy planJournal actualJournal budgetJournal budgetRootSource planId = do
   planTransaction <- uniquePlanTransaction
   (actualId, actualTransaction) <- uniqueCompletedActual
   verifyCompletionShape planTransaction actualTransaction
@@ -155,6 +155,14 @@ preparePlanBudgetSync registry policy maybeAccountPolicy planJournal actualJourn
       classifyExisting movement metadata
   where
     failOne = Left . NonEmpty.singleton
+
+    budgetMovements = householdBudgetMovementJournalMovements budgetJournal
+    budgetMetadataBlocks =
+      [ map metadataPair (journalTransactionSourceMetadata source)
+      | source <- householdBudgetMovementJournalTransactionSources budgetJournal
+      ]
+    metadataPair entry =
+      (journalMetadataKey entry, journalMetadataValue entry)
 
     planMatches =
       [ identifiedPlanTransaction identified
@@ -250,20 +258,15 @@ preparePlanBudgetSync registry policy maybeAccountPolicy planJournal actualJourn
       [] -> failOne (PlanBudgetSyncShapeMismatch planId)
 
     classifyExisting movement metadata = do
-      budgetMetadataBlocks <- budgetTransactionMetadataBlocks budgetRootSource
-      if length budgetMetadataBlocks /= length budgetMovements
-        then failOne (PlanBudgetSyncBudgetMetadataAlignmentMismatch
-          (length budgetMovements) (length budgetMetadataBlocks))
-        else do
-          matching <- matchingBudgetIndices budgetMetadataBlocks
-          case matching of
-            [] -> appendCandidate movement metadata
-            [index]
-              | budgetMovements !! index == movement
-                  && budgetMetadataBlocks !! index == metadata ->
-                    Right (PlanBudgetSyncApplied planId)
-              | otherwise -> failOne (PlanBudgetSyncExistingLinkageMismatch planId)
-            _ -> failOne (PlanBudgetSyncDuplicateBudgetLinkage planId)
+      matching <- matchingBudgetIndices budgetMetadataBlocks
+      case matching of
+        [] -> appendCandidate movement metadata
+        [index]
+          | budgetMovements !! index == movement
+              && budgetMetadataBlocks !! index == metadata ->
+                Right (PlanBudgetSyncApplied planId)
+          | otherwise -> failOne (PlanBudgetSyncExistingLinkageMismatch planId)
+        _ -> failOne (PlanBudgetSyncDuplicateBudgetLinkage planId)
 
     matchingBudgetIndices blocks = do
       matches <- traverse classify (zip [0..] blocks)
@@ -300,21 +303,6 @@ injectMetadata metadata block = case T.lines block of
     (header : map renderMetadata metadata ++ rest)
   where
     renderMetadata (key, value) = "  ; " <> key <> ": " <> value
-
-budgetTransactionMetadataBlocks
-  :: Text
-  -> Either (NonEmpty PlanBudgetSyncError) [[(Text, Text)]]
-budgetTransactionMetadataBlocks input =
-  case parseJournalDocument input of
-    Left journalErrors -> Left
-      (fmap (PlanBudgetSyncBudgetJournalSyntaxError . journalErrorLine) journalErrors)
-    Right document -> Right
-      [ map metadataPair (journalTransactionSourceMetadata source)
-      | source <- journalDocumentTransactionSources document
-      ]
-  where
-    metadataPair entry =
-      (journalMetadataKey entry, journalMetadataValue entry)
 
 metadataOptional
   :: Text
