@@ -39,7 +39,7 @@ import System.IO (Handle, hClose, openTempFile)
 import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError
-  , admitActualJournalFromResolvedJournal
+  , admitActualJournalFromResolvedSources
   , parseActualJournal
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
@@ -48,11 +48,17 @@ import HKernel.Household.BudgetMovement
   , HouseholdBudgetMovementJournalError
   , admitHouseholdBudgetMovementJournal
   )
-import HKernel.Loader (LoadError, loadJournal, loadJournalFromRootSource)
+import HKernel.Loader
+  ( LoadError
+  , journalRootObservationJournal
+  , journalRootObservationTransactionSources
+  , loadJournal
+  , loadJournalRootObservationFromSource
+  )
 import HKernel.Plan.Journal
   ( PlanJournal
   , PlanJournalError
-  , admitPlanJournalFromResolvedJournal
+  , admitPlanJournalFromResolvedSources
   )
 
 -- | The complete source snapshot that the caller observed before preview.
@@ -186,18 +192,19 @@ data ActualSourceAdmissionError
   | ActualSourceJournalError ActualJournalError
   deriving (Show)
 
--- | Admit exact Actual root bytes together with the include graph resolved from
--- the root path. The root text and the accounting graph therefore belong to one
--- observation instead of permitting a second root-file read to drift in time.
+-- | Admit exact Actual root bytes together with parser-owned root transaction
+-- evidence and the include-resolved Journal produced by the same root parse.
 admitActualJournalRootSource
   :: FilePath
   -> Text
   -> IO (Either (NonEmpty ActualSourceAdmissionError) ActualJournal)
 admitActualJournalRootSource sourceFile source = do
-  resolved <- loadJournalFromRootSource sourceFile source
-  pure $ case resolved of
+  observed <- loadJournalRootObservationFromSource sourceFile source
+  pure $ case observed of
     Left loadError -> Left (pure (ActualSourceLoadError loadError))
-    Right journal -> case admitActualJournalFromResolvedJournal journal source of
+    Right observation -> case admitActualJournalFromResolvedSources
+        (journalRootObservationJournal observation)
+        (journalRootObservationTransactionSources observation) of
       Left errors -> Left (fmap ActualSourceJournalError errors)
       Right actualJournal -> Right actualJournal
 
@@ -226,18 +233,19 @@ data PlanJournalSourceAdmissionError
   | PlanJournalSourceAdmissionError PlanJournalError
   deriving (Show)
 
--- | Admit exact Plan root bytes together with the include graph resolved from
--- the root path. This can validate an in-memory candidate before publication
--- without replacing the current root file.
+-- | Admit exact Plan root bytes together with parser-owned root transaction
+-- evidence and the include-resolved Journal produced by the same root parse.
 admitPlanJournalRootSource
   :: FilePath
   -> Text
   -> IO (Either (NonEmpty PlanJournalSourceAdmissionError) PlanJournal)
 admitPlanJournalRootSource sourceFile source = do
-  resolved <- loadJournalFromRootSource sourceFile source
-  pure $ case resolved of
+  observed <- loadJournalRootObservationFromSource sourceFile source
+  pure $ case observed of
     Left loadError -> Left (pure (PlanJournalSourceLoadError loadError))
-    Right journal -> case admitPlanJournalFromResolvedJournal journal source of
+    Right observation -> case admitPlanJournalFromResolvedSources
+        (journalRootObservationJournal observation)
+        (journalRootObservationTransactionSources observation) of
       Left errors -> Left (fmap PlanJournalSourceAdmissionError errors)
       Right planJournal -> Right planJournal
 
