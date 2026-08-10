@@ -23,7 +23,6 @@ module HKernel.Editor.PlanLifecycle
   , PlanFinishAmountError(..)
   , mkPositivePlanFinishAmount
   , positivePlanFinishAmountQuantity
-  , PlanFinishIntent(..)
   ) where
 
 import Data.Bifunctor (first)
@@ -583,7 +582,7 @@ renderDay :: Day -> Text
 renderDay = T.pack . formatTime defaultTimeLocale "%F"
 
 
--- Plan Finish compatibility input
+-- Plan Finish compatibility magnitude
 
 -- | Strictly positive replacement magnitude accepted by the retained
 -- @plan finish@ CLI surface and the current Complete & Advance operation.
@@ -602,11 +601,3 @@ mkPositivePlanFinishAmount
 mkPositivePlanFinishAmount quantity
   | quantity <= zeroQuantity = Left (NonPositivePlanFinishAmount quantity)
   | otherwise = Right (PositivePlanFinishAmount quantity)
-
--- | Retained command payload for the compatibility @plan finish@ grammar.
--- Completion preparation and publication are owned by PlanCompleteAdvance.
-data PlanFinishIntent = PlanFinishIntent
-  { finishPlanId       :: Text
-  , finishActualDate   :: Day
-  , finishActualAmount :: Maybe PositivePlanFinishAmount
-  } deriving (Eq, Show)
