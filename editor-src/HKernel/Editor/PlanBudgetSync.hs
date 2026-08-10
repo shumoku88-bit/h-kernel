@@ -7,7 +7,6 @@ module HKernel.Editor.PlanBudgetSync
   , preparePlanBudgetSync
   ) where
 
-import Data.Char (isSpace)
 import Data.List (findIndex)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -44,6 +43,14 @@ import HKernel.Household.Policy
   ( HouseholdPolicy
   , householdAllocationEnvelopes
   , householdEnvelopeForPlanDestination
+  )
+import HKernel.Journal
+  ( journalDocumentTransactionSources
+  , journalErrorLine
+  , journalMetadataKey
+  , journalMetadataValue
+  , journalTransactionSourceMetadata
+  , parseJournalDocument
   )
 import HKernel.Ledger
   ( Transaction
@@ -87,6 +94,7 @@ data PlanBudgetSyncError
   | PlanBudgetSyncSpentAccountDuplicate (NonEmpty Account)
   | PlanBudgetSyncActualAmountNotPositive PlanId
   | PlanBudgetSyncCommodityMismatch PlanId
+  | PlanBudgetSyncBudgetJournalSyntaxError Int
   | PlanBudgetSyncBudgetMetadataAlignmentMismatch Int Int
   | PlanBudgetSyncDuplicateMetadataKey Text
   | PlanBudgetSyncDuplicateBudgetLinkage PlanId
@@ -241,13 +249,12 @@ preparePlanBudgetSync registry policy maybeAccountPolicy planJournal actualJourn
       posting : _ -> Right posting
       [] -> failOne (PlanBudgetSyncShapeMismatch planId)
 
-    budgetMetadataBlocks = transactionMetadataBlocks budgetRootSource
-
-    classifyExisting movement metadata
-      | length budgetMetadataBlocks /= length budgetMovements =
-          failOne (PlanBudgetSyncBudgetMetadataAlignmentMismatch
-            (length budgetMovements) (length budgetMetadataBlocks))
-      | otherwise = do
+    classifyExisting movement metadata = do
+      budgetMetadataBlocks <- budgetTransactionMetadataBlocks budgetRootSource
+      if length budgetMetadataBlocks /= length budgetMovements
+        then failOne (PlanBudgetSyncBudgetMetadataAlignmentMismatch
+          (length budgetMovements) (length budgetMetadataBlocks))
+        else do
           matching <- matchingBudgetIndices budgetMetadataBlocks
           case matching of
             [] -> appendCandidate movement metadata
@@ -294,39 +301,20 @@ injectMetadata metadata block = case T.lines block of
   where
     renderMetadata (key, value) = "  ; " <> key <> ": " <> value
 
-transactionMetadataBlocks :: Text -> [[(Text, Text)]]
-transactionMetadataBlocks input =
-  [ mapMaybe parseMetadata (drop 1 block)
-  | block@((_, header) : _) <- sourceBlocks input
-  , not (isNonTransactionDirective header)
-  ]
-
-sourceBlocks :: Text -> [[(Int, Text)]]
-sourceBlocks = map reverse . reverse . foldl addLine [] . zip [1..] . T.lines
+budgetTransactionMetadataBlocks
+  :: Text
+  -> Either (NonEmpty PlanBudgetSyncError) [[(Text, Text)]]
+budgetTransactionMetadataBlocks input =
+  case parseJournalDocument input of
+    Left journalErrors -> Left
+      (fmap (PlanBudgetSyncBudgetJournalSyntaxError . journalErrorLine) journalErrors)
+    Right document -> Right
+      [ map metadataPair (journalTransactionSourceMetadata source)
+      | source <- journalDocumentTransactionSources document
+      ]
   where
-    addLine blocks located@(_, line)
-      | startsBlock line = [located] : blocks
-      | otherwise = case blocks of
-          [] -> []
-          block : rest -> (located : block) : rest
-
-startsBlock :: Text -> Bool
-startsBlock line =
-  not (T.null (T.strip line))
-    && not (isIndented line)
-    && not (isComment line)
-
-parseMetadata :: (Int, Text) -> Maybe (Text, Text)
-parseMetadata (_, line)
-  | not (isIndented line && isComment line) = Nothing
-  | otherwise = case T.breakOn ":" cleanLine of
-      (_, remainder) | T.null remainder -> Nothing
-      (rawKey, remainder) -> Just
-        (T.toCaseFold (T.strip rawKey), T.strip (T.drop 1 remainder))
-  where
-    cleanLine = T.strip
-      (T.dropWhile (\character -> character == ';' || isSpace character)
-        (T.strip line))
+    metadataPair entry =
+      (journalMetadataKey entry, journalMetadataValue entry)
 
 metadataOptional
   :: Text
@@ -336,22 +324,3 @@ metadataOptional key metadata = case [value | (entryKey, value) <- metadata, ent
   [] -> Right Nothing
   [value] -> Right (Just value)
   _ -> Left (NonEmpty.singleton (PlanBudgetSyncDuplicateMetadataKey key))
-
-isNonTransactionDirective :: Text -> Bool
-isNonTransactionDirective line =
-  any (`isDirective` line) ["account", "include", "commodity"]
-
-isDirective :: Text -> Text -> Bool
-isDirective keyword line = case T.stripPrefix keyword (T.stripStart line) of
-  Nothing -> False
-  Just remainder ->
-    T.null remainder
-      || maybe False (isSpace . fst) (T.uncons remainder)
-
-isComment :: Text -> Bool
-isComment = T.isPrefixOf ";" . T.stripStart
-
-isIndented :: Text -> Bool
-isIndented line = case T.uncons line of
-  Just (character, _) -> isSpace character
-  Nothing -> False
