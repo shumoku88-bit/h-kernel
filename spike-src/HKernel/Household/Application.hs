@@ -8,6 +8,8 @@
 -- state without re-parsing raw files or invoking intermediate shell hubs.
 module HKernel.Household.Application
   ( HouseholdState(..)
+  , householdStateBudgetJournal
+  , householdStateBudgetMovements
   , HouseholdWriteSnapshot(..)
   , HouseholdLoadError(..)
   , loadCanonicalHousehold
@@ -58,8 +60,11 @@ import HKernel.Household.AccountProfile
   )
 import HKernel.Household.BudgetMovement
   ( HouseholdBudgetMovement
+  , HouseholdBudgetMovementJournal
   , HouseholdBudgetMovementJournalError
-  , admitHouseholdBudgetMovementJournal
+  , admitHouseholdBudgetMovementJournalFromResolvedJournal
+  , householdBudgetMovementJournalMovements
+  , householdBudgetMovementJournalValue
   )
 import HKernel.Household.Config
   ( HouseholdConfiguration
@@ -118,21 +123,32 @@ import HKernel.Spike.HouseholdReport
 
 -- | The canonical Household application state loaded from the 8 canonical paths.
 data HouseholdState = HouseholdState
-  { householdStateRoot             :: HouseholdRoot
-  , householdStatePaths            :: HouseholdSourcePaths
-  , householdStateAccountsRegistry :: AccountRegistry
-  , householdStateActualJournal    :: ActualJournal
-  , householdStatePlanJournal      :: PlanJournal
-  , householdStateBudgetJournal    :: Journal
-  , householdStateBudgetMovements  :: [HouseholdBudgetMovement]
-  , householdStateBudgetPolicy     :: BudgetPolicy
-  , householdStateConfiguration    :: HouseholdConfiguration
-  , householdStatePolicy           :: HouseholdPolicy
-  , householdStateValidatedPolicy  :: AccountValidatedHouseholdPolicy
-  , householdStateReportConfig     :: ReportConfiguration
-  , householdStateIssues           :: [HouseholdIssue]
-  , householdStateDailyScope       :: DailyTargetScope
+  { householdStateRoot                  :: HouseholdRoot
+  , householdStatePaths                 :: HouseholdSourcePaths
+  , householdStateAccountsRegistry      :: AccountRegistry
+  , householdStateActualJournal         :: ActualJournal
+  , householdStatePlanJournal           :: PlanJournal
+  , householdStateBudgetMovementJournal :: HouseholdBudgetMovementJournal
+  , householdStateBudgetPolicy          :: BudgetPolicy
+  , householdStateConfiguration         :: HouseholdConfiguration
+  , householdStatePolicy                :: HouseholdPolicy
+  , householdStateValidatedPolicy       :: AccountValidatedHouseholdPolicy
+  , householdStateReportConfig          :: ReportConfiguration
+  , householdStateIssues                :: [HouseholdIssue]
+  , householdStateDailyScope            :: DailyTargetScope
   } deriving (Eq, Show)
+
+-- | Compatibility/read projection for callers that need accounting Budget
+-- Journal meaning but do not need root metadata evidence.
+householdStateBudgetJournal :: HouseholdState -> Journal
+householdStateBudgetJournal =
+  householdBudgetMovementJournalValue . householdStateBudgetMovementJournal
+
+-- | Compatibility/read projection for report and delivery callers that need
+-- only ordered household Budget movement facts.
+householdStateBudgetMovements :: HouseholdState -> [HouseholdBudgetMovement]
+householdStateBudgetMovements =
+  householdBudgetMovementJournalMovements . householdStateBudgetMovementJournal
 
 -- | One admitted Household observation together with the exact root bytes used
 -- by current coordinated Editor operations.
@@ -287,9 +303,10 @@ loadBudget root paths accountsRegistry actualRootText actualJournal planRootText
               pure (Left (pure (HouseholdBudgetRegistryDisagreement
                 (householdBudgetJournalPath paths)
                 "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
-          | otherwise -> case admitHouseholdBudgetMovementJournal budgetJournal of
+          | otherwise -> case admitHouseholdBudgetMovementJournalFromResolvedJournal
+              budgetJournal budgetRootText of
               Left errors -> pure (Left (pure (HouseholdBudgetMovementAdmitFailed errors)))
-              Right budgetMovements ->
+              Right budgetMovementJournal ->
                 loadConfigsAndIssues
                   root
                   paths
@@ -299,8 +316,7 @@ loadBudget root paths accountsRegistry actualRootText actualJournal planRootText
                   planRootText
                   planJournal
                   budgetRootText
-                  budgetJournal
-                  budgetMovements
+                  budgetMovementJournal
 
 loadConfigsAndIssues
   :: HouseholdRoot
@@ -311,10 +327,9 @@ loadConfigsAndIssues
   -> Text
   -> PlanJournal
   -> Text
-  -> Journal
-  -> [HouseholdBudgetMovement]
+  -> HouseholdBudgetMovementJournal
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
-loadConfigsAndIssues root paths accountsRegistry actualRootText actualJournal planRootText planJournal budgetRootText budgetJournal budgetMovements = do
+loadConfigsAndIssues root paths accountsRegistry actualRootText actualJournal planRootText planJournal budgetRootText budgetMovementJournal = do
   budgetTextResult <- readHouseholdSource (householdBudgetConfigPath paths)
   case budgetTextResult of
     Left errors -> pure (Left errors)
@@ -357,8 +372,7 @@ loadConfigsAndIssues root paths accountsRegistry actualRootText actualJournal pl
                                         , householdStateAccountsRegistry = accountsRegistry
                                         , householdStateActualJournal = actualJournal
                                         , householdStatePlanJournal = planJournal
-                                        , householdStateBudgetJournal = budgetJournal
-                                        , householdStateBudgetMovements = budgetMovements
+                                        , householdStateBudgetMovementJournal = budgetMovementJournal
                                         , householdStateBudgetPolicy = budgetPolicy
                                         , householdStateConfiguration = configuration
                                         , householdStatePolicy = policy
@@ -484,8 +498,8 @@ admitCanonicalHousehold root accountsText actualText planText budgetText budgetP
     else Left (pure (HouseholdBudgetRegistryDisagreement
       (householdBudgetJournalPath paths)
       "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry"))
-  budgetMovements <- first (pure . HouseholdBudgetMovementAdmitFailed)
-    (admitHouseholdBudgetMovementJournal budgetJournal)
+  budgetMovementJournal <- first (pure . HouseholdBudgetMovementAdmitFailed)
+    (admitHouseholdBudgetMovementJournalFromResolvedJournal budgetJournal budgetText)
 
   budgetPolicy <- first (pure . HouseholdBudgetPolicyParseFailed)
     (parseBudgetPolicy budgetPolicyText)
@@ -511,8 +525,7 @@ admitCanonicalHousehold root accountsText actualText planText budgetText budgetP
     , householdStateAccountsRegistry = accountsRegistry
     , householdStateActualJournal = actualJournal
     , householdStatePlanJournal = planJournal
-    , householdStateBudgetJournal = budgetJournal
-    , householdStateBudgetMovements = budgetMovements
+    , householdStateBudgetMovementJournal = budgetMovementJournal
     , householdStateBudgetPolicy = budgetPolicy
     , householdStateConfiguration = configuration
     , householdStatePolicy = policy
