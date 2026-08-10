@@ -1,5 +1,10 @@
+[presentation.hierarchy]
+# heading-color = "cyan" # red, bright-red, green, yellow, blue, magenta, cyan, white
+# section-color = "yellow" # red, bright-red, green, yellow, blue, magenta, cyan, white
+
 [presentation.amounts]
 negative-style = "parentheses"
+# positive-color = "green" # red, bright-red, green, yellow, blue, magenta, cyan, white
 # negative-color = "red" # red, bright-red, green, yellow, blue, magenta, cyan, white
 
 
