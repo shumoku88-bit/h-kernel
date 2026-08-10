@@ -9,7 +9,7 @@ module HKernel.Journal
   , IncludeError(..)
   , mkInclude
   , includePath
-  , JournalDocument(..)
+  , JournalDocument
   , JournalMetadata
   , journalMetadataLine
   , journalMetadataKey
