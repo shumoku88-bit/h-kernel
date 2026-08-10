@@ -162,7 +162,7 @@ New tools must add evidence beyond this baseline.
 | GHC eventlog / heap profiling | explain runtime/GC behaviour | targeted performance work | measurement complexity | Candidate |
 | GHC Core/STG dumps | teaching + optimization diagnosis | targeted observation | overwhelming compiler output | Candidate |
 | Criterion | stable microbenchmarking | only after a kernel is identified | benchmark framework before a question | Deferred |
-| cabal-audit | dependency security advisory checks | periodic/CI observation | advisory/tool maintenance | Investigate |
+| hsec-tools / hsec-sync | query and synchronize the Haskell Security Advisory DB | periodic observation | advisory cache/tool maintenance | Candidate / investigate |
 | `cabal outdated` / plan inspection | dependency drift visibility | periodic maintenance | update churn | Investigate |
 | `sqz` | AI tool-output compression + cross-call dedup | local Codex experiment | hidden context / dedup recovery | Candidate, high interest |
 | `rtk` | deterministic command-aware AI output filtering | local Codex experiment | PATH/shim interception; hidden detail | Candidate, high interest |
@@ -241,6 +241,18 @@ Do not compare different tasks as if their token counts were controlled experime
 For source mutation, publication, CI failures, compiler errors, and security-sensitive output, exact evidence wins over compression.
 
 If a compressed summary hides the detail needed to establish correctness, recover the original output rather than reasoning from an incomplete summary.
+
+## Dependency security tooling
+
+The historical Hackage package named `cabal-audit` is not the current security-advisory path for this ledger.
+
+The current Haskell Security Response Team ecosystem maintains the Haskell Security Advisory Database and provides `hsec-sync` to synchronize advisory data and `hsec-tools` to query it.
+
+Initial experiment question:
+
+> Can periodic advisory queries add actionable dependency-security evidence without turning ordinary h-kernel CI into a network-dependent or noisy gate?
+
+Start as a local/periodic observation. Do not make the build depend on an online advisory service or fail CI merely because the advisory cache cannot be refreshed.
 
 ## Haskell tooling trial order
 
