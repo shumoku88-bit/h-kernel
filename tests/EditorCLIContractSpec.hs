@@ -12,6 +12,7 @@ import HKernel.Editor.ActualReverse
   )
 import HKernel.Editor.CLI
 import HKernel.Editor.IssueAppend (intentAmount, intentDetails)
+import HKernel.Editor.PlanCompleteAdvance (positivePlanMagnitudeQuantity)
 import HKernel.Editor.PlanLifecycle
   ( addDate
   , editAmount
@@ -39,6 +40,7 @@ main = do
         , ("Plan edit requires at least one change coordinate", testPlanEditChangeRequired)
         , ("Plan edit rejects non-positive amount", testPlanEditNonPositiveAmount)
         , ("Plan edit admits command-local commit", testPlanEditCommit)
+        , ("Plan finish admits direct identity date and amount", testPlanFinishAdmission)
         , ("Plan finish requires explicit actual date", testPlanFinishDateRequired)
         , ("Plan finish rejects negative actual amount", testPlanFinishNegativeAmount)
         , ("Plan finish rejects zero actual amount", testPlanFinishZeroAmount)
@@ -239,6 +241,29 @@ testPlanEditCommit = case parseEditorCommand
   ] of
     Right (CommitRequested, PlanEditCmd _ _ intent) ->
       editDate intent == Just (fromGregorian 2026 8 6)
+    _ -> False
+
+testPlanFinishAdmission :: Bool
+testPlanFinishAdmission = case parseEditorCommand
+  [ "plan"
+  , "finish"
+  , "plan.journal"
+  , "actual.journal"
+  , "--id"
+  , "plan-2026-08-05-meal"
+  , "--actual-date"
+  , "2026-08-06"
+  , "--actual-amount"
+  , "275"
+  ] of
+    Right
+      ( PreviewOnly
+      , PlanFinishCmd "plan.journal" "actual.journal" planId actualDate amount
+      ) ->
+        planId == "plan-2026-08-05-meal"
+          && actualDate == fromGregorian 2026 8 6
+          && fmap positivePlanMagnitudeQuantity amount
+            == Just (quantityFromInteger 275)
     _ -> False
 
 testPlanFinishDateRequired :: Bool

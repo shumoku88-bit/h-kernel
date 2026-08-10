@@ -10,7 +10,10 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 
-import HKernel.Actual.Journal (parseActualJournal)
+import HKernel.Actual.Journal
+  ( admitActualJournalFromResolvedJournal
+  , parseActualJournal
+  )
 import HKernel.Application.Config (HouseholdSourcePaths(..), householdSourcePaths, mkHouseholdRoot)
 import qualified HKernel.Editor.ActualAccountAppend as ActualAccountAppend
 import qualified HKernel.Editor.ActualAppend as ActualAppend
@@ -19,6 +22,7 @@ import HKernel.Editor.ActualWriter
 import qualified HKernel.Editor.BudgetMovementAppend as BudgetMovementAppend
 import HKernel.Editor.CLI
 import qualified HKernel.Editor.IssueAppend as IssueAppend
+import qualified HKernel.Editor.PlanCompleteAdvance as PlanCompleteAdvance
 import qualified HKernel.Editor.PlanLifecycle as PlanLifecycle
 import HKernel.Household.Application
   ( HouseholdState(..)
@@ -31,6 +35,8 @@ import HKernel.Household.BudgetMovement.TSV
 import HKernel.Household.Issue.TSV (parseHouseholdIssues)
 import HKernel.Journal (Journal)
 import HKernel.Loader (loadJournal, loadJournalFromRootSource)
+import HKernel.Plan (mkPlanId)
+import HKernel.Plan.Journal (admitPlanJournalFromResolvedJournal)
 import System.FilePath ((</>), normalise, takeDirectory)
 
 die :: String -> IO a
@@ -231,22 +237,32 @@ executeCommand commitMode command = case command of
           (PlanLifecycle.editCandidateCompleteSource preview)
           commitMode
 
-  PlanFinishCmd planFile actualFile intent -> do
+  PlanFinishCmd planFile actualFile planIdText actualDate actualAmount -> do
     planSource <- TIO.readFile planFile
     actualSource <- TIO.readFile actualFile
     resolvedPlan <- loadResolvedPlanJournal planFile planSource
     resolvedActual <- loadResolvedActualJournal actualFile
-    case PlanLifecycle.preparePlanFinishFromResolvedJournals
-        resolvedPlan resolvedActual planSource actualSource intent of
+    planJournal <- case admitPlanJournalFromResolvedJournal resolvedPlan planSource of
       Left errors -> validationFailed errors
-      Right preview ->
-        executePreview
-          publishActualAppendFromResolvedJournal
-          actualFile
-          actualSource
-          (PlanLifecycle.finishCandidateBlock preview)
-          (PlanLifecycle.finishCandidateCompleteSource preview)
-          commitMode
+      Right value -> pure value
+    actualJournal <- case admitActualJournalFromResolvedJournal resolvedActual actualSource of
+      Left errors -> validationFailed errors
+      Right value -> pure value
+    planId <- case mkPlanId planIdText of
+      Left planIdError -> validationFailed (pure planIdError)
+      Right value -> pure value
+    let completeIntent = PlanCompleteAdvance.PlanCompleteAdvanceIntent
+          { PlanCompleteAdvance.completeAdvancePlanId = planId
+          , PlanCompleteAdvance.completeAdvanceActualDate = actualDate
+          , PlanCompleteAdvance.completeAdvanceActualAmount = actualAmount
+          , PlanCompleteAdvance.completeAdvanceSuccessorDate = Nothing
+          , PlanCompleteAdvance.completeAdvanceSuccessorAmount = Nothing
+          }
+    case PlanCompleteAdvance.preparePlanCompleteAdvance
+        planJournal actualJournal planSource actualSource completeIntent of
+      Left errors -> validationFailed errors
+      Right preview -> executePlanFinishPreview
+        planFile actualFile planSource actualSource preview commitMode
 
 loadResolvedActualJournal :: FilePath -> IO Journal
 loadResolvedActualJournal sourceFile = do
@@ -274,6 +290,56 @@ validationFailed errors =
   die
     ("Validation errors:\n"
       <> unlines (map show (NonEmpty.toList errors)))
+
+executePlanFinishPreview
+  :: FilePath
+  -> FilePath
+  -> Text
+  -> Text
+  -> PlanCompleteAdvance.PlanCompleteAdvancePreview
+  -> CommitMode
+  -> IO ()
+executePlanFinishPreview planFile actualFile planSource actualSource preview commitMode = do
+  TIO.putStrLn "--- Preview ---"
+  putPreviewBlock (PlanCompleteAdvance.completeAdvanceActualBlock preview)
+  TIO.putStrLn "---------------"
+  case commitMode of
+    PreviewOnly ->
+      TIO.putStrLn
+        "Run with --commit immediately after the command name to apply changes."
+    CommitRequested -> do
+      let writeIntent = PlanCompleteAdvance.PlanCompleteAdvanceWriteIntent
+            { PlanCompleteAdvance.writeActualPath = actualFile
+            , PlanCompleteAdvance.writeExpectedActual = actualSource
+            , PlanCompleteAdvance.writeCandidateActual =
+                PlanCompleteAdvance.completeAdvanceActualSource preview
+            , PlanCompleteAdvance.writePlanPath = planFile
+            , PlanCompleteAdvance.writeExpectedPlan = planSource
+            , PlanCompleteAdvance.writeCandidatePlan =
+                PlanCompleteAdvance.completeAdvancePlanSource preview
+            }
+      writeResult <- PlanCompleteAdvance.publishPlanCompleteAdvance
+        (admitPlanFinishPaths planFile actualFile)
+        writeIntent
+      case writeResult of
+        Right () -> TIO.putStrLn "Successfully updated source."
+        Left writeError -> die ("Write failed: " <> show writeError)
+
+-- | Re-admit the two explicit Journal paths accepted by the CLI after the
+-- coordinated writer installs both candidates. This deliberately does not
+-- require a canonical Household root: the retained CLI grammar accepts explicit
+-- Plan and Actual paths, while each Journal remains path-aware for includes.
+admitPlanFinishPaths :: FilePath -> FilePath -> IO (Either String ())
+admitPlanFinishPaths planFile actualFile = do
+  actualResult <- admitActualJournalPath actualFile
+  case actualResult of
+    Left errors -> pure
+      (Left ("Actual post-admission failed: " <> show errors))
+    Right _ -> do
+      planResult <- admitPlanJournalPath planFile
+      pure $ case planResult of
+        Left errors -> Left ("Plan post-admission failed: " <> show errors)
+        Right _ -> Right ()
 
 executePreview
   :: Show sourceError
