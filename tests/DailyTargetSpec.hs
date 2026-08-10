@@ -118,6 +118,16 @@ characterizeNativeSourceParity registry plan retainedScope = do
       "native Plan metadata rejects partial reservation evidence"
       ("unexpectedly accepted: " ++ show value)
 
+  let detachedJournal = mustRight
+        (parsePlanJournal detachedDailyTargetMetadataPlanJournal)
+  assertEqual
+    "canonical blank line detaches Daily Target metadata"
+    []
+    (mustRight
+      (parseDailyTargetPlanJournalSelections
+        detachedDailyTargetMetadataPlanJournal
+        detachedJournal))
+
   let duplicateId = mustRight (mkDailyTargetScopeId "wifi")
       duplicateAsset = selectDailyTargetAsset duplicateId
         (mustRight (mkAccount "assets:cash"))
@@ -265,6 +275,16 @@ partialReservationPlanJournal = planDeclarations <> T.unlines
   , "    ; reservation-amount: 50"
   , "    assets:cash    -200 JPY"
   , "    expenses:wifi   200 JPY"
+  ]
+
+detachedDailyTargetMetadataPlanJournal :: T.Text
+detachedDailyTargetMetadataPlanJournal = planDeclarations <> T.unlines
+  [ "2026-08-08 Wi-Fi"
+  , "    ; plan-id: plan-wifi"
+  , "    assets:cash    -200 JPY"
+  , "    expenses:wifi   200 JPY"
+  , ""
+  , "    ; daily-target-id: wifi"
   ]
 
 planDeclarations :: T.Text
