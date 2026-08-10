@@ -22,6 +22,7 @@ main = do
   retainCanonicalPlanSourceEvidence
   characterizeResolvedJournalAdmission
   rejectResolvedJournalTransactionDrift
+  rejectResolvedJournalEqualCountTransactionDrift
   rejectMissingPlanIdentity
   rejectDuplicatePlanMetadata
   rejectInvalidPlanIdentity
@@ -88,6 +89,20 @@ rejectResolvedJournalTransactionDrift =
     driftedJournal = mustRight (parseJournal driftedResolvedAccountingJournal)
     isAlignmentMismatch err = case err of
       PlanJournalTransactionMetadataAlignmentMismatch 2 1 -> True
+      _ -> False
+
+rejectResolvedJournalEqualCountTransactionDrift :: IO ()
+rejectResolvedJournalEqualCountTransactionDrift =
+  assertLeftSatisfies
+    "resolved admission rejects equal-count source evidence for a different Plan transaction"
+    (any isSourceMismatch . NonEmpty.toList)
+    (admitPlanJournalFromResolvedJournal
+      resolvedJournal
+      equalCountDifferentPlanRoot)
+  where
+    resolvedJournal = mustRight (parseJournal resolvedAccountingJournal)
+    isSourceMismatch err = case err of
+      PlanJournalTransactionSourceAlignmentMismatch 1 -> True
       _ -> False
 
 rejectMissingPlanIdentity :: IO ()
@@ -306,6 +321,16 @@ resolvedPlanRoot = T.unlines
   , "    ; plan-id: plan-wifi"
   , "    ; note: unrelated metadata remains unrelated"
   , "    expenses:food  200 JPY"
+  , "    assets:cash"
+  ]
+
+equalCountDifferentPlanRoot :: T.Text
+equalCountDifferentPlanRoot = T.unlines
+  [ "include accounts.journal"
+  , ""
+  , "2026-08-08 Different payment"
+  , "    ; plan-id: plan-wrong-source"
+  , "    expenses:food  201 JPY"
   , "    assets:cash"
   ]
 
