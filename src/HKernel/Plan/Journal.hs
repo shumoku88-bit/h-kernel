@@ -98,14 +98,22 @@ data PlanJournal = PlanJournal
   , planJournalTransactionSources :: Map PlanId JournalTransactionSource
   } deriving (Show)
 
--- Source locations are provenance for later domain-specific admission, not part
--- of PlanJournal's semantic equality. A resolved root may place the same Plan
--- transaction at different physical line numbers while retaining identical
--- accounting and Plan meaning.
+-- Physical source coordinates are provenance rather than semantic equality.
+-- Metadata key/value evidence is semantic here because downstream Plan domains
+-- may interpret it, while direct and resolved roots can legitimately place the
+-- same evidence at different line numbers.
 instance Eq PlanJournal where
   left == right =
     planJournalValue left == planJournalValue right
       && planJournalTransactions left == planJournalTransactions right
+      && fmap sourceMetadataMeaning (planJournalTransactionSources left)
+          == fmap sourceMetadataMeaning (planJournalTransactionSources right)
+
+sourceMetadataMeaning :: JournalTransactionSource -> [(Text, Text)]
+sourceMetadataMeaning source =
+  [ (journalMetadataKey entry, journalMetadataValue entry)
+  | entry <- journalTransactionSourceMetadata source
+  ]
 
 -- | Read canonical root-source evidence for one admitted Plan identity.
 --
