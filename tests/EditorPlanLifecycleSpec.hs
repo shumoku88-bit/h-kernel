@@ -38,6 +38,7 @@ main = do
         , ("testPlanEditDateAndAmountPreservesMetadata", testPlanEditDateAndAmountPreservesMetadata)
         , ("testPlanEditDateOnlyPreservesPostingText", testPlanEditDateOnlyPreservesPostingText)
         , ("testPlanEditAmountOnlyPreservesDate", testPlanEditAmountOnlyPreservesDate)
+        , ("testPlanEditIgnoresDetachedPlanIdComment", testPlanEditIgnoresDetachedPlanIdComment)
         , ("testPlanEditNoOpRejected", testPlanEditNoOpRejected)
         , ("testPlanEditClosedRejected", testPlanEditClosedRejected)
         , ("testPlanEditMissingRejected", testPlanEditMissingRejected)
@@ -97,6 +98,7 @@ metadataRichPlanFixture = T.unlines
   , "  ; human note retained verbatim"
   , "  assets:bank  -500 JPY"
   , "  expenses:food  500 JPY"
+  , "  ; trailing human note retained verbatim"
   ]
 
 metadataRichPlanRootFixture :: Text
@@ -114,6 +116,13 @@ metadataRichPlanRootFixture = T.unlines
   , "  ; human note retained verbatim"
   , "  assets:bank  -500 JPY"
   , "  expenses:food  500 JPY"
+  , "  ; trailing human note retained verbatim"
+  ]
+
+detachedDuplicatePlanIdFixture :: Text
+detachedDuplicatePlanIdFixture = metadataRichPlanFixture <> T.unlines
+  [ ""
+  , "  ; plan-id: plan-2023-01-01-lunch"
   ]
 
 planFixtureWithActualOnlyMetadata :: Text
@@ -264,6 +273,7 @@ testPlanEditDateAndAmountPreservesMetadata =
                , "; reservation-amount: 100"
                , "; reservation-commodity: JPY"
                , "; human note retained verbatim"
+               , "; trailing human note retained verbatim"
                ]
          in "2023-01-07 existing plan" `T.isInfixOf` block
               && "-650 JPY" `T.isInfixOf` block
@@ -293,6 +303,7 @@ testPlanEditDateOnlyPreservesPostingText =
               && "assets:bank  -500 JPY" `T.isInfixOf` candidate
               && "expenses:food  500 JPY" `T.isInfixOf` candidate
               && "; reservation-id: lunch-reservation" `T.isInfixOf` candidate
+              && "; trailing human note retained verbatim" `T.isInfixOf` candidate
 
 testPlanEditAmountOnlyPreservesDate :: Bool
 testPlanEditAmountOnlyPreservesDate =
@@ -318,6 +329,20 @@ testPlanEditAmountOnlyPreservesDate =
                            (identifiedPlanTransaction identified)))
                          == [qty "-725", qty "725"]
                      _ -> False
+
+testPlanEditIgnoresDetachedPlanIdComment :: Bool
+testPlanEditIgnoresDetachedPlanIdComment =
+  let intent = PlanEditIntent
+        { editPlanId = "plan-2023-01-01-lunch"
+        , editDate = Just (fromGregorian 2023 1 10)
+        , editAmount = Nothing
+        }
+      planIdLine = "; plan-id: plan-2023-01-01-lunch"
+  in case preparePlanEdit detachedDuplicatePlanIdFixture actualFixture intent of
+       Left err -> error (show err)
+       Right preview ->
+         "2023-01-10 existing plan" `T.isInfixOf` editCandidateBlock preview
+           && T.count planIdLine (editCandidateCompleteSource preview) == 2
 
 testPlanEditNoOpRejected :: Bool
 testPlanEditNoOpRejected =
@@ -413,6 +438,7 @@ testResolvedPlanEditWithPlanInclude =
         , "; reservation-amount: 100"
         , "; reservation-commodity: JPY"
         , "; human note retained verbatim"
+        , "; trailing human note retained verbatim"
         ]
   in isLeft (parsePlanJournal metadataRichPlanRootFixture)
       && case preparePlanEditFromResolvedJournals
