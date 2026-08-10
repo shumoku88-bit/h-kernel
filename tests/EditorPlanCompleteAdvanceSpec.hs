@@ -50,6 +50,10 @@ main = do
         , ("actual amount does not rewrite successor default", testAmountSeparation)
         , ("daily-target identity refreshes", testDailyTargetRefresh)
         , ("completion ignores advance-only recurrence admission", testCompletionDoesNotAdmitRecurrence)
+        , ("completion keeps original amount and Plan source", testCompletionUsesOriginalAmount)
+        , ("completion applies explicit binary amount", testCompletionAmountOverride)
+        , ("completion rejects already closed Plan", testCompletionClosed)
+        , ("completion rejects missing Plan", testCompletionMissing)
         , ("once recurrence forbids successor", testOnceNoSuccessor)
         , ("cycle recurrence requires explicit date", testCycleManualDate)
         , ("series relation derives active members and latest", testSeriesSafetyAssessment)
@@ -195,6 +199,16 @@ accountsResolved = T.unlines
 
 actualRoot :: Text
 actualRoot = "include accounts.journal\n"
+
+closedMonthlyActualSource :: Text
+closedMonthlyActualSource = T.unlines
+  [ "include accounts.journal"
+  , ""
+  , "2031-01-17 sample recurring payment"
+  , "  ; plan-id: plan-2031-01-17-sample-series"
+  , "  expenses:test-service  1234 JPY"
+  , "  assets:test-bank  -1234 JPY"
+  ]
 
 closedDuplicateActualSource :: Text
 closedDuplicateActualSource = T.unlines
@@ -365,6 +379,100 @@ testCompletionDoesNotAdmitRecurrence = case
           && CompleteAdvanceInvalidRecurrence "every-third-moon"
             `elem` NonEmpty.toList errors
       _ -> False
+  _ -> False
+
+testCompletionUsesOriginalAmount :: Bool
+testCompletionUsesOriginalAmount = withMonthly $ \planJournal actualJournal target ->
+  case preparePlanCompleteAdvance
+      planJournal
+      actualJournal
+      monthlyPlanSource
+      actualRoot
+      PlanCompleteAdvanceIntent
+        { completeAdvancePlanId = target
+        , completeAdvanceActualDate = fromGregorian 2031 1 16
+        , completeAdvanceActualAmount = Nothing
+        , completeAdvanceSuccessorDate = Nothing
+        , completeAdvanceSuccessorAmount = Nothing
+        } of
+    Right preview ->
+      "; plan-id: plan-2031-01-17-sample-series"
+        `T.isInfixOf` completeAdvanceActualBlock preview
+        && "1234 JPY" `T.isInfixOf` completeAdvanceActualBlock preview
+        && "-1234 JPY" `T.isInfixOf` completeAdvanceActualBlock preview
+        && completeAdvanceSuccessorBlock preview == Nothing
+        && completeAdvancePlanSource preview == monthlyPlanSource
+    Left _ -> False
+
+testCompletionAmountOverride :: Bool
+testCompletionAmountOverride = withMonthly $ \planJournal actualJournal target ->
+  case positive "1300" of
+    Nothing -> False
+    Just replacement -> case preparePlanCompleteAdvance
+        planJournal
+        actualJournal
+        monthlyPlanSource
+        actualRoot
+        PlanCompleteAdvanceIntent
+          { completeAdvancePlanId = target
+          , completeAdvanceActualDate = fromGregorian 2031 1 16
+          , completeAdvanceActualAmount = Just replacement
+          , completeAdvanceSuccessorDate = Nothing
+          , completeAdvanceSuccessorAmount = Nothing
+          } of
+      Right preview ->
+        "1300 JPY" `T.isInfixOf` completeAdvanceActualBlock preview
+          && "-1300 JPY" `T.isInfixOf` completeAdvanceActualBlock preview
+          && not ("1234 JPY" `T.isInfixOf` completeAdvanceActualBlock preview)
+          && completeAdvancePlanSource preview == monthlyPlanSource
+      Left _ -> False
+
+testCompletionClosed :: Bool
+testCompletionClosed = case
+    ( admitPlan monthlyPlanSource
+    , admitActualSource closedMonthlyActualSource
+    , planId "plan-2031-01-17-sample-series"
+    ) of
+  (Just planJournal, Just actualJournal, Just target) ->
+    case preparePlanCompleteAdvance
+        planJournal
+        actualJournal
+        monthlyPlanSource
+        closedMonthlyActualSource
+        PlanCompleteAdvanceIntent
+          { completeAdvancePlanId = target
+          , completeAdvanceActualDate = fromGregorian 2031 1 18
+          , completeAdvanceActualAmount = Nothing
+          , completeAdvanceSuccessorDate = Nothing
+          , completeAdvanceSuccessorAmount = Nothing
+          } of
+      Left errors -> CompleteAdvancePlanAlreadyClosed target
+        `elem` NonEmpty.toList errors
+      Right _ -> False
+  _ -> False
+
+testCompletionMissing :: Bool
+testCompletionMissing = case
+    ( admitPlan monthlyPlanSource
+    , admitActual
+    , planId "plan-missing"
+    ) of
+  (Just planJournal, Just actualJournal, Just missing) ->
+    case preparePlanCompleteAdvance
+        planJournal
+        actualJournal
+        monthlyPlanSource
+        actualRoot
+        PlanCompleteAdvanceIntent
+          { completeAdvancePlanId = missing
+          , completeAdvanceActualDate = fromGregorian 2031 1 16
+          , completeAdvanceActualAmount = Nothing
+          , completeAdvanceSuccessorDate = Nothing
+          , completeAdvanceSuccessorAmount = Nothing
+          } of
+      Left errors -> CompleteAdvancePlanNotFound missing
+        `elem` NonEmpty.toList errors
+      Right _ -> False
   _ -> False
 
 testOnceNoSuccessor :: Bool
