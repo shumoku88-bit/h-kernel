@@ -68,11 +68,11 @@ renderReportBookWithPresentation
 renderReportBookWithPresentation presentation report =
   T.intercalate "\n"
     [ renderReportBookCoreWithPresentation presentation report
-    , renderUnavailableCycleAccounts
-    , renderUnavailableDailyTarget
-    , renderUnavailablePlannedTransactions
-    , renderUnavailableHouseholdIssues
-    , renderUnavailableEnvelopeBacking
+    , renderUnavailableCycleAccounts presentation
+    , renderUnavailableDailyTarget presentation
+    , renderUnavailablePlannedTransactions presentation
+    , renderUnavailableHouseholdIssues presentation
+    , renderUnavailableEnvelopeBacking presentation
     ]
 
 renderReportBookCoreWithPresentation
@@ -96,7 +96,7 @@ renderTrialBalance = renderTrialBalanceWithPresentation defaultPresentationConfi
 
 renderTrialBalanceWithPresentation :: PresentationConfig -> TrialBalance -> Text
 renderTrialBalanceWithPresentation presentation report = T.intercalate "\n"
-  [ terminalHeader "Account Balances (h-kernel Engine)"
+  [ terminalHeaderWith presentation "Account Balances (h-kernel Engine)"
   , terminalMeta ("As of: " <> renderDay (trialBalanceDate report))
   , ""
   , renderTerminalTable accountColumns rows Nothing
@@ -120,13 +120,13 @@ renderProfitAndLossWithPresentation
   -> ProfitAndLoss
   -> Text
 renderProfitAndLossWithPresentation presentation report = T.intercalate "\n"
-  [ terminalHeader "Profit & Loss Statement (h-kernel Engine)"
+  [ terminalHeaderWith presentation "Profit & Loss Statement (h-kernel Engine)"
   , terminalMeta ("Period: " <> renderDay (rangeStart dateRange)
       <> ".." <> renderDay (rangeEnd dateRange))
   , ""
-  , terminalYellow "Income"
+  , terminalSectionWith presentation "Income"
   , renderTerminalTable accountAmountColumns incomeRows Nothing
-  , terminalYellow "Expenses"
+  , terminalSectionWith presentation "Expenses"
   , renderTerminalTable accountAmountColumns expenseRows (Just netRow)
   , renderUnclassifiedWith presentation
       (profitAndLossUnclassified report)
@@ -141,7 +141,7 @@ renderProfitAndLossWithPresentation presentation report = T.intercalate "\n"
       | line <- incomeLines report
       ] ++
       [ [ styledCell terminalBold "Total Income"
-        , styledCell (terminalBold . terminalGreen)
+        , styledCell (terminalBold . terminalPositiveAmountWith presentation)
             (renderBalancePlainWith presentation (totalIncome report))
         ]
       ]
@@ -153,8 +153,7 @@ renderProfitAndLossWithPresentation presentation report = T.intercalate "\n"
       ] ++
       [ [ styledCell terminalBold "Total Expenses"
         , styledCell
-            (terminalBold . terminalRedWith
-              (presentationNegativeColor presentation))
+            (terminalBold . terminalNegativeAmountWith presentation)
             (renderBalancePlainWith presentation (totalExpenses report))
         ]
       ]
@@ -172,14 +171,14 @@ renderBalanceSheetWithPresentation
   -> BalanceSheet
   -> Text
 renderBalanceSheetWithPresentation presentation report = T.intercalate "\n"
-  [ terminalHeader "Balance Sheet (h-kernel Engine)"
+  [ terminalHeaderWith presentation "Balance Sheet (h-kernel Engine)"
   , terminalMeta ("As of: " <> renderDay (balanceSheetDate report))
   , ""
-  , terminalYellow "Assets"
+  , terminalSectionWith presentation "Assets"
   , renderTerminalTable accountColumns assetRows Nothing
-  , terminalYellow "Liabilities"
+  , terminalSectionWith presentation "Liabilities"
   , renderTerminalTable accountColumns liabilityRows Nothing
-  , terminalYellow "Equity"
+  , terminalSectionWith presentation "Equity"
   , renderTerminalTable accountColumns equityRows Nothing
   , renderUnclassifiedWith presentation (balanceSheetUnclassified report)
   , terminalBoldThen "Balanced: " (renderYesNo balanced)
@@ -195,7 +194,7 @@ renderBalanceSheetWithPresentation presentation report = T.intercalate "\n"
       | line <- assetLines report
       ] ++
       [ [ styledCell terminalBold "Total assets"
-        , styledCell (terminalBold . terminalGreen)
+        , styledCell (terminalBold . terminalPositiveAmountWith presentation)
             (renderBalancePlainWith presentation (totalAssets report))
         ]
       ]
@@ -207,8 +206,7 @@ renderBalanceSheetWithPresentation presentation report = T.intercalate "\n"
       ] ++
       [ [ styledCell terminalBold "Total liabilities"
         , styledCell
-            (terminalBold . terminalRedWith
-              (presentationNegativeColor presentation))
+            (terminalBold . terminalNegativeAmountWith presentation)
             (renderBalancePlainWith presentation (totalLiabilities report))
         ]
       ]
@@ -323,7 +321,7 @@ renderDailyFlowWithDateColumns dateColumns =
 
 renderDailyFlowWithPresentation :: PresentationConfig -> DailyFlow -> Text
 renderDailyFlowWithPresentation presentation report = T.intercalate "\n"
-  ( [ terminalHeader "Daily Flow (Category × Date)"
+  ( [ terminalHeaderWith presentation "Daily Flow (Category × Date)"
     , terminalMeta ("Requested period: "
         <> dailyFlowViewRequestedPeriod view
         <> " | Displayed: " <> dailyFlowViewDisplayedPeriod view
@@ -424,7 +422,7 @@ renderMonthlyAccountsWithPresentation
   -> MonthlyAccounts
   -> Text
 renderMonthlyAccountsWithPresentation presentation report = T.intercalate "\n"
-  [ terminalHeader "Monthly Accounts (Account × Month)"
+  [ terminalHeaderWith presentation "Monthly Accounts (Account × Month)"
   , terminalMeta ("Period: " <> renderDay (rangeStart dateRange)
       <> " .. " <> renderDay (rangeEnd dateRange)
       <> " | Displayed months: " <> tshow (length months))
@@ -450,7 +448,7 @@ renderMonthlyAccountsWithPresentation presentation report = T.intercalate "\n"
               (styledCell terminalBold "Total Income")
               (map monthlyAccountsIncome lines')
               monthlyIncomeTotal
-              (terminalBold . terminalGreen)]
+              (terminalBold . terminalPositiveAmountWith presentation)]
         ++ [sectionRow "Expenses"]
         ++ map (accountRow (redBalanceCellWith presentation))
           (monthlyAccountsExpenseRows report)
@@ -458,10 +456,9 @@ renderMonthlyAccountsWithPresentation presentation report = T.intercalate "\n"
               (styledCell terminalBold "Total Expenses")
               (map monthlyAccountsExpenses lines')
               monthlyExpenseTotal
-              (terminalBold . terminalRedWith
-                (presentationNegativeColor presentation))]
+              (terminalBold . terminalNegativeAmountWith presentation)]
     sectionRow label =
-      styledCell (terminalBold . terminalYellow) label
+      styledCell (terminalBold . terminalSectionWith presentation) label
         : replicate (length months + 1) (plainCell "")
     accountRow balanceCell row =
       plainCell (accountName (monthlyAccountRowAccount row))
@@ -493,7 +490,7 @@ renderCycleAccountsWithPresentation
   -> CycleAccounts
   -> Text
 renderCycleAccountsWithPresentation presentation report = T.intercalate "\n"
-  [ terminalHeader "Cycle Accounts & Comparison Matrix"
+  [ terminalHeaderWith presentation "Cycle Accounts & Comparison Matrix"
   , terminalMeta ("Current: " <> renderPeriod current
       <> " | Previous: " <> renderPeriod previous
       <> " | Periods are half-open")
@@ -534,7 +531,7 @@ cycleRow presentation row =
 renderCycleUnclassified :: PresentationConfig -> [CycleAccountRow] -> Text
 renderCycleUnclassified _ [] = ""
 renderCycleUnclassified presentation rows = T.intercalate "\n"
-  [ terminalYellow "Unclassified accounts"
+  [ terminalSectionWith presentation "Unclassified accounts"
   , renderTerminalTable columns
       (map (cycleRow presentation) rows)
       Nothing
@@ -554,37 +551,37 @@ renderPeriod period =
 
 -- These sections deliberately complete the observable household surface without
 -- manufacturing domain facts. Each message names the evidence still missing.
-renderUnavailableCycleAccounts :: Text
-renderUnavailableCycleAccounts = unavailableSection
+renderUnavailableCycleAccounts :: PresentationConfig -> Text
+renderUnavailableCycleAccounts presentation = unavailableSection presentation
   "Cycle Accounts & Comparison Matrix"
   "explicit current and previous cycles are not part of the combined report input; use cycle-accounts with two half-open periods"
 
-renderUnavailableDailyTarget :: Text
-renderUnavailableDailyTarget = unavailableSection
+renderUnavailableDailyTarget :: PresentationConfig -> Text
+renderUnavailableDailyTarget presentation = unavailableSection presentation
   "Daily Target"
   "no typed Daily Target model exists for eligible backing, open commitments, target date policy, and commodity-separated allowance"
 
-renderUnavailablePlannedTransactions :: Text
-renderUnavailablePlannedTransactions = unavailableSection
+renderUnavailablePlannedTransactions :: PresentationConfig -> Text
+renderUnavailablePlannedTransactions presentation = unavailableSection presentation
   "Planned Transactions"
   "Plan admission exists, but no typed source collection or completion projection is connected"
 
-renderUnavailableHouseholdIssues :: Text
-renderUnavailableHouseholdIssues = unavailableSection
+renderUnavailableHouseholdIssues :: PresentationConfig -> Text
+renderUnavailableHouseholdIssues presentation = unavailableSection presentation
   "Household Issues"
   "HouseholdIssue values exist, but no typed source collection is connected"
 
-renderUnavailableEnvelopeBacking :: Text
-renderUnavailableEnvelopeBacking = T.intercalate "\n"
-  [ terminalHeader "Envelope & Backing"
+renderUnavailableEnvelopeBacking :: PresentationConfig -> Text
+renderUnavailableEnvelopeBacking presentation = T.intercalate "\n"
+  [ terminalHeaderWith presentation "Envelope & Backing"
   , terminalMeta "Status: NOT AVAILABLE IN COMBINED REPORT"
   , terminalDim "Envelope entitlement/consumption/remaining requires an explicit external policy; use envelope-budget. Pool backing, commitments, unallocated, and shortage remain NOT IMPLEMENTED."
   , ""
   ]
 
-unavailableSection :: Text -> Text -> Text
-unavailableSection title reason = T.intercalate "\n"
-  [ terminalHeader title
+unavailableSection :: PresentationConfig -> Text -> Text -> Text
+unavailableSection presentation title reason = T.intercalate "\n"
+  [ terminalHeaderWith presentation title
   , terminalMeta "Status: NOT IMPLEMENTED"
   , terminalDim reason
   , ""
@@ -599,7 +596,7 @@ renderRecentTransactionsWithPresentation
   -> RecentTransactions
   -> Text
 renderRecentTransactionsWithPresentation presentation report = T.intercalate "\n"
-  [ terminalHeader ("Recent Transactions (Last "
+  [ terminalHeaderWith presentation ("Recent Transactions (Last "
       <> tshow (recentCountValue (recentTransactionsCount report))
       <> " Transactions)")
   , terminalMeta ("As of: " <> renderDay (recentTransactionsAsOf report))
@@ -618,7 +615,7 @@ renderRecentTransactionList presentation transactions =
 
 renderRecentTransaction :: PresentationConfig -> Transaction -> Text
 renderRecentTransaction presentation transaction = T.intercalate "\n"
-  [ terminalYellow
+  [ terminalSectionWith presentation
       (renderDay (transactionDate transaction)
         <> "  " <> transactionDescription transaction)
   , renderTerminalTable recentColumns rows Nothing
@@ -634,7 +631,7 @@ renderRecentTransaction presentation transaction = T.intercalate "\n"
 renderUnclassifiedWith :: PresentationConfig -> [AccountLine] -> Text
 renderUnclassifiedWith _ [] = ""
 renderUnclassifiedWith presentation lines' = T.intercalate "\n"
-  [ terminalYellow "Unclassified accounts"
+  [ terminalSectionWith presentation "Unclassified accounts"
   , renderTerminalTable accountColumns rows Nothing
   ]
   where

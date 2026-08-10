@@ -82,7 +82,10 @@ main = do
 
   let presentation = PresentationConfig
         { presentationNegativeStyle = LeadingMinus
-        , presentationNegativeColor = MagentaColor
+        , presentationHeadingColor = BlueColor
+        , presentationSectionColor = CyanColor
+        , presentationPositiveAmountColor = YellowColor
+        , presentationNegativeAmountColor = MagentaColor
         , presentationDailyFlowDateColumns =
             mustRight (mkDateColumnCount 5)
         }
@@ -107,6 +110,30 @@ main = do
     True
     ("-1,000 JPY" `T.isInfixOf` renderedWithPresentation
       && not ("(1,000 JPY)" `T.isInfixOf` renderedWithPresentation))
+  assertEqual
+    "configured heading color reaches combined report headings"
+    True
+    ("\ESC[1;34m== Account Balances (h-kernel Engine) ==\ESC[0m"
+      `T.isInfixOf` renderedWithPresentation
+      && "\ESC[1;34m== Envelope & Backing ==\ESC[0m"
+        `T.isInfixOf` renderedWithPresentation)
+  assertEqual
+    "configured section color reaches report hierarchy"
+    True
+    ("\ESC[36mIncome\ESC[0m" `T.isInfixOf` renderedWithPresentation
+      && "\ESC[36mExpenses\ESC[0m" `T.isInfixOf` renderedWithPresentation)
+  let configuredPositiveTotals =
+        [ line
+        | line <- T.lines renderedWithPresentation
+        , "Total Income" `T.isInfixOf` line
+            || "Total assets" `T.isInfixOf` line
+        ]
+  assertEqual
+    "configured positive amount color reaches positive totals"
+    True
+    (not (null configuredPositiveTotals)
+      && all (T.isInfixOf "\ESC[33m") configuredPositiveTotals
+      && all (not . T.isInfixOf "\ESC[32m") configuredPositiveTotals)
   let configuredAmountTotals =
         [ line
         | line <- T.lines renderedWithPresentation
@@ -114,14 +141,18 @@ main = do
             || "Total liabilities" `T.isInfixOf` line
         ]
   assertEqual
-    "configured report exposes every red-tone amount total"
+    "configured report exposes every negative amount-tone total"
     3
     (length configuredAmountTotals)
   assertEqual
-    "configured negative color reaches every red-tone amount total"
+    "configured negative amount color reaches every negative amount-tone total"
     True
     (all (T.isInfixOf "\ESC[35m") configuredAmountTotals
       && all (not . T.isInfixOf "\ESC[31m") configuredAmountTotals)
+  assertEqual
+    "status success stays green instead of inheriting positive amount color"
+    True
+    ("Balanced: \ESC[32mYES\ESC[0m" `T.isInfixOf` renderedWithPresentation)
   assertEqual
     "missing household semantics remain explicit instead of looking empty"
     True

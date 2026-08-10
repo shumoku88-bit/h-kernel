@@ -70,10 +70,12 @@ renderHouseholdReportSection presentation section surface =
       renderDailyTarget presentation (householdDailyTarget surface)
     HouseholdPlannedTransactions ->
       renderPlans
+        presentation
         (currentCycleAccountsPeriod (householdCurrentCycleAccounts surface))
         (householdPlannedTransactions surface)
     HouseholdIssues visibility ->
-      renderHouseholdIssues visibility (householdIssues surface)
+      renderHouseholdIssuesWithPresentation
+        presentation visibility (householdIssues surface)
     HouseholdEnvelopeBacking ->
       renderEnvelope presentation (householdEnvelopeBacking surface)
 
@@ -116,7 +118,7 @@ renderHouseholdCycleReports presentation surface = T.intercalate "\n"
       HouseholdCycleComparisonAvailable comparison ->
         renderAlignedCycleComparison presentation comparison
       HouseholdCycleComparisonUnavailable reason ->
-        renderUnavailableCycleComparison reason
+        renderUnavailableCycleComparison presentation reason
   ]
 
 renderCurrentCycleAccounts
@@ -124,7 +126,7 @@ renderCurrentCycleAccounts
   -> CurrentCycleAccounts
   -> Text
 renderCurrentCycleAccounts presentation report = T.intercalate "\n"
-  [ terminalHeader "Current Cycle Accounts"
+  [ terminalHeaderWith presentation "Current Cycle Accounts"
   , terminalMeta ("Cycle: " <> renderPeriod (currentCycleAccountsPeriod report)
       <> " | Observed through: "
       <> renderDay (currentCycleAccountsObservation report))
@@ -167,7 +169,7 @@ renderAlignedCycleComparison
   -> CycleComparison
   -> Text
 renderAlignedCycleComparison presentation report = T.intercalate "\n"
-  [ terminalHeader "Cycle Comparison"
+  [ terminalHeaderWith presentation "Cycle Comparison"
   , terminalMeta
       ("Policy: " <> renderComparisonPolicy (cycleComparisonPolicy report)
         <> " | Current: " <> renderObservation current
@@ -203,10 +205,11 @@ renderAlignedCycleComparison presentation report = T.intercalate "\n"
       ]
 
 renderUnavailableCycleComparison
-  :: HouseholdCycleComparisonUnavailable
+  :: PresentationConfig
+  -> HouseholdCycleComparisonUnavailable
   -> Text
-renderUnavailableCycleComparison reason = T.intercalate "\n"
-  [ terminalHeader "Cycle Comparison"
+renderUnavailableCycleComparison presentation reason = T.intercalate "\n"
+  [ terminalHeaderWith presentation "Cycle Comparison"
   , terminalMeta "Status: NOT AVAILABLE"
   , terminalDim ("Aligned previous-cycle observation is unavailable: " <> tshow reason)
   , ""
@@ -233,7 +236,7 @@ renderPeriod period =
 
 renderDailyTarget :: PresentationConfig -> DailyTarget -> Text
 renderDailyTarget presentation report = T.intercalate "\n"
-  [ terminalHeader "Daily Target"
+  [ terminalHeaderWith presentation "Daily Target"
   , terminalMeta ("Observation: " <> renderDay (dailyTargetObservedOn report)
       <> " | Target end (exclusive): "
       <> renderDay (dailyTargetEndExclusive report)
@@ -280,18 +283,22 @@ renderRates rates = T.intercalate ", " (map renderRate rates)
           fraction = abs (scaled `mod` 100)
       in tshow whole <> "." <> T.justifyRight 2 '0' (tshow fraction)
 
-renderPlans :: Period -> [CommittedOutgoingPlan] -> Text
-renderPlans period plans = T.intercalate "\n"
-  [ terminalHeader "Planned Transactions"
+renderPlans :: PresentationConfig -> Period -> [CommittedOutgoingPlan] -> Text
+renderPlans presentation period plans = T.intercalate "\n"
+  [ terminalHeaderWith presentation "Planned Transactions"
   , terminalMeta "Source: plan.journal | All open outgoing commitments; current-cycle calculations remain cycle-bounded"
   , ""
-  , renderPlanHorizon period plans
+  , renderPlanHorizon presentation period plans
   , ""
   ]
 
-renderPlanHorizon :: Period -> [CommittedOutgoingPlan] -> Text
-renderPlanHorizon _ [] = terminalDim "(none)"
-renderPlanHorizon period plans =
+renderPlanHorizon
+  :: PresentationConfig
+  -> Period
+  -> [CommittedOutgoingPlan]
+  -> Text
+renderPlanHorizon _ _ [] = terminalDim "(none)"
+renderPlanHorizon presentation period plans =
   T.intercalate "\n" (beforeLines ++ currentLines ++ afterLines)
   where
     classified = classifyPlannedTransactions period plans
@@ -301,7 +308,7 @@ renderPlanHorizon period plans =
     beforeLines
       | null before = []
       | otherwise =
-          [ terminalYellow "Open before current cycle"
+          [ terminalSectionWith presentation "Open before current cycle"
           , renderPlanLines before
           , ""
           ]
@@ -333,8 +340,16 @@ renderPlanLines :: [CommittedOutgoingPlan] -> Text
 renderPlanLines = T.intercalate "\n" . map renderCommittedOutgoingPlanLine
 
 renderHouseholdIssues :: IssueVisibility -> [HouseholdIssue] -> Text
-renderHouseholdIssues visibility issues = T.intercalate "\n"
-  [ terminalHeader "Household Issues"
+renderHouseholdIssues =
+  renderHouseholdIssuesWithPresentation defaultPresentationConfig
+
+renderHouseholdIssuesWithPresentation
+  :: PresentationConfig
+  -> IssueVisibility
+  -> [HouseholdIssue]
+  -> Text
+renderHouseholdIssuesWithPresentation presentation visibility issues = T.intercalate "\n"
+  [ terminalHeaderWith presentation "Household Issues"
   , terminalMeta ("Source: issues.tsv | " <> visibilityLabel visibility
       <> " | Displayed: " <> tshow (length visibleIssues)
       <> hiddenLabel)
@@ -407,7 +422,7 @@ renderAmount amount =
 
 renderEnvelope :: PresentationConfig -> EnvelopeBacking -> Text
 renderEnvelope presentation report = T.intercalate "\n"
-  [ terminalHeader "Envelope & Backing"
+  [ terminalHeaderWith presentation "Envelope & Backing"
   , terminalMeta ("Cycle: [" <> renderDay (periodStart period)
       <> ", " <> renderDay (periodEndExclusive period) <> ")"
       <> " | Observed through: " <> renderDay (envelopeBackingObservedOn report))
@@ -415,7 +430,7 @@ renderEnvelope presentation report = T.intercalate "\n"
   , renderTerminalTable envelopeColumns envelopeRows Nothing
   , renderUnassignedExpenses presentation
       (envelopeUnassignedExpenses report)
-  , terminalYellow "Backing evidence"
+  , terminalSectionWith presentation "Backing evidence"
   , renderTerminalTable backingColumns backingRows Nothing
   , "Status: " <> renderBackingStatus (envelopeBackingSurplus report)
   , ""
@@ -464,7 +479,7 @@ renderUnassignedExpenses
   -> Text
 renderUnassignedExpenses _ [] = ""
 renderUnassignedExpenses presentation expenses = T.intercalate "\n"
-  [ terminalYellow "Expense activity outside an envelope"
+  [ terminalSectionWith presentation "Expense activity outside an envelope"
   , renderTerminalTable
       [("Account", AlignLeft), ("Movement", AlignRight)]
       [ [ plainCell (accountName account)

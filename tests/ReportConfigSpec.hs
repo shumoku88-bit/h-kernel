@@ -50,9 +50,18 @@ main = do
   assertEqual "negative amount style is validated and retained"
     LeadingMinus
     (presentationNegativeStyle presentation)
+  assertEqual "heading color is validated and retained"
+    BlueColor
+    (presentationHeadingColor presentation)
+  assertEqual "section color is validated and retained"
+    CyanColor
+    (presentationSectionColor presentation)
+  assertEqual "positive amount color is validated and retained"
+    YellowColor
+    (presentationPositiveAmountColor presentation)
   assertEqual "negative amount color is validated and retained"
     MagentaColor
-    (presentationNegativeColor presentation)
+    (presentationNegativeAmountColor presentation)
   assertEqual "daily flow date columns are validated and retained"
     10
     (dateColumnCountValue
@@ -67,17 +76,55 @@ main = do
       (presentationDailyFlowDateColumns
         (reportConfigurationPresentation defaultColumnsConfiguration)))
 
+  let defaultHierarchyConfiguration = mustRight
+        (parseReportConfiguration
+          (T.replace hierarchyTable "" validConfig))
+      defaultHierarchyPresentation =
+        reportConfigurationPresentation defaultHierarchyConfiguration
+  assertEqual "heading color defaults to cyan"
+    CyanColor
+    (presentationHeadingColor defaultHierarchyPresentation)
+  assertEqual "section color defaults to yellow"
+    YellowColor
+    (presentationSectionColor defaultHierarchyPresentation)
+
+  let hierarchyOnlyConfiguration = mustRight
+        (parseReportConfiguration
+          (T.replace amountsTable "" validConfig))
+      hierarchyOnlyPresentation =
+        reportConfigurationPresentation hierarchyOnlyConfiguration
+  assertEqual "hierarchy remains configurable without an amounts table"
+    (BlueColor, CyanColor)
+    ( presentationHeadingColor hierarchyOnlyPresentation
+    , presentationSectionColor hierarchyOnlyPresentation
+    )
+  assertEqual "amount presentation defaults when only hierarchy is configured"
+    (AccountingParentheses, GreenColor, RedColor)
+    ( presentationNegativeStyle hierarchyOnlyPresentation
+    , presentationPositiveAmountColor hierarchyOnlyPresentation
+    , presentationNegativeAmountColor hierarchyOnlyPresentation
+    )
+
   let defaultPresentationConfiguration = mustRight
         (parseReportConfiguration
           (T.replace presentationTable "" validConfig))
+      defaultPresentation =
+        reportConfigurationPresentation defaultPresentationConfiguration
   assertEqual "negative amount style defaults to accounting parentheses"
     AccountingParentheses
-    (presentationNegativeStyle
-      (reportConfigurationPresentation defaultPresentationConfiguration))
+    (presentationNegativeStyle defaultPresentation)
+  assertEqual "heading color defaults to cyan without presentation config"
+    CyanColor
+    (presentationHeadingColor defaultPresentation)
+  assertEqual "section color defaults to yellow without presentation config"
+    YellowColor
+    (presentationSectionColor defaultPresentation)
+  assertEqual "positive amount color defaults to green"
+    GreenColor
+    (presentationPositiveAmountColor defaultPresentation)
   assertEqual "negative amount color defaults to red"
     RedColor
-    (presentationNegativeColor
-      (reportConfigurationPresentation defaultPresentationConfiguration))
+    (presentationNegativeAmountColor defaultPresentation)
 
   assertLeft "unknown TOML keys are not silently ignored"
     (parseReportConfiguration
@@ -89,6 +136,18 @@ main = do
     (parseReportConfiguration
       (T.replace "negative-style = \"minus\""
         "negative-style = \"absolute\"" validConfig))
+  assertLeft "unknown heading colors are rejected"
+    (parseReportConfiguration
+      (T.replace "heading-color = \"blue\""
+        "heading-color = \"invalid-color\"" validConfig))
+  assertLeft "unknown section colors are rejected"
+    (parseReportConfiguration
+      (T.replace "section-color = \"cyan\""
+        "section-color = \"invalid-color\"" validConfig))
+  assertLeft "unknown positive amount colors are rejected"
+    (parseReportConfiguration
+      (T.replace "positive-color = \"yellow\""
+        "positive-color = \"invalid-color\"" validConfig))
   assertLeft "unknown negative amount colors are rejected"
     (parseReportConfiguration
       (T.replace "negative-color = \"magenta\""
@@ -100,13 +159,25 @@ main = do
     (parseReportConfiguration
       (T.replace "max-date-columns = 10" "max-date-columns = 0" validConfig))
 
-presentationTable :: T.Text
-presentationTable = T.unlines
+hierarchyTable :: T.Text
+hierarchyTable = T.unlines
+  [ "[presentation.hierarchy]"
+  , "heading-color = \"blue\""
+  , "section-color = \"cyan\""
+  , ""
+  ]
+
+amountsTable :: T.Text
+amountsTable = T.unlines
   [ "[presentation.amounts]"
   , "negative-style = \"minus\""
+  , "positive-color = \"yellow\""
   , "negative-color = \"magenta\""
   , ""
   ]
+
+presentationTable :: T.Text
+presentationTable = hierarchyTable <> amountsTable
 
 validConfig :: T.Text
 validConfig = presentationTable <> T.unlines

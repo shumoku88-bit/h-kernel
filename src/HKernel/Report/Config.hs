@@ -40,9 +40,21 @@ data ReportConfiguration = ReportConfiguration
 
 data RawConfig = RawConfig (Maybe RawPresentation) RawReports
 
-data RawPresentation = RawPresentation RawAmounts
+data RawPresentation = RawPresentation
+  { rawPresentationHierarchy :: Maybe RawHierarchy
+  , rawPresentationAmounts :: Maybe RawAmounts
+  }
 
-data RawAmounts = RawAmounts Text (Maybe Text)
+data RawHierarchy = RawHierarchy
+  { rawHeadingColor :: Maybe Text
+  , rawSectionColor :: Maybe Text
+  }
+
+data RawAmounts = RawAmounts
+  { rawNegativeStyle :: Text
+  , rawPositiveColor :: Maybe Text
+  , rawNegativeColor :: Maybe Text
+  }
 
 data RawReports = RawReports
   RawAsOf
@@ -66,11 +78,22 @@ instance FromValue RawConfig where
 
 instance FromValue RawPresentation where
   fromValue = parseTableFromValue
-    (RawPresentation <$> reqKey "amounts")
+    (RawPresentation
+      <$> optKey "hierarchy"
+      <*> optKey "amounts")
+
+instance FromValue RawHierarchy where
+  fromValue = parseTableFromValue
+    (RawHierarchy
+      <$> optKey "heading-color"
+      <*> optKey "section-color")
 
 instance FromValue RawAmounts where
   fromValue = parseTableFromValue
-    (RawAmounts <$> reqKey "negative-style" <*> optKey "negative-color")
+    (RawAmounts
+      <$> reqKey "negative-style"
+      <*> optKey "positive-color"
+      <*> optKey "negative-color")
 
 instance FromValue RawReports where
   fromValue = parseTableFromValue
@@ -118,11 +141,19 @@ parseReportConfig = fmap reportConfigurationPlan . parseReportConfiguration
 -- other Household policy coordinates.
 renderReportConfiguration :: ReportConfiguration -> Text
 renderReportConfiguration configuration = T.unlines
-  [ "[presentation.amounts]"
+  [ "[presentation.hierarchy]"
+  , "heading-color = " <> quoted (renderPresentationColor
+      (presentationHeadingColor presentation))
+  , "section-color = " <> quoted (renderPresentationColor
+      (presentationSectionColor presentation))
+  , ""
+  , "[presentation.amounts]"
   , "negative-style = " <> quoted (renderNegativeStyle
       (presentationNegativeStyle presentation))
-  , "negative-color = " <> quoted (renderNegativeColor
-      (presentationNegativeColor presentation))
+  , "positive-color = " <> quoted (renderPresentationColor
+      (presentationPositiveAmountColor presentation))
+  , "negative-color = " <> quoted (renderPresentationColor
+      (presentationNegativeAmountColor presentation))
   , ""
   , "[reports.trial-balance]"
   , "as-of = " <> quoted (renderAsOf (trialBalanceSpec plan))
@@ -160,15 +191,15 @@ renderNegativeStyle :: NegativeStyle -> Text
 renderNegativeStyle AccountingParentheses = "parentheses"
 renderNegativeStyle LeadingMinus = "minus"
 
-renderNegativeColor :: NegativeToneColor -> Text
-renderNegativeColor RedColor = "red"
-renderNegativeColor BrightRedColor = "bright-red"
-renderNegativeColor GreenColor = "green"
-renderNegativeColor YellowColor = "yellow"
-renderNegativeColor BlueColor = "blue"
-renderNegativeColor MagentaColor = "magenta"
-renderNegativeColor CyanColor = "cyan"
-renderNegativeColor WhiteColor = "white"
+renderPresentationColor :: PresentationColor -> Text
+renderPresentationColor RedColor = "red"
+renderPresentationColor BrightRedColor = "bright-red"
+renderPresentationColor GreenColor = "green"
+renderPresentationColor YellowColor = "yellow"
+renderPresentationColor BlueColor = "blue"
+renderPresentationColor MagentaColor = "magenta"
+renderPresentationColor CyanColor = "cyan"
+renderPresentationColor WhiteColor = "white"
 
 renderAsOf :: AsOfSpec -> Text
 renderAsOf (AsOf reference) = renderDateReference reference
@@ -205,8 +236,23 @@ renderReportConfigErrors = T.unlines . map ("  " <>)
 rawConfigToConfiguration :: RawConfig -> Either [Text] ReportConfiguration
 rawConfigToConfiguration (RawConfig rawPresentation reports) = case reports of
   RawReports trial balance profit daily monthly recent -> do
-    negativeStyle <- parseNegativeStyle rawPresentation
-    negativeColor <- parseNegativeColor rawPresentation
+    negativeStyle <- parseNegativeStyle amounts
+    headingColor <- parseOptionalPresentationColor
+      "presentation.hierarchy.heading-color"
+      CyanColor
+      (hierarchy >>= rawHeadingColor)
+    sectionColor <- parseOptionalPresentationColor
+      "presentation.hierarchy.section-color"
+      YellowColor
+      (hierarchy >>= rawSectionColor)
+    positiveAmountColor <- parseOptionalPresentationColor
+      "presentation.amounts.positive-color"
+      GreenColor
+      (amounts >>= rawPositiveColor)
+    negativeAmountColor <- parseOptionalPresentationColor
+      "presentation.amounts.negative-color"
+      RedColor
+      (amounts >>= rawNegativeColor)
     trialSpec <- parseAsOf "reports.trial-balance.as-of" trial
     balanceSpec <- parseAsOf "reports.balance-sheet.as-of" balance
     profitSpec <- parseRange "reports.profit-and-loss" profit
@@ -224,25 +270,38 @@ rawConfigToConfiguration (RawConfig rawPresentation reports) = case reports of
           }
       , reportConfigurationPresentation = PresentationConfig
           { presentationNegativeStyle = negativeStyle
-          , presentationNegativeColor = negativeColor
+          , presentationHeadingColor = headingColor
+          , presentationSectionColor = sectionColor
+          , presentationPositiveAmountColor = positiveAmountColor
+          , presentationNegativeAmountColor = negativeAmountColor
           , presentationDailyFlowDateColumns = dateColumns
           }
       }
+    where
+      hierarchy = rawPresentation >>= rawPresentationHierarchy
+      amounts = rawPresentation >>= rawPresentationAmounts
 
-parseNegativeStyle :: Maybe RawPresentation -> Either [Text] NegativeStyle
+parseNegativeStyle :: Maybe RawAmounts -> Either [Text] NegativeStyle
 parseNegativeStyle Nothing = Right AccountingParentheses
-parseNegativeStyle (Just (RawPresentation (RawAmounts value _))) = case value of
+parseNegativeStyle (Just amounts) = case rawNegativeStyle amounts of
   "parentheses" -> Right AccountingParentheses
   "minus" -> Right LeadingMinus
-  _ -> Left
+  value -> Left
     [ "presentation.amounts.negative-style: expected parentheses or minus; got ‘"
         <> value <> "’"
     ]
 
-parseNegativeColor :: Maybe RawPresentation -> Either [Text] NegativeToneColor
-parseNegativeColor Nothing = Right RedColor
-parseNegativeColor (Just (RawPresentation (RawAmounts _ Nothing))) = Right RedColor
-parseNegativeColor (Just (RawPresentation (RawAmounts _ (Just value)))) = case value of
+parseOptionalPresentationColor
+  :: Text
+  -> PresentationColor
+  -> Maybe Text
+  -> Either [Text] PresentationColor
+parseOptionalPresentationColor _ fallback Nothing = Right fallback
+parseOptionalPresentationColor path _ (Just value) =
+  parsePresentationColor path value
+
+parsePresentationColor :: Text -> Text -> Either [Text] PresentationColor
+parsePresentationColor path value = case value of
   "red" -> Right RedColor
   "bright-red" -> Right BrightRedColor
   "green" -> Right GreenColor
@@ -252,7 +311,7 @@ parseNegativeColor (Just (RawPresentation (RawAmounts _ (Just value)))) = case v
   "cyan" -> Right CyanColor
   "white" -> Right WhiteColor
   _ -> Left
-    [ "presentation.amounts.negative-color: expected red, bright-red, green, yellow, blue, magenta, cyan, or white; got ‘"
+    [ path <> ": expected red, bright-red, green, yellow, blue, magenta, cyan, or white; got ‘"
         <> value <> "’"
     ]
 

@@ -1,7 +1,7 @@
 -- | Validated presentation coordinates shared by configuration and rendering.
 module HKernel.Report.Presentation
   ( NegativeStyle(..)
-  , NegativeToneColor(..)
+  , PresentationColor(..)
   , PresentationConfig(..)
   , defaultPresentationConfig
   , DateColumnCount
@@ -17,8 +17,11 @@ data NegativeStyle
   | LeadingMinus
   deriving (Eq, Show)
 
--- | Terminal color choice for negative values in reports.
-data NegativeToneColor
+-- | Validated terminal color available to semantic report presentation roles.
+--
+-- The role lives in 'PresentationConfig'; this value only states which terminal
+-- color is selected for that role.
+data PresentationColor
   = RedColor
   | BrightRedColor
   | GreenColor
@@ -30,9 +33,16 @@ data NegativeToneColor
   deriving (Eq, Show)
 
 -- | Validated presentation policy shared by ReportBook and standalone reports.
+--
+-- Hierarchy colors, amount tones, and layout coordinates are explicit here.
+-- Success/failure status colors and dim/bold emphasis remain renderer semantics
+-- rather than being conflated with amount sign or report hierarchy.
 data PresentationConfig = PresentationConfig
   { presentationNegativeStyle :: NegativeStyle
-  , presentationNegativeColor :: NegativeToneColor
+  , presentationHeadingColor :: PresentationColor
+  , presentationSectionColor :: PresentationColor
+  , presentationPositiveAmountColor :: PresentationColor
+  , presentationNegativeAmountColor :: PresentationColor
   , presentationDailyFlowDateColumns :: DateColumnCount
   } deriving (Eq, Show)
 
@@ -57,7 +67,9 @@ defaultDateColumnCount = DateColumnCount 14
 defaultPresentationConfig :: PresentationConfig
 defaultPresentationConfig = PresentationConfig
   { presentationNegativeStyle = AccountingParentheses
-  , presentationNegativeColor = RedColor
+  , presentationHeadingColor = CyanColor
+  , presentationSectionColor = YellowColor
+  , presentationPositiveAmountColor = GreenColor
+  , presentationNegativeAmountColor = RedColor
   , presentationDailyFlowDateColumns = defaultDateColumnCount
   }
-

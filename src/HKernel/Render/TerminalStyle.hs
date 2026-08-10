@@ -17,13 +17,17 @@ module HKernel.Render.TerminalStyle
   , signedBalanceCellWith
   , signedAmountCellWith
   , terminalHeader
+  , terminalHeaderWith
   , terminalMeta
   , terminalBold
   , terminalBoldThen
   , terminalDim
   , terminalYellow
+  , terminalSectionWith
   , terminalGreen
   , terminalRed
+  , terminalPositiveAmountWith
+  , terminalNegativeAmountWith
   , terminalRedWith
   , renderTerminalTable
   , renderBalancePlain
@@ -47,33 +51,47 @@ import qualified Data.Text as T
 import HKernel.Money
 import HKernel.Report.Presentation
   ( NegativeStyle(..)
-  , NegativeToneColor(..)
+  , PresentationColor(..)
   , PresentationConfig(..)
   , defaultPresentationConfig
   )
 
-clrReset, clrBold, clrRed, clrGreen, clrYellow, clrBoldCyan, clrDim :: Text
+clrReset, clrBold, clrRed, clrGreen, clrYellow, clrDim :: Text
 clrReset = "\ESC[0m"
 clrBold = "\ESC[1m"
 clrRed = "\ESC[31m"
 clrGreen = "\ESC[32m"
 clrYellow = "\ESC[33m"
-clrBoldCyan = "\ESC[1;36m"
 clrDim = "\ESC[2m"
 
-clrNegativeColor :: NegativeToneColor -> Text
-clrNegativeColor color = case color of
-  RedColor       -> "\ESC[31m"
-  BrightRedColor -> "\ESC[91m"
-  GreenColor     -> "\ESC[32m"
-  YellowColor    -> "\ESC[33m"
-  BlueColor      -> "\ESC[34m"
-  MagentaColor   -> "\ESC[35m"
-  CyanColor      -> "\ESC[36m"
-  WhiteColor     -> "\ESC[37m"
+presentationColorCode :: PresentationColor -> Text
+presentationColorCode color = case color of
+  RedColor       -> "31"
+  BrightRedColor -> "91"
+  GreenColor     -> "32"
+  YellowColor    -> "33"
+  BlueColor      -> "34"
+  MagentaColor   -> "35"
+  CyanColor      -> "36"
+  WhiteColor     -> "37"
+
+presentationColorControl :: PresentationColor -> Text
+presentationColorControl color = "\ESC[" <> presentationColorCode color <> "m"
+
+presentationBoldColorControl :: PresentationColor -> Text
+presentationBoldColorControl color =
+  "\ESC[1;" <> presentationColorCode color <> "m"
+
+terminalColor :: PresentationColor -> Text -> Text
+terminalColor color = wrap (presentationColorControl color)
 
 terminalHeader :: Text -> Text
-terminalHeader title = clrBoldCyan <> "== " <> title <> " ==" <> clrReset
+terminalHeader = terminalHeaderWith defaultPresentationConfig
+
+terminalHeaderWith :: PresentationConfig -> Text -> Text
+terminalHeaderWith config title =
+  wrap (presentationBoldColorControl (presentationHeadingColor config))
+    ("== " <> title <> " ==")
 
 terminalMeta :: Text -> Text
 terminalMeta = terminalDim
@@ -92,14 +110,29 @@ terminalDim = wrap clrDim
 terminalYellow :: Text -> Text
 terminalYellow = wrap clrYellow
 
+terminalSectionWith :: PresentationConfig -> Text -> Text
+terminalSectionWith config = terminalColor (presentationSectionColor config)
+
+-- | Fixed success status tone. Amount-positive presentation uses
+-- 'terminalPositiveAmountWith' instead.
 terminalGreen :: Text -> Text
 terminalGreen = wrap clrGreen
 
+-- | Fixed failure/warning status tone. Amount-negative presentation uses
+-- 'terminalNegativeAmountWith' instead.
 terminalRed :: Text -> Text
 terminalRed = wrap clrRed
 
-terminalRedWith :: NegativeToneColor -> Text -> Text
-terminalRedWith color = wrap (clrNegativeColor color)
+terminalPositiveAmountWith :: PresentationConfig -> Text -> Text
+terminalPositiveAmountWith config =
+  terminalColor (presentationPositiveAmountColor config)
+
+terminalNegativeAmountWith :: PresentationConfig -> Text -> Text
+terminalNegativeAmountWith config =
+  terminalColor (presentationNegativeAmountColor config)
+
+terminalRedWith :: PresentationColor -> Text -> Text
+terminalRedWith = terminalColor
 
 wrap :: Text -> Text -> Text
 wrap code value = code <> value <> clrReset
@@ -120,9 +153,9 @@ styledCell style value = Cell value (style value)
 
 data BalanceTone
   = PlainTone
-  | GreenTone
-  | RedTone NegativeToneColor
-  | SignedTone NegativeToneColor
+  | PositiveTone PresentationColor
+  | NegativeTone PresentationColor
+  | SignedTone PresentationColor PresentationColor
 
 plainBalanceCell :: Balance -> Cell
 plainBalanceCell = plainBalanceCellWith defaultPresentationConfig
@@ -143,18 +176,29 @@ plainBalanceCellWith :: PresentationConfig -> Balance -> Cell
 plainBalanceCellWith config = balanceCell config PlainTone
 
 greenBalanceCellWith :: PresentationConfig -> Balance -> Cell
-greenBalanceCellWith config = balanceCell config GreenTone
+greenBalanceCellWith config =
+  balanceCell config (PositiveTone (presentationPositiveAmountColor config))
 
 redBalanceCellWith :: PresentationConfig -> Balance -> Cell
-redBalanceCellWith config = balanceCell config (RedTone (presentationNegativeColor config))
+redBalanceCellWith config =
+  balanceCell config (NegativeTone (presentationNegativeAmountColor config))
 
 signedBalanceCellWith :: PresentationConfig -> Balance -> Cell
-signedBalanceCellWith config = balanceCell config (SignedTone (presentationNegativeColor config))
+signedBalanceCellWith config =
+  balanceCell config
+    (SignedTone
+      (presentationPositiveAmountColor config)
+      (presentationNegativeAmountColor config))
 
 signedAmountCellWith :: PresentationConfig -> Amount -> Cell
 signedAmountCellWith config amount =
   let plain = renderAmountPlainWith config amount
-  in Cell plain (styleQuantity (presentationNegativeColor config) (amountQuantity amount) plain)
+  in Cell plain
+      (styleQuantity
+        (presentationPositiveAmountColor config)
+        (presentationNegativeAmountColor config)
+        (amountQuantity amount)
+        plain)
 
 renderBalancePlain :: Balance -> Text
 renderBalancePlain = cellStyled . plainBalanceCell
@@ -198,10 +242,10 @@ balanceCell config tone balance = case balanceEntries balance of
 
 styleZero :: BalanceTone -> Text
 styleZero tone = case tone of
-  PlainTone     -> "0"
-  GreenTone     -> terminalGreen "0"
-  RedTone color -> terminalRedWith color "0"
-  SignedTone _  -> terminalDim "0"
+  PlainTone -> "0"
+  PositiveTone color -> terminalColor color "0"
+  NegativeTone color -> terminalColor color "0"
+  SignedTone _ _ -> terminalDim "0"
 
 styleBalance
   :: PresentationConfig
@@ -211,14 +255,14 @@ styleBalance
   -> Text
 styleBalance config tone entries plain = case tone of
   PlainTone -> plain
-  GreenTone -> terminalGreen plain
-  RedTone color -> terminalRedWith color plain
-  SignedTone color
-    | all ((> zeroQuantity) . snd) entries -> terminalGreen plain
-    | all ((< zeroQuantity) . snd) entries -> terminalRedWith color plain
+  PositiveTone color -> terminalColor color plain
+  NegativeTone color -> terminalColor color plain
+  SignedTone positiveColor negativeColor
+    | all ((> zeroQuantity) . snd) entries -> terminalColor positiveColor plain
+    | all ((< zeroQuantity) . snd) entries -> terminalColor negativeColor plain
     | all ((== zeroQuantity) . snd) entries -> terminalDim plain
     | otherwise -> T.intercalate ", "
-        [ styleQuantity color quantity
+        [ styleQuantity positiveColor negativeColor quantity
             (renderEntryPlain config commodity quantity)
         | (commodity, quantity) <- entries
         ]
@@ -238,11 +282,16 @@ renderAmountPlainWith config amount =
   renderEntryPlain config
     (amountCommodity amount) (amountQuantity amount)
 
-styleQuantity :: NegativeToneColor -> Quantity -> Text -> Text
-styleQuantity color quantity value
-  | quantity < zeroQuantity = terminalRedWith color value
-  | quantity > zeroQuantity = terminalGreen value
-  | otherwise               = terminalDim value
+styleQuantity
+  :: PresentationColor
+  -> PresentationColor
+  -> Quantity
+  -> Text
+  -> Text
+styleQuantity positiveColor negativeColor quantity value
+  | quantity < zeroQuantity = terminalColor negativeColor value
+  | quantity > zeroQuantity = terminalColor positiveColor value
+  | otherwise = terminalDim value
 
 formatQuantityMagnitude :: Quantity -> Text
 formatQuantityMagnitude quantity = groupedWhole <> fraction
