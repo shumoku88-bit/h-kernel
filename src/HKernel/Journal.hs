@@ -16,6 +16,8 @@ module HKernel.Journal
   , journalMetadataValue
   , JournalTransactionSource
   , journalTransactionSourceHeaderLine
+  , journalTransactionSourceLastLine
+  , journalTransactionSourcePostingLines
   , journalTransactionSourceMetadata
   , journalDocumentTransactionSources
   , journalDocumentIncludes
@@ -106,12 +108,15 @@ data JournalMetadata = JournalMetadata
 
 -- | Root-document evidence for one transaction block in source order.
 --
--- The header line lets domain projections preserve source diagnostics without
--- rediscovering Journal block boundaries. Metadata remains generic and may
--- contain keys that a particular domain intentionally ignores.
+-- Header, final block line, and posting lines are parser-owned physical source
+-- coordinates. Metadata remains generic and may contain keys that a particular
+-- domain intentionally ignores. Downstream writers can therefore target the
+-- canonical syntax already observed here without rediscovering block grammar.
 data JournalTransactionSource = JournalTransactionSource
-  { journalTransactionSourceHeaderLine :: Int
-  , journalTransactionSourceMetadata   :: [JournalMetadata]
+  { journalTransactionSourceHeaderLine  :: Int
+  , journalTransactionSourceLastLine    :: Int
+  , journalTransactionSourcePostingLines :: [Int]
+  , journalTransactionSourceMetadata    :: [JournalMetadata]
   } deriving (Eq, Show)
 
 data Journal = Journal
@@ -184,7 +189,7 @@ data Block = Block LocatedLine [LocatedLine]
 data ParsedBlock
   = ParsedInclude Int Include
   | ParsedAccount Int AccountDeclaration
-  | ParsedTransaction Int Transaction [LocatedPosting] [JournalMetadata]
+  | ParsedTransaction Int Int Transaction [LocatedPosting] [JournalMetadata]
   | ParsedIgnored
 
 data ParsedAccountMetadata
@@ -201,9 +206,11 @@ journalDocumentTransactionSources :: JournalDocument -> [JournalTransactionSourc
 journalDocumentTransactionSources (JournalDocument blocks) =
   [ JournalTransactionSource
       { journalTransactionSourceHeaderLine = headerLine
+      , journalTransactionSourceLastLine = lastLine
+      , journalTransactionSourcePostingLines = map fst locatedPostings
       , journalTransactionSourceMetadata = metadata
       }
-  | ParsedTransaction headerLine _ _ metadata <- blocks
+  | ParsedTransaction headerLine lastLine _ locatedPostings metadata <- blocks
   ]
 
 journalDocumentIncludes :: JournalDocument -> [Include]
@@ -257,7 +264,7 @@ validateJournalDocument (JournalDocument parsedBlocks) =
     postingErrors = validatePostings registry parsedBlocks
     transactions =
       [ transaction
-      | ParsedTransaction _ transaction _ _ <- parsedBlocks
+      | ParsedTransaction _ _ transaction _ _ <- parsedBlocks
       ]
     validationErrors
       | null includeErrors = registryErrors ++ postingErrors
@@ -297,13 +304,24 @@ collectBlocks = finish . go Nothing [] []
       Block header (reverse bodyLines) : stored
 
 parseBlock :: Block -> Either (NonEmpty JournalError) ParsedBlock
-parseBlock block@(Block (headerLine, headerText) _)
+parseBlock block@(Block (headerLine, headerText) bodyLines)
   | isDirective "include" headerText = parseIncludeBlock block
   | isDirective "account" headerText = parseAccountBlock block
   | isDirective "commodity" headerText = Right ParsedIgnored
   | otherwise = do
       (transaction, locatedPostings, metadata) <- parseTransactionBlock block
-      Right (ParsedTransaction headerLine transaction locatedPostings metadata)
+      Right
+        (ParsedTransaction
+          headerLine
+          (blockLastLine headerLine bodyLines)
+          transaction
+          locatedPostings
+          metadata)
+
+blockLastLine :: Int -> [LocatedLine] -> Int
+blockLastLine headerLine bodyLines = case bodyLines of
+  [] -> headerLine
+  _ -> fst (last bodyLines)
 
 parseIncludeBlock :: Block -> Either (NonEmpty JournalError) ParsedBlock
 parseIncludeBlock (Block header bodyLines) = case nonCommentLines of
@@ -439,7 +457,7 @@ buildRegistry :: [ParsedBlock] -> ([JournalError], AccountRegistry)
 buildRegistry = finish . Foldable.foldl' add ([], emptyAccountRegistry)
   where
     add state (ParsedInclude _ _) = state
-    add state (ParsedTransaction _ _ _ _) = state
+    add state (ParsedTransaction _ _ _ _ _) = state
     add state ParsedIgnored = state
     add (errors, registry) (ParsedAccount lineNumber declaration) =
       case registerAccount declaration registry of
@@ -457,7 +475,7 @@ validatePostings registry = concatMap validateBlock
     validateBlock (ParsedInclude _ _) = []
     validateBlock (ParsedAccount _ _) = []
     validateBlock ParsedIgnored = []
-    validateBlock (ParsedTransaction _ _ locatedPostings _) =
+    validateBlock (ParsedTransaction _ _ _ locatedPostings _) =
       concatMap validatePosting locatedPostings
 
     validatePosting (lineNumber, posting) =

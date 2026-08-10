@@ -21,10 +21,9 @@ module HKernel.Editor.PlanLifecycle
   ) where
 
 import Data.Bifunctor (first)
-import Data.Char (isAsciiLower, isAsciiUpper, isSpace, toLower)
+import Data.Char (isAsciiLower, isAsciiUpper, toLower)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -50,6 +49,9 @@ import HKernel.Journal
   ( Journal
   , appendJournalTransaction
   , journalAccountRegistry
+  , journalTransactionSourceHeaderLine
+  , journalTransactionSourceLastLine
+  , journalTransactionSourcePostingLines
   , replaceJournalTransactionAt
   )
 import HKernel.Ledger
@@ -90,6 +92,7 @@ import HKernel.Plan.Journal
   , identifiedPlanId
   , identifiedPlanTransaction
   , parsePlanJournal
+  , planJournalTransactionSourceFor
   , planJournalTransactions
   , planJournalValue
   )
@@ -360,7 +363,7 @@ preparePlanEditFromJournals planJ planSource actualJ intent = do
     then Left (pure (EditNoChange pId))
     else Right ()
 
-  located <- first pure (locatePlanSourceBlock pId transaction planSource)
+  located <- first pure (locatePlanSourceBlock planJ pId transaction planSource)
   editedBlockLines <- first pure
     (editLocatedPlanBlock pId targetDate (editAmount intent) updatedPostings located)
 
@@ -415,84 +418,60 @@ editPlanPostings (Just positiveAmount) postings
           (mkAmount (amountCommodity (postingAmount posting)) newQuantity)
 
 data LocatedPlanBlock = LocatedPlanBlock
-  { locatedPrefixLines :: [Text]
-  , locatedBlockLines  :: [Text]
-  , locatedSuffixLines :: [Text]
+  { locatedPrefixLines   :: [Text]
+  , locatedBlockLines    :: [Text]
+  , locatedSuffixLines   :: [Text]
+  , locatedPostingIndexes :: [Int]
   }
 
 locatePlanSourceBlock
-  :: PlanId
+  :: PlanJournal
+  -> PlanId
   -> Transaction
   -> Text
   -> Either PlanEditError LocatedPlanBlock
-locatePlanSourceBlock pId transaction source =
-  case planIdCoordinates of
-    [] -> Left (EditSourcePlanIdCoordinateMissing pId)
-    [metadataIndex] -> do
-      start <- case reverse
-          [ index
-          | (index, line) <- zip [0..metadataIndex] sourceLines
-          , isTopLevelSourceLine line
-          ] of
-        firstStart : _ -> Right firstStart
-        [] -> Left (EditSourceTransactionHeaderMissing pId)
-      let header = sourceLines !! start
-          expectedDatePrefix = renderDay (transactionDate transaction)
-      if not (expectedDatePrefix `T.isPrefixOf` header)
-        then Left (EditSourceTransactionHeaderMissing pId)
-        else
-          let endExclusive = case listToMaybe
-                  [ index
-                  | (index, line) <- zip [0..] sourceLines
-                  , index > start
-                  , isTopLevelSourceLine line
-                  ] of
-                Just index -> index
-                Nothing -> length sourceLines
-          in Right LocatedPlanBlock
-              { locatedPrefixLines = take start sourceLines
-              , locatedBlockLines = take (endExclusive - start)
-                  (drop start sourceLines)
-              , locatedSuffixLines = drop endExclusive sourceLines
-              }
-    coordinates -> Left
-      (EditSourcePlanIdCoordinateAmbiguous pId (length coordinates))
-  where
-    sourceLines = T.splitOn "\n" source
-    planIdCoordinates =
-      [ index
-      | (index, line) <- zip [0..] sourceLines
-      , metadataPlanId line == Just (planIdText pId)
-      ]
+locatePlanSourceBlock planJ pId transaction source = do
+  sourceEvidence <- case planJournalTransactionSourceFor pId planJ of
+    Nothing -> Left (EditSourcePlanIdCoordinateMissing pId)
+    Just value -> Right value
 
-metadataPlanId :: Text -> Maybe Text
-metadataPlanId line
-  | not (isIndentedSourceLine line && isCommentSourceLine line) = Nothing
-  | otherwise =
-      let strippedComment = T.dropWhile
-            (\character -> character == ';' || isSpace character)
-            (T.strip line)
-          (rawKey, remainder) = T.breakOn ":" strippedComment
-          key = T.toCaseFold (T.strip rawKey)
-      in if key == "plan-id" && not (T.null remainder)
-          then Just (T.strip (T.drop 1 remainder))
-          else Nothing
+  let sourceLines = T.splitOn "\n" source
+      headerLine = journalTransactionSourceHeaderLine sourceEvidence
+      lastLine = journalTransactionSourceLastLine sourceEvidence
+      postingLines = journalTransactionSourcePostingLines sourceEvidence
+      start = headerLine - 1
+      endExclusive = lastLine
+      blockLength = endExclusive - start
+      postingIndexes = map (\lineNumber -> lineNumber - headerLine) postingLines
+      expectedPostingCount = NonEmpty.length (transactionPostings transaction)
+      validPostingIndexes = filter
+        (\index -> index > 0 && index < blockLength)
+        postingIndexes
 
-isTopLevelSourceLine :: Text -> Bool
-isTopLevelSourceLine line =
-  not (T.null (T.strip line))
-    && not (isIndentedSourceLine line)
-    && not (isCommentSourceLine line)
+  if start < 0
+      || endExclusive <= start
+      || endExclusive > length sourceLines
+    then Left (EditSourceTransactionHeaderMissing pId)
+    else Right ()
 
-isIndentedSourceLine :: Text -> Bool
-isIndentedSourceLine line = case T.uncons line of
-  Just (character, _) -> isSpace character
-  Nothing -> False
+  if length postingIndexes /= expectedPostingCount
+      || length validPostingIndexes /= expectedPostingCount
+    then Left
+      (EditSourcePostingCoordinateMismatch
+        expectedPostingCount
+        (length validPostingIndexes))
+    else Right ()
 
-isCommentSourceLine :: Text -> Bool
-isCommentSourceLine line =
-  ";" `T.isPrefixOf` T.stripStart line
-    || "#" `T.isPrefixOf` T.stripStart line
+  let header = sourceLines !! start
+      expectedDatePrefix = renderDay (transactionDate transaction)
+  if not (expectedDatePrefix `T.isPrefixOf` header)
+    then Left (EditSourceTransactionHeaderMissing pId)
+    else Right LocatedPlanBlock
+      { locatedPrefixLines = take start sourceLines
+      , locatedBlockLines = take blockLength (drop start sourceLines)
+      , locatedSuffixLines = drop endExclusive sourceLines
+      , locatedPostingIndexes = postingIndexes
+      }
 
 editLocatedPlanBlock
   :: PlanId
@@ -505,43 +484,36 @@ editLocatedPlanBlock pId targetDate amountEdit postings located =
   case locatedBlockLines located of
     [] -> Left (EditSourceTransactionHeaderMissing pId)
     header : rest -> do
-      updatedRest <- case amountEdit of
-        Nothing -> Right rest
+      let datedLines = replaceHeaderDate targetDate header : rest
+      case amountEdit of
+        Nothing -> Right datedLines
         Just _ -> replacePostingSourceLines
-          rest
+          (locatedPostingIndexes located)
+          datedLines
           (map renderPostingLine (NonEmpty.toList postings))
-      pure (replaceHeaderDate targetDate header : updatedRest)
 
 replaceHeaderDate :: Day -> Text -> Text
 replaceHeaderDate day header = renderDay day <> T.drop 10 header
 
 replacePostingSourceLines
-  :: [Text]
+  :: [Int]
+  -> [Text]
   -> [Text]
   -> Either PlanEditError [Text]
-replacePostingSourceLines sourceLines replacements = go sourceLines replacements 0
+replacePostingSourceLines coordinates sourceLines replacements
+  | length coordinates /= expectedCount = Left
+      (EditSourcePostingCoordinateMismatch expectedCount (length coordinates))
+  | any invalidCoordinate coordinates = Left
+      (EditSourcePostingCoordinateMismatch expectedCount validCount)
+  | otherwise = Right
+      [ maybe line id (lookup index replacementCoordinates)
+      | (index, line) <- zip [0..] sourceLines
+      ]
   where
     expectedCount = length replacements
-
-    go [] [] _ = Right []
-    go [] remaining replaced = Left
-      (EditSourcePostingCoordinateMismatch expectedCount
-        (replaced + expectedCount - length remaining))
-    go (line : lines) remaining replaced
-      | isPostingSourceLine line = case remaining of
-          replacement : rest ->
-            (replacement :) <$> go lines rest (replaced + 1)
-          [] -> Left
-            (EditSourcePostingCoordinateMismatch expectedCount (replaced + 1))
-      | otherwise = (line :) <$> go lines remaining replaced
-
-isPostingSourceLine :: Text -> Bool
-isPostingSourceLine line =
-  isIndentedSourceLine line
-    && not (T.null stripped)
-    && not (isCommentSourceLine line)
-  where
-    stripped = T.strip line
+    invalidCoordinate index = index <= 0 || index >= length sourceLines
+    validCount = length (filter (not . invalidCoordinate) coordinates)
+    replacementCoordinates = zip coordinates replacements
 
 renderPostingLine :: Posting -> Text
 renderPostingLine posting =
