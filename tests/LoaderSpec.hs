@@ -277,7 +277,7 @@ missingIncludeReadPathTest directory = do
         True
         ("accounts.journal ->" `T.isInfixOf` rendered)
     Left err -> failTest
-      ("wrong root loader failure: " ++ T.unpack (renderLoadError err))
+      ("wrong loader failure: " ++ T.unpack (renderLoadError err))
     Right _ -> failTest "missing nested include was accepted"
 
 directDuplicateIncludeTest :: FilePath -> IO ()
