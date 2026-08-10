@@ -24,11 +24,6 @@ module HKernel.Editor.PlanLifecycle
   , mkPositivePlanFinishAmount
   , positivePlanFinishAmountQuantity
   , PlanFinishIntent(..)
-  , PlanFinishPreview(..)
-  , PlanFinishError(..)
-  , preparePlanFinish
-  , preparePlanFinishFromResolvedActualJournal
-  , preparePlanFinishFromResolvedJournals
   ) where
 
 import Data.Bifunctor (first)
@@ -46,15 +41,8 @@ import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError
   , actualJournalCompletionDeclarations
-  , actualJournalValue
   , admitActualJournalFromResolvedJournal
   , parseActualJournal
-  )
-import HKernel.Editor.ActualAppend
-  ( ActualAppendPreview(..)
-  , ActualEditError(..)
-  , ActualEditIntent(..)
-  , prepareActualAppendFromResolvedJournal
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Editor.TransactionBlock
@@ -595,9 +583,10 @@ renderDay :: Day -> Text
 renderDay = T.pack . formatTime defaultTimeLocale "%F"
 
 
--- Plan Finish
+-- Plan Finish compatibility input
 
--- | A strictly positive magnitude supplied when a binary Plan is finished.
+-- | Strictly positive replacement magnitude accepted by the retained
+-- @plan finish@ CLI surface and the current Complete & Advance operation.
 -- The original posting signs remain the owner of payment direction.
 newtype PositivePlanFinishAmount = PositivePlanFinishAmount
   { positivePlanFinishAmountQuantity :: Quantity
@@ -614,123 +603,10 @@ mkPositivePlanFinishAmount quantity
   | quantity <= zeroQuantity = Left (NonPositivePlanFinishAmount quantity)
   | otherwise = Right (PositivePlanFinishAmount quantity)
 
+-- | Retained command payload for the compatibility @plan finish@ grammar.
+-- Completion preparation and publication are owned by PlanCompleteAdvance.
 data PlanFinishIntent = PlanFinishIntent
   { finishPlanId       :: Text
   , finishActualDate   :: Day
   , finishActualAmount :: Maybe PositivePlanFinishAmount
   } deriving (Eq, Show)
-
-data PlanFinishPreview = PlanFinishPreview
-  { finishCandidateBlock          :: Text
-  , finishCandidateCompleteSource :: Text
-  } deriving (Eq, Show)
-
-data PlanFinishError
-  = FinishPlanJournalSyntaxError (NonEmpty PlanJournalError)
-  | FinishActualJournalSyntaxError (NonEmpty ActualJournalError)
-  | FinishActualEditError (NonEmpty ActualEditError)
-  | FinishInvalidId PlanIdError
-  | FinishPlanNotFound PlanId
-  | FinishPlanAlreadyClosed PlanId
-  | FinishActualAmountOnlyForBinaryPlan
-  deriving (Eq, Show)
-
-preparePlanFinish
-  :: Text
-  -> Text
-  -> PlanFinishIntent
-  -> Either (NonEmpty PlanFinishError) PlanFinishPreview
-preparePlanFinish planSource actualSource intent = do
-  planJ <- first (pure . FinishPlanJournalSyntaxError)
-    (parsePlanJournal planSource)
-  actualJ <- first (pure . FinishActualJournalSyntaxError)
-    (parseActualJournal actualSource)
-  preparePlanFinishFromJournals planJ actualSource actualJ intent
-
-preparePlanFinishFromResolvedActualJournal
-  :: Journal
-  -> Text
-  -> Text
-  -> PlanFinishIntent
-  -> Either (NonEmpty PlanFinishError) PlanFinishPreview
-preparePlanFinishFromResolvedActualJournal resolvedActual planSource actualSource intent = do
-  planJ <- first (pure . FinishPlanJournalSyntaxError)
-    (parsePlanJournal planSource)
-  actualJ <- first (pure . FinishActualJournalSyntaxError)
-    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
-  preparePlanFinishFromJournals planJ actualSource actualJ intent
-
--- | Prepare Plan Finish from the same include-resolved Plan and Actual Journals
--- observed by canonical mutation delivery. Plan identity remains owned by the
--- typed Plan journal while the emitted completion is validated as Actual.
-preparePlanFinishFromResolvedJournals
-  :: Journal
-  -> Journal
-  -> Text
-  -> Text
-  -> PlanFinishIntent
-  -> Either (NonEmpty PlanFinishError) PlanFinishPreview
-preparePlanFinishFromResolvedJournals resolvedPlan resolvedActual planSource actualSource intent = do
-  planJ <- first (pure . FinishPlanJournalSyntaxError)
-    (admitPlanJournalFromResolvedJournal resolvedPlan planSource)
-  actualJ <- first (pure . FinishActualJournalSyntaxError)
-    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
-  preparePlanFinishFromJournals planJ actualSource actualJ intent
-
-preparePlanFinishFromJournals
-  :: PlanJournal
-  -> Text
-  -> ActualJournal
-  -> PlanFinishIntent
-  -> Either (NonEmpty PlanFinishError) PlanFinishPreview
-preparePlanFinishFromJournals planJ actualSource actualJ intent = do
-  pId <- first (pure . FinishInvalidId) (mkPlanId (finishPlanId intent))
-
-  let existingCompletions = map declaredCompletionPlanId (actualJournalCompletionDeclarations actualJ)
-  if pId `elem` existingCompletions
-    then Left (pure (FinishPlanAlreadyClosed pId))
-    else Right ()
-
-  let planTransactions = planJournalTransactions planJ
-  identifiedPlanTx <- case filter (\p -> identifiedPlanId p == pId) planTransactions of
-    [] -> Left (pure (FinishPlanNotFound pId))
-    (p:_) -> Right p
-
-  let txn = identifiedPlanTransaction identifiedPlanTx
-      originalPostings = transactionPostings txn
-
-  updatedPostings <- case finishActualAmount intent of
-    Nothing -> Right originalPostings
-    Just positiveAmount ->
-      if length originalPostings /= 2
-        then Left (pure FinishActualAmountOnlyForBinaryPlan)
-        else
-          let
-            newQty = positivePlanFinishAmountQuantity positiveAmount
-            modifyPosting p =
-              let oldQty = amountQuantity (postingAmount p)
-                  qty = if quantityToRational oldQty < 0 then negateQuantity newQty else newQty
-              in mkPosting (postingAccount p) (mkAmount (amountCommodity (postingAmount p)) qty)
-          in Right (fmap modifyPosting originalPostings)
-
-  let intentPostings = fmap (\p -> IntentPosting (postingAccount p) (amountQuantity (postingAmount p)) (Just (amountCommodity (postingAmount p)))) updatedPostings
-
-  let actualIntent = ActualEditIntent
-        { intentDate = finishActualDate intent
-        , intentDescription = transactionDescription txn
-        , intentPostings = intentPostings
-        , intentMetadata = [("plan-id", planIdText pId)]
-        }
-
-  actualPreview <- first (pure . FinishActualEditError)
-    (prepareActualAppendFromResolvedJournal
-      (actualJournalValue actualJ)
-      actualSource
-      actualIntent)
-
-  let preview = PlanFinishPreview
-        { finishCandidateBlock = candidateBlock actualPreview
-        , finishCandidateCompleteSource = candidateCompleteSource actualPreview
-        }
-
-  pure preview
