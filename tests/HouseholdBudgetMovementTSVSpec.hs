@@ -17,6 +17,7 @@ main = do
   characterizeAcceptedMovements
   characterizeSourceFailures
   characterizeNativeJournalRoundTrip
+  characterizeNativeResolvedSourceAdmission
   characterizeNativeJournalFailures
 
 characterizeAcceptedMovements :: IO ()
@@ -90,6 +91,28 @@ characterizeNativeJournalRoundTrip = do
     (map householdBudgetMovementMemo retained)
     (map householdBudgetMovementMemo native)
 
+characterizeNativeResolvedSourceAdmission :: IO ()
+characterizeNativeResolvedSourceAdmission = do
+  let resolvedJournal = mustRight (parseJournal nativeResolvedBudgetJournal)
+      admitted = mustRight
+        (admitHouseholdBudgetMovementJournalFromResolvedJournal
+          resolvedJournal
+          nativeResolvedBudgetJournal)
+
+  assertEqual
+    "resolved native Budget admission accepts matching transaction evidence"
+    1
+    (length (householdBudgetMovementJournalMovements admitted))
+
+  assertEqual
+    "resolved native Budget admission rejects equal-count source evidence for a different transaction"
+    (Left
+      (BudgetMovementJournalTransactionSourceAlignmentMismatch 1
+        NonEmpty.:| []))
+    (admitHouseholdBudgetMovementJournalFromResolvedJournal
+      resolvedJournal
+      equalCountDifferentBudgetSource)
+
 characterizeNativeJournalFailures :: IO ()
 characterizeNativeJournalFailures = do
   assertEqual
@@ -152,6 +175,20 @@ budgetDeclarations = T.unlines
   , "  type: budget"
   , "account assets:cash"
   , "  type: asset"
+  ]
+
+nativeResolvedBudgetJournal :: T.Text
+nativeResolvedBudgetJournal = budgetDeclarations <> T.unlines
+  [ "2026-06-15 move-to-reserve"
+  , "    budget:opening    -100 JPY"
+  , "    budget:reserve     100 JPY"
+  ]
+
+equalCountDifferentBudgetSource :: T.Text
+equalCountDifferentBudgetSource = budgetDeclarations <> T.unlines
+  [ "2026-06-15 different-move"
+  , "    budget:opening    -101 JPY"
+  , "    budget:reserve     101 JPY"
   ]
 
 nonBudgetJournal :: T.Text

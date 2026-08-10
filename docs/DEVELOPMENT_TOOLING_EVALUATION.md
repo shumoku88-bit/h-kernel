@@ -2,7 +2,7 @@
 
 > **Status**: ACTIVE OBSERVATION LEDGER
 > **Scope**: Haskell development tools, build/test/analysis tools, and AI-assisted development tooling
-> **Baseline main**: `028a051b5b85464328129221d7b6099f8273d6d4`
+> **Baseline main**: `c8eba9eb4d43e4c0db82d36f7c36017f6d124dfe`
 > **Principle**: adopt tools because measured evidence says they improve h-kernel, not because they are fashionable or Haskell-specific.
 
 ## Purpose

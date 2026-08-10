@@ -18,6 +18,7 @@ module HKernel.Journal
   , journalPostingSourceLine
   , journalPostingSourceQuantityColumns
   , JournalTransactionSource
+  , journalTransactionSourceTransaction
   , journalTransactionSourceHeaderLine
   , journalTransactionSourceLastLine
   , journalTransactionSourcePostings
@@ -122,14 +123,16 @@ data JournalPostingSource = JournalPostingSource
 
 -- | Root-document evidence for one transaction block in source order.
 --
--- Header, final block line, posting syntax coordinates, and metadata are owned
--- by the canonical parser. Domain modules assign meaning to metadata while
--- source writers can target already-observed syntax without rediscovering it.
+-- The parser retains both the typed Transaction meaning produced from this
+-- exact block and its physical coordinates/metadata. Domain admission can
+-- therefore prove that source metadata is being attached to the same resolved
+-- transaction instead of relying only on transaction count and position.
 data JournalTransactionSource = JournalTransactionSource
-  { journalTransactionSourceHeaderLine :: Int
-  , journalTransactionSourceLastLine   :: Int
-  , journalTransactionSourcePostings   :: [JournalPostingSource]
-  , journalTransactionSourceMetadata   :: [JournalMetadata]
+  { journalTransactionSourceTransaction :: Transaction
+  , journalTransactionSourceHeaderLine  :: Int
+  , journalTransactionSourceLastLine    :: Int
+  , journalTransactionSourcePostings    :: [JournalPostingSource]
+  , journalTransactionSourceMetadata    :: [JournalMetadata]
   } deriving (Eq, Show)
 
 -- | Compatibility projection for callers that need only posting line numbers.
@@ -224,12 +227,13 @@ data PartialPosting = PartialPosting
 journalDocumentTransactionSources :: JournalDocument -> [JournalTransactionSource]
 journalDocumentTransactionSources (JournalDocument blocks) =
   [ JournalTransactionSource
-      { journalTransactionSourceHeaderLine = headerLine
+      { journalTransactionSourceTransaction = transaction
+      , journalTransactionSourceHeaderLine = headerLine
       , journalTransactionSourceLastLine = lastLine
       , journalTransactionSourcePostings = map fst locatedPostings
       , journalTransactionSourceMetadata = metadata
       }
-  | ParsedTransaction headerLine lastLine _ locatedPostings metadata <- blocks
+  | ParsedTransaction headerLine lastLine transaction locatedPostings metadata <- blocks
   ]
 
 journalDocumentIncludes :: JournalDocument -> [Include]
