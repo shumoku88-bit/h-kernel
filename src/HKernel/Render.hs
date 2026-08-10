@@ -770,15 +770,15 @@ renderAccountError :: AccountError -> Text
 renderAccountError err = case err of
   EmptyAccount -> "account name is empty"
   AccountHasSurroundingWhitespace name ->
-    "account name has surrounding whitespace: " <> quoted name
+    "account has surrounding whitespace: " <> quoted name
   AccountContainsControlCharacter name ->
-    "account name contains a control character: " <> quoted name
+    "account contains a control character: " <> quoted name
 
 renderCommodityError :: CommodityError -> Text
 renderCommodityError err = case err of
   EmptyCommodity -> "commodity code is empty"
   CommodityContainsWhitespace code ->
-    "commodity code contains whitespace: " <> quoted code
+    "commodity contains whitespace: " <> quoted code
 
 renderTransactionError :: TransactionError -> Text
 renderTransactionError err = case err of
