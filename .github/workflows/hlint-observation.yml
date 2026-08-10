@@ -1,0 +1,75 @@
+name: HLint Observation
+
+on:
+  push:
+    branches:
+      - obs/hlint-experiment-001
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned HLint
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            https://github.com/ndmitchell/hlint/releases/download/v3.10/hlint-3.10-x86_64-linux.tar.gz \
+            --output /tmp/hlint.tar.gz
+          echo "ccabc8802a58154699a3583b8dddc5ea2e6d65753a62c45c0e80088ebb16b42b  /tmp/hlint.tar.gz" | sha256sum --check
+          mkdir -p /tmp/hlint
+          tar -xzf /tmp/hlint.tar.gz -C /tmp/hlint
+          echo "/tmp/hlint/hlint-3.10" >> "$GITHUB_PATH"
+
+      - name: Observe production Haskell source
+        shell: bash
+        run: |
+          set -euo pipefail
+          hlint --version
+          mapfile -t files < <(
+            find . -type f -name '*.hs' \
+              ! -path './tests/*' \
+              ! -path './tools/*' \
+              ! -path './dist-newstyle/*' \
+              ! -path './.git/*' \
+              | sort
+          )
+          printf 'Observed Haskell files: %s\n' "${#files[@]}"
+          printf '%s\n' "${files[@]}" > /tmp/hlint-files.txt
+
+          set +e
+          hlint "${files[@]}" --json > /tmp/hlint.json
+          hlint_status=$?
+          set -e
+
+          python3 - <<'PY'
+          import collections
+          import json
+          from pathlib import Path
+
+          hints = json.loads(Path('/tmp/hlint.json').read_text())
+          print(f'HLint findings: {len(hints)}')
+          print('Findings by severity:')
+          for severity, count in sorted(collections.Counter(h.get('severity', 'Unknown') for h in hints).items()):
+              print(f'  {severity}: {count}')
+          print('Findings by hint:')
+          for hint, count in collections.Counter(h.get('hint', 'Unknown') for h in hints).most_common():
+              print(f'  {count:4}  {hint}')
+          print('\nDetailed findings:')
+          for h in hints:
+              pos = h.get('startLine', '?')
+              print(f"{h.get('file')}:{pos}: {h.get('severity')}: {h.get('hint')}")
+              print(f"  found:   {h.get('from')}")
+              print(f"  perhaps: {h.get('to')}")
+              note = h.get('note') or []
+              if note:
+                  print(f"  note:    {'; '.join(note)}")
+          PY
+
+          echo "HLint exit status (observation only): $hlint_status"
+          exit 0
