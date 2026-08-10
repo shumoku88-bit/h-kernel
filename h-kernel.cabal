@@ -652,6 +652,7 @@ executable h-kernel-editor-tui
                     , HKernel.Editor.TUI.Maintenance
                     , HKernel.Editor.TUI.Model
                     , HKernel.Editor.TUI.Plan
+                    , HKernel.Editor.TUI.ReportStyle
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
                     , directory >= 1.3 && < 1.4

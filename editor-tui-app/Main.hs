@@ -40,6 +40,7 @@ import HKernel.Editor.TUI.Model
   , makeWorkspaceContext
   )
 import qualified HKernel.Editor.TUI.Plan as Plan
+import qualified HKernel.Editor.TUI.ReportStyle as ReportStyle
 import HKernel.Household.Application
   ( HouseholdState(..)
   , HouseholdWriteSnapshot(..)
@@ -323,29 +324,8 @@ renderReportPlanError (InvalidReportRange reportName start end) =
   "invalid " <> reportName <> " range: start " <> T.pack (show start)
     <> " is after end " <> T.pack (show end)
 
--- CLI report renderers intentionally publish ANSI SGR styling. Brick owns its
--- own layout and attributes, so its text widgets must receive display text only.
 reportText :: Text -> Widget Name
-reportText = txt . stripTerminalSgr
-
-stripTerminalSgr :: Text -> Text
-stripTerminalSgr value = T.concat (go value)
-  where
-    go remaining
-      | T.null remaining = []
-      | otherwise =
-          let (plain, control) = T.breakOn "\ESC[" remaining
-          in plain :
-              if T.null control
-                then []
-                else
-                  let afterPrefix = T.drop 2 control
-                      (_, suffix) = T.span isSgrParameter afterPrefix
-                  in case T.uncons suffix of
-                      Just ('m', afterSgr) -> go afterSgr
-                      _ -> "\ESC[" : go afterPrefix
-    isSgrParameter character =
-      character == ';' || (character >= '0' && character <= '9')
+reportText = ReportStyle.renderTerminalReport
 
 drawSettingsView :: AppContext -> Widget Name
 drawSettingsView context =
