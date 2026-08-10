@@ -134,3 +134,7 @@ role = "contract"
 [[documents]]
 path = "docs/INLINE_ACCOUNT_DISCOVERY_IMPLEMENTATION_NOTE_2026-08-09.md"
 role = "observation"
+
+[[documents]]
+path = "docs/DEVELOPMENT_TOOLING_EVALUATION.md"
+role = "observation"
