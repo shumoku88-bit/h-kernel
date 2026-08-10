@@ -33,6 +33,7 @@ main :: IO ()
 main = withTemporaryDirectory $ \directory -> do
   relativeIncludeTest directory
   rootSourceSnapshotTest directory
+  rootEvidenceStaysRootLocalTest directory
   syntheticMasterFileIntegrationTest directory
   rootReadFailurePathTest directory
   missingIncludeReadPathTest directory
@@ -100,6 +101,45 @@ rootSourceSnapshotTest directory = do
       Asset
     Left err -> failTest
       ("observed root source loading failed: " ++ T.unpack (renderLoadError err))
+
+-- | Root transaction evidence must remain root-local even when include
+-- resolution contributes transactions. Otherwise identical line numbers from
+-- different files could be mistaken for one physical source coordinate.
+rootEvidenceStaysRootLocalTest :: FilePath -> IO ()
+rootEvidenceStaysRootLocalTest directory = do
+  let root = directory </> "root-evidence.journal"
+      included = directory </> "root-evidence-included.journal"
+      observedRoot = "include root-evidence-included.journal\n"
+
+  TIO.writeFile root observedRoot
+  TIO.writeFile included (T.unlines
+    [ "account assets:included"
+    , "    type: asset"
+    , "    commodity: JPY"
+    , ""
+    , "account equity:included"
+    , "    type: equity"
+    , "    commodity: JPY"
+    , ""
+    , "2026-08-01 Included transaction"
+    , "    assets:included  100 JPY"
+    , "    equity:included"
+    ])
+
+  result <- loadJournalRootObservationFromSource root observedRoot
+  case result of
+    Right observation -> do
+      assertEqual
+        "root observation excludes included transaction source coordinates"
+        0
+        (length (journalRootObservationTransactionSources observation))
+      assertEqual
+        "resolved Journal still contains included transaction meaning"
+        1
+        (length
+          (journalTransactions (journalRootObservationJournal observation)))
+    Left err -> failTest
+      ("root evidence loading failed: " ++ T.unpack (renderLoadError err))
 
 -- | Exercise a synthetic master-file entry shape: callers provide only
 -- @journal-tree/master.journal@ while that master file owns separate Account
@@ -237,7 +277,7 @@ missingIncludeReadPathTest directory = do
         True
         ("accounts.journal ->" `T.isInfixOf` rendered)
     Left err -> failTest
-      ("wrong loader failure: " ++ T.unpack (renderLoadError err))
+      ("wrong root loader failure: " ++ T.unpack (renderLoadError err))
     Right _ -> failTest "missing nested include was accepted"
 
 directDuplicateIncludeTest :: FilePath -> IO ()
