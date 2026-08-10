@@ -12,13 +12,13 @@ import HKernel.Editor.ActualReverse
   )
 import HKernel.Editor.CLI
 import HKernel.Editor.IssueAppend (intentAmount, intentDetails)
+import HKernel.Editor.PlanCompleteAdvance (positivePlanMagnitudeQuantity)
 import HKernel.Editor.PlanLifecycle
   ( addDate
   , editAmount
   , editDate
   , editPlanId
   , positivePlanEditAmountQuantity
-  , positivePlanFinishAmountQuantity
   )
 import HKernel.Household.BudgetMovement (householdBudgetMovementMemo)
 import HKernel.Money (quantityFromInteger)
@@ -262,7 +262,7 @@ testPlanFinishAdmission = case parseEditorCommand
       ) ->
         planId == "plan-2026-08-05-meal"
           && actualDate == fromGregorian 2026 8 6
-          && fmap positivePlanFinishAmountQuantity amount
+          && fmap positivePlanMagnitudeQuantity amount
             == Just (quantityFromInteger 275)
     _ -> False
 
