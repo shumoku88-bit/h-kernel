@@ -51,10 +51,14 @@ import HKernel.Journal
   ( Journal
   , JournalDocument
   , JournalError
-  , JournalMetadata(..)
-  , JournalTransactionSource(..)
+  , JournalTransactionSource
   , journalAccountRegistry
   , journalDocumentTransactionSources
+  , journalMetadataKey
+  , journalMetadataLine
+  , journalMetadataValue
+  , journalTransactionSourceHeaderLine
+  , journalTransactionSourceMetadata
   , journalTransactions
   , parseJournalDocument
   , validateJournalDocument
