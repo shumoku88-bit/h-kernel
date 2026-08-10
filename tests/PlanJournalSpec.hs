@@ -4,15 +4,22 @@ module Main (main) where
 
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
-import HKernel.Journal (journalTransactions, parseJournal)
+import HKernel.Journal
+  ( journalMetadataKey
+  , journalMetadataValue
+  , journalTransactionSourceMetadata
+  , journalTransactions
+  , parseJournal
+  )
 import HKernel.Ledger (transactionPostings)
-import HKernel.Plan (committedPlanId, planIdText)
+import HKernel.Plan (committedPlanId, mkPlanId, planIdText)
 import HKernel.Plan.Journal
 import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
   characterizeWholePlanTransactions
+  retainCanonicalPlanSourceEvidence
   characterizeResolvedJournalAdmission
   rejectResolvedJournalTransactionDrift
   rejectMissingPlanIdentity
@@ -44,6 +51,17 @@ characterizeWholePlanTransactions = do
     (map (NonEmpty.length . transactionPostings . identifiedPlanTransaction)
       identified)
 
+retainCanonicalPlanSourceEvidence :: IO ()
+retainCanonicalPlanSourceEvidence = do
+  let admitted = mustRight (parsePlanJournal planJournal)
+  assertEqual
+    "PlanJournal retains canonical source metadata without assigning its meaning"
+    (Just
+      [ ("plan-id", "plan-wifi")
+      , ("note", "unrelated metadata remains unrelated")
+      ])
+    (sourceMetadataPairs "plan-wifi" admitted)
+
 characterizeResolvedJournalAdmission :: IO ()
 characterizeResolvedJournalAdmission = do
   let resolvedJournal = mustRight (parseJournal resolvedAccountingJournal)
@@ -55,6 +73,10 @@ characterizeResolvedJournalAdmission = do
     "resolved Account includes preserve the complete Plan semantic projection"
     direct
     admitted
+  assertEqual
+    "resolved admission retains the same canonical metadata values"
+    (sourceMetadataPairs "plan-wifi" direct)
+    (sourceMetadataPairs "plan-wifi" admitted)
 
 rejectResolvedJournalTransactionDrift :: IO ()
 rejectResolvedJournalTransactionDrift =
@@ -218,6 +240,16 @@ rejectMultiPostingReportProjection = do
     "multi-posting outgoing Plans remain valid source but fail narrow projection"
     ((== ["plan-shared"]) . projectionErrorPlanIds)
     (projectCommittedOutgoingPlans source classified)
+
+sourceMetadataPairs :: T.Text -> PlanJournal -> Maybe [(T.Text, T.Text)]
+sourceMetadataPairs rawPlanId planJournalValue' = do
+  source <- planJournalTransactionSourceFor
+    (mustRight (mkPlanId rawPlanId))
+    planJournalValue'
+  pure
+    [ (journalMetadataKey entry, journalMetadataValue entry)
+    | entry <- journalTransactionSourceMetadata source
+    ]
 
 unsupportedPlanIds
   :: NonEmpty.NonEmpty PlanClassificationError
