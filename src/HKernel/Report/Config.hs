@@ -40,11 +40,21 @@ data ReportConfiguration = ReportConfiguration
 
 data RawConfig = RawConfig (Maybe RawPresentation) RawReports
 
-data RawPresentation = RawPresentation (Maybe RawHierarchy) (Maybe RawAmounts)
+data RawPresentation = RawPresentation
+  { rawPresentationHierarchy :: Maybe RawHierarchy
+  , rawPresentationAmounts :: Maybe RawAmounts
+  }
 
-data RawHierarchy = RawHierarchy (Maybe Text) (Maybe Text)
+data RawHierarchy = RawHierarchy
+  { rawHeadingColor :: Maybe Text
+  , rawSectionColor :: Maybe Text
+  }
 
-data RawAmounts = RawAmounts Text (Maybe Text) (Maybe Text)
+data RawAmounts = RawAmounts
+  { rawNegativeStyle :: Text
+  , rawPositiveColor :: Maybe Text
+  , rawNegativeColor :: Maybe Text
+  }
 
 data RawReports = RawReports
   RawAsOf
@@ -226,27 +236,23 @@ renderReportConfigErrors = T.unlines . map ("  " <>)
 rawConfigToConfiguration :: RawConfig -> Either [Text] ReportConfiguration
 rawConfigToConfiguration (RawConfig rawPresentation reports) = case reports of
   RawReports trial balance profit daily monthly recent -> do
-    negativeStyle <- parseNegativeStyle rawPresentation
-    headingColor <- parseHierarchyColor
+    negativeStyle <- parseNegativeStyle amounts
+    headingColor <- parseOptionalPresentationColor
       "presentation.hierarchy.heading-color"
       CyanColor
-      rawPresentation
-      hierarchyHeadingColor
-    sectionColor <- parseHierarchyColor
+      (hierarchy >>= rawHeadingColor)
+    sectionColor <- parseOptionalPresentationColor
       "presentation.hierarchy.section-color"
       YellowColor
-      rawPresentation
-      hierarchySectionColor
-    positiveAmountColor <- parseAmountColor
+      (hierarchy >>= rawSectionColor)
+    positiveAmountColor <- parseOptionalPresentationColor
       "presentation.amounts.positive-color"
       GreenColor
-      rawPresentation
-      amountPositiveColor
-    negativeAmountColor <- parseAmountColor
+      (amounts >>= rawPositiveColor)
+    negativeAmountColor <- parseOptionalPresentationColor
       "presentation.amounts.negative-color"
       RedColor
-      rawPresentation
-      amountNegativeColor
+      (amounts >>= rawNegativeColor)
     trialSpec <- parseAsOf "reports.trial-balance.as-of" trial
     balanceSpec <- parseAsOf "reports.balance-sheet.as-of" balance
     profitSpec <- parseRange "reports.profit-and-loss" profit
@@ -271,51 +277,19 @@ rawConfigToConfiguration (RawConfig rawPresentation reports) = case reports of
           , presentationDailyFlowDateColumns = dateColumns
           }
       }
+    where
+      hierarchy = rawPresentation >>= rawPresentationHierarchy
+      amounts = rawPresentation >>= rawPresentationAmounts
 
-parseNegativeStyle :: Maybe RawPresentation -> Either [Text] NegativeStyle
+parseNegativeStyle :: Maybe RawAmounts -> Either [Text] NegativeStyle
 parseNegativeStyle Nothing = Right AccountingParentheses
-parseNegativeStyle (Just (RawPresentation _ Nothing)) = Right AccountingParentheses
-parseNegativeStyle (Just (RawPresentation _ (Just (RawAmounts value _ _)))) = case value of
+parseNegativeStyle (Just amounts) = case rawNegativeStyle amounts of
   "parentheses" -> Right AccountingParentheses
   "minus" -> Right LeadingMinus
-  _ -> Left
+  value -> Left
     [ "presentation.amounts.negative-style: expected parentheses or minus; got ‘"
         <> value <> "’"
     ]
-
-parseHierarchyColor
-  :: Text
-  -> PresentationColor
-  -> Maybe RawPresentation
-  -> (RawHierarchy -> Maybe Text)
-  -> Either [Text] PresentationColor
-parseHierarchyColor _ fallback Nothing _ = Right fallback
-parseHierarchyColor _ fallback (Just (RawPresentation Nothing _)) _ = Right fallback
-parseHierarchyColor path fallback (Just (RawPresentation (Just hierarchy) _)) select =
-  parseOptionalPresentationColor path fallback (select hierarchy)
-
-parseAmountColor
-  :: Text
-  -> PresentationColor
-  -> Maybe RawPresentation
-  -> (RawAmounts -> Maybe Text)
-  -> Either [Text] PresentationColor
-parseAmountColor _ fallback Nothing _ = Right fallback
-parseAmountColor _ fallback (Just (RawPresentation _ Nothing)) _ = Right fallback
-parseAmountColor path fallback (Just (RawPresentation _ (Just amounts))) select =
-  parseOptionalPresentationColor path fallback (select amounts)
-
-hierarchyHeadingColor :: RawHierarchy -> Maybe Text
-hierarchyHeadingColor (RawHierarchy value _) = value
-
-hierarchySectionColor :: RawHierarchy -> Maybe Text
-hierarchySectionColor (RawHierarchy _ value) = value
-
-amountPositiveColor :: RawAmounts -> Maybe Text
-amountPositiveColor (RawAmounts _ value _) = value
-
-amountNegativeColor :: RawAmounts -> Maybe Text
-amountNegativeColor (RawAmounts _ _ value) = value
 
 parseOptionalPresentationColor
   :: Text
