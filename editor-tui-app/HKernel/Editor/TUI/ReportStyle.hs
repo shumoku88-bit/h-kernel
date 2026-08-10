@@ -87,7 +87,7 @@ parseLine initialStyle = go initialStyle []
       character == ';' || (character >= '0' && character <= '9')
 
 applySgr :: Text -> SgrStyle -> SgrStyle
-applySgr parameters = foldl (flip applyCode) <*> parsedCodes
+applySgr parameters style = foldl (flip applyCode) style parsedCodes
   where
     parsedCodes
       | T.null parameters = [0]
