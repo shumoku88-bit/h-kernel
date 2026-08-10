@@ -96,7 +96,16 @@ data PlanJournal = PlanJournal
   { planJournalValue              :: Journal
   , planJournalTransactions       :: [IdentifiedPlanTransaction]
   , planJournalTransactionSources :: Map PlanId JournalTransactionSource
-  } deriving (Eq, Show)
+  } deriving (Show)
+
+-- Source locations are provenance for later domain-specific admission, not part
+-- of PlanJournal's semantic equality. A resolved root may place the same Plan
+-- transaction at different physical line numbers while retaining identical
+-- accounting and Plan meaning.
+instance Eq PlanJournal where
+  left == right =
+    planJournalValue left == planJournalValue right
+      && planJournalTransactions left == planJournalTransactions right
 
 -- | Read canonical root-source evidence for one admitted Plan identity.
 --
