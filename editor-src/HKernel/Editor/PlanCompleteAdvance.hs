@@ -183,10 +183,9 @@ data PlanCompleteAdvanceError
 
 proposePlanAdvance
   :: PlanJournal
-  -> Text
   -> PlanId
   -> Either (NonEmpty PlanCompleteAdvanceError) PlanAdvanceProposal
-proposePlanAdvance planJournal _planSource targetId = do
+proposePlanAdvance planJournal targetId = do
   identified <- findPlan planJournal targetId
   metadata <- sourceMetadataFor planJournal targetId
   recurrence <- admitRecurrence metadata
@@ -213,10 +212,9 @@ proposePlanAdvance planJournal _planSource targetId = do
 assessPlanAdvanceSafety
   :: PlanJournal
   -> ActualJournal
-  -> Text
   -> PlanId
   -> Either (NonEmpty PlanCompleteAdvanceError) PlanAdvanceSafety
-assessPlanAdvanceSafety planJournal actualJournal _planSource targetId = do
+assessPlanAdvanceSafety planJournal actualJournal targetId = do
   identified <- findPlan planJournal targetId
   ensureOpen actualJournal targetId
   metadata <- sourceMetadataFor planJournal targetId
@@ -272,7 +270,7 @@ preparePlanCompleteAdvance planJournal actualJournal planSource actualSource int
         CompleteAdvanceAmountOverrideRequiresBinaryPlan
         (completeAdvanceSuccessorAmount intent)
         (transactionPostings transaction)
-      safety <- assessPlanAdvanceSafety planJournal actualJournal planSource targetId
+      safety <- assessPlanAdvanceSafety planJournal actualJournal targetId
       rejectDuplicateLookingSuccessor
         safety
         successorDate

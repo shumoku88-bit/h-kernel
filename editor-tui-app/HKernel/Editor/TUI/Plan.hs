@@ -157,7 +157,6 @@ startSelectedCompletion context = do
   (_, identified) <- L.listSelectedElement (contextPlanList context)
   pure $ case proposePlanAdvance
       (householdStatePlanJournal (contextHouseholdState context))
-      (contextPlanSource context)
       (identifiedPlanId identified) of
     Left errors -> WriteOutcome
       ("Cannot prepare selected Plan: " <> T.pack (show (NonEmpty.toList errors)))
