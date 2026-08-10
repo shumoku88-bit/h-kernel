@@ -10,8 +10,13 @@ module HKernel.Journal
   , mkInclude
   , includePath
   , JournalDocument(..)
-  , JournalMetadata(..)
-  , JournalTransactionSource(..)
+  , JournalMetadata
+  , journalMetadataLine
+  , journalMetadataKey
+  , journalMetadataValue
+  , JournalTransactionSource
+  , journalTransactionSourceHeaderLine
+  , journalTransactionSourceMetadata
   , journalDocumentTransactionSources
   , journalDocumentIncludes
   , resolveJournalDocumentIncludes
