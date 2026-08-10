@@ -10,6 +10,7 @@
 module HKernel.Household.Config
   ( HouseholdConfiguration
   , householdConfigurationPolicy
+  , householdConfigurationPrimaryCommodity
   , householdConfigurationDailyTargetAssets
   , householdConfigurationAccountPolicy
   , parseHouseholdConfiguration
@@ -52,6 +53,11 @@ import HKernel.Household.DailyTarget
   , selectDailyTargetAsset
   )
 import HKernel.Household.Policy
+import HKernel.Money
+  ( Commodity
+  , CommodityError(..)
+  , mkCommodity
+  )
 import Toml (decode)
 import Toml.Schema
   ( FromValue(..)
@@ -63,6 +69,7 @@ import Toml.Schema
 
 data HouseholdConfiguration = HouseholdConfiguration
   { householdConfigurationPolicy            :: HouseholdPolicy
+  , householdConfigurationPrimaryCommodity  :: Maybe Commodity
   , householdConfigurationDailyTargetAssets :: [DailyTargetAssetSelection]
   , householdConfigurationAccountPolicy     :: Maybe HouseholdAccountPolicy
   } deriving (Eq, Show)
@@ -70,6 +77,7 @@ data HouseholdConfiguration = HouseholdConfiguration
 data RawHouseholdPolicy = RawHouseholdPolicy
   RawCycle
   RawHouseholdBudget
+  (Maybe RawMoney)
   (Maybe RawDailyTarget)
   (Maybe RawAccountPolicy)
 
@@ -78,6 +86,8 @@ data RawCycle = RawCycle Text Text
 data RawHouseholdBudget = RawHouseholdBudget
   [RawEnvelopeCoordinates]
   [Text]
+
+data RawMoney = RawMoney Text
 
 data RawEnvelopeCoordinates = RawEnvelopeCoordinates
   Text
@@ -113,6 +123,7 @@ instance FromValue RawHouseholdPolicy where
     (RawHouseholdPolicy
       <$> reqKey "cycle"
       <*> reqKey "budget"
+      <*> optKey "money"
       <*> optKey "daily-target"
       <*> optKey "account-policy")
 
@@ -127,6 +138,10 @@ instance FromValue RawHouseholdBudget where
     (RawHouseholdBudget
       <$> reqKey "envelopes"
       <*> reqKey "unassigned-accounts")
+
+instance FromValue RawMoney where
+  fromValue = parseTableFromValue
+    (RawMoney <$> reqKey "primary-commodity")
 
 instance FromValue RawEnvelopeCoordinates where
   fromValue = parseTableFromValue
@@ -220,15 +235,22 @@ rawToHouseholdConfiguration
   -> RawHouseholdPolicy
   -> Either [Text] HouseholdConfiguration
 rawToHouseholdConfiguration budgetPolicy
-    (RawHouseholdPolicy rawCycle rawHouseholdBudget rawDailyTarget rawAccountPolicy) = do
+    (RawHouseholdPolicy rawCycle rawHouseholdBudget rawMoney rawDailyTarget rawAccountPolicy) = do
   policy <- rawToHouseholdPolicy budgetPolicy rawCycle rawHouseholdBudget
+  primaryCommodity <- traverse parseRawMoney rawMoney
   dailyTargetAssets <- parseRawDailyTarget rawDailyTarget
   accountPolicy <- traverse parseRawAccountPolicy rawAccountPolicy
   Right HouseholdConfiguration
     { householdConfigurationPolicy = policy
+    , householdConfigurationPrimaryCommodity = primaryCommodity
     , householdConfigurationDailyTargetAssets = dailyTargetAssets
     , householdConfigurationAccountPolicy = accountPolicy
     }
+
+parseRawMoney :: RawMoney -> Either [Text] Commodity
+parseRawMoney (RawMoney rawCommodity) = case mkCommodity rawCommodity of
+  Right commodity -> Right commodity
+  Left err -> Left [renderCommodityError "money.primary-commodity" err]
 
 parseRawDailyTarget
   :: Maybe RawDailyTarget
@@ -491,6 +513,12 @@ renderEnvelopeIdError path err = path <> ": " <> case err of
 renderDailyTargetScopeIdError :: Text -> DailyTargetScopeIdError -> Text
 renderDailyTargetScopeIdError path err = path <> ": " <> case err of
   EmptyDailyTargetScopeId -> "expected a non-empty Daily Target selection identity"
+
+renderCommodityError :: Text -> CommodityError -> Text
+renderCommodityError path err = path <> ": " <> case err of
+  EmptyCommodity -> "expected a non-empty Commodity identity"
+  CommodityContainsWhitespace value ->
+    "whitespace is not allowed; got " <> quoted value
 
 renderAccountError :: Text -> AccountError -> Text
 renderAccountError path err = path <> ": " <> case err of
