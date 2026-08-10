@@ -35,20 +35,27 @@ module HKernel.Actual.Journal
   , admitActualJournalFromResolvedJournal
   ) where
 
-import Data.Char (isSpace)
-import Data.List (foldl', sort)
+import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
-import qualified Data.Text as T
 import HKernel.Journal
   ( Journal
+  , JournalDocument
   , JournalError
+  , JournalMetadata
+  , JournalTransactionSource
+  , journalDocumentTransactionSources
+  , journalMetadataKey
+  , journalMetadataLine
+  , journalMetadataValue
+  , journalTransactionSourceMetadata
   , journalTransactions
-  , parseJournal
+  , parseJournalDocument
+  , validateJournalDocument
   )
 import HKernel.Ledger (Transaction)
 import HKernel.Plan
@@ -123,17 +130,19 @@ data ActualJournalError
 parseActualJournal
   :: Text
   -> Either (NonEmpty ActualJournalError) ActualJournal
-parseActualJournal input = case parseJournal input of
+parseActualJournal input = case parseJournalDocument input of
   Left journalErrors -> Left (fmap ActualJournalSyntaxError journalErrors)
-  Right journal -> admitActualJournalFromResolvedJournal journal input
+  Right document -> case validateJournalDocument document of
+    Left journalErrors -> Left (fmap ActualJournalSyntaxError journalErrors)
+    Right journal -> admitActualJournalFromDocument journal document
 
 -- | Project root-source Actual metadata onto an already validated Journal.
 --
 -- The supplied Journal is expected to be the result of admitting the same root
 -- source after its include graph has been resolved. Accounting declarations,
 -- postings, exact amounts, and transaction validation therefore remain owned by
--- 'HKernel.Journal'; this function reads only Actual-owned metadata from the
--- root source text.
+-- 'HKernel.Journal'; this function reads only Actual-owned meaning from
+-- canonical root-document metadata evidence.
 --
 -- The transaction count must match exactly. This permits includes to contribute
 -- declarations such as canonical Account ownership, but fails closed if an
@@ -143,7 +152,16 @@ admitActualJournalFromResolvedJournal
   :: Journal
   -> Text
   -> Either (NonEmpty ActualJournalError) ActualJournal
-admitActualJournalFromResolvedJournal journal input
+admitActualJournalFromResolvedJournal journal input =
+  case parseJournalDocument input of
+    Left journalErrors -> Left (fmap ActualJournalSyntaxError journalErrors)
+    Right document -> admitActualJournalFromDocument journal document
+
+admitActualJournalFromDocument
+  :: Journal
+  -> JournalDocument
+  -> Either (NonEmpty ActualJournalError) ActualJournal
+admitActualJournalFromDocument journal document
   | transactionCount /= metadataCount = Left
       (ActualTransactionMetadataAlignmentMismatch
         transactionCount metadataCount NonEmpty.:| [])
@@ -158,7 +176,7 @@ admitActualJournalFromResolvedJournal journal input
         }
   where
     transactions = journalTransactions journal
-    metadataBlocks = transactionMetadataBlocks input
+    metadataBlocks = journalDocumentTransactionSources document
     transactionCount = length transactions
     metadataCount = length metadataBlocks
     admissions = zipWith admitTransactionMetadata transactions metadataBlocks
@@ -179,14 +197,6 @@ admitActualJournalFromResolvedJournal journal input
         ++ duplicateActualIdErrors locatedIdentified
         ++ reversalIntegrityErrors identifiedTransactions reversals
 
-type LocatedLine = (Int, Text)
-
-data LocatedMetadata = LocatedMetadata
-  { locatedMetadataLine  :: Int
-  , locatedMetadataKey   :: Text
-  , locatedMetadataValue :: Text
-  }
-
 data LocatedIdentifiedActual = LocatedIdentifiedActual
   { locatedIdentifiedLine  :: Int
   , locatedIdentifiedValue :: IdentifiedActualTransaction
@@ -199,75 +209,11 @@ data TransactionMetadataAdmission = TransactionMetadataAdmission
   , admissionReversal    :: Maybe ActualReversalDeclaration
   }
 
--- | Recover transaction blocks using the same top-level shape as the Journal
--- syntax, then retain only metadata owned by the Actual projection.
-transactionMetadataBlocks :: Text -> [[LocatedMetadata]]
-transactionMetadataBlocks input =
-  [ mapMaybe relevantMetadata (drop 1 block)
-  | block@((_, header) : _) <- sourceBlocks input
-  , not (isNonTransactionDirective header)
-  ]
-
-sourceBlocks :: Text -> [[LocatedLine]]
-sourceBlocks = map reverse . reverse . foldl' addLine [] . zip [1..] . T.lines
-  where
-    addLine blocks located@(_, line)
-      | startsBlock line = [located] : blocks
-      | otherwise = case blocks of
-          [] -> []
-          block : rest -> (located : block) : rest
-
-startsBlock :: Text -> Bool
-startsBlock line =
-  not (T.null (T.strip line))
-    && not (isIndented line)
-    && not (isComment line)
-
-relevantMetadata :: LocatedLine -> Maybe LocatedMetadata
-relevantMetadata (lineNumber, line)
-  | not (isIndented line && isComment line) = Nothing
-  | otherwise = case T.breakOn ":" cleanLine of
-      (_, remainder) | T.null remainder -> Nothing
-      (_, remainder)
-        | key `elem` relevantMetadataKeys -> Just LocatedMetadata
-            { locatedMetadataLine = lineNumber
-            , locatedMetadataKey = key
-            , locatedMetadataValue = T.strip (T.drop 1 remainder)
-            }
-        | otherwise -> Nothing
-  where
-    cleanLine = T.strip
-      (T.dropWhile (\character -> character == ';' || isSpace character)
-        (T.strip line))
-    key = T.toCaseFold (T.strip (fst (T.breakOn ":" cleanLine)))
-
-relevantMetadataKeys :: [Text]
-relevantMetadataKeys = ["event-id", "plan-id", "reverses"]
-
-isNonTransactionDirective :: Text -> Bool
-isNonTransactionDirective line =
-  any (`isDirective` line) ["account", "include", "commodity"]
-
-isDirective :: Text -> Text -> Bool
-isDirective keyword line = case T.stripPrefix keyword (T.stripStart line) of
-  Nothing -> False
-  Just remainder ->
-    T.null remainder
-      || maybe False (isSpace . fst) (T.uncons remainder)
-
-isComment :: Text -> Bool
-isComment = T.isPrefixOf ";" . T.stripStart
-
-isIndented :: Text -> Bool
-isIndented line = case T.uncons line of
-  Just (character, _) -> isSpace character
-  Nothing -> False
-
 admitTransactionMetadata
   :: Transaction
-  -> [LocatedMetadata]
+  -> JournalTransactionSource
   -> TransactionMetadataAdmission
-admitTransactionMetadata transaction metadata = TransactionMetadataAdmission
+admitTransactionMetadata transaction source = TransactionMetadataAdmission
   { admissionErrors =
       eventErrors
         ++ planErrors
@@ -279,6 +225,7 @@ admitTransactionMetadata transaction metadata = TransactionMetadataAdmission
   , admissionReversal = reversalDeclaration
   }
   where
+    metadata = journalTransactionSourceMetadata source
     eventEntries = metadataEntries "event-id" metadata
     planEntries = metadataEntries "plan-id" metadata
     reversesEntries = metadataEntries "reverses" metadata
@@ -335,14 +282,14 @@ admitTransactionMetadata transaction metadata = TransactionMetadataAdmission
                       , reversedTransactionId = targetId
                       })
 
-metadataEntries :: Text -> [LocatedMetadata] -> [LocatedMetadata]
-metadataEntries key = filter ((== key) . locatedMetadataKey)
+metadataEntries :: Text -> [JournalMetadata] -> [JournalMetadata]
+metadataEntries key = filter ((== key) . journalMetadataKey)
 
 admitMetadataValue
   :: Text
   -> (Text -> Either parseError value)
   -> (Int -> parseError -> ActualJournalError)
-  -> [LocatedMetadata]
+  -> [JournalMetadata]
   -> ([ActualJournalError], Maybe (Int, value))
 admitMetadataValue key parseValue invalidError entries = case entries of
   [] -> ([], Nothing)
@@ -351,13 +298,13 @@ admitMetadataValue key parseValue invalidError entries = case entries of
     , either (const Nothing) (Just . withLine) parsed
     )
     where
-      lineNumber = locatedMetadataLine firstEntry
-      parsed = parseValue (locatedMetadataValue firstEntry)
+      lineNumber = journalMetadataLine firstEntry
+      parsed = parseValue (journalMetadataValue firstEntry)
       withLine value = (lineNumber, value)
       parseErrors = either (\err -> [invalidError lineNumber err])
         (const []) parsed
       duplicateErrors =
-        [ DuplicateActualMetadataKey (locatedMetadataLine entry) key
+        [ DuplicateActualMetadataKey (journalMetadataLine entry) key
         | entry <- duplicateEntries
         ]
 
