@@ -65,6 +65,7 @@ import HKernel.Journal
   , journalMetadataValue
   , journalTransactionSourceHeaderLine
   , journalTransactionSourceMetadata
+  , journalTransactionSourceTransaction
   , journalTransactions
   , parseJournalDocument
   , validateJournalDocument
@@ -141,6 +142,7 @@ data PlanJournalError
   | DuplicatePlanJournalMetadataKey Int Text
   | DuplicatePlanJournalPlanId PlanId (NonEmpty Int)
   | PlanJournalTransactionMetadataAlignmentMismatch Int Int
+  | PlanJournalTransactionSourceAlignmentMismatch Int
   deriving (Eq, Show)
 
 -- | Parse accounting syntax, then require one unique @plan-id@ per transaction.
@@ -199,6 +201,8 @@ admitPlanJournalFromSources journal metadataBlocks
   | transactionCount /= metadataCount = Left
       (PlanJournalTransactionMetadataAlignmentMismatch
         transactionCount metadataCount NonEmpty.:| [])
+  | Just sourceErrors <- NonEmpty.nonEmpty sourceAlignmentErrors =
+      Left sourceErrors
   | otherwise = case NonEmpty.nonEmpty allErrors of
       Just errors -> Left errors
       Nothing -> Right PlanJournal
@@ -213,6 +217,11 @@ admitPlanJournalFromSources journal metadataBlocks
     transactions = journalTransactions journal
     transactionCount = length transactions
     metadataCount = length metadataBlocks
+    sourceAlignmentErrors =
+      [ PlanJournalTransactionSourceAlignmentMismatch index
+      | (index, transaction, source) <- zip3 [1..] transactions metadataBlocks
+      , transaction /= journalTransactionSourceTransaction source
+      ]
     admissions = zipWith admitPlanMetadata transactions metadataBlocks
     locatedPlans = mapMaybe admissionPlan admissions
     allErrors =
