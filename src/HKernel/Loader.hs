@@ -72,12 +72,18 @@ data LoadError
 -- The resolved Journal and the root transaction-source evidence are produced
 -- from one parse of the supplied root bytes. Included documents still resolve
 -- from the filesystem, but their physical coordinates never enter the root
--- evidence. The constructor stays private so callers cannot fabricate this
--- pairing directly.
-data JournalRootObservation = JournalRootObservation
-  { journalRootObservationJournal            :: Journal
-  , journalRootObservationTransactionSources :: [JournalTransactionSource]
-  }
+-- evidence. The positional constructor stays private so callers cannot create
+-- or record-update a mismatched pairing directly.
+data JournalRootObservation
+  = JournalRootObservation Journal [JournalTransactionSource]
+
+journalRootObservationJournal :: JournalRootObservation -> Journal
+journalRootObservationJournal (JournalRootObservation journal _) = journal
+
+journalRootObservationTransactionSources
+  :: JournalRootObservation
+  -> [JournalTransactionSource]
+journalRootObservationTransactionSources (JournalRootObservation _ sources) = sources
 
 newtype LoadedFiles = LoadedFiles (Map FilePath IncludeTrace)
 
@@ -129,11 +135,10 @@ loadJournalRootObservationFromSource rootPath rootSource = runExceptT
         loadRootDocuments (rootTrace rootPath) rootSource
       journal <- fromEither
         (first JournalValidationFailed (validateJournalDocument resolvedDocument))
-      pure JournalRootObservation
-        { journalRootObservationJournal = journal
-        , journalRootObservationTransactionSources =
-            journalDocumentTransactionSources rootDocument
-        }
+      pure
+        (JournalRootObservation
+          journal
+          (journalDocumentTransactionSources rootDocument))
 
 runLoader :: Loader JournalDocument -> IO (Either LoadError Journal)
 runLoader loadRoot = runExceptT
