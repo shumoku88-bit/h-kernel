@@ -41,6 +41,9 @@ jobs:
       - name: Build
         run: cabal build all
 
+      - name: Build report observation tool
+        run: cabal build --project-file=tools/report-observe/cabal.project exe:report-observe
+
       - name: Test
         run: cabal test all
 
