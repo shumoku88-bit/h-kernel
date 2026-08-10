@@ -23,12 +23,23 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, diffDays)
 import Data.Time.Format (defaultTimeLocale, formatTime)
-import HKernel.Account (Account, accountName)
+import HKernel.Account (Account, accountName, declaredAccount)
 import HKernel.HouseholdIssue
 import HKernel.Money
 import HKernel.Period
-import HKernel.Plan (CommittedOutgoingPlan)
-import HKernel.Plan.Render (renderCommittedOutgoingPlanLine)
+import HKernel.Plan
+  ( CommittedOutgoingPlan
+  , committedPlanAmount
+  , committedPlanDate
+  , committedPlanDirection
+  , committedPlanId
+  , committedPlanMemo
+  , declaredOutgoingPaymentDirection
+  , declaredPaymentDestination
+  , declaredPaymentSource
+  , planIdText
+  , positiveAmountValue
+  )
 import HKernel.Render
   ( renderReportBookCoreWithPresentation
   )
@@ -337,7 +348,27 @@ plansAt horizon classified =
   ]
 
 renderPlanLines :: [CommittedOutgoingPlan] -> Text
-renderPlanLines = T.intercalate "\n" . map renderCommittedOutgoingPlanLine
+renderPlanLines plans = renderTerminalTable columns rows Nothing
+  where
+    columns =
+      [ ("Date", AlignLeft)
+      , ("Plan ID", AlignLeft)
+      , ("Amount", AlignRight)
+      , ("From", AlignLeft)
+      , ("To", AlignLeft)
+      , ("Memo", AlignLeft)
+      ]
+    rows = map renderPlanRow plans
+    renderPlanRow plan =
+      [ plainCell (renderDay (committedPlanDate plan))
+      , plainCell (planIdText (committedPlanId plan))
+      , plainCell (renderAmount (positiveAmountValue (committedPlanAmount plan)))
+      , plainCell (accountName (declaredAccount (declaredPaymentSource direction)))
+      , plainCell (accountName (declaredAccount (declaredPaymentDestination direction)))
+      , plainCell (committedPlanMemo plan)
+      ]
+      where
+        direction = declaredOutgoingPaymentDirection (committedPlanDirection plan)
 
 renderHouseholdIssues :: IssueVisibility -> [HouseholdIssue] -> Text
 renderHouseholdIssues =
