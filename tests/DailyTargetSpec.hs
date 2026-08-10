@@ -88,7 +88,7 @@ characterizeNativeSourceParity registry plan retainedScope = do
         (parseHouseholdConfiguration budgetPolicy nativeHouseholdConfig)
       planJournal = mustRight (parsePlanJournal nativePlanJournal)
       obligationSelections = mustRight
-        (parseDailyTargetPlanJournalSelections nativePlanJournal planJournal)
+        (admitDailyTargetPlanJournalSelections planJournal)
       nativeScope = mustRight
         (dailyTargetScopeFromSelections
           registry
@@ -106,7 +106,7 @@ characterizeNativeSourceParity registry plan retainedScope = do
     [mustRight (mkDailyTargetScopeId "wifi")]
     (map dailyTargetObligationSelectionId obligationSelections)
 
-  case parseDailyTargetPlanJournalSelections partialReservationPlanJournal
+  case admitDailyTargetPlanJournalSelections
       (mustRight (parsePlanJournal partialReservationPlanJournal)) of
     Left errors
       | IncompleteDailyTargetReservation 1 `elem` NonEmpty.toList errors ->
@@ -124,9 +124,7 @@ characterizeNativeSourceParity registry plan retainedScope = do
     "canonical blank line detaches Daily Target metadata"
     []
     (mustRight
-      (parseDailyTargetPlanJournalSelections
-        detachedDailyTargetMetadataPlanJournal
-        detachedJournal))
+      (admitDailyTargetPlanJournalSelections detachedJournal))
 
   let duplicateId = mustRight (mkDailyTargetScopeId "wifi")
       duplicateAsset = selectDailyTargetAsset duplicateId

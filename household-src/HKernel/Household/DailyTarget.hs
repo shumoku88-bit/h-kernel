@@ -22,7 +22,7 @@ module HKernel.Household.DailyTarget
   , DailyTargetSelectionError(..)
   , dailyTargetScopeFromSelections
   , DailyTargetPlanJournalError(..)
-  , parseDailyTargetPlanJournalSelections
+  , admitDailyTargetPlanJournalSelections
   , DailyTargetPolicy
   , DailyTargetPolicyError(..)
   , mkDailyTargetPolicy
@@ -70,13 +70,10 @@ import HKernel.Journal
   ( Journal
   , JournalMetadata
   , JournalTransactionSource
-  , journalDocumentTransactionSources
-  , journalErrorLine
   , journalMetadataKey
   , journalMetadataLine
   , journalMetadataValue
   , journalTransactionSourceMetadata
-  , parseJournalDocument
   )
 import HKernel.Money
 import HKernel.Period
@@ -85,6 +82,7 @@ import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , PlanJournal
   , identifiedPlanId
+  , planJournalTransactionSourceFor
   , planJournalTransactions
   )
 import HKernel.Plan.Reservation
@@ -175,11 +173,10 @@ dailyTargetScopeFromSelections registry plans assetSelections obligationSelectio
     allErrors = duplicateErrors ++ policyErrors ++ obligationErrors
 
 -- | Privacy-preserving failures while projecting Household Daily Target
--- metadata from the same transaction blocks already admitted by Plan.Journal.
+-- metadata from the same transaction evidence already admitted by Plan.Journal.
 -- Invalid private values are never retained in these errors.
 data DailyTargetPlanJournalError
-  = DailyTargetPlanJournalSyntaxError Int
-  | DailyTargetPlanJournalMetadataAlignmentMismatch Int Int
+  = DailyTargetPlanJournalMetadataAlignmentMismatch Int Int
   | DuplicateDailyTargetPlanJournalMetadataKey Int Text
   | EmptyDailyTargetPlanJournalSelectionId Int
   | DailyTargetReservationWithoutSelection Int
@@ -195,31 +192,30 @@ data DailyTargetSelectionAdmission = DailyTargetSelectionAdmission
   , dailyTargetAdmissionSelection :: Maybe DailyTargetObligationSelection
   }
 
--- | Project Daily Target declarations from the canonical @plan.journal@.
+-- | Project Daily Target declarations from one already admitted PlanJournal.
 --
--- Plan identity remains owned by 'HKernel.Plan.Journal'. Journal block and
--- metadata syntax remain owned by 'HKernel.Journal'. This boundary assigns
--- meaning only to @daily-target-id@ and optional reservation metadata.
+-- Plan identity and root transaction/source alignment remain owned by
+-- 'HKernel.Plan.Journal'. Journal metadata syntax remains owned by
+-- 'HKernel.Journal'. This boundary assigns meaning only to @daily-target-id@
+-- and optional reservation metadata without parsing @plan.journal@ again.
 -- Transactions without a selection id remain ordinary Plans and publish no
 -- Daily Target selection.
-parseDailyTargetPlanJournalSelections
-  :: Text
-  -> PlanJournal
-  -> Either (NonEmpty DailyTargetPlanJournalError) [DailyTargetObligationSelection]
-parseDailyTargetPlanJournalSelections input planJournal =
-  case parseJournalDocument input of
-    Left journalErrors ->
-      Left (fmap (DailyTargetPlanJournalSyntaxError . journalErrorLine) journalErrors)
-    Right document ->
-      admitDailyTargetPlanJournalSelections
-        (journalDocumentTransactionSources document)
-        planJournal
-
 admitDailyTargetPlanJournalSelections
+  :: PlanJournal
+  -> Either (NonEmpty DailyTargetPlanJournalError) [DailyTargetObligationSelection]
+admitDailyTargetPlanJournalSelections planJournal =
+  admitDailyTargetPlanJournalSelectionsFromSources metadataSources planJournal
+  where
+    transactions = planJournalTransactions planJournal
+    metadataSources = mapMaybe sourceFor transactions
+    sourceFor identified =
+      planJournalTransactionSourceFor (identifiedPlanId identified) planJournal
+
+admitDailyTargetPlanJournalSelectionsFromSources
   :: [JournalTransactionSource]
   -> PlanJournal
   -> Either (NonEmpty DailyTargetPlanJournalError) [DailyTargetObligationSelection]
-admitDailyTargetPlanJournalSelections metadataSources planJournal
+admitDailyTargetPlanJournalSelectionsFromSources metadataSources planJournal
   | transactionCount /= metadataCount = Left
       (DailyTargetPlanJournalMetadataAlignmentMismatch
         transactionCount metadataCount NonEmpty.:| [])

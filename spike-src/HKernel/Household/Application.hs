@@ -73,8 +73,8 @@ import HKernel.Household.DailyTarget
   , DailyTargetPlanJournalError
   , DailyTargetScope
   , DailyTargetSelectionError
+  , admitDailyTargetPlanJournalSelections
   , dailyTargetScopeFromSelections
-  , parseDailyTargetPlanJournalSelections
   )
 import HKernel.Household.Issue.TSV
   ( HouseholdIssueTSVError
@@ -348,7 +348,6 @@ loadConfigsAndIssues root paths accountsRegistry actualRootText actualJournal pl
                               Right issues -> case assembleDailyScope
                                   accountsRegistry
                                   (householdConfigurationDailyTargetAssets configuration)
-                                  planRootText
                                   planJournal of
                                 Left errors -> pure (Left errors)
                                 Right dailyScope ->
@@ -413,14 +412,13 @@ validateHouseholdAccountPolicy registry (Just policy) =
 assembleDailyScope
   :: AccountRegistry
   -> [DailyTargetAssetSelection]
-  -> Text
   -> PlanJournal
   -> Either (NonEmpty HouseholdLoadError) DailyTargetScope
-assembleDailyScope registry assetSelections planRootText planJournal = do
+assembleDailyScope registry assetSelections planJournal = do
   admittedPlans <- first (pure . HouseholdPlanProjectionFailed)
     (admitPlanJournal planJournal)
   obligationSelections <- first (pure . HouseholdDailyTargetPlanMetadataFailed)
-    (parseDailyTargetPlanJournalSelections planRootText planJournal)
+    (admitDailyTargetPlanJournalSelections planJournal)
   first (pure . HouseholdDailyTargetScopeFailed)
     (dailyTargetScopeFromSelections
       registry
@@ -505,7 +503,6 @@ admitCanonicalHousehold root accountsText actualText planText budgetText budgetP
   dailyScope <- assembleDailyScope
     accountsRegistry
     (householdConfigurationDailyTargetAssets configuration)
-    planText
     planJournal
 
   pure HouseholdState
