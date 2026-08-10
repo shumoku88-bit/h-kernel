@@ -13,6 +13,10 @@ module HKernel.Editor.PlanCompleteAdvance
   ( PlanRecurrence(..)
   , PlanAdvanceProposal(..)
   , PlanAdvanceSafety(..)
+  , PositivePlanMagnitude
+  , PlanMagnitudeError(..)
+  , mkPositivePlanMagnitude
+  , positivePlanMagnitudeQuantity
   , PlanCompleteAdvanceIntent(..)
   , PlanCompleteAdvancePreview(..)
   , PlanCompleteAdvanceError(..)
@@ -51,10 +55,6 @@ import HKernel.Editor.ActualWriter
   ( WriterFileSystem(..)
   , defaultWriterFileSystem
   )
-import HKernel.Editor.PlanLifecycle
-  ( PositivePlanFinishAmount
-  , positivePlanFinishAmountQuantity
-  )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Editor.TransactionBlock
   ( IntentPosting(..)
@@ -78,11 +78,13 @@ import HKernel.Ledger
   , transactionPostings
   )
 import HKernel.Money
-  ( amountCommodity
+  ( Quantity
+  , amountCommodity
   , amountQuantity
   , mkAmount
   , negateQuantity
   , quantityToRational
+  , zeroQuantity
   )
 import HKernel.Plan
   ( PlanId
@@ -125,12 +127,30 @@ data PlanAdvanceSafety = PlanAdvanceSafety
   , advanceLatestRelatedActivePlan :: Maybe IdentifiedPlanTransaction
   } deriving (Eq, Show)
 
+-- | Strictly positive replacement magnitude for binary Plan completion and
+-- successor overrides. Existing posting signs and commodities remain the owners
+-- of direction and commodity; this value carries only the replacement Quantity.
+newtype PositivePlanMagnitude = PositivePlanMagnitude
+  { positivePlanMagnitudeQuantity :: Quantity
+  } deriving (Eq, Show)
+
+data PlanMagnitudeError
+  = NonPositivePlanMagnitude Quantity
+  deriving (Eq, Show)
+
+mkPositivePlanMagnitude
+  :: Quantity
+  -> Either PlanMagnitudeError PositivePlanMagnitude
+mkPositivePlanMagnitude quantity
+  | quantity <= zeroQuantity = Left (NonPositivePlanMagnitude quantity)
+  | otherwise = Right (PositivePlanMagnitude quantity)
+
 data PlanCompleteAdvanceIntent = PlanCompleteAdvanceIntent
   { completeAdvancePlanId          :: PlanId
   , completeAdvanceActualDate      :: Day
-  , completeAdvanceActualAmount    :: Maybe PositivePlanFinishAmount
+  , completeAdvanceActualAmount    :: Maybe PositivePlanMagnitude
   , completeAdvanceSuccessorDate   :: Maybe Day
-  , completeAdvanceSuccessorAmount :: Maybe PositivePlanFinishAmount
+  , completeAdvanceSuccessorAmount :: Maybe PositivePlanMagnitude
   } deriving (Eq, Show)
 
 data PlanCompleteAdvancePreview = PlanCompleteAdvancePreview
@@ -302,7 +322,7 @@ postingIntent posting = IntentPosting
 
 replaceBinaryMagnitude
   :: PlanCompleteAdvanceError
-  -> Maybe PositivePlanFinishAmount
+  -> Maybe PositivePlanMagnitude
   -> NonEmpty Posting
   -> Either (NonEmpty PlanCompleteAdvanceError) (NonEmpty Posting)
 replaceBinaryMagnitude _ Nothing postings = Right postings
@@ -310,7 +330,7 @@ replaceBinaryMagnitude errorValue (Just replacement) postings
   | NonEmpty.length postings /= 2 = Left (pure errorValue)
   | otherwise = Right (fmap replace postings)
   where
-    magnitude = positivePlanFinishAmountQuantity replacement
+    magnitude = positivePlanMagnitudeQuantity replacement
     replace posting =
       let oldAmount = postingAmount posting
           oldQuantity = amountQuantity oldAmount
