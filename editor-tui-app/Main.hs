@@ -202,9 +202,7 @@ drawReportsView :: AppContext -> Widget Name
 drawReportsView context =
   vBox
     [ borderWithLabel (txt ("Household Report: " <> reportChoiceLabel selected))
-        (withVScrollBars OnRight
-          (withHScrollBars OnBottom
-            (viewport ReportsViewport Both (renderSelectedReport context))))
+        (viewport ReportsViewport Both (renderSelectedReport context))
     , str "[Enter] Choose report   [↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page"
     , str "[Home/End] Top/Bottom   [r] Next report   [1-7] Switch section   [q] Quit"
     ]
@@ -291,21 +289,21 @@ reportChoices =
 renderSelectedReport :: AppContext -> Widget Name
 renderSelectedReport context = case contextSelectedReport context of
   ReportTrialBalance -> withReportBook $ \(ReportBook trial _ _ _ _ _) ->
-    txt (renderTrialBalanceWithPresentation pres trial)
+    reportText (renderTrialBalanceWithPresentation pres trial)
   ReportBalanceSheet -> withReportBook $ \(ReportBook _ balance _ _ _ _) ->
-    txt (renderBalanceSheetWithPresentation pres balance)
+    reportText (renderBalanceSheetWithPresentation pres balance)
   ReportProfitAndLoss -> withReportBook $ \(ReportBook _ _ profit _ _ _) ->
-    txt (renderProfitAndLossWithPresentation pres profit)
+    reportText (renderProfitAndLossWithPresentation pres profit)
   ReportDailyFlow -> withReportBook $ \(ReportBook _ _ _ daily _ _) ->
-    txt (renderDailyFlowWithPresentation pres daily)
+    reportText (renderDailyFlowWithPresentation pres daily)
   ReportMonthlyAccounts -> withReportBook $ \(ReportBook _ _ _ _ _ monthly) ->
-    txt (renderMonthlyAccountsWithPresentation pres monthly)
+    reportText (renderMonthlyAccountsWithPresentation pres monthly)
   ReportHousehold section -> renderHouseholdSection section
   ReportRecentTransactions -> withReportBook $ \(ReportBook _ _ _ _ recent _) ->
-    txt (renderRecentTransactionsWithPresentation pres recent)
+    reportText (renderRecentTransactionsWithPresentation pres recent)
   ReportCombinedBook -> withReportBook $ \book -> case householdSurface of
-    Left err -> txt ("Report surface error: " <> T.pack (show err))
-    Right surface -> txt
+    Left err -> reportText ("Report surface error: " <> T.pack (show err))
+    Right surface -> reportText
       (renderReportBookWithHouseholdPresentation pres book surface)
   where
     state = contextHouseholdState context
@@ -314,16 +312,40 @@ renderSelectedReport context = case contextSelectedReport context of
     householdSurface = contextHouseholdReportSurface context
     resolvedReportBook = contextResolvedReportBook context
     withReportBook renderBook = case resolvedReportBook of
-      Left err -> txt ("Report plan error: " <> renderReportPlanError err)
+      Left err -> reportText ("Report plan error: " <> renderReportPlanError err)
       Right book -> renderBook book
     renderHouseholdSection section = case householdSurface of
-      Left err -> txt ("Report surface error: " <> T.pack (show err))
-      Right surface -> txt (renderHouseholdReportSection pres section surface)
+      Left err -> reportText ("Report surface error: " <> T.pack (show err))
+      Right surface -> reportText (renderHouseholdReportSection pres section surface)
 
 renderReportPlanError :: ReportPlanError -> Text
 renderReportPlanError (InvalidReportRange reportName start end) =
   "invalid " <> reportName <> " range: start " <> T.pack (show start)
     <> " is after end " <> T.pack (show end)
+
+-- CLI report renderers intentionally publish ANSI SGR styling. Brick owns its
+-- own layout and attributes, so its text widgets must receive display text only.
+reportText :: Text -> Widget Name
+reportText = txt . stripTerminalSgr
+
+stripTerminalSgr :: Text -> Text
+stripTerminalSgr value = T.concat (go value)
+  where
+    go remaining
+      | T.null remaining = []
+      | otherwise =
+          let (plain, control) = T.breakOn "\ESC[" remaining
+          in plain :
+              if T.null control
+                then []
+                else
+                  let afterPrefix = T.drop 2 control
+                      (_, suffix) = T.span isSgrParameter afterPrefix
+                  in case T.uncons suffix of
+                      Just ('m', afterSgr) -> go afterSgr
+                      _ -> "\ESC[" : go afterPrefix
+    isSgrParameter character =
+      character == ';' || (character >= '0' && character <= '9')
 
 drawSettingsView :: AppContext -> Widget Name
 drawSettingsView context =
