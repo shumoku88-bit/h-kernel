@@ -18,6 +18,7 @@ module HKernel.Household.BudgetMovement
   , HouseholdBudgetMovementJournalError(..)
   , admitHouseholdBudgetMovementJournal
   , admitHouseholdBudgetMovementJournalFromResolvedJournal
+  , admitHouseholdBudgetMovementJournalFromResolvedSources
   , HouseholdBudgetMovementJournalRenderError(..)
   , renderHouseholdBudgetMovementTransactions
   ) where
@@ -131,9 +132,8 @@ data HouseholdBudgetMovementJournalError
 -- Budget movements.
 --
 -- This source-independent projection remains useful to compatibility callers.
--- Canonical native loading should prefer
--- 'admitHouseholdBudgetMovementJournalFromResolvedJournal' so root source
--- evidence and movement meaning remain one observation.
+-- Canonical native loading should prefer a root-evidence admission so source
+-- coordinates and movement meaning remain one observation.
 --
 -- Posting order is meaningful at this boundary: posting 1 is @from@ and posting
 -- 2 is @to@. This preserves the source-independent movement value even for a
@@ -182,10 +182,8 @@ admitHouseholdBudgetMovementJournal journal =
 -- | Admit one resolved Budget Journal together with the exact root bytes from
 -- which root-local metadata evidence was observed.
 --
--- Included Account declarations may contribute to the resolved Journal, but a
--- hidden included transaction cannot silently acquire root-local metadata. The
--- transaction/source count fence therefore mirrors the root-ownership rule used
--- by Plan Journal admission.
+-- This compatibility entry point reparses the supplied root Text, then delegates
+-- to the same parser-owned source admission used by canonical filesystem loading.
 admitHouseholdBudgetMovementJournalFromResolvedJournal
   :: Journal
   -> Text
@@ -196,8 +194,24 @@ admitHouseholdBudgetMovementJournalFromResolvedJournal journal rootSource = do
   document <- case parseJournalDocument rootSource of
     Left errors -> Left (fmap BudgetMovementJournalSyntaxError errors)
     Right value -> Right value
-  let sources = journalDocumentTransactionSources document
-      transactionCount = length (journalTransactions journal)
+  admitHouseholdBudgetMovementJournalFromResolvedSources
+    journal
+    (journalDocumentTransactionSources document)
+
+-- | Admit Budget movement meaning from parser-owned root transaction evidence
+-- retained by the same loading observation as the resolved Journal.
+--
+-- Included Account declarations may contribute to the resolved Journal, but a
+-- hidden included transaction cannot silently acquire root-local metadata. The
+-- transaction/source count fence therefore mirrors Actual and Plan admission.
+admitHouseholdBudgetMovementJournalFromResolvedSources
+  :: Journal
+  -> [JournalTransactionSource]
+  -> Either
+      (NonEmpty HouseholdBudgetMovementJournalError)
+      HouseholdBudgetMovementJournal
+admitHouseholdBudgetMovementJournalFromResolvedSources journal sources = do
+  let transactionCount = length (journalTransactions journal)
       sourceCount = length sources
   if transactionCount /= sourceCount
     then Left (pure
