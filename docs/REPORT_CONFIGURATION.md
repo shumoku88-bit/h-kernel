@@ -72,8 +72,14 @@ standalone -> resolved report -> shared renderer + PresentationConfig
 
 
 ```toml
+[presentation.hierarchy]
+heading-color = "cyan"
+section-color = "yellow"
+
 [presentation.amounts]
 negative-style = "parentheses"
+positive-color = "green"
+negative-color = "red"
 
 [reports.trial-balance]
 as-of = "latest"
@@ -106,6 +112,12 @@ count = 5
 ## プレゼンテーションのセマンティクス
 
 
+`presentation.hierarchy` と `presentation.amounts` は独立してオプションです。どちらか一方だけを設定でき、テーブル自体がない場合はその意味の既定値が使われます。
+
+
+`presentation.hierarchy.heading-color` と `presentation.hierarchy.section-color` は、レポート階層の表示色を選びます。heading はレポート見出し、section は Income / Expenses や Household report 内の小見出しなどを意味します。既定値はそれぞれ `"cyan"` と `"yellow"` です。
+
+
 `presentation.amounts.negative-style` は以下を正確に受け入れます:
 
 
@@ -117,15 +129,19 @@ count = 5
 デフォルトは`"parentheses"`です。この値は端末表現のみを変更します。符号付きの `Quantity`、`Amount`、および `Balance` の値は変更されません。
 
 
-`presentation.amounts.negative-color`（オプション）は以下を正確に受け入れます:
+`presentation.amounts.positive-color` と `presentation.amounts.negative-color` は、金額表示の positive/green-tone と negative/red-tone を選びます。既定値はそれぞれ `"green"` と `"red"` です。negative tone は負値だけでなく、Expense・Liability など金額として同じ presentation role で描画される行と合計にも使われます。
 
 
-- `"red"` (デフォルト), `"bright-red"`, `"green"`, `"yellow"`, `"blue"`, `"magenta"`, `"cyan"`, `"white"`
+4つの color 座標は、以下を正確に受け入れます:
 
 
-この値は負値、およびExpense・Liabilityなど金額として赤toneで描画される行と合計のANSI端末カラーを変更します。
+- `"red"`, `"bright-red"`, `"green"`, `"yellow"`, `"blue"`, `"magenta"`, `"cyan"`, `"white"`
 
-ただし、`Balanced: NO`や`under_backed`などの警告・状態表示は対象外で、固定の警告色を保ちます。
+
+これらは report hierarchy と amount tone の ANSI 端末カラーだけを変更します。`Balanced: YES/NO` や `backed/under_backed` などの success/failure status は amount palette とは別の意味で、既存の固定 green/red を保ちます。
+
+
+bold と dim も色ではなく emphasis として固定です。現在の muted/metadata/zero 表示は端末既定foregroundに dim を適用するため、`muted = "bright-black"` のような色座標はこの schema にはありません。
 
 
 `reports.daily-flow.max-date-columns`もプレゼンテーションコーディネートです。現在の TOML の場所がデイリー フロー テーブル内に残っている場合でも、設定された `all` とスタンドアロンのデイリー フロー出力によって共有されます。
