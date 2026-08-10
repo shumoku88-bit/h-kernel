@@ -168,10 +168,12 @@ drawSectionTabBar currentSection =
   borderWithLabel (str "h-kernel Household")
     (hBox (map renderTab [minBound .. maxBound]))
   where
-    renderTab section
-      | section == currentSection = withAttr (attrName "activeTab")
-          (str (" [" <> sectionNum section <> ": " <> sectionName section <> "] "))
-      | otherwise = str ("  " <> sectionNum section <> ": " <> sectionName section <> "  ")
+    renderTab section = clickable (SectionTab section) rendered
+      where
+        rendered
+          | section == currentSection = withAttr (attrName "activeTab")
+              (str (" [" <> sectionNum section <> ": " <> sectionName section <> "] "))
+          | otherwise = str ("  " <> sectionNum section <> ": " <> sectionName section <> "  ")
     sectionNum ActualSection = "1"
     sectionNum PlansSection = "2"
     sectionNum BudgetSection = "3"
@@ -204,7 +206,7 @@ drawReportsView context =
   vBox
     [ borderWithLabel (txt ("Household Report: " <> reportChoiceLabel selected))
         (viewport ReportsViewport Both (renderSelectedReport context))
-    , str "[Enter] Choose report   [↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page"
+    , str "[Enter] Choose report   [wheel/↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page"
     , str "[Home/End] Top/Bottom   [r/R] Next/Previous report   [1-7] Switch section   [q] Quit"
     ]
   where
@@ -219,7 +221,7 @@ drawReportPicker choices =
           (padAll 1
             (L.renderList renderReportChoice True choices
               <=> str " "
-              <=> str "[↑/↓ or j/k] Move   [Enter] Open   [Esc] Back   [Q] Quit")))))
+              <=> str "[wheel/↑/↓ or j/k] Move   [click/Enter] Open   [Esc] Back   [Q] Quit")))))
 
 drawPlanBudgetSyncPicker
   :: L.List Name HKernel.Plan.Journal.IdentifiedPlanTransaction
@@ -232,7 +234,7 @@ drawPlanBudgetSyncPicker plans =
           (padAll 1
             ( L.renderList renderCompletedPlan True plans
               <=> str " "
-              <=> str "[↑/↓ or j/k] Move   [Enter] Retry sync   [Esc] Back   [Q] Quit")))))
+              <=> str "[wheel/↑/↓ or j/k] Move   [Enter] Retry sync   [Esc] Back   [Q] Quit")))))
 
 renderCompletedPlan :: Bool -> HKernel.Plan.Journal.IdentifiedPlanTransaction -> Widget Name
 renderCompletedPlan selected identified
@@ -360,7 +362,7 @@ drawSettingsView context =
                   <> T.pack (show (reportConfigurationPresentation
                     (householdStateReportConfig state))))
               ])))
-    , str "[1-7] Switch section   [q] Quit"
+    , str "[wheel] Scroll   [1-7] Switch section   [q] Quit"
     ]
   where
     state = contextHouseholdState context
@@ -379,6 +381,51 @@ appEvent event = do
 
 handleWorkspaceEvent :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleWorkspaceEvent context event = case event of
+  MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
+  MouseDown ReportsViewport V.BScrollUp _ _
+    | inReports -> vScrollBy reportsViewport (-3)
+  MouseDown ReportsViewport V.BScrollDown _ _
+    | inReports -> vScrollBy reportsViewport 3
+  MouseDown BudgetViewport V.BScrollUp _ _
+    | inBudget -> vScrollBy (viewportScroll BudgetViewport) (-3)
+  MouseDown BudgetViewport V.BScrollDown _ _
+    | inBudget -> vScrollBy (viewportScroll BudgetViewport) 3
+  MouseDown AccountsViewport V.BScrollUp _ _
+    | inAccounts -> vScrollBy (viewportScroll AccountsViewport) (-3)
+  MouseDown AccountsViewport V.BScrollDown _ _
+    | inAccounts -> vScrollBy (viewportScroll AccountsViewport) 3
+  MouseDown SettingsViewport V.BScrollUp _ _
+    | inSettings -> vScrollBy (viewportScroll SettingsViewport) (-3)
+  MouseDown SettingsViewport V.BScrollDown _ _
+    | inSettings -> vScrollBy (viewportScroll SettingsViewport) 3
+  MouseDown WorkspaceAccountList V.BScrollUp _ _
+    | inActual -> handleActualListEvent
+        (context { contextWorkspaceFocus = AccountsFocus }) (V.EvKey V.KUp [])
+  MouseDown WorkspaceAccountList V.BScrollDown _ _
+    | inActual -> handleActualListEvent
+        (context { contextWorkspaceFocus = AccountsFocus }) (V.EvKey V.KDown [])
+  MouseDown WorkspaceAccountList V.BLeft _ (Location (_, row))
+    | inActual -> selectActualAccountRow row
+  MouseDown WorkspaceTransactionList V.BScrollUp _ _
+    | inActual -> handleActualListEvent
+        (context { contextWorkspaceFocus = TransactionsFocus }) (V.EvKey V.KUp [])
+  MouseDown WorkspaceTransactionList V.BScrollDown _ _
+    | inActual -> handleActualListEvent
+        (context { contextWorkspaceFocus = TransactionsFocus }) (V.EvKey V.KDown [])
+  MouseDown WorkspaceTransactionList V.BLeft _ (Location (_, row))
+    | inActual -> selectActualTransactionRow row
+  MouseDown PlanList V.BScrollUp _ _
+    | inPlans -> zoom zoomPlanList (L.handleListEvent (V.EvKey V.KUp []))
+  MouseDown PlanList V.BScrollDown _ _
+    | inPlans -> zoom zoomPlanList (L.handleListEvent (V.EvKey V.KDown []))
+  MouseDown PlanList V.BLeft _ (Location (_, row))
+    | inPlans -> moveListSelection zoomPlanList row
+  MouseDown IssueList V.BScrollUp _ _
+    | inIssues -> zoom zoomIssueList (L.handleListEvent (V.EvKey V.KUp []))
+  MouseDown IssueList V.BScrollDown _ _
+    | inIssues -> zoom zoomIssueList (L.handleListEvent (V.EvKey V.KDown []))
+  MouseDown IssueList V.BLeft _ (Location (_, row))
+    | inIssues -> moveListSelection zoomIssueList row
   VtyEvent (V.EvKey V.KEsc []) -> halt
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
@@ -510,6 +557,7 @@ handleWorkspaceEvent context event = case event of
     inAccounts = contextCurrentSection context == AccountsSection
     inIssues = contextCurrentSection context == IssuesSection
     inReports = contextCurrentSection context == ReportsSection
+    inSettings = contextCurrentSection context == SettingsSection
     reportsViewport = viewportScroll ReportsViewport
     switchSection :: HouseholdSection -> EventM Name AppWrapper ()
     switchSection section =
@@ -550,6 +598,24 @@ handleWorkspaceEvent context event = case event of
     openSelectedIssue = case Maintenance.startSelectedIssueClose context of
       Nothing -> pure ()
       Just flow -> put (AppWrapper context (MaintenanceFlow flow))
+    selectActualAccountRow row = do
+      moveListSelection zoomWorkspaceAccounts row
+      AppWrapper updatedContext _ <- get
+      let focused = updatedContext { contextWorkspaceFocus = AccountsFocus }
+      put (AppWrapper (Actual.applyWorkspaceAccountFilter focused) Workspace)
+    selectActualTransactionRow row = do
+      moveListSelection zoomWorkspaceList row
+      AppWrapper updatedContext _ <- get
+      put (AppWrapper (updatedContext { contextWorkspaceFocus = TransactionsFocus }) Workspace)
+
+moveListSelection
+  :: Traversal' AppWrapper (L.List Name a)
+  -> Int
+  -> EventM Name AppWrapper ()
+moveListSelection traversal row =
+  zoom traversal $ do
+    items <- get
+    put (L.listMoveTo row items)
 
 reportChoiceIndex :: ReportChoice -> Int
 reportChoiceIndex choice = go 0 reportChoices
@@ -561,6 +627,14 @@ reportChoiceIndex choice = go 0 reportChoices
 
 handleReportPicker :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleReportPicker context event = case event of
+  MouseDown ReportPickerList V.BScrollUp _ _ ->
+    zoom zoomReportPicker (L.handleListEvent (V.EvKey V.KUp []))
+  MouseDown ReportPickerList V.BScrollDown _ _ ->
+    zoom zoomReportPicker (L.handleListEvent (V.EvKey V.KDown []))
+  MouseDown ReportPickerList V.BLeft _ (Location (_, row)) ->
+    case drop row reportChoices of
+      [] -> pure ()
+      choice : _ -> openChoice choice
   VtyEvent (V.EvKey V.KEsc []) -> put (AppWrapper context Workspace)
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
@@ -569,17 +643,25 @@ handleReportPicker context event = case event of
     case state of
       ReportPicker choices -> case L.listSelectedElement choices of
         Nothing -> put (AppWrapper context Workspace)
-        Just (_, choice) -> do
-          put (AppWrapper (context { contextSelectedReport = choice }) Workspace)
-          let reportsViewport = viewportScroll ReportsViewport
-          vScrollToBeginning reportsViewport
-          hScrollToBeginning reportsViewport
+        Just (_, choice) -> openChoice choice
       _ -> pure ()
   VtyEvent vtyEvent -> zoom zoomReportPicker (L.handleListEventVi L.handleListEvent vtyEvent)
   _ -> pure ()
+  where
+    openChoice choice = do
+      put (AppWrapper (context { contextSelectedReport = choice }) Workspace)
+      let reportsViewport = viewportScroll ReportsViewport
+      vScrollToBeginning reportsViewport
+      hScrollToBeginning reportsViewport
 
 handlePlanBudgetSyncPicker :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handlePlanBudgetSyncPicker context event = case event of
+  MouseDown PlanList V.BScrollUp _ _ ->
+    zoom zoomPlanBudgetSyncPicker (L.handleListEvent (V.EvKey V.KUp []))
+  MouseDown PlanList V.BScrollDown _ _ ->
+    zoom zoomPlanBudgetSyncPicker (L.handleListEvent (V.EvKey V.KDown []))
+  MouseDown PlanList V.BLeft _ (Location (_, row)) ->
+    moveListSelection zoomPlanBudgetSyncPicker row
   VtyEvent (V.EvKey V.KEsc []) -> put (AppWrapper context Workspace)
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
@@ -727,7 +809,10 @@ main = do
           issuesSource = householdWriteSnapshotIssuesSource snapshot
           context = makeWorkspaceContext False today journalFile source planSource budgetSource issuesSource state
           initialState = AppWrapper context Workspace
-          buildVty = mkVty V.defaultConfig
+          buildVty = do
+            vty <- mkVty V.defaultConfig
+            V.setMode (V.outputIface vty) V.Mouse True
+            pure vty
       initialVty <- buildVty
       _ <- customMain initialVty buildVty Nothing app initialState
       pure ()

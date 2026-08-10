@@ -97,6 +97,7 @@ data Name
   | IssuesViewport
   | ReportsViewport
   | SettingsViewport
+  | SectionTab HouseholdSection
   deriving (Eq, Ord, Show)
 
 data WorkspaceFocus
