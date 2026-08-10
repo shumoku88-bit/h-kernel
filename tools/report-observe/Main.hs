@@ -1,13 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Measure the report work that matters around one admitted Household
--- observation without introducing a benchmark framework or mutable cache.
+-- | Measure report work around one admitted Household observation without
+-- introducing a benchmark framework or mutable report cache.
 module Main (main) where
 
 import Control.Exception (evaluate)
 import Control.Monad (replicateM)
 import Data.IORef (IORef, newIORef, readIORef)
-import Data.List (sort)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -44,18 +43,6 @@ data PreparedReport = PreparedReport
   , preparedSurface :: HouseholdReportSurface
   }
 
-data Sample = Sample
-  { sampleNanoseconds :: Word64
-  , sampleRenderedLength :: Int
-  }
-
-data Summary = Summary
-  { summaryAverageMs :: Double
-  , summaryMedianMs :: Double
-  , summaryMinimumMs :: Double
-  , summaryMaximumMs :: Double
-  }
-
 main :: IO ()
 main = do
   args <- getArgs
@@ -74,38 +61,33 @@ main = do
   initialState <- loadState root
   prepared <- prepareOrDie today initialState
 
-  -- Force one complete combined report before the repeated observations. This
-  -- gives retained-render the same already-observed report model that #135 now
-  -- keeps in AppContext, while each render call itself is still executed anew.
+  -- Force one complete combined report before repeated observations. The
+  -- retained case therefore starts with the same already-observed report model
+  -- that #135 now keeps in AppContext, while Text rendering is invoked anew.
   _ <- forceRendered prepared
 
   stateRef <- newIORef initialState
   preparedRef <- newIORef prepared
 
   loadSamples <- replicateM runs
-    (timedSample (loadPrepareRender root today))
+    (timed (loadPrepareRender root today))
   rebuildSamples <- replicateM runs
-    (timedSample (rebuildRender stateRef today))
+    (timed (rebuildRender stateRef today))
   retainedSamples <- replicateM runs
-    (timedSample (retainedRender preparedRef))
-
-  let loadSummary = summarize loadSamples
-      rebuildSummary = summarize rebuildSamples
-      retainedSummary = summarize retainedSamples
-      projectionDelta = summaryAverageMs rebuildSummary
-        - summaryAverageMs retainedSummary
+    (timed (retainedRender preparedRef))
 
   putStrLn "h-kernel report observation benchmark"
   putStrLn ("observation-day: " <> show today)
   putStrLn ("runs: " <> show runs)
   putStrLn ""
-  printSummary "load+project+render" loadSummary
-  printSummary "rebuild+render" rebuildSummary
-  printSummary "retained-render" retainedSummary
-  printf "projection-placement delta: %.3f ms average\n" projectionDelta
+  printSamples "load+project+render" loadSamples
+  printSamples "rebuild+render" rebuildSamples
+  printSamples "retained-render" retainedSamples
+  printf "projection-placement delta: %.3f ms average\n"
+    (averageMs rebuildSamples - averageMs retainedSamples)
   putStrLn ""
   putStrLn "Interpretation:"
-  putStrLn "  load+project+render  canonical TUI observation load plus first combined report"
+  putStrLn "  load+project+render  canonical Household observation load plus combined report"
   putStrLn "  rebuild+render       old redraw shape: rebuild report projections, then render"
   putStrLn "  retained-render      #135 shape: reuse report projections, then render"
   putStrLn "  delta                approximate projection work removed from one redraw"
@@ -118,16 +100,16 @@ loadPrepareRender root day = do
 
 rebuildRender :: IORef HouseholdState -> Day -> IO Int
 rebuildRender stateRef day = do
-  -- Reading through IO prevents the benchmark loop from turning the immutable
-  -- Household value into one shared rebuild thunk across samples.
+  -- Read through IO so repeated samples do not collapse into one shared rebuild
+  -- thunk merely because the admitted Household value is immutable.
   state <- readIORef stateRef
   report <- prepareOrDie day state
   forceRendered report
 
 retainedRender :: IORef PreparedReport -> IO Int
 retainedRender preparedRef = do
-  -- The model is intentionally retained, matching AppContext after #135. The
-  -- Text renderer is called again for every sample rather than caching output.
+  -- The report model is retained, matching AppContext after #135. Rendered Text
+  -- itself is not cached.
   report <- readIORef preparedRef
   forceRendered report
 
@@ -155,8 +137,7 @@ prepareReport day state = do
     Right value -> Right value
   surface <- case buildHouseholdReportSurfaceFromHousehold day state of
     Left errors -> Left
-      ("Household report surface failed: "
-        <> show (NonEmpty.toList errors))
+      ("Household report surface failed: " <> show (NonEmpty.toList errors))
     Right value -> Right value
   pure PreparedReport
     { preparedPresentation = presentation
@@ -172,51 +153,28 @@ forceRendered report = evaluate
       (preparedBook report)
       (preparedSurface report)))
 
-timedSample :: IO Int -> IO Sample
-timedSample action = do
+timed :: IO Int -> IO Word64
+timed action = do
   started <- getMonotonicTimeNSec
-  renderedLength <- action
+  _ <- action
   finished <- getMonotonicTimeNSec
-  pure Sample
-    { sampleNanoseconds = finished - started
-    , sampleRenderedLength = renderedLength
-    }
+  pure (finished - started)
 
-summarize :: [Sample] -> Summary
-summarize samples =
-  let lengths = map sampleRenderedLength samples
-      firstLength = case lengths of
-        [] -> error "summarize: empty samples"
-        value : _ -> value
-      _consistentLength
-        | all (== firstLength) lengths = ()
-        | otherwise = error "report rendering changed length between samples"
-      values = sort (map (nanosecondsToMilliseconds . sampleNanoseconds) samples)
-      count = length values
-      total = sum values
-      medianValue
-        | odd count = values !! (count `div` 2)
-        | otherwise =
-            let upper = count `div` 2
-            in (values !! (upper - 1) + values !! upper) / 2
-  in _consistentLength `seq` Summary
-      { summaryAverageMs = total / fromIntegral count
-      , summaryMedianMs = medianValue
-      , summaryMinimumMs = head values
-      , summaryMaximumMs = last values
-      }
+averageMs :: [Word64] -> Double
+averageMs values =
+  sum (map nanosecondsToMilliseconds values) / fromIntegral (length values)
+
+printSamples :: String -> [Word64] -> IO ()
+printSamples label values =
+  printf "%s: runs=%d average=%.3fms min=%.3fms max=%.3fms\n"
+    label
+    (length values)
+    (averageMs values)
+    (nanosecondsToMilliseconds (minimum values))
+    (nanosecondsToMilliseconds (maximum values))
 
 nanosecondsToMilliseconds :: Word64 -> Double
 nanosecondsToMilliseconds value = fromIntegral value / 1000000
-
-printSummary :: String -> Summary -> IO ()
-printSummary label value =
-  printf "%s: average=%.3fms median=%.3fms min=%.3fms max=%.3fms\n"
-    label
-    (summaryAverageMs value)
-    (summaryMedianMs value)
-    (summaryMinimumMs value)
-    (summaryMaximumMs value)
 
 parsePositiveInt :: String -> Maybe Int
 parsePositiveInt value = case reads value of
