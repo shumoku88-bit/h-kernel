@@ -54,6 +54,7 @@ import HKernel.Journal
   , journalMetadataLine
   , journalMetadataValue
   , journalTransactionSourceMetadata
+  , journalTransactionSourceTransaction
   , journalTransactions
   , parseJournalDocument
   , validateJournalDocument
@@ -121,6 +122,7 @@ data ActualJournalError
   | UnknownActualReversalTarget ActualTransactionId ActualTransactionId
   | DuplicateActualReversalTarget ActualTransactionId (NonEmpty ActualTransactionId)
   | ActualTransactionMetadataAlignmentMismatch Int Int
+  | ActualTransactionSourceAlignmentMismatch Int
   deriving (Eq, Show)
 
 -- | Parse the accounting Journal, then project explicit Actual metadata.
@@ -181,6 +183,8 @@ admitActualJournalFromSources journal metadataBlocks
   | transactionCount /= metadataCount = Left
       (ActualTransactionMetadataAlignmentMismatch
         transactionCount metadataCount NonEmpty.:| [])
+  | Just sourceErrors <- NonEmpty.nonEmpty sourceAlignmentErrors =
+      Left sourceErrors
   | otherwise = case NonEmpty.nonEmpty allErrors of
       Just errors -> Left errors
       Nothing -> Right ActualJournal
@@ -194,6 +198,11 @@ admitActualJournalFromSources journal metadataBlocks
     transactions = journalTransactions journal
     transactionCount = length transactions
     metadataCount = length metadataBlocks
+    sourceAlignmentErrors =
+      [ ActualTransactionSourceAlignmentMismatch index
+      | (index, transaction, source) <- zip3 [1..] transactions metadataBlocks
+      , transaction /= journalTransactionSourceTransaction source
+      ]
     admissions = zipWith admitTransactionMetadata transactions metadataBlocks
     transactionEntries = zipWith toTransactionEntry transactions admissions
     toTransactionEntry transaction admission = ActualTransactionEntry
