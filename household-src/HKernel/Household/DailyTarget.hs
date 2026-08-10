@@ -46,8 +46,6 @@ module HKernel.Household.DailyTarget
   , deriveDailyTarget
   ) where
 
-import Data.Char (isSpace)
-import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
@@ -56,7 +54,6 @@ import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
-import qualified Data.Text as T
 import Data.Time.Calendar (Day, diffDays)
 import HKernel.Account
   ( Account
@@ -69,7 +66,18 @@ import HKernel.Engine
   ( accountBalance
   , accountBalancesThrough
   )
-import HKernel.Journal (Journal)
+import HKernel.Journal
+  ( Journal
+  , JournalMetadata
+  , JournalTransactionSource
+  , journalDocumentTransactionSources
+  , journalErrorLine
+  , journalMetadataKey
+  , journalMetadataLine
+  , journalMetadataValue
+  , journalTransactionSourceMetadata
+  , parseJournalDocument
+  )
 import HKernel.Money
 import HKernel.Period
 import HKernel.Plan
@@ -170,7 +178,8 @@ dailyTargetScopeFromSelections registry plans assetSelections obligationSelectio
 -- metadata from the same transaction blocks already admitted by Plan.Journal.
 -- Invalid private values are never retained in these errors.
 data DailyTargetPlanJournalError
-  = DailyTargetPlanJournalMetadataAlignmentMismatch Int Int
+  = DailyTargetPlanJournalSyntaxError Int
+  | DailyTargetPlanJournalMetadataAlignmentMismatch Int Int
   | DuplicateDailyTargetPlanJournalMetadataKey Int Text
   | EmptyDailyTargetPlanJournalSelectionId Int
   | DailyTargetReservationWithoutSelection Int
@@ -181,18 +190,6 @@ data DailyTargetPlanJournalError
   | NonPositiveDailyTargetReservationAmount Int
   deriving (Eq, Show)
 
-type LocatedLine = (Int, Text)
-
-data LocatedDailyTargetMetadata = LocatedDailyTargetMetadata
-  { locatedDailyTargetMetadataLine  :: Int
-  , locatedDailyTargetMetadataKey   :: Text
-  , locatedDailyTargetMetadataValue :: Text
-  }
-
-data DailyTargetTransactionMetadataBlock = DailyTargetTransactionMetadataBlock
-  { dailyTargetTransactionMetadata :: [LocatedDailyTargetMetadata]
-  }
-
 data DailyTargetSelectionAdmission = DailyTargetSelectionAdmission
   { dailyTargetAdmissionErrors    :: [DailyTargetPlanJournalError]
   , dailyTargetAdmissionSelection :: Maybe DailyTargetObligationSelection
@@ -200,14 +197,29 @@ data DailyTargetSelectionAdmission = DailyTargetSelectionAdmission
 
 -- | Project Daily Target declarations from the canonical @plan.journal@.
 --
--- Plan identity remains owned by 'HKernel.Plan.Journal'. This boundary reads
--- only @daily-target-id@ and optional reservation metadata. Transactions without
--- a selection id remain ordinary Plans and publish no Daily Target selection.
+-- Plan identity remains owned by 'HKernel.Plan.Journal'. Journal block and
+-- metadata syntax remain owned by 'HKernel.Journal'. This boundary assigns
+-- meaning only to @daily-target-id@ and optional reservation metadata.
+-- Transactions without a selection id remain ordinary Plans and publish no
+-- Daily Target selection.
 parseDailyTargetPlanJournalSelections
   :: Text
   -> PlanJournal
   -> Either (NonEmpty DailyTargetPlanJournalError) [DailyTargetObligationSelection]
-parseDailyTargetPlanJournalSelections input planJournal
+parseDailyTargetPlanJournalSelections input planJournal =
+  case parseJournalDocument input of
+    Left journalErrors ->
+      Left (fmap (DailyTargetPlanJournalSyntaxError . journalErrorLine) journalErrors)
+    Right document ->
+      admitDailyTargetPlanJournalSelections
+        (journalDocumentTransactionSources document)
+        planJournal
+
+admitDailyTargetPlanJournalSelections
+  :: [JournalTransactionSource]
+  -> PlanJournal
+  -> Either (NonEmpty DailyTargetPlanJournalError) [DailyTargetObligationSelection]
+admitDailyTargetPlanJournalSelections metadataSources planJournal
   | transactionCount /= metadataCount = Left
       (DailyTargetPlanJournalMetadataAlignmentMismatch
         transactionCount metadataCount NonEmpty.:| [])
@@ -216,18 +228,17 @@ parseDailyTargetPlanJournalSelections input planJournal
       Nothing -> Right (mapMaybe dailyTargetAdmissionSelection admissions)
   where
     transactions = planJournalTransactions planJournal
-    metadataBlocks = dailyTargetTransactionMetadataBlocks input
     transactionCount = length transactions
-    metadataCount = length metadataBlocks
-    admissions = zipWith3 admitDailyTargetSelection [1..] transactions metadataBlocks
+    metadataCount = length metadataSources
+    admissions = zipWith3 admitDailyTargetSelection [1..] transactions metadataSources
     allErrors = concatMap dailyTargetAdmissionErrors admissions
 
 admitDailyTargetSelection
   :: Int
   -> IdentifiedPlanTransaction
-  -> DailyTargetTransactionMetadataBlock
+  -> JournalTransactionSource
   -> DailyTargetSelectionAdmission
-admitDailyTargetSelection transactionIndex identified block =
+admitDailyTargetSelection transactionIndex identified source =
   case duplicateErrors of
     _ : _ -> DailyTargetSelectionAdmission duplicateErrors Nothing
     [] -> case selectionValue of
@@ -251,13 +262,15 @@ admitDailyTargetSelection transactionIndex identified block =
                       (identifiedPlanId identified)
                       reservation)))
   where
-    metadata = dailyTargetTransactionMetadata block
+    metadata = filter
+      ((`elem` supportedDailyTargetMetadataKeys) . journalMetadataKey)
+      (journalTransactionSourceMetadata source)
     duplicateErrors =
       [ DuplicateDailyTargetPlanJournalMetadataKey lineNumber key
       | (lineNumber, key) <- duplicateDailyTargetMetadataKeys metadata
       ]
     values = Map.fromList
-      [ (locatedDailyTargetMetadataKey entry, locatedDailyTargetMetadataValue entry)
+      [ (journalMetadataKey entry, journalMetadataValue entry)
       | entry <- metadata
       ]
     selectionValue = Map.lookup "daily-target-id" values
@@ -302,50 +315,6 @@ admitDailyTargetSelection transactionIndex identified block =
                           positive))
           _ -> Left [IncompleteDailyTargetReservation transactionIndex]
 
-dailyTargetTransactionMetadataBlocks
-  :: Text
-  -> [DailyTargetTransactionMetadataBlock]
-dailyTargetTransactionMetadataBlocks input =
-  [ DailyTargetTransactionMetadataBlock
-      { dailyTargetTransactionMetadata =
-          mapMaybe relevantDailyTargetMetadata (drop 1 block)
-      }
-  | block@((_, header) : _) <- dailyTargetSourceBlocks input
-  , not (isNonTransactionDirective header)
-  ]
-
-dailyTargetSourceBlocks :: Text -> [[LocatedLine]]
-dailyTargetSourceBlocks =
-  map reverse . reverse . foldl' addLine [] . zip [1..] . T.lines
-  where
-    addLine blocks located@(_, line)
-      | startsBlock line = [located] : blocks
-      | otherwise = case blocks of
-          [] -> []
-          block : rest -> (located : block) : rest
-
-startsBlock :: Text -> Bool
-startsBlock line =
-  not (T.null (T.strip line))
-    && not (isIndented line)
-    && not (isComment line)
-
-relevantDailyTargetMetadata :: LocatedLine -> Maybe LocatedDailyTargetMetadata
-relevantDailyTargetMetadata (lineNumber, line)
-  | not (isIndented line && isComment line) = Nothing
-  | normalizedKey `notElem` supportedDailyTargetMetadataKeys = Nothing
-  | otherwise = Just LocatedDailyTargetMetadata
-      { locatedDailyTargetMetadataLine = lineNumber
-      , locatedDailyTargetMetadataKey = normalizedKey
-      , locatedDailyTargetMetadataValue = T.strip (T.drop 1 remainder)
-      }
-  where
-    cleanLine = T.strip
-      (T.dropWhile (\character -> character == ';' || isSpace character)
-        (T.strip line))
-    (key, remainder) = T.breakOn ":" cleanLine
-    normalizedKey = T.toCaseFold (T.strip key)
-
 supportedDailyTargetMetadataKeys :: [Text]
 supportedDailyTargetMetadataKeys =
   [ "daily-target-id"
@@ -355,37 +324,27 @@ supportedDailyTargetMetadataKeys =
   ]
 
 duplicateDailyTargetMetadataKeys
-  :: [LocatedDailyTargetMetadata]
+  :: [JournalMetadata]
   -> [(Int, Text)]
-duplicateDailyTargetMetadataKeys =
-  reverse . third . foldl' observe (Map.empty, [], [])
+duplicateDailyTargetMetadataKeys metadata =
+  [ (journalMetadataLine entry, key)
+  | entry <- metadata
+  , let key = journalMetadataKey entry
+  , Map.findWithDefault (0 :: Int) key counts > 1
+  , journalMetadataLine entry /= firstLineFor key
+  ]
   where
-    observe (seen, unique, repeated) entry
-      | Map.member key seen =
-          (seen, unique, (locatedDailyTargetMetadataLine entry, key) : repeated)
-      | otherwise = (Map.insert key () seen, entry : unique, repeated)
-      where
-        key = locatedDailyTargetMetadataKey entry
-    third (_, _, value) = value
-
-isNonTransactionDirective :: Text -> Bool
-isNonTransactionDirective line =
-  any (`isDirective` line) ["account", "include", "commodity"]
-
-isDirective :: Text -> Text -> Bool
-isDirective keyword line = case T.stripPrefix keyword (T.stripStart line) of
-  Nothing -> False
-  Just remainder ->
-    T.null remainder
-      || maybe False (isSpace . fst) (T.uncons remainder)
-
-isComment :: Text -> Bool
-isComment = T.isPrefixOf ";" . T.stripStart
-
-isIndented :: Text -> Bool
-isIndented line = case T.uncons line of
-  Just (character, _) -> isSpace character
-  Nothing -> False
+    counts = Map.fromListWith (+)
+      [ (journalMetadataKey entry, 1 :: Int)
+      | entry <- metadata
+      ]
+    firstLineFor key = case
+      [ journalMetadataLine entry
+      | entry <- metadata
+      , journalMetadataKey entry == key
+      ] of
+      firstLine : _ -> firstLine
+      [] -> 0
 
 -- | Household policy selecting the Asset Accounts that may fund ordinary
 -- day-to-day spending.
