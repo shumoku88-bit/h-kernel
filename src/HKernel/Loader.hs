@@ -144,10 +144,6 @@ runLoader loadRoot = runExceptT
       fromEither
         (first JournalValidationFailed (validateJournalDocument document))
 
-loadRootDocument :: IncludeTrace -> Text -> Loader JournalDocument
-loadRootDocument trace source =
-  snd <$> loadRootDocuments trace source
-
 loadRootDocuments
   :: IncludeTrace
   -> Text
