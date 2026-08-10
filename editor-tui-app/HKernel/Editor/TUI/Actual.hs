@@ -10,6 +10,7 @@ module HKernel.Editor.TUI.Actual
   , handleFlowEvent
   , publishCandidate
   , startDaily
+  , startIncome
   , startMulti
   , startSelectedReverse
   , toggleWorkspaceFocus
@@ -69,6 +70,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , ActualMultiAddState(..)
   , dailyAccountCandidates
   , groupAccountCandidates
+  , incomeAccountCandidates
   , initialActualAddInputForDay
   , initialActualMultiAddStateForDay
   , multiAccountCandidates
@@ -121,9 +123,14 @@ data MultiEditInput = MultiEditInput
   , multiEditAmountText       :: Text
   } deriving (Eq, Show)
 
+data DailyEntryKind
+  = DailyExpense
+  | DailyIncome
+  deriving (Eq, Show)
+
 data State event
-  = DailyInput (Form ActualAddInput event Name)
-  | DailyPreview ActualAddPreview (Form ActualAddInput event Name)
+  = DailyInput DailyEntryKind (Form ActualAddInput event Name)
+  | DailyPreview DailyEntryKind ActualAddPreview (Form ActualAddInput event Name)
   | MultiInput ActualMultiAddState (Form MultiEditInput event Name)
   | MultiPreview ActualMultiAddPreview ActualMultiAddState (Form MultiEditInput event Name)
   | ReverseInput ActualTransactionId Transaction (Form ActualReverseInput event Name)
@@ -140,7 +147,13 @@ data PublishResult
   | ReloadFailed
 
 startDaily :: Day -> State event
-startDaily day = DailyInput (mkDailyForm day)
+startDaily = startDailyEntry DailyExpense
+
+startIncome :: Day -> State event
+startIncome = startDailyEntry DailyIncome
+
+startDailyEntry :: DailyEntryKind -> Day -> State event
+startDailyEntry kind day = DailyInput kind (mkDailyForm kind day)
 
 startMulti :: Day -> State event
 startMulti day =
@@ -215,28 +228,31 @@ reverseInputDescriptionTextL f input =
   (\value -> input { reverseInputDescriptionText = value })
     <$> f (reverseInputDescriptionText input)
 
-mkForm :: ActualAddInput -> Form ActualAddInput event Name
-mkForm =
+mkForm :: DailyEntryKind -> ActualAddInput -> Form ActualAddInput event Name
+mkForm kind =
   let label labelText widget =
         padBottom (Pad 1)
           ((vLimit 1 (hLimit 20 (str labelText <+> fill ' '))) <+> widget)
+      (toLabel, fromLabel) = case kind of
+        DailyExpense -> ("Category:", "Pay from:")
+        DailyIncome -> ("Receive into:", "Income source:")
   in newForm
       [ label "Amount:"
           @@= editTextField addAmountTextL AmountField (Just 1)
       , label "Description:"
           @@= editTextField addDescriptionTextL DescriptionField (Just 1)
-      , label "Category:"
+      , label toLabel
           @@= editTextField addToAccountTextL ToAccountField (Just 1)
-      , label "Pay from:"
+      , label fromLabel
           @@= editTextField addFromAccountTextL FromAccountField (Just 1)
       , label "Date:"
           @@= editTextField addDateTextL DateField (Just 1)
       ]
 
-mkDailyForm :: Day -> Form ActualAddInput event Name
-mkDailyForm day =
+mkDailyForm :: DailyEntryKind -> Day -> Form ActualAddInput event Name
+mkDailyForm kind day =
   setFormFocus AmountField
-    (mkForm (initialActualAddInputForDay day))
+    (mkForm kind (initialActualAddInputForDay day))
 
 multiEditInputFor :: ActualMultiAddState -> MultiEditInput
 multiEditInputFor state = MultiEditInput
@@ -319,7 +335,7 @@ mkReverseForm day eventIdText transaction =
       (form (initialReverseInput day eventIdText transaction))
 
 zoomDailyForm :: Traversal' (State AppEvent) (Form ActualAddInput AppEvent Name)
-zoomDailyForm f (DailyInput form) = DailyInput <$> f form
+zoomDailyForm f (DailyInput kind form) = DailyInput kind <$> f form
 zoomDailyForm _ state = pure state
 
 zoomMultiForm :: Traversal' (State AppEvent) (Form MultiEditInput AppEvent Name)
@@ -333,9 +349,9 @@ zoomReverseForm _ state = pure state
 
 drawFlow :: AppContext -> State AppEvent -> Widget Name
 drawFlow context state = case state of
-  DailyInput form ->
+  DailyInput kind form ->
     center
-      (borderWithLabel (str "Daily Actual")
+      (borderWithLabel (str (dailyEntryTitle kind))
         (padAll 1
           (vBox
             [ txt ("Date: " <> dateSummary context (addDateText (formState form)))
@@ -343,13 +359,13 @@ drawFlow context state = case state of
             , str "Account fields expose existing typed Accounts inline; exact text remains available."
             , str " "
             , renderForm form
-            , renderDailyInlineAccountSelector context form
+            , renderDailyInlineAccountSelector context kind form
             , str " "
             , dailyInputControls form
             ])))
-  DailyPreview preview _ ->
+  DailyPreview kind preview _ ->
     center
-      (borderWithLabel (str "Actual Preview")
+      (borderWithLabel (str (dailyPreviewTitle kind))
         (padAll 1 (renderPreview preview <=> str " " <=> str (previewControls preview))))
   MultiInput multiState form ->
     center
@@ -420,6 +436,16 @@ drawFlow context state = case state of
   PublishRequested _ _ -> emptyWidget
   QuitRequested -> emptyWidget
 
+dailyEntryTitle :: DailyEntryKind -> String
+dailyEntryTitle kind = case kind of
+  DailyExpense -> "Daily Expense"
+  DailyIncome -> "Daily Income"
+
+dailyPreviewTitle :: DailyEntryKind -> String
+dailyPreviewTitle kind = case kind of
+  DailyExpense -> "Expense Preview"
+  DailyIncome -> "Income Preview"
+
 dailyInputControls :: Form ActualAddInput AppEvent Name -> Widget Name
 dailyInputControls form = case dailySelectionTarget form of
   Just _ -> str "[Up/Down] Choose Account | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
@@ -434,19 +460,22 @@ multiInputControls form
 
 renderDailyInlineAccountSelector
   :: AppContext
+  -> DailyEntryKind
   -> Form ActualAddInput AppEvent Name
   -> Widget Name
-renderDailyInlineAccountSelector context form = case dailySelectionTarget form of
+renderDailyInlineAccountSelector context kind form = case dailySelectionTarget form of
   Nothing -> emptyWidget
   Just target ->
     renderInlineAccountSelector context label current candidates
     where
       input = formState form
       current = dailyAccountText target input
-      candidates = dailyCandidates context target
-      label = case target of
-        SelectToAccount -> "Expense Accounts"
-        SelectFromAccount -> "Payment Accounts"
+      candidates = dailyCandidates context kind target
+      label = case (kind, target) of
+        (DailyExpense, SelectToAccount) -> "Expense Accounts"
+        (DailyExpense, SelectFromAccount) -> "Payment Accounts"
+        (DailyIncome, SelectToAccount) -> "Receiving Accounts"
+        (DailyIncome, SelectFromAccount) -> "Income Accounts"
 
 renderMultiInlineAccountSelector
   :: AppContext
@@ -526,12 +555,19 @@ dailyAccountText target input = case target of
   SelectToAccount -> addToAccountText input
   SelectFromAccount -> addFromAccountText input
 
-dailyCandidates :: AppContext -> AccountSelectionTarget -> [HKernel.Account.Account]
-dailyCandidates context target =
-  flattenCandidateGroups context
-    (dailyAccountCandidates registry (contextActualTransactions context) target)
+dailyCandidates
+  :: AppContext
+  -> DailyEntryKind
+  -> AccountSelectionTarget
+  -> [HKernel.Account.Account]
+dailyCandidates context kind target =
+  flattenCandidateGroups context (candidates registry transactions target)
   where
     registry = householdStateAccountsRegistry (contextHouseholdState context)
+    transactions = contextActualTransactions context
+    candidates = case kind of
+      DailyExpense -> dailyAccountCandidates
+      DailyIncome -> incomeAccountCandidates
 
 multiCandidates :: AppContext -> [HKernel.Account.Account]
 multiCandidates context =
@@ -576,7 +612,7 @@ drawWorkspace context =
     , borderWithLabel (str "Selected transaction")
         (padAll 1 (renderWorkspaceSelection context))
     , txt ("Filter: " <> workspaceFilterText context)
-    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [Enter] Reverse selected   [a] Daily Actual   [m] Multi Actual   [q] Quit"
+    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [Enter] Reverse selected   [a] Expense   [i] Income   [m] Multi Actual   [q] Quit"
     ]
 
 handleFlowEvent
@@ -586,8 +622,8 @@ handleFlowEvent
 handleFlowEvent context event = do
   state <- get
   case state of
-    DailyInput form -> handleDailyInput context form event
-    DailyPreview preview form -> handleDailyPreview context preview form event
+    DailyInput kind form -> handleDailyInput context kind form event
+    DailyPreview kind preview form -> handleDailyPreview context kind preview form event
     MultiInput multiState form -> handleMultiInput context multiState form event
     MultiPreview preview multiState form -> handleMultiPreview context preview multiState form event
     ReverseInput targetId transaction form ->
@@ -611,55 +647,58 @@ handleFlowEvent context event = do
 
 handleDailyInput
   :: AppContext
+  -> DailyEntryKind
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name (State AppEvent) ()
-handleDailyInput context form event = case event of
+handleDailyInput context kind form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
   VtyEvent (V.EvKey V.KUp [])
     | Just target <- dailySelectionTarget form ->
-        moveDailyAccountCandidate context (-1) target form
+        moveDailyAccountCandidate context kind (-1) target form
   VtyEvent (V.EvKey V.KDown [])
     | Just target <- dailySelectionTarget form ->
-        moveDailyAccountCandidate context 1 target form
+        moveDailyAccountCandidate context kind 1 target form
   VtyEvent (V.EvKey V.KEnter [])
     | Just target <- dailySelectionTarget form ->
-        acceptDailyAccount target form
+        acceptDailyAccount kind target form
   VtyEvent (V.EvKey V.KEnter []) -> do
     let input = formState form
         resolvedJournal = actualJournalValue
           (householdStateActualJournal (contextHouseholdState context))
         preview = prepareActualAddPreviewFromResolvedJournal
           resolvedJournal (contextSource context) input
-    put (DailyPreview preview form)
+    put (DailyPreview kind preview form)
   _ -> zoom zoomDailyForm (handleFormEvent event)
 
 moveDailyAccountCandidate
   :: AppContext
+  -> DailyEntryKind
   -> Int
   -> AccountSelectionTarget
   -> Form ActualAddInput AppEvent Name
   -> EventM Name (State AppEvent) ()
-moveDailyAccountCandidate context offset target form =
+moveDailyAccountCandidate context kind offset target form =
   case stepAccountCandidate offset current candidates of
     Nothing -> pure ()
     Just account ->
       let updatedInput = selectActualAddAccount target account input
           updatedForm = setFormFocus (dailyFieldName target)
             (updateFormState updatedInput form)
-      in put (DailyInput updatedForm)
+      in put (DailyInput kind updatedForm)
   where
     input = formState form
     current = dailyAccountText target input
-    candidates = dailyCandidates context target
+    candidates = dailyCandidates context kind target
 
 acceptDailyAccount
-  :: AccountSelectionTarget
+  :: DailyEntryKind
+  -> AccountSelectionTarget
   -> Form ActualAddInput AppEvent Name
   -> EventM Name (State AppEvent) ()
-acceptDailyAccount target form
+acceptDailyAccount kind target form
   | T.null (T.strip (dailyAccountText target (formState form))) = pure ()
-  | otherwise = put (DailyInput (setFormFocus nextField form))
+  | otherwise = put (DailyInput kind (setFormFocus nextField form))
   where
     nextField = case target of
       SelectToAccount -> FromAccountField
@@ -672,11 +711,12 @@ dailyFieldName target = case target of
 
 handleDailyPreview
   :: AppContext
+  -> DailyEntryKind
   -> ActualAddPreview
   -> Form ActualAddInput AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name (State AppEvent) ()
-handleDailyPreview context preview form event = case event of
+handleDailyPreview context kind preview form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> back
   VtyEvent (V.EvKey (V.KChar 'b') []) -> back
   VtyEvent (V.EvKey (V.KChar 'B') []) -> back
@@ -689,7 +729,7 @@ handleDailyPreview context preview form event = case event of
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
   _ -> pure ()
   where
-    back = put (DailyInput form)
+    back = put (DailyInput kind form)
     publish = case preview of
       ActualAddCandidateReady block ->
         let stickyDay = fromMaybe (contextEntryDay context)
