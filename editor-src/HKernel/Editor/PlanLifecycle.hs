@@ -18,11 +18,6 @@ module HKernel.Editor.PlanLifecycle
   , preparePlanEdit
   , preparePlanEditFromResolvedActualJournal
   , preparePlanEditFromResolvedJournals
-
-  , PositivePlanFinishAmount
-  , PlanFinishAmountError(..)
-  , mkPositivePlanFinishAmount
-  , positivePlanFinishAmountQuantity
   ) where
 
 import Data.Bifunctor (first)
@@ -184,10 +179,6 @@ preparePlanAddFromResolvedActualJournal resolvedActual planSource actualSource i
     (admitActualJournalFromResolvedJournal resolvedActual actualSource)
   preparePlanAddFromJournals planJ planSource actualJ intent
 
--- | Prepare Plan Add from the same resolved Plan graph and root Plan text that
--- canonical path admission observes. Plan-owned metadata is admitted by
--- 'HKernel.Plan.Journal'; include-resolved accounting meaning stays in the
--- supplied Journal.
 preparePlanAddFromResolvedJournals
   :: Journal
   -> Journal
@@ -252,11 +243,8 @@ preparePlanAddFromJournals planJ planSource actualJ intent = do
 
   pure preview
 
-
 -- Plan Edit
 
--- | Strictly positive replacement magnitude for a binary Plan edit.
--- The admitted posting signs remain the owner of direction.
 newtype PositivePlanEditAmount = PositivePlanEditAmount
   { positivePlanEditAmountQuantity :: Quantity
   } deriving (Eq, Show)
@@ -302,14 +290,6 @@ data PlanEditError
   | EditCandidateSemanticMismatch PlanId
   deriving (Eq, Show)
 
--- | Edit one open Plan by durable Plan identity while retaining source metadata
--- and unrelated comments verbatim.
---
--- The complete Plan and Actual sources are admitted first. Physical source
--- scanning then locates only the unique block already proven to own the target
--- @plan-id@. Date edits touch the transaction header date only. Amount edits
--- replace posting source lines in order while leaving metadata/comment lines in
--- place. The complete candidate is re-admitted before it can be published.
 preparePlanEdit
   :: Text
   -> Text
@@ -335,8 +315,6 @@ preparePlanEditFromResolvedActualJournal resolvedActual planSource actualSource 
     (admitActualJournalFromResolvedJournal resolvedActual actualSource)
   preparePlanEditFromJournals planJ planSource actualJ intent
 
--- | Prepare Plan Edit from include-resolved Plan and Actual Journals while root
--- Plan text remains the owner of physical Plan metadata/source placement.
 preparePlanEditFromResolvedJournals
   :: Journal
   -> Journal
@@ -397,14 +375,9 @@ preparePlanEditFromJournals planJ planSource actualJ intent = do
         }
 
   candidateTransaction <- first (pure . EditCandidateTransactionError)
-    (mkTransaction
-      targetDate
-      (transactionDescription transaction)
-      updatedPostings)
+    (mkTransaction targetDate (transactionDescription transaction) updatedPostings)
   candidateResolvedPlan <- case replaceJournalTransactionAt
-      targetIndex
-      candidateTransaction
-      (planJournalValue planJ) of
+      targetIndex candidateTransaction (planJournalValue planJ) of
     Just journal -> Right journal
     Nothing -> Left (pure (EditCandidateSemanticMismatch pId))
   candidateJournal <- first (pure . EditCandidateParseError)
@@ -580,24 +553,3 @@ renderPostingLine posting =
 
 renderDay :: Day -> Text
 renderDay = T.pack . formatTime defaultTimeLocale "%F"
-
-
--- Plan Finish compatibility magnitude
-
--- | Strictly positive replacement magnitude accepted by the retained
--- @plan finish@ CLI surface and the current Complete & Advance operation.
--- The original posting signs remain the owner of payment direction.
-newtype PositivePlanFinishAmount = PositivePlanFinishAmount
-  { positivePlanFinishAmountQuantity :: Quantity
-  } deriving (Eq, Show)
-
-data PlanFinishAmountError
-  = NonPositivePlanFinishAmount Quantity
-  deriving (Eq, Show)
-
-mkPositivePlanFinishAmount
-  :: Quantity
-  -> Either PlanFinishAmountError PositivePlanFinishAmount
-mkPositivePlanFinishAmount quantity
-  | quantity <= zeroQuantity = Left (NonPositivePlanFinishAmount quantity)
-  | otherwise = Right (PositivePlanFinishAmount quantity)
