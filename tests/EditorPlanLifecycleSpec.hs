@@ -38,6 +38,7 @@ main = do
         , ("testPlanEditDateAndAmountPreservesMetadata", testPlanEditDateAndAmountPreservesMetadata)
         , ("testPlanEditDateOnlyPreservesPostingText", testPlanEditDateOnlyPreservesPostingText)
         , ("testPlanEditAmountOnlyPreservesDate", testPlanEditAmountOnlyPreservesDate)
+        , ("testPlanEditAmountPreservesPostingSourceShape", testPlanEditAmountPreservesPostingSourceShape)
         , ("testPlanEditIgnoresDetachedPlanIdComment", testPlanEditIgnoresDetachedPlanIdComment)
         , ("testPlanEditNoOpRejected", testPlanEditNoOpRejected)
         , ("testPlanEditClosedRejected", testPlanEditClosedRejected)
@@ -123,6 +124,21 @@ detachedDuplicatePlanIdFixture :: Text
 detachedDuplicatePlanIdFixture = metadataRichPlanFixture <> T.unlines
   [ ""
   , "  ; plan-id: plan-2023-01-01-lunch"
+  ]
+
+sourceShapePlanFixture :: Text
+sourceShapePlanFixture = T.unlines
+  [ "account assets:bank"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , ""
+  , "2023-01-01 existing plan"
+  , "  ; plan-id: plan-2023-01-01-lunch"
+  , "\tassets:bank\t\t-500.00   JPY   ; bank source note"
+  , "    expenses:food    ; inferred amount stays elided"
   ]
 
 planFixtureWithActualOnlyMetadata :: Text
@@ -328,6 +344,36 @@ testPlanEditAmountOnlyPreservesDate =
                          (toList (transactionPostings
                            (identifiedPlanTransaction identified)))
                          == [qty "-725", qty "725"]
+                     _ -> False
+
+testPlanEditAmountPreservesPostingSourceShape :: Bool
+testPlanEditAmountPreservesPostingSourceShape =
+  let intent = PlanEditIntent
+        { editPlanId = "plan-2023-01-01-lunch"
+        , editDate = Nothing
+        , editAmount = Just (positiveEditQty "650")
+        }
+      targetId = either (error "bad plan id") id
+        (mkPlanId "plan-2023-01-01-lunch")
+  in case preparePlanEdit sourceShapePlanFixture actualFixture intent of
+       Left err -> error (show err)
+       Right preview ->
+         let block = editCandidateBlock preview
+             candidate = editCandidateCompleteSource preview
+         in "\tassets:bank\t\t-650   JPY   ; bank source note"
+              `T.isInfixOf` block
+              && "    expenses:food    ; inferred amount stays elided"
+                `T.isInfixOf` block
+              && not ("-500.00" `T.isInfixOf` block)
+              && case parsePlanJournal candidate of
+                   Left _ -> False
+                   Right journal -> case filter ((== targetId) . identifiedPlanId)
+                       (planJournalTransactions journal) of
+                     [identified] ->
+                       map (amountQuantity . postingAmount)
+                         (toList (transactionPostings
+                           (identifiedPlanTransaction identified)))
+                         == [qty "-650", qty "650"]
                      _ -> False
 
 testPlanEditIgnoresDetachedPlanIdComment :: Bool

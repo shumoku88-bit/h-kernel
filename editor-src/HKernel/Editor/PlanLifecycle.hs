@@ -29,7 +29,6 @@ import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 
-import HKernel.Account (accountName)
 import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError
@@ -47,11 +46,14 @@ import HKernel.Editor.TransactionBlock
   )
 import HKernel.Journal
   ( Journal
+  , JournalPostingSource
   , appendJournalTransaction
   , journalAccountRegistry
+  , journalPostingSourceLine
+  , journalPostingSourceQuantityColumns
   , journalTransactionSourceHeaderLine
   , journalTransactionSourceLastLine
-  , journalTransactionSourcePostingLines
+  , journalTransactionSourcePostings
   , replaceJournalTransactionAt
   )
 import HKernel.Ledger
@@ -70,7 +72,6 @@ import HKernel.Money
   ( Quantity
   , amountCommodity
   , amountQuantity
-  , commodityCode
   , mkAmount
   , negateQuantity
   , quantityToRational
@@ -290,6 +291,7 @@ data PlanEditError
   | EditSourcePlanIdCoordinateAmbiguous PlanId Int
   | EditSourceTransactionHeaderMissing PlanId
   | EditSourcePostingCoordinateMismatch Int Int
+  | EditSourcePostingQuantityCoordinateInvalid Int
   | EditCandidateSemanticMismatch PlanId
   deriving (Eq, Show)
 
@@ -418,10 +420,11 @@ editPlanPostings (Just positiveAmount) postings
           (mkAmount (amountCommodity (postingAmount posting)) newQuantity)
 
 data LocatedPlanBlock = LocatedPlanBlock
-  { locatedPrefixLines   :: [Text]
-  , locatedBlockLines    :: [Text]
-  , locatedSuffixLines   :: [Text]
-  , locatedPostingIndexes :: [Int]
+  { locatedPrefixLines    :: [Text]
+  , locatedBlockLines     :: [Text]
+  , locatedSuffixLines    :: [Text]
+  , locatedHeaderLine     :: Int
+  , locatedPostingSources :: [JournalPostingSource]
   }
 
 locatePlanSourceBlock
@@ -438,11 +441,13 @@ locatePlanSourceBlock planJ pId transaction source = do
   let sourceLines = T.splitOn "\n" source
       headerLine = journalTransactionSourceHeaderLine sourceEvidence
       lastLine = journalTransactionSourceLastLine sourceEvidence
-      postingLines = journalTransactionSourcePostingLines sourceEvidence
+      postingSources = journalTransactionSourcePostings sourceEvidence
       start = headerLine - 1
       endExclusive = lastLine
       blockLength = endExclusive - start
-      postingIndexes = map (\lineNumber -> lineNumber - headerLine) postingLines
+      postingIndexes = map
+        (\postingSource -> journalPostingSourceLine postingSource - headerLine)
+        postingSources
       expectedPostingCount = NonEmpty.length (transactionPostings transaction)
       validPostingIndexes = filter
         (\index -> index > 0 && index < blockLength)
@@ -454,7 +459,7 @@ locatePlanSourceBlock planJ pId transaction source = do
     then Left (EditSourceTransactionHeaderMissing pId)
     else Right ()
 
-  if length postingIndexes /= expectedPostingCount
+  if length postingSources /= expectedPostingCount
       || length validPostingIndexes /= expectedPostingCount
     then Left
       (EditSourcePostingCoordinateMismatch
@@ -470,7 +475,8 @@ locatePlanSourceBlock planJ pId transaction source = do
       { locatedPrefixLines = take start sourceLines
       , locatedBlockLines = take blockLength (drop start sourceLines)
       , locatedSuffixLines = drop endExclusive sourceLines
-      , locatedPostingIndexes = postingIndexes
+      , locatedHeaderLine = headerLine
+      , locatedPostingSources = postingSources
       }
 
 editLocatedPlanBlock
@@ -487,41 +493,65 @@ editLocatedPlanBlock pId targetDate amountEdit postings located =
       let datedLines = replaceHeaderDate targetDate header : rest
       case amountEdit of
         Nothing -> Right datedLines
-        Just _ -> replacePostingSourceLines
-          (locatedPostingIndexes located)
+        Just _ -> replacePostingQuantities
+          (locatedHeaderLine located)
+          (locatedPostingSources located)
           datedLines
-          (map renderPostingLine (NonEmpty.toList postings))
+          (map (renderQuantity . amountQuantity . postingAmount)
+            (NonEmpty.toList postings))
 
 replaceHeaderDate :: Day -> Text -> Text
 replaceHeaderDate day header = renderDay day <> T.drop 10 header
 
-replacePostingSourceLines
-  :: [Int]
+replacePostingQuantities
+  :: Int
+  -> [JournalPostingSource]
   -> [Text]
   -> [Text]
   -> Either PlanEditError [Text]
-replacePostingSourceLines coordinates sourceLines replacements
-  | length coordinates /= expectedCount = Left
-      (EditSourcePostingCoordinateMismatch expectedCount (length coordinates))
-  | any invalidCoordinate coordinates = Left
-      (EditSourcePostingCoordinateMismatch expectedCount validCount)
-  | otherwise = Right
-      [ maybe line id (lookup index replacementCoordinates)
-      | (index, line) <- zip [0..] sourceLines
-      ]
+replacePostingQuantities headerLine postingSources sourceLines replacements
+  | length postingSources /= expectedCount = Left
+      (EditSourcePostingCoordinateMismatch expectedCount (length postingSources))
+  | length validIndexes /= expectedCount = Left
+      (EditSourcePostingCoordinateMismatch expectedCount (length validIndexes))
+  | otherwise = do
+      replacementLines <- traverse replacementAt (zip postingSources replacements)
+      let replacementsByIndex = [entry | Just entry <- replacementLines]
+      pure
+        [ maybe line id (lookup index replacementsByIndex)
+        | (index, line) <- zip [0..] sourceLines
+        ]
   where
     expectedCount = length replacements
-    invalidCoordinate index = index <= 0 || index >= length sourceLines
-    validCount = length (filter (not . invalidCoordinate) coordinates)
-    replacementCoordinates = zip coordinates replacements
+    postingIndex postingSource = journalPostingSourceLine postingSource - headerLine
+    validIndexes = filter
+      (\index -> index > 0 && index < length sourceLines)
+      (map postingIndex postingSources)
 
-renderPostingLine :: Posting -> Text
-renderPostingLine posting =
-  "    " <> accountName (postingAccount posting)
-    <> "    " <> renderQuantity (amountQuantity amount)
-    <> " " <> commodityCode (amountCommodity amount)
-  where
-    amount = postingAmount posting
+    replacementAt (postingSource, replacement) =
+      case journalPostingSourceQuantityColumns postingSource of
+        Nothing -> Right Nothing
+        Just columns -> do
+          let index = postingIndex postingSource
+              sourceLine = sourceLines !! index
+          edited <- replaceQuantityToken
+            (journalPostingSourceLine postingSource)
+            columns
+            replacement
+            sourceLine
+          Right (Just (index, edited))
+
+replaceQuantityToken
+  :: Int
+  -> (Int, Int)
+  -> Text
+  -> Text
+  -> Either PlanEditError Text
+replaceQuantityToken lineNumber (start, end) replacement sourceLine
+  | start < 0 || end <= start || end > T.length sourceLine =
+      Left (EditSourcePostingQuantityCoordinateInvalid lineNumber)
+  | otherwise = Right
+      (T.take start sourceLine <> replacement <> T.drop end sourceLine)
 
 renderDay :: Day -> Text
 renderDay = T.pack . formatTime defaultTimeLocale "%F"
