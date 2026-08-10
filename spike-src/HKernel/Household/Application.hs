@@ -42,6 +42,7 @@ import HKernel.Actual.Journal
   , ActualJournalError(..)
   , actualJournalValue
   , admitActualJournalFromResolvedJournal
+  , admitActualJournalFromResolvedSources
   )
 import HKernel.Application.Config
   ( HouseholdRoot
@@ -63,6 +64,7 @@ import HKernel.Household.BudgetMovement
   , HouseholdBudgetMovementJournal
   , HouseholdBudgetMovementJournalError
   , admitHouseholdBudgetMovementJournalFromResolvedJournal
+  , admitHouseholdBudgetMovementJournalFromResolvedSources
   , householdBudgetMovementJournalMovements
   , householdBudgetMovementJournalValue
   )
@@ -102,11 +104,17 @@ import HKernel.Journal
   , resolveJournalDocumentIncludes
   , validateJournalDocument
   )
-import HKernel.Loader (LoadError, loadJournalFromRootSource)
+import HKernel.Loader
+  ( LoadError
+  , journalRootObservationJournal
+  , journalRootObservationTransactionSources
+  , loadJournalRootObservationFromSource
+  )
 import HKernel.Plan.Journal
   ( PlanJournal
   , PlanJournalError(..)
   , admitPlanJournalFromResolvedJournal
+  , admitPlanJournalFromResolvedSources
   , planJournalValue
   )
 import HKernel.Report.Config
@@ -209,8 +217,9 @@ loadCanonicalHousehold root =
 -- | Load one canonical Household observation and retain the exact mutable root
 -- bytes from which its typed meaning was admitted.
 --
--- Journal roots are read once here, then resolved with
--- 'loadJournalFromRootSource'. Issues are likewise parsed from the exact bytes
+-- Journal roots are read once here, then each exact root is parsed once into a
+-- sealed Loader observation containing resolved accounting meaning and root-only
+-- transaction source evidence. Issues are likewise parsed from the exact bytes
 -- retained for publication. This prevents the invalid temporal shape
 -- @HouseholdState from observation A / expected root bytes from observation B@
 -- without restricting ordinary include graphs.
@@ -236,17 +245,22 @@ loadActual root paths accountsRegistry = do
   case rootTextResult of
     Left errors -> pure (Left errors)
     Right rootText -> do
-      loaded <- loadJournalFromRootSource (householdActualJournalPath paths) rootText
+      loaded <- loadJournalRootObservationFromSource
+        (householdActualJournalPath paths)
+        rootText
       case loaded of
         Left err -> pure (Left (pure (HouseholdActualLoadFailed err)))
-        Right resolved -> case admitActualJournalFromResolvedJournal resolved rootText of
-          Left errors -> pure (Left (pure (HouseholdActualParseFailed errors)))
-          Right actualJournal
-            | accountsRegistry /= journalAccountRegistry (actualJournalValue actualJournal) ->
-                pure (Left (pure (HouseholdAccountRegistryDisagreement
-                  accountsRegistry
-                  (journalAccountRegistry (actualJournalValue actualJournal)))))
-            | otherwise -> loadPlan root paths accountsRegistry rootText actualJournal
+        Right observation ->
+          let resolved = journalRootObservationJournal observation
+              sources = journalRootObservationTransactionSources observation
+          in case admitActualJournalFromResolvedSources resolved sources of
+            Left errors -> pure (Left (pure (HouseholdActualParseFailed errors)))
+            Right actualJournal
+              | accountsRegistry /= journalAccountRegistry (actualJournalValue actualJournal) ->
+                  pure (Left (pure (HouseholdAccountRegistryDisagreement
+                    accountsRegistry
+                    (journalAccountRegistry (actualJournalValue actualJournal)))))
+              | otherwise -> loadPlan root paths accountsRegistry rootText actualJournal
 
 loadPlan
   :: HouseholdRoot
@@ -260,24 +274,29 @@ loadPlan root paths accountsRegistry actualRootText actualJournal = do
   case rootTextResult of
     Left errors -> pure (Left errors)
     Right rootText -> do
-      loaded <- loadJournalFromRootSource (householdPlanJournalPath paths) rootText
+      loaded <- loadJournalRootObservationFromSource
+        (householdPlanJournalPath paths)
+        rootText
       case loaded of
         Left err -> pure (Left (pure (HouseholdPlanLoadFailed err)))
-        Right resolved -> case admitPlanJournalFromResolvedJournal resolved rootText of
-          Left errors -> pure (Left (pure (HouseholdPlanParseFailed errors)))
-          Right planJournal
-            | accountsRegistry /= journalAccountRegistry (planJournalValue planJournal) ->
-                pure (Left (pure (HouseholdPlanRegistryDisagreement
-                  (householdPlanJournalPath paths)
-                  "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
-            | otherwise -> loadBudget
-                root
-                paths
-                accountsRegistry
-                actualRootText
-                actualJournal
-                rootText
-                planJournal
+        Right observation ->
+          let resolved = journalRootObservationJournal observation
+              sources = journalRootObservationTransactionSources observation
+          in case admitPlanJournalFromResolvedSources resolved sources of
+            Left errors -> pure (Left (pure (HouseholdPlanParseFailed errors)))
+            Right planJournal
+              | accountsRegistry /= journalAccountRegistry (planJournalValue planJournal) ->
+                  pure (Left (pure (HouseholdPlanRegistryDisagreement
+                    (householdPlanJournalPath paths)
+                    "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
+              | otherwise -> loadBudget
+                  root
+                  paths
+                  accountsRegistry
+                  actualRootText
+                  actualJournal
+                  rootText
+                  planJournal
 
 loadBudget
   :: HouseholdRoot
@@ -293,18 +312,20 @@ loadBudget root paths accountsRegistry actualRootText actualJournal planRootText
   case rootTextResult of
     Left errors -> pure (Left errors)
     Right budgetRootText -> do
-      loaded <- loadJournalFromRootSource
+      loaded <- loadJournalRootObservationFromSource
         (householdBudgetJournalPath paths)
         budgetRootText
       case loaded of
         Left err -> pure (Left (pure (HouseholdBudgetLoadFailed err)))
-        Right budgetJournal
-          | accountsRegistry /= journalAccountRegistry budgetJournal ->
-              pure (Left (pure (HouseholdBudgetRegistryDisagreement
-                (householdBudgetJournalPath paths)
-                "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
-          | otherwise -> case admitHouseholdBudgetMovementJournalFromResolvedJournal
-              budgetJournal budgetRootText of
+        Right observation ->
+          let budgetJournal = journalRootObservationJournal observation
+              sources = journalRootObservationTransactionSources observation
+          in if accountsRegistry /= journalAccountRegistry budgetJournal
+            then pure (Left (pure (HouseholdBudgetRegistryDisagreement
+              (householdBudgetJournalPath paths)
+              "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
+            else case admitHouseholdBudgetMovementJournalFromResolvedSources
+                budgetJournal sources of
               Left errors -> pure (Left (pure (HouseholdBudgetMovementAdmitFailed errors)))
               Right budgetMovementJournal ->
                 loadConfigsAndIssues
