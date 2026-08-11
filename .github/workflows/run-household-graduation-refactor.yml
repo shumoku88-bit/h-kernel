@@ -25,7 +25,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          source = Path('.github/workflows/graduate-household-report-spike.yml').read_text()
+          source = Path('.github/graduate_household_report_spike_source.txt').read_text()
           marker = "python3 - <<'PY'\n"
           start = source.index(marker) + len(marker)
           end = source.index('\n          PY', start)
@@ -37,7 +37,7 @@ jobs:
           exec(compile(script, 'graduate_household_report_spike.py', 'exec'))
           PY
 
-          rm .github/workflows/graduate-household-report-spike.yml
+          rm .github/graduate_household_report_spike_source.txt
           rm .github/workflows/run-household-graduation-refactor.yml
           rmdir -p spike-src/HKernel/Spike/HouseholdReport 2>/dev/null || true
           rmdir -p spike-src/HKernel/Spike 2>/dev/null || true
