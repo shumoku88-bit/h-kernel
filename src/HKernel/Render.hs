@@ -128,7 +128,7 @@ renderProfitAndLossWithPresentation presentation report = T.intercalate "\n"
     dateRange = profitAndLossRange report
     incomeRows =
       [ [ plainCell (accountName (lineAccount line))
-        , greenBalanceCellWith presentation (lineBalance line)
+        , positiveBalanceCellWith presentation (lineBalance line)
         ]
       | line <- incomeLines report
       ] ++
@@ -139,7 +139,7 @@ renderProfitAndLossWithPresentation presentation report = T.intercalate "\n"
       ]
     expenseRows =
       [ [ plainCell (accountName (lineAccount line))
-        , redBalanceCellWith presentation (lineBalance line)
+        , negativeBalanceCellWith presentation (lineBalance line)
         ]
       | line <- expenseLines report
       ] ++
@@ -181,7 +181,7 @@ renderBalanceSheetWithPresentation presentation report = T.intercalate "\n"
   where
     assetRows =
       [ [ plainCell (accountName (lineAccount line))
-        , greenBalanceCellWith presentation (lineBalance line)
+        , positiveBalanceCellWith presentation (lineBalance line)
         ]
       | line <- assetLines report
       ] ++
@@ -192,7 +192,7 @@ renderBalanceSheetWithPresentation presentation report = T.intercalate "\n"
       ]
     liabilityRows =
       [ [ plainCell (accountName (lineAccount line))
-        , redBalanceCellWith presentation (lineBalance line)
+        , negativeBalanceCellWith presentation (lineBalance line)
         ]
       | line <- liabilityLines report
       ] ++
@@ -365,14 +365,14 @@ renderDailyFlowBlock presentation view blockCount blockIndex dates =
       | otherwise =
           [ plainCell "Income"
               : renderValues
-                  (greenBalanceCellWith presentation)
+                  (positiveBalanceCellWith presentation)
                   incomeValues
                   (dailyFlowViewIncomeTotal view)
           ]
     expenseRows =
       [ plainCell (accountName (dailyFlowExpenseViewAccount row))
           : renderValues
-              (redBalanceCellWith presentation)
+              (negativeBalanceCellWith presentation)
               values
               (dailyFlowExpenseViewTotal row)
       | row <- dailyFlowViewExpenses view
@@ -434,7 +434,7 @@ renderMonthlyAccountsWithPresentation presentation report = T.intercalate "\n"
        ++ [("Period total", AlignRight)]
     rows =
       [sectionRow "Income"]
-        ++ map (accountRow (greenBalanceCellWith presentation))
+        ++ map (accountRow (positiveBalanceCellWith presentation))
           (monthlyAccountsIncomeRows report)
         ++ [totalRow
               (styledCell terminalBold "Total Income")
@@ -442,7 +442,7 @@ renderMonthlyAccountsWithPresentation presentation report = T.intercalate "\n"
               monthlyIncomeTotal
               (terminalBold . terminalPositiveAmountWith presentation)]
         ++ [sectionRow "Expenses"]
-        ++ map (accountRow (redBalanceCellWith presentation))
+        ++ map (accountRow (negativeBalanceCellWith presentation))
           (monthlyAccountsExpenseRows report)
         ++ [totalRow
               (styledCell terminalBold "Total Expenses")
