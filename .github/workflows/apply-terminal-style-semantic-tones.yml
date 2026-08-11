@@ -1,0 +1,30 @@
+name: Apply Terminal Tone Vocabulary Cleanup
+
+on:
+  push:
+    branches:
+      - refactor/terminal-style-semantic-tones
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply focused vocabulary subtraction
+        run: python3 tools/apply_terminal_style_semantic_tones.py
+      - name: Commit focused cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm tools/apply_terminal_style_semantic_tones.py
+          rm .github/workflows/apply-terminal-style-semantic-tones.yml
+          git config user.name 'shumoku88-bit'
+          git config user.email 'shumoku88@gmail.com'
+          git add -A
+          git commit -m 'refactor(render): name amount tones semantically'
+          git push origin HEAD:refactor/terminal-style-semantic-tones
