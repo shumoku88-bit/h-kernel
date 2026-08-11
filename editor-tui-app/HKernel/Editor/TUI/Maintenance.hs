@@ -26,7 +26,6 @@ import qualified Graphics.Vty as V
 import Lens.Micro (Lens', Traversal')
 
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -69,6 +68,7 @@ import HKernel.Editor.IssueAppend
   , IssueCloseDisposition(..)
   , IssueCloseIntent(..)
   , IssueClosePreview(..)
+  , generateAvailableIssueId
   , prepareIssueAppend
   , prepareIssueClose
   )
@@ -91,7 +91,6 @@ import HKernel.Household.Application
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.HouseholdIssue
   ( HouseholdIssue
-  , IssueId
   , IssueStatus(..)
   , householdIssueAmount
   , householdIssueDetails
@@ -100,7 +99,6 @@ import HKernel.HouseholdIssue
   , householdIssueStatus
   , householdIssueText
   , issueIdText
-  , mkIssueId
   )
 import HKernel.Money
   ( Amount
@@ -548,7 +546,11 @@ parseAccountType value = case T.toCaseFold value of
 
 prepareIssueAdd :: AppContext -> IssueInput -> Either Text IssueAppendPreview
 prepareIssueAdd context input = do
-  issueId <- suggestIssueId context
+  issueId <- either (Left . showText) Right
+    (generateAvailableIssueId
+      (contextEntryDay context)
+      (map householdIssueId
+        (householdStateIssues (contextHouseholdState context))))
   amount <- prepareOptionalAmount (issueAmountText input) (issueCommodityText input)
   let intent = IssueAppendIntent
         { intentIssueId = issueId
@@ -574,21 +576,6 @@ prepareOptionalAmount quantityText commodityText
   where
     quantity = T.strip quantityText
     commodity = T.strip commodityText
-
-suggestIssueId :: AppContext -> Either Text IssueId
-suggestIssueId context = go (1 :: Int)
-  where
-    dayText = T.filter (/= '-') (T.pack (show (contextEntryDay context)))
-    existing = Set.fromList
-      (map (issueIdText . householdIssueId)
-        (householdStateIssues (contextHouseholdState context)))
-    go index =
-      let candidateText = "ISS" <> dayText <> "-" <> T.pack (show index)
-      in if candidateText `Set.member` existing
-          then go (index + 1)
-          else case mkIssueId candidateText of
-            Left err -> Left (showText err)
-            Right value -> Right value
 
 publishCandidate :: AppContext -> PublishRequest -> IO PublishResult
 publishCandidate context request = case request of
