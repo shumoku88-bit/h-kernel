@@ -11,7 +11,6 @@ module HKernel.Editor.TransactionBlock
 import Control.Applicative ((<|>))
 import Control.Monad (when)
 import Data.Bifunctor (first)
-import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
