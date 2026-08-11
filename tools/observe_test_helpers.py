@@ -14,8 +14,6 @@ HELPERS = [
     "mustJust",
 ]
 
-TYPE_SIG = re.compile(r"^([A-Za-z_][A-Za-z0-9_']*)\s*::")
-
 
 def helper_block(lines, helper):
     start = None
@@ -25,12 +23,21 @@ def helper_block(lines, helper):
             break
     if start is None:
         return None
+
+    equation = re.compile(rf"^{re.escape(helper)}(?:\s|\(|$)")
+    seen_equation = False
     end = len(lines)
     for i in range(start + 1, len(lines)):
-        match = TYPE_SIG.match(lines[i])
-        if match and match.group(1) != helper:
+        line = lines[i]
+        if equation.match(line):
+            seen_equation = True
+            continue
+        if not seen_equation:
+            continue
+        if line and not line[0].isspace():
             end = i
             break
+
     while end > start and not lines[end - 1].strip():
         end -= 1
     return "\n".join(lines[start:end]) + "\n"
@@ -44,7 +51,7 @@ files = sorted(Path("tests").glob("*.hs"))
 print(f"test_files={len(files)}")
 print()
 
-all_duplicate_lines = 0
+all_definition_lines = 0
 ideal_saved_lines = 0
 for helper in HELPERS:
     variants = defaultdict(list)
@@ -63,9 +70,8 @@ for helper in HELPERS:
     ):
         lines = line_count(block)
         digest = hashlib.sha256(block.encode()).hexdigest()[:10]
-        duplicate_lines = lines * len(names)
         saved = lines * max(0, len(names) - 1)
-        all_duplicate_lines += duplicate_lines
+        all_definition_lines += lines * len(names)
         ideal_saved_lines += saved
         print(
             f"  variant={index} sha={digest} files={len(names)} "
@@ -75,6 +81,6 @@ for helper in HELPERS:
             print(f"    {name}")
     print()
 
-print(f"definition_lines_observed={all_duplicate_lines}")
+print(f"definition_lines_observed={all_definition_lines}")
 print(f"ideal_exact_body_saved_lines={ideal_saved_lines}")
 print("note=ideal_saved excludes import/Cabal/shared-module costs")
