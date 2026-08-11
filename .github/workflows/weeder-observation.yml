@@ -68,8 +68,6 @@ jobs:
 
           exposed = sorted(set(exposed))
           print(f"Cabal exposed modules retained in second pass: {len(exposed)}")
-          for module in exposed:
-              print(f"  {module}")
 
           strict = "\n".join([
               "roots = [ '.*\\.main$', '^Paths_.*' ]",
@@ -122,21 +120,29 @@ jobs:
           from pathlib import Path
           import re
 
-          weed_line = re.compile(r"^([^:]+):(\d+):\s*(.+)$")
+          weed_line = re.compile(r"^([^:]+):\s+(.+):(\d+):(\d+):\s+(.+)$")
 
           def read_weeds(path):
               rows = []
               for raw in Path(path).read_text().splitlines():
                   match = weed_line.match(raw.strip())
                   if match:
-                      rows.append((match.group(1), int(match.group(2)), match.group(3)))
+                      rows.append((
+                          match.group(1),
+                          match.group(2),
+                          int(match.group(3)),
+                          int(match.group(4)),
+                          match.group(5),
+                      ))
+                  elif raw.strip():
+                      print(f"UNPARSED {path}: {raw}")
               return rows
 
           strict_rows = read_weeds("/tmp/weeder-strict.txt")
           public_rows = read_weeds("/tmp/weeder-public.txt")
           strict = set(strict_rows)
           public = set(public_rows)
-          public_only = sorted(strict - public)
+          public_sensitive = sorted(strict - public)
 
           def top(path):
               clean = path[2:] if path.startswith("./") else path
@@ -145,23 +151,23 @@ jobs:
           print("\n=== WEEDER OBSERVATION SUMMARY ===")
           print(f"strict-root weeds: {len(strict)}")
           print(f"public-surface-retained weeds: {len(public)}")
-          print(f"strict-only findings removed by retaining exposed modules: {len(public_only)}")
+          print(f"strict-only findings removed by retaining exposed modules: {len(public_sensitive)}")
 
           print("\nPublic-retained weeds by top-level source tree:")
-          for tree, count in Counter(top(path) for path, _, _ in public).most_common():
+          for tree, count in Counter(top(path) for _, path, _, _, _ in public).most_common():
               print(f"  {tree}: {count}")
 
           print("\nStrict-only findings by top-level source tree:")
-          for tree, count in Counter(top(path) for path, _, _ in public_only).most_common():
+          for tree, count in Counter(top(path) for _, path, _, _, _ in public_sensitive).most_common():
               print(f"  {tree}: {count}")
 
           print("\n=== PUBLIC-SURFACE-RETAINED WEEDS ===")
-          for path, line, symbol in sorted(public):
-              print(f"{path}:{line}: {symbol}")
+          for module, path, line, column, symbol in sorted(public):
+              print(f"{module}: {path}:{line}:{column}: {symbol}")
 
           print("\n=== STRICT-ONLY / PUBLIC-SURFACE-SENSITIVE FINDINGS ===")
-          for path, line, symbol in public_only:
-              print(f"{path}:{line}: {symbol}")
+          for module, path, line, column, symbol in public_sensitive:
+              print(f"{module}: {path}:{line}:{column}: {symbol}")
           PY
 
           echo "strict Weeder exit status: $(cat /tmp/weeder-strict.txt.status)"
