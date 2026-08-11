@@ -66,21 +66,17 @@ import HKernel.Editor.ActualWorkspace (transactionEntriesForAccount)
 import HKernel.Editor.ActualWriter (publishActualBlockWithPathAdmission)
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
-  , ActualMultiAddState(..)
+  , actualMultiPostingAt
   , dailyAccountCandidates
   , groupAccountCandidates
   , incomeAccountCandidates
   , initialActualAddInputForDay
-  , initialActualMultiAddStateForDay
+  , initialActualMultiAddInputForDay
   , multiAccountCandidates
   , resizeActualMultiPostings
   , selectActualAddAccount
-  , selectActualMultiPosting
-  , selectedActualMultiPosting
-  , setActualMultiDateText
-  , setActualMultiDescription
-  , setSelectedActualMultiAccountText
-  , setSelectedActualMultiAmount
+  , setActualMultiPostingAccountText
+  , setActualMultiPostingAmount
   , stepAccountCandidate
   )
 import HKernel.Editor.TUI.Model
@@ -117,12 +113,12 @@ import HKernel.Plan.Completion
   , actualTransactionIdText
   )
 
-data MultiEditInput = MultiEditInput
-  { multiEditDateText         :: Text
-  , multiEditDescriptionText  :: Text
-  , multiEditPostingCountText :: Text
-  , multiEditAccountText      :: Text
-  , multiEditAmountText       :: Text
+-- | Brick-local interaction coordinates around the one authoritative Actual
+-- draft. Row selection and unfinished posting-count text are delivery state.
+data MultiFormState = MultiFormState
+  { multiFormInput            :: ActualMultiAddInput
+  , multiFormSelectedPosting  :: Int
+  , multiFormPostingCountText :: Text
   } deriving (Eq, Show)
 
 data DailyEntryKind
@@ -133,8 +129,8 @@ data DailyEntryKind
 data State event
   = DailyInput DailyEntryKind (Form ActualAddInput event Name)
   | DailyPreview DailyEntryKind ActualAddPreview (Form ActualAddInput event Name)
-  | MultiInput ActualMultiAddState (Form MultiEditInput event Name)
-  | MultiPreview ActualMultiAddPreview ActualMultiAddState (Form MultiEditInput event Name)
+  | MultiInput (Form MultiFormState event Name)
+  | MultiPreview ActualMultiAddPreview (Form MultiFormState event Name)
   | ReverseInput ActualTransactionId Transaction (Form ActualReverseInput event Name)
   | ReversePreview ActualTransactionId Transaction ActualReverseInputPreview (Form ActualReverseInput event Name)
   | ReverseUnavailable Text
@@ -158,9 +154,7 @@ startDailyEntry :: DailyEntryKind -> Day -> State event
 startDailyEntry kind day = DailyInput kind (mkDailyForm kind day)
 
 startMulti :: Day -> State event
-startMulti day =
-  let state = initialActualMultiAddStateForDay day
-  in MultiInput state (mkMultiForm state)
+startMulti day = MultiInput (mkMultiForm (initialMultiFormState day))
 
 startSelectedReverse :: AppContext -> State event
 startSelectedReverse context = case selectedWorkspaceReverseTarget context of
@@ -196,29 +190,46 @@ addAmountTextL :: Lens' ActualAddInput Text
 addAmountTextL f input =
   (\value -> input { addAmountText = value }) <$> f (addAmountText input)
 
-multiEditDateTextL :: Lens' MultiEditInput Text
-multiEditDateTextL f input =
-  (\value -> input { multiEditDateText = value }) <$> f (multiEditDateText input)
+multiDateTextL :: Lens' MultiFormState Text
+multiDateTextL f state =
+  (\value -> state { multiFormInput = input { multiAddDateText = value } })
+    <$> f (multiAddDateText input)
+  where
+    input = multiFormInput state
 
-multiEditDescriptionTextL :: Lens' MultiEditInput Text
-multiEditDescriptionTextL f input =
-  (\value -> input { multiEditDescriptionText = value })
-    <$> f (multiEditDescriptionText input)
+multiDescriptionTextL :: Lens' MultiFormState Text
+multiDescriptionTextL f state =
+  (\value -> state
+      { multiFormInput = input { multiAddDescriptionText = value } })
+    <$> f (multiAddDescriptionText input)
+  where
+    input = multiFormInput state
 
-multiEditPostingCountTextL :: Lens' MultiEditInput Text
-multiEditPostingCountTextL f input =
-  (\value -> input { multiEditPostingCountText = value })
-    <$> f (multiEditPostingCountText input)
+multiPostingCountTextL :: Lens' MultiFormState Text
+multiPostingCountTextL f state =
+  (\value -> state { multiFormPostingCountText = value })
+    <$> f (multiFormPostingCountText state)
 
-multiEditAccountTextL :: Lens' MultiEditInput Text
-multiEditAccountTextL f input =
-  (\value -> input { multiEditAccountText = value })
-    <$> f (multiEditAccountText input)
+multiAccountTextL :: Lens' MultiFormState Text
+multiAccountTextL f state =
+  (\value -> state
+      { multiFormInput =
+          setActualMultiPostingAccountText selected value input })
+    <$> f (multiPostingAccountText posting)
+  where
+    input = multiFormInput state
+    selected = multiFormSelectedPosting state
+    posting = actualMultiPostingAt selected input
 
-multiEditAmountTextL :: Lens' MultiEditInput Text
-multiEditAmountTextL f input =
-  (\value -> input { multiEditAmountText = value })
-    <$> f (multiEditAmountText input)
+multiAmountTextL :: Lens' MultiFormState Text
+multiAmountTextL f state =
+  (\value -> state
+      { multiFormInput = setActualMultiPostingAmount selected value input })
+    <$> f (multiPostingAmountText posting)
+  where
+    input = multiFormInput state
+    selected = multiFormSelectedPosting state
+    posting = actualMultiPostingAt selected input
 
 reverseInputDateTextL :: Lens' ActualReverseInput Text
 reverseInputDateTextL f input =
@@ -256,60 +267,59 @@ mkDailyForm kind day =
   setFormFocus AmountField
     (mkForm kind (initialActualAddInputForDay day))
 
-multiEditInputFor :: ActualMultiAddState -> MultiEditInput
-multiEditInputFor state = MultiEditInput
-  { multiEditDateText = multiAddDateText input
-  , multiEditDescriptionText = multiAddDescriptionText input
-  , multiEditPostingCountText = T.pack (show (NonEmpty.length (multiAddPostings input)))
-  , multiEditAccountText = multiPostingAccountText selected
-  , multiEditAmountText = multiPostingAmountText selected
+initialMultiFormState :: Day -> MultiFormState
+initialMultiFormState day = MultiFormState
+  { multiFormInput = input
+  , multiFormSelectedPosting = 0
+  , multiFormPostingCountText =
+      T.pack (show (NonEmpty.length (multiAddPostings input)))
   }
   where
-    input = actualMultiAddInput state
-    selected = selectedActualMultiPosting state
+    input = initialActualMultiAddInputForDay day
 
-mkMultiForm :: ActualMultiAddState -> Form MultiEditInput event Name
+mkMultiForm :: MultiFormState -> Form MultiFormState event Name
 mkMultiForm state =
   let label labelText widget =
         padBottom (Pad 1)
           ((vLimit 1 (hLimit 20 (str labelText <+> fill ' '))) <+> widget)
       form = newForm
         [ label "Date:"
-            @@= editTextField multiEditDateTextL MultiDateField (Just 1)
+            @@= editTextField multiDateTextL MultiDateField (Just 1)
         , label "Description:"
-            @@= editTextField multiEditDescriptionTextL MultiDescriptionField (Just 1)
+            @@= editTextField multiDescriptionTextL MultiDescriptionField (Just 1)
         , label "Posting count:"
-            @@= editTextField multiEditPostingCountTextL MultiPostingCountField (Just 1)
+            @@= editTextField multiPostingCountTextL MultiPostingCountField (Just 1)
         , label "Selected account:"
-            @@= editTextField multiEditAccountTextL MultiAccountField (Just 1)
+            @@= editTextField multiAccountTextL MultiAccountField (Just 1)
         , label "Selected amount:"
-            @@= editTextField multiEditAmountTextL MultiAmountField (Just 1)
+            @@= editTextField multiAmountTextL MultiAmountField (Just 1)
         ]
-  in setFormFocus MultiDescriptionField (form (multiEditInputFor state))
+  in setFormFocus MultiDescriptionField (form state)
 
-commitMultiForm
-  :: ActualMultiAddState
-  -> Form MultiEditInput event Name
-  -> ActualMultiAddState
-commitMultiForm state form =
-  let editInput = formState form
-      currentInput = actualMultiAddInput state
-      currentCount = NonEmpty.length (multiAddPostings currentInput)
-      requestedCount = fromMaybe currentCount
-        (readMaybe (T.unpack (T.strip (multiEditPostingCountText editInput))))
-      resized = resizeActualMultiPostings requestedCount state
-      withDate = setActualMultiDateText (multiEditDateText editInput) resized
-      withDescription = setActualMultiDescription
-        (multiEditDescriptionText editInput) withDate
-      withAccount = setSelectedActualMultiAccountText
-        (multiEditAccountText editInput) withDescription
-  in setSelectedActualMultiAmount (multiEditAmountText editInput) withAccount
+applyMultiPostingCount :: MultiFormState -> MultiFormState
+applyMultiPostingCount state = state
+  { multiFormInput = resized
+  , multiFormSelectedPosting = clampMultiPostingIndex selected resized
+  , multiFormPostingCountText =
+      T.pack (show (NonEmpty.length (multiAddPostings resized)))
+  }
+  where
+    input = multiFormInput state
+    currentCount = NonEmpty.length (multiAddPostings input)
+    requestedCount = fromMaybe currentCount
+      (readMaybe (T.unpack (T.strip (multiFormPostingCountText state))))
+    resized = resizeActualMultiPostings requestedCount input
+    selected = multiFormSelectedPosting state
 
-syncMultiForm
-  :: ActualMultiAddState
-  -> Form MultiEditInput event Name
-  -> Form MultiEditInput event Name
-syncMultiForm state = updateFormState (multiEditInputFor state)
+selectMultiPosting :: Int -> MultiFormState -> MultiFormState
+selectMultiPosting requested state = state
+  { multiFormSelectedPosting = clampMultiPostingIndex requested input }
+  where
+    input = multiFormInput state
+
+clampMultiPostingIndex :: Int -> ActualMultiAddInput -> Int
+clampMultiPostingIndex requested input =
+  max 0 (min requested (NonEmpty.length (multiAddPostings input) - 1))
 
 initialReverseInput :: Day -> Text -> Transaction -> ActualReverseInput
 initialReverseInput day eventIdText transaction = ActualReverseInput
@@ -340,8 +350,8 @@ zoomDailyForm :: Traversal' (State AppEvent) (Form ActualAddInput AppEvent Name)
 zoomDailyForm f (DailyInput kind form) = DailyInput kind <$> f form
 zoomDailyForm _ state = pure state
 
-zoomMultiForm :: Traversal' (State AppEvent) (Form MultiEditInput AppEvent Name)
-zoomMultiForm f (MultiInput state form) = MultiInput state <$> f form
+zoomMultiForm :: Traversal' (State AppEvent) (Form MultiFormState AppEvent Name)
+zoomMultiForm f (MultiInput form) = MultiInput <$> f form
 zoomMultiForm _ state = pure state
 
 zoomReverseForm :: Traversal' (State AppEvent) (Form ActualReverseInput AppEvent Name)
@@ -369,29 +379,31 @@ drawFlow context state = case state of
     center
       (borderWithLabel (str (dailyPreviewTitle kind))
         (padAll 1 (renderPreview preview <=> str " " <=> str (previewControls preview))))
-  MultiInput multiState form ->
+  MultiInput form ->
     center
       (borderWithLabel (str "Multi-posting Actual")
         (hLimit 86
           (padAll 1
             (vBox
               [ txt ("Date: " <> dateSummary context
-                  (multiAddDateText (actualMultiAddInput multiState)))
+                  (multiAddDateText input))
               , str "Each posting owns its sign. The complete transaction must balance to zero."
               , str " "
               , renderMultiPostingRows multiState
               , str " "
               , txt ("Editing posting "
-                  <> T.pack (show (actualMultiSelectedPosting multiState + 1))
+                  <> T.pack (show (multiFormSelectedPosting multiState + 1))
                   <> " of "
-                  <> T.pack (show (NonEmpty.length
-                    (multiAddPostings (actualMultiAddInput multiState)))))
+                  <> T.pack (show (NonEmpty.length (multiAddPostings input))))
               , renderForm form
               , renderMultiInlineAccountSelector context form
               , str " "
               , multiInputControls form
               ]))))
-  MultiPreview preview _ _ ->
+    where
+      multiState = formState form
+      input = multiFormInput multiState
+  MultiPreview preview _ ->
     center
       (borderWithLabel (str "Multi-posting Preview")
         (hLimit 86
@@ -453,7 +465,7 @@ dailyInputControls form = case dailySelectionTarget form of
   Just _ -> str "[Up/Down] Choose Account | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
   Nothing -> str "[Tab] Next field | [Enter] Preview | [Esc] Actual"
 
-multiInputControls :: Form MultiEditInput AppEvent Name -> Widget Name
+multiInputControls :: Form MultiFormState AppEvent Name -> Widget Name
 multiInputControls form
   | multiAccountFocused form =
       str "[Up/Down] Choose Account | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
@@ -481,13 +493,17 @@ renderDailyInlineAccountSelector context kind form = case dailySelectionTarget f
 
 renderMultiInlineAccountSelector
   :: AppContext
-  -> Form MultiEditInput AppEvent Name
+  -> Form MultiFormState AppEvent Name
   -> Widget Name
 renderMultiInlineAccountSelector context form
   | multiAccountFocused form =
       renderInlineAccountSelector context "Posting Accounts"
-        (multiEditAccountText (formState form)) (multiCandidates context)
+        (multiPostingAccountText selectedPosting) (multiCandidates context)
   | otherwise = emptyWidget
+  where
+    state = formState form
+    selectedPosting = actualMultiPostingAt
+      (multiFormSelectedPosting state) (multiFormInput state)
 
 renderInlineAccountSelector
   :: AppContext
@@ -548,7 +564,7 @@ dailySelectionTarget form = case focusGetCurrent (formFocus form) of
   Just FromAccountField -> Just SelectFromAccount
   _ -> Nothing
 
-multiAccountFocused :: Form MultiEditInput event Name -> Bool
+multiAccountFocused :: Form MultiFormState event Name -> Bool
 multiAccountFocused form =
   focusGetCurrent (formFocus form) == Just MultiAccountField
 
@@ -626,8 +642,8 @@ handleFlowEvent context event = do
   case state of
     DailyInput kind form -> handleDailyInput context kind form event
     DailyPreview kind preview form -> handleDailyPreview context kind preview form event
-    MultiInput multiState form -> handleMultiInput context multiState form event
-    MultiPreview preview multiState form -> handleMultiPreview context preview multiState form event
+    MultiInput form -> handleMultiInput context form event
+    MultiPreview preview form -> handleMultiPreview context preview form event
     ReverseInput targetId transaction form ->
       handleReverseInput context targetId transaction form event
     ReversePreview targetId transaction preview form ->
@@ -741,83 +757,86 @@ handleDailyPreview context kind preview form event = case event of
 
 handleMultiInput
   :: AppContext
-  -> ActualMultiAddState
-  -> Form MultiEditInput AppEvent Name
+  -> Form MultiFormState AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name (State AppEvent) ()
-handleMultiInput context state form event = case event of
+handleMultiInput context form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
   VtyEvent (V.EvKey V.KUp [])
-    | multiAccountFocused form -> moveMultiAccountCandidate context (-1) state form
+    | multiAccountFocused form -> moveMultiAccountCandidate context (-1) form
   VtyEvent (V.EvKey V.KDown [])
-    | multiAccountFocused form -> moveMultiAccountCandidate context 1 state form
+    | multiAccountFocused form -> moveMultiAccountCandidate context 1 form
   VtyEvent (V.EvKey V.KEnter [])
-    | multiAccountFocused form -> acceptMultiAccount state form
-  VtyEvent (V.EvKey V.KEnter []) -> prepareMultiPreview context state form
-  VtyEvent (V.EvKey V.KUp []) -> moveMultiSelection (-1) state form
-  VtyEvent (V.EvKey V.KDown []) -> moveMultiSelection 1 state form
+    | multiAccountFocused form -> acceptMultiAccount form
+  VtyEvent (V.EvKey V.KEnter []) -> prepareMultiPreview context form
+  VtyEvent (V.EvKey V.KUp []) -> moveMultiSelection (-1) form
+  VtyEvent (V.EvKey V.KDown []) -> moveMultiSelection 1 form
   _ -> zoom zoomMultiForm (handleFormEvent event)
 
 moveMultiAccountCandidate
   :: AppContext
   -> Int
-  -> ActualMultiAddState
-  -> Form MultiEditInput AppEvent Name
+  -> Form MultiFormState AppEvent Name
   -> EventM Name (State AppEvent) ()
-moveMultiAccountCandidate context offset state form =
+moveMultiAccountCandidate context offset form =
   case stepAccountCandidate offset current candidates of
     Nothing -> pure ()
     Just account ->
-      let updatedEdit = editInput
-            { multiEditAccountText = HKernel.Account.accountName account }
+      let updatedInput = setActualMultiPostingAccountText selected
+            (HKernel.Account.accountName account) input
+          updatedState = state { multiFormInput = updatedInput }
           updatedForm = setFormFocus MultiAccountField
-            (updateFormState updatedEdit form)
-      in put (MultiInput state updatedForm)
+            (updateFormState updatedState form)
+      in put (MultiInput updatedForm)
   where
-    editInput = formState form
-    current = multiEditAccountText editInput
+    state = formState form
+    input = multiFormInput state
+    selected = multiFormSelectedPosting state
+    current = multiPostingAccountText (actualMultiPostingAt selected input)
     candidates = multiCandidates context
 
 acceptMultiAccount
-  :: ActualMultiAddState
-  -> Form MultiEditInput AppEvent Name
+  :: Form MultiFormState AppEvent Name
   -> EventM Name (State AppEvent) ()
-acceptMultiAccount state form
-  | T.null (T.strip (multiEditAccountText (formState form))) = pure ()
-  | otherwise = put (MultiInput state (setFormFocus MultiAmountField form))
+acceptMultiAccount form
+  | T.null (T.strip current) = pure ()
+  | otherwise = put (MultiInput (setFormFocus MultiAmountField form))
+  where
+    state = formState form
+    current = multiPostingAccountText
+      (actualMultiPostingAt
+        (multiFormSelectedPosting state) (multiFormInput state))
 
 moveMultiSelection
   :: Int
-  -> ActualMultiAddState
-  -> Form MultiEditInput AppEvent Name
+  -> Form MultiFormState AppEvent Name
   -> EventM Name (State AppEvent) ()
-moveMultiSelection offset state form =
-  let committed = commitMultiForm state form
-      selected = actualMultiSelectedPosting committed + offset
-      moved = selectActualMultiPosting selected committed
-  in put (MultiInput moved (syncMultiForm moved form))
+moveMultiSelection offset form =
+  let applied = applyMultiPostingCount (formState form)
+      selected = multiFormSelectedPosting applied + offset
+      moved = selectMultiPosting selected applied
+  in put (MultiInput (updateFormState moved form))
 
 prepareMultiPreview
   :: AppContext
-  -> ActualMultiAddState
-  -> Form MultiEditInput AppEvent Name
+  -> Form MultiFormState AppEvent Name
   -> EventM Name (State AppEvent) ()
-prepareMultiPreview context state form = do
-  let committed = commitMultiForm state form
+prepareMultiPreview context form = do
+  let applied = applyMultiPostingCount (formState form)
+      updatedForm = updateFormState applied form
       resolvedJournal = actualJournalValue
         (householdStateActualJournal (contextHouseholdState context))
       preview = prepareActualMultiAddPreviewFromResolvedJournal
-        resolvedJournal (contextSource context) (actualMultiAddInput committed)
-  put (MultiPreview preview committed (syncMultiForm committed form))
+        resolvedJournal (contextSource context) (multiFormInput applied)
+  put (MultiPreview preview updatedForm)
 
 handleMultiPreview
   :: AppContext
   -> ActualMultiAddPreview
-  -> ActualMultiAddState
-  -> Form MultiEditInput AppEvent Name
+  -> Form MultiFormState AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name (State AppEvent) ()
-handleMultiPreview context preview state form event = case event of
+handleMultiPreview context preview form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> back
   VtyEvent (V.EvKey (V.KChar 'b') []) -> back
   VtyEvent (V.EvKey (V.KChar 'B') []) -> back
@@ -830,11 +849,13 @@ handleMultiPreview context preview state form event = case event of
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
   _ -> pure ()
   where
-    back = put (MultiInput state form)
+    state = formState form
+    back = put (MultiInput form)
     publish = case preview of
       ActualMultiAddCandidateReady block ->
         let stickyDay = fromMaybe (contextEntryDay context)
-              (readMaybe (T.unpack (multiAddDateText (actualMultiAddInput state))))
+              (readMaybe (T.unpack
+                (multiAddDateText (multiFormInput state))))
         in put (PublishRequested stickyDay block)
       _ -> pure ()
 
@@ -1019,15 +1040,15 @@ dateSummary context value
   where
     today = contextObservationDay context
 
-renderMultiPostingRows :: ActualMultiAddState -> Widget Name
+renderMultiPostingRows :: MultiFormState -> Widget Name
 renderMultiPostingRows state =
   vBox
     [ renderRow index posting
     | (index, posting) <- zip [0 ..]
-        (NonEmpty.toList (multiAddPostings (actualMultiAddInput state)))
+        (NonEmpty.toList (multiAddPostings (multiFormInput state)))
     ]
   where
-    selected = actualMultiSelectedPosting state
+    selected = multiFormSelectedPosting state
     renderRow index posting =
       let accountText
             | T.null (multiPostingAccountText posting) = "(enter account)"
