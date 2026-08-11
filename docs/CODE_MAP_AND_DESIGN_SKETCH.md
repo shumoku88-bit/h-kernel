@@ -46,9 +46,9 @@
 | 場所 | CURRENTの役割 | 状態 |
 |---|---|---|
 | `src/` | exact accounting、Journal、Actual、Plan、Budget、Report、application config、rendering primitive | stable library |
-| `household-src/` | Account profile admission、Household policy、Daily Target、Backing、Budget movement、Issue admission | stable library |
+| `household-src/` | Account profile admission、Household policy、Daily Target、Backing、Budget movement、Issue admission、pure Household Report composition/rendering | stable library |
+| `household-app-src/` | canonical Household source IO、typed admission、HouseholdState、write snapshot、Report bootstrap | stable application library |
 | `editor-src/` | typed edit intent、candidate preparation、source placement、safe writer、Actual workspace projection、UI-independent interaction | stable editor library |
-| `spike-src/` | stable typed ownerを合成するHousehold Report compositionとrendering | active spike |
 | `app/` | report CLIのfile、environment、stdout、exit boundary | delivery adapter |
 | `editor-app/` | editor CLIのargument、preview、explicit commit、exit boundary | delivery adapter |
 | `editor-tui-app/` | Actual workspaceのBrick event loop、pane、focus、rendering、effect delivery | delivery adapter |
@@ -70,7 +70,8 @@ h-kernel-household
   source: household-src/
   depends on: h-kernel
   owns: AccountProfile, HouseholdPolicy, DailyTarget,
-        HouseholdBacking, BudgetMovement, Issue admission
+        HouseholdBacking, BudgetMovement, Issue admission,
+        pure Household Report composition and rendering
 
 h-kernel-editor
   source: editor-src/
@@ -80,9 +81,10 @@ h-kernel-editor
         typed Actual workspace projection, UI-independent Actual add interaction
 
 h-kernel-household-application
-  source: spike-src/
+  source: household-app-src/
   depends on: h-kernel + h-kernel-household
-  owns: provisional Household Report composition
+  owns: canonical Household IO, typed admission, HouseholdState,
+        write snapshots and Report bootstrap
 
 executables
   app/             -> h-kernel report CLI

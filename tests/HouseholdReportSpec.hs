@@ -144,8 +144,8 @@ main = do
       assertEqual "unavailable aligned comparison does not fail the Household surface"
         True
         ("Status: NOT AVAILABLE" `T.isInfixOf` shortPreviousRendered
-&& "Daily Target" `T.isInfixOf` shortPreviousRendered
-&& "Envelope & Backing" `T.isInfixOf` shortPreviousRendered)
+          && "Daily Target" `T.isInfixOf` shortPreviousRendered
+          && "Envelope & Backing" `T.isInfixOf` shortPreviousRendered)
     available -> failWith "short previous cycle should make aligned comparison unavailable" available
 
   let defaultIssues = renderHouseholdIssues OpenIssuesOnly (householdIssues surface)

@@ -119,11 +119,11 @@ library h-kernel-editor
 library h-kernel-household-application
     exposed-modules:  HKernel.Household.Application
     build-depends:    base >= 4.14 && < 5
-          , containers >= 0.6 && < 0.8
-          , h-kernel
-          , h-kernel-household
-          , text >= 1.2 && < 2.2
-          , time >= 1.9 && < 1.15
+                    , containers >= 0.6 && < 0.8
+                    , h-kernel
+                    , h-kernel-household
+                    , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
     hs-source-dirs:   household-app-src
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns

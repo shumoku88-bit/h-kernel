@@ -51,7 +51,8 @@ h-kernel-household
   depends on: h-kernel
   owns:
     AccountProfile admission, HouseholdPolicy, DailyTarget,
-    HouseholdBacking, BudgetMovement, Household Issue admission
+    HouseholdBacking, BudgetMovement, Household Issue admission,
+    pure Household Report composition and rendering
 
 h-kernel-editor
   source: editor-src/
@@ -63,10 +64,11 @@ h-kernel-editor
     typed Actual workspace projection, UI-independent Actual add interaction
 
 h-kernel-household-application
-  source: spike-src/
+  source: household-app-src/
   depends on: h-kernel + h-kernel-household
   owns:
-    provisional Household Report composition and rendering
+    canonical Household source IO, typed admission, HouseholdState,
+    write snapshots and pure Report composition bootstrap
 ```
 
 Delivery adaptersはlibraryとは別に置く。

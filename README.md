@@ -288,9 +288,9 @@ Actual reverseのdaily routeは既存CLIへ`reverse` leafと残りの引数を�
 
 ```text
 src/             stable accounting, Journal, Plan, Budget, Report
-household-src/   stable household policy and admissions
+household-src/   stable household policy, admissions and pure Report composition
+household-app-src/ canonical Household IO and admission bootstrap
 editor-src/      editor intent, candidate, safe writer
-spike-src/       provisional Household Report composition
 app/             report CLI adapter
 editor-app/      editor CLI adapter
 editor-tui-app/  Actual workspace TUI adapter

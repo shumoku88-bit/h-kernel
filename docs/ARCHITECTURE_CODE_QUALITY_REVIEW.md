@@ -56,9 +56,9 @@ graph TD
 | ライブラリ | ソースディレクトリ | 役割 | IO |
 |---|---|---|---|
 | `h-kernel` | `src/` (~42 files) | 純粋コア: 勘定、元帳、仕訳帳、報告、描画基盤 | なし（`Loader` 除く） |
-| `h-kernel-household` | `household-src/` (~10 files) | 世帯固有: 予算、日次目標、勘定プロファイル | なし |
+| `h-kernel-household` | `household-src/` | 世帯固有: 予算、日次目標、勘定プロファイル、pure Report composition/rendering | なし |
+| `h-kernel-household-application` | `household-app-src/` | canonical Household IO、typed admission、write snapshot、Report bootstrap | 読込み |
 | `h-kernel-editor` | `editor-src/` (~14 files) | 編集: 型付き編集意図、プレビュー、安全な原子的書込み | 書込みのみ |
-| `h-kernel-spike-*` | `spike-src/` (~3 files) | レポート構成の実験 | — |
 
 **依存方向は Cabal の内部ライブラリ境界で構造的に強制**される。`h-kernel` コアが editor や household を知ることはビルドシステムレベルで不可能。
 
