@@ -32,13 +32,13 @@ renderHouseholdIssueLine issue = T.intercalate " | "
   ]
 
 renderStatus :: IssueStatus -> Text
-renderStatus status = case status of
+renderStatus = \case
   Open -> "open"
   Resolved -> "resolved"
   Dropped -> "dropped"
 
 renderDue :: IssueDue -> Text
-renderDue due = case due of
+renderDue = \case
   DueOn day -> "due " <> renderDay day
   DueUndetermined -> "due undetermined"
 
