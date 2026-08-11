@@ -142,3 +142,7 @@ role = "observation"
 [[documents]]
 path = "docs/DEVELOPMENT_TOOLING_EVALUATION.md"
 role = "observation"
+
+[[documents]]
+path = "docs/TEST_HELPER_DUPLICATION_OBSERVATION_001.md"
+role = "observation"
