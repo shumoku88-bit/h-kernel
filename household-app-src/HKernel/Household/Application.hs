@@ -19,8 +19,8 @@ module HKernel.Household.Application
   ) where
 
 import Control.Exception (IOException)
+import Control.Monad.Trans.Except (ExceptT(..), runExceptT)
 import Data.Bifunctor (first)
-import qualified Data.List.NonEmpty as NonEmpty
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -227,206 +227,157 @@ loadCanonicalHousehold root =
 loadCanonicalHouseholdWriteSnapshot
   :: HouseholdRoot
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
-loadCanonicalHouseholdWriteSnapshot root = do
+loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
   let paths = householdSourcePaths root
-  accountsContentResult <- readHouseholdSource (householdAccountsJournalPath paths)
-  case accountsContentResult of
-    Left errors -> pure (Left errors)
-    Right accountsContent -> case parseAccountJournal accountsContent of
-      Left errors -> pure (Left (pure (HouseholdAccountsParseFailed errors)))
-      Right accountsRegistry -> loadActual root paths accountsContent accountsRegistry
 
-loadActual
-  :: HouseholdRoot
-  -> HouseholdSourcePaths
-  -> Text
-  -> AccountRegistry
-  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
-loadActual root paths accountsRootText accountsRegistry = do
-  rootTextResult <- readHouseholdSource (householdActualJournalPath paths)
-  case rootTextResult of
-    Left errors -> pure (Left errors)
-    Right rootText -> do
-      loaded <- loadJournalRootObservationFromSource
-        (householdActualJournalPath paths)
-        rootText
-      case loaded of
-        Left err -> pure (Left (pure (HouseholdActualLoadFailed err)))
-        Right observation ->
-          let resolved = journalRootObservationJournal observation
-              sources = journalRootObservationTransactionSources observation
-          in case admitActualJournalFromResolvedSources resolved sources of
-            Left errors -> pure (Left (pure (HouseholdActualParseFailed errors)))
-            Right actualJournal
-              | accountsRegistry /= journalAccountRegistry (actualJournalValue actualJournal) ->
-                  pure (Left (pure (HouseholdAccountRegistryDisagreement
-                    accountsRegistry
-                    (journalAccountRegistry (actualJournalValue actualJournal)))))
-              | otherwise -> loadPlan
-                  root paths accountsRootText accountsRegistry rootText actualJournal
+  -- 1. accounts.journal
+  accountsSource <- readHouseholdSourceExcept (householdAccountsJournalPath paths)
+  accountsRegistry <- liftEither . first (pure . HouseholdAccountsParseFailed) $
+    parseAccountJournal accountsSource
 
-loadPlan
-  :: HouseholdRoot
-  -> HouseholdSourcePaths
-  -> Text
-  -> AccountRegistry
-  -> Text
-  -> ActualJournal
-  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
-loadPlan root paths accountsRootText accountsRegistry actualRootText actualJournal = do
-  rootTextResult <- readHouseholdSource (householdPlanJournalPath paths)
-  case rootTextResult of
-    Left errors -> pure (Left errors)
-    Right rootText -> do
-      loaded <- loadJournalRootObservationFromSource
-        (householdPlanJournalPath paths)
-        rootText
-      case loaded of
-        Left err -> pure (Left (pure (HouseholdPlanLoadFailed err)))
-        Right observation ->
-          let resolved = journalRootObservationJournal observation
-              sources = journalRootObservationTransactionSources observation
-          in case admitPlanJournalFromResolvedSources resolved sources of
-            Left errors -> pure (Left (pure (HouseholdPlanParseFailed errors)))
-            Right planJournal
-              | accountsRegistry /= journalAccountRegistry (planJournalValue planJournal) ->
-                  pure (Left (pure (HouseholdPlanRegistryDisagreement
-                    (householdPlanJournalPath paths)
-                    "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
-              | otherwise -> loadBudget
-                  root
-                  paths
-                  accountsRootText
-                  accountsRegistry
-                  actualRootText
-                  actualJournal
-                  rootText
-                  planJournal
+  -- 2. actual.journal
+  actualSource <- readHouseholdSourceExcept (householdActualJournalPath paths)
+  actualObservation <- ExceptT $ first (pure . HouseholdActualLoadFailed) <$>
+    loadJournalRootObservationFromSource (householdActualJournalPath paths) actualSource
+  actualJournal <- liftEither . first (pure . HouseholdActualParseFailed) $
+    admitActualJournalFromResolvedSources
+      (journalRootObservationJournal actualObservation)
+      (journalRootObservationTransactionSources actualObservation)
+  liftEither $ validateAccountRegistryAgreement
+    accountsRegistry
+    (journalAccountRegistry (actualJournalValue actualJournal))
+    (HouseholdAccountRegistryDisagreement accountsRegistry)
 
-loadBudget
-  :: HouseholdRoot
-  -> HouseholdSourcePaths
-  -> Text
-  -> AccountRegistry
-  -> Text
-  -> ActualJournal
-  -> Text
-  -> PlanJournal
-  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
-loadBudget root paths accountsRootText accountsRegistry actualRootText actualJournal planRootText planJournal = do
-  rootTextResult <- readHouseholdSource (householdBudgetJournalPath paths)
-  case rootTextResult of
-    Left errors -> pure (Left errors)
-    Right budgetRootText -> do
-      loaded <- loadJournalRootObservationFromSource
-        (householdBudgetJournalPath paths)
-        budgetRootText
-      case loaded of
-        Left err -> pure (Left (pure (HouseholdBudgetLoadFailed err)))
-        Right observation ->
-          let budgetJournal = journalRootObservationJournal observation
-              sources = journalRootObservationTransactionSources observation
-          in if accountsRegistry /= journalAccountRegistry budgetJournal
-            then pure (Left (pure (HouseholdBudgetRegistryDisagreement
-              (householdBudgetJournalPath paths)
-              "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry")))
-            else case admitHouseholdBudgetMovementJournalFromResolvedSources
-                budgetJournal sources of
-              Left errors -> pure (Left (pure (HouseholdBudgetMovementAdmitFailed errors)))
-              Right budgetMovementJournal ->
-                loadConfigsAndIssues
-                  root
-                  paths
-                  accountsRootText
-                  accountsRegistry
-                  actualRootText
-                  actualJournal
-                  planRootText
-                  planJournal
-                  budgetRootText
-                  budgetMovementJournal
+  -- 3. plan.journal
+  planSource <- readHouseholdSourceExcept (householdPlanJournalPath paths)
+  planObservation <- ExceptT $ first (pure . HouseholdPlanLoadFailed) <$>
+    loadJournalRootObservationFromSource (householdPlanJournalPath paths) planSource
+  planJournal <- liftEither . first (pure . HouseholdPlanParseFailed) $
+    admitPlanJournalFromResolvedSources
+      (journalRootObservationJournal planObservation)
+      (journalRootObservationTransactionSources planObservation)
+  liftEither $ validateAccountRegistryAgreement
+    accountsRegistry
+    (journalAccountRegistry (planJournalValue planJournal))
+    (\_ -> HouseholdPlanRegistryDisagreement
+      (householdPlanJournalPath paths)
+      "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry")
 
-loadConfigsAndIssues
-  :: HouseholdRoot
-  -> HouseholdSourcePaths
-  -> Text
-  -> AccountRegistry
-  -> Text
-  -> ActualJournal
-  -> Text
-  -> PlanJournal
-  -> Text
-  -> HouseholdBudgetMovementJournal
-  -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
-loadConfigsAndIssues root paths accountsRootText accountsRegistry actualRootText actualJournal planRootText planJournal budgetRootText budgetMovementJournal = do
-  budgetTextResult <- readHouseholdSource (householdBudgetConfigPath paths)
-  case budgetTextResult of
-    Left errors -> pure (Left errors)
-    Right budgetText -> case parseBudgetPolicy budgetText of
-      Left errors -> pure (Left (pure (HouseholdBudgetPolicyParseFailed errors)))
-      Right budgetPolicy -> do
-        householdTextResult <- readHouseholdSource (householdPolicyConfigPath paths)
-        case householdTextResult of
-          Left errors -> pure (Left errors)
-          Right householdText -> case parseHouseholdConfiguration budgetPolicy householdText of
-            Left errors -> pure (Left (pure (HouseholdPolicyParseFailed errors)))
-            Right configuration -> do
-              let policy = householdConfigurationPolicy configuration
-              case validateHouseholdPolicyAccounts accountsRegistry policy of
-                Left errors -> pure (Left (pure (HouseholdPolicyAccountValidationFailed errors)))
-                Right validatedPolicy -> case validateHouseholdAccountPolicy accountsRegistry
-                    (householdConfigurationAccountPolicy configuration) of
-                  Left errors -> pure (Left errors)
-                  Right () -> do
-                    reportTextResult <- readHouseholdSource (householdReportConfigPath paths)
-                    case reportTextResult of
-                      Left errors -> pure (Left errors)
-                      Right reportText -> case parseReportConfiguration reportText of
-                        Left errors -> pure (Left (pure (HouseholdReportConfigParseFailed errors)))
-                        Right reportConfig -> do
-                          issuesTextResult <- readHouseholdSource (householdIssuesPath paths)
-                          case issuesTextResult of
-                            Left errors -> pure (Left errors)
-                            Right issuesText -> case parseHouseholdIssues issuesText of
-                              Left errors -> pure (Left (pure (HouseholdIssuesParseFailed errors)))
-                              Right issues -> case assembleDailyScope
-                                  accountsRegistry
-                                  (householdConfigurationDailyTargetAssets configuration)
-                                  planJournal of
-                                Left errors -> pure (Left errors)
-                                Right dailyScope ->
-                                  let state = HouseholdState
-                                        { householdStateRoot = root
-                                        , householdStatePaths = paths
-                                        , householdStateAccountsRegistry = accountsRegistry
-                                        , householdStateActualJournal = actualJournal
-                                        , householdStatePlanJournal = planJournal
-                                        , householdStateBudgetMovementJournal = budgetMovementJournal
-                                        , householdStateBudgetPolicy = budgetPolicy
-                                        , householdStateConfiguration = configuration
-                                        , householdStatePolicy = policy
-                                        , householdStateValidatedPolicy = validatedPolicy
-                                        , householdStateReportConfig = reportConfig
-                                        , householdStateIssues = issues
-                                        , householdStateDailyScope = dailyScope
-                                        }
-                                  in pure (Right HouseholdWriteSnapshot
-                                      { householdWriteSnapshotState = state
-                                      , householdWriteSnapshotAccountsSource = accountsRootText
-                                      , householdWriteSnapshotActualSource = actualRootText
-                                      , householdWriteSnapshotPlanSource = planRootText
-                                      , householdWriteSnapshotBudgetSource = budgetRootText
-                                      , householdWriteSnapshotIssuesSource = issuesText
-                                      })
+  -- 4. budget.journal
+  budgetSource <- readHouseholdSourceExcept (householdBudgetJournalPath paths)
+  budgetObservation <- ExceptT $ first (pure . HouseholdBudgetLoadFailed) <$>
+    loadJournalRootObservationFromSource (householdBudgetJournalPath paths) budgetSource
+  let budgetJournal = journalRootObservationJournal budgetObservation
+      budgetSources = journalRootObservationTransactionSources budgetObservation
+  liftEither $ validateAccountRegistryAgreement
+    accountsRegistry
+    (journalAccountRegistry budgetJournal)
+    (\_ -> HouseholdBudgetRegistryDisagreement
+      (householdBudgetJournalPath paths)
+      "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry")
+  budgetMovementJournal <- liftEither . first (pure . HouseholdBudgetMovementAdmitFailed) $
+    admitHouseholdBudgetMovementJournalFromResolvedSources budgetJournal budgetSources
 
-readHouseholdSource
+  -- 5. budget.toml
+  budgetPolicySource <- readHouseholdSourceExcept (householdBudgetConfigPath paths)
+  budgetPolicy <- liftEither . first (pure . HouseholdBudgetPolicyParseFailed) $
+    parseBudgetPolicy budgetPolicySource
+
+  -- 6. household.toml
+  householdPolicySource <- readHouseholdSourceExcept (householdPolicyConfigPath paths)
+  configuration <- liftEither . first (pure . HouseholdPolicyParseFailed) $
+    parseHouseholdConfiguration budgetPolicy householdPolicySource
+
+  -- 7. report.toml
+  reportConfigSource <- readHouseholdSourceExcept (householdReportConfigPath paths)
+  reportConfig <- liftEither . first (pure . HouseholdReportConfigParseFailed) $
+    parseReportConfiguration reportConfigSource
+
+  -- 8. issues.tsv
+  issuesSource <- readHouseholdSourceExcept (householdIssuesPath paths)
+  issues <- liftEither . first (pure . HouseholdIssuesParseFailed) $
+    parseHouseholdIssues issuesSource
+
+  -- 9. Post-admission validation & state assembly
+  state <- liftEither $ assembleCanonicalHouseholdState
+    root
+    paths
+    accountsRegistry
+    actualJournal
+    planJournal
+    budgetMovementJournal
+    budgetPolicy
+    configuration
+    reportConfig
+    issues
+
+  pure HouseholdWriteSnapshot
+    { householdWriteSnapshotState = state
+    , householdWriteSnapshotAccountsSource = accountsSource
+    , householdWriteSnapshotActualSource = actualSource
+    , householdWriteSnapshotPlanSource = planSource
+    , householdWriteSnapshotBudgetSource = budgetSource
+    , householdWriteSnapshotIssuesSource = issuesSource
+    }
+
+readHouseholdSourceExcept
   :: FilePath
-  -> IO (Either (NonEmpty HouseholdLoadError) Text)
-readHouseholdSource path = do
+  -> ExceptT (NonEmpty HouseholdLoadError) IO Text
+readHouseholdSourceExcept path = ExceptT $ do
   result <- tryIOError (TIO.readFile path)
   pure $ case result of
     Left err -> Left (pure (HouseholdSourceReadFailed path err))
     Right content -> Right content
+
+liftEither :: Applicative m => Either e a -> ExceptT e m a
+liftEither = ExceptT . pure
+
+validateAccountRegistryAgreement
+  :: AccountRegistry
+  -> AccountRegistry
+  -> (AccountRegistry -> HouseholdLoadError)
+  -> Either (NonEmpty HouseholdLoadError) ()
+validateAccountRegistryAgreement expected actual mkErr
+  | expected == actual = Right ()
+  | otherwise = Left (pure (mkErr actual))
+
+assembleCanonicalHouseholdState
+  :: HouseholdRoot
+  -> HouseholdSourcePaths
+  -> AccountRegistry
+  -> ActualJournal
+  -> PlanJournal
+  -> HouseholdBudgetMovementJournal
+  -> BudgetPolicy
+  -> HouseholdConfiguration
+  -> ReportConfiguration
+  -> [HouseholdIssue]
+  -> Either (NonEmpty HouseholdLoadError) HouseholdState
+assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJournal budgetMovementJournal budgetPolicy configuration reportConfig issues = do
+  let policy = householdConfigurationPolicy configuration
+  validatedPolicy <- first (pure . HouseholdPolicyAccountValidationFailed)
+    (validateHouseholdPolicyAccounts accountsRegistry policy)
+  validateHouseholdAccountPolicy accountsRegistry
+    (householdConfigurationAccountPolicy configuration)
+  dailyScope <- assembleDailyScope
+    accountsRegistry
+    (householdConfigurationDailyTargetAssets configuration)
+    planJournal
+  pure HouseholdState
+    { householdStateRoot = root
+    , householdStatePaths = paths
+    , householdStateAccountsRegistry = accountsRegistry
+    , householdStateActualJournal = actualJournal
+    , householdStatePlanJournal = planJournal
+    , householdStateBudgetMovementJournal = budgetMovementJournal
+    , householdStateBudgetPolicy = budgetPolicy
+    , householdStateConfiguration = configuration
+    , householdStatePolicy = policy
+    , householdStateValidatedPolicy = validatedPolicy
+    , householdStateReportConfig = reportConfig
+    , householdStateIssues = issues
+    , householdStateDailyScope = dailyScope
+    }
 
 validateHouseholdAccountPolicy
   :: AccountRegistry
@@ -504,30 +455,30 @@ admitCanonicalHousehold root accountsText actualText planText budgetText budgetP
     (resolveInMemoryJournal accountsText actualText)
   actualJournal <- first (pure . HouseholdActualParseFailed)
     (admitActualJournalFromResolvedJournal resolvedActual actualText)
-  let actualRegistry = journalAccountRegistry (actualJournalValue actualJournal)
-  if accountsRegistry == actualRegistry
-    then Right ()
-    else Left (pure (HouseholdAccountRegistryDisagreement accountsRegistry actualRegistry))
+  validateAccountRegistryAgreement
+    accountsRegistry
+    (journalAccountRegistry (actualJournalValue actualJournal))
+    (HouseholdAccountRegistryDisagreement accountsRegistry)
 
   resolvedPlan <- first (pure . HouseholdPlanParseFailed . fmap PlanJournalSyntaxError)
     (resolveInMemoryJournal accountsText planText)
   planJournal <- first (pure . HouseholdPlanParseFailed)
     (admitPlanJournalFromResolvedJournal resolvedPlan planText)
-  let planRegistry = journalAccountRegistry (planJournalValue planJournal)
-  if accountsRegistry == planRegistry
-    then Right ()
-    else Left (pure (HouseholdPlanRegistryDisagreement
+  validateAccountRegistryAgreement
+    accountsRegistry
+    (journalAccountRegistry (planJournalValue planJournal))
+    (\_ -> HouseholdPlanRegistryDisagreement
       (householdPlanJournalPath paths)
-      "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry"))
+      "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry")
 
   budgetJournal <- first (pure . HouseholdBudgetParseFailed)
     (resolveInMemoryJournal accountsText budgetText)
-  let budgetRegistry = journalAccountRegistry budgetJournal
-  if accountsRegistry == budgetRegistry
-    then Right ()
-    else Left (pure (HouseholdBudgetRegistryDisagreement
+  validateAccountRegistryAgreement
+    accountsRegistry
+    (journalAccountRegistry budgetJournal)
+    (\_ -> HouseholdBudgetRegistryDisagreement
       (householdBudgetJournalPath paths)
-      "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry"))
+      "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry")
   budgetMovementJournal <- first (pure . HouseholdBudgetMovementAdmitFailed)
     (admitHouseholdBudgetMovementJournalFromResolvedJournal budgetJournal budgetText)
 
@@ -535,35 +486,22 @@ admitCanonicalHousehold root accountsText actualText planText budgetText budgetP
     (parseBudgetPolicy budgetPolicyText)
   configuration <- first (pure . HouseholdPolicyParseFailed)
     (parseHouseholdConfiguration budgetPolicy householdPolicyText)
-  let policy = householdConfigurationPolicy configuration
-  validatedPolicy <- first (pure . HouseholdPolicyAccountValidationFailed)
-    (validateHouseholdPolicyAccounts accountsRegistry policy)
-  validateHouseholdAccountPolicy accountsRegistry
-    (householdConfigurationAccountPolicy configuration)
   reportConfig <- first (pure . HouseholdReportConfigParseFailed)
     (parseReportConfiguration reportConfigText)
   issues <- first (pure . HouseholdIssuesParseFailed)
     (parseHouseholdIssues issuesText)
-  dailyScope <- assembleDailyScope
-    accountsRegistry
-    (householdConfigurationDailyTargetAssets configuration)
-    planJournal
 
-  pure HouseholdState
-    { householdStateRoot = root
-    , householdStatePaths = paths
-    , householdStateAccountsRegistry = accountsRegistry
-    , householdStateActualJournal = actualJournal
-    , householdStatePlanJournal = planJournal
-    , householdStateBudgetMovementJournal = budgetMovementJournal
-    , householdStateBudgetPolicy = budgetPolicy
-    , householdStateConfiguration = configuration
-    , householdStatePolicy = policy
-    , householdStateValidatedPolicy = validatedPolicy
-    , householdStateReportConfig = reportConfig
-    , householdStateIssues = issues
-    , householdStateDailyScope = dailyScope
-    }
+  assembleCanonicalHouseholdState
+    root
+    paths
+    accountsRegistry
+    actualJournal
+    planJournal
+    budgetMovementJournal
+    budgetPolicy
+    configuration
+    reportConfig
+    issues
 
 -- | Build the report surface using the shared typed calculation owner.
 buildHouseholdReportSurfaceFromHousehold

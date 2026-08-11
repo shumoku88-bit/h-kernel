@@ -341,18 +341,34 @@ testRegistryDisagreementFailure = do
 
 testInMemoryAdmission :: IO ()
 testInMemoryAdmission = do
-  let root = case mkHouseholdRoot "." of
-        Right r -> r
-        Left _ -> error "unreachable"
-  case admitCanonicalHousehold root syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues of
+  let dir = "/tmp/synthetic_household_inmemory_spec"
+  resetDirectory dir
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+
+  root <- case mkHouseholdRoot dir of
+    Left err -> die ("mkHouseholdRoot failed: " <> show err)
+    Right r -> pure r
+
+  loadResult <- loadCanonicalHousehold root
+  fsState <- case loadResult of
+    Left errs -> die ("loadCanonicalHousehold failed:\n" <> unlines (map show (NonEmpty.toList errs)))
+    Right s -> pure s
+
+  pureState <- case admitCanonicalHousehold root syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues of
     Left errs -> die ("admitCanonicalHousehold failed:\n" <> unlines (map show (NonEmpty.toList errs)))
-    Right state -> do
-      unless (length (householdConfigurationDailyTargetAssets (householdStateConfiguration state)) == 1)
-        (die "in-memory Household discarded Daily Target asset policy")
-      let observation = fromGregorian 2026 7 20
-      case buildHouseholdReportSurfaceFromHousehold observation state of
-        Left errs -> die ("buildHouseholdReportSurfaceFromHousehold in memory failed:\n" <> unlines (map show (NonEmpty.toList errs)))
-        Right _ -> pure ()
+    Right s -> pure s
+
+  unless (fsState == pureState)
+    (die "loadCanonicalHousehold and admitCanonicalHousehold produced different HouseholdState for same synthetic sources")
+
+  unless (length (householdConfigurationDailyTargetAssets (householdStateConfiguration pureState)) == 1)
+    (die "in-memory Household discarded Daily Target asset policy")
+  let observation = fromGregorian 2026 7 20
+  case buildHouseholdReportSurfaceFromHousehold observation pureState of
+    Left errs -> die ("buildHouseholdReportSurfaceFromHousehold in memory failed:\n" <> unlines (map show (NonEmpty.toList errs)))
+    Right _ -> pure ()
+
+  removeDirectoryRecursive dir
 
 testNativePlanMetadataFailsClosed :: IO ()
 testNativePlanMetadataFailsClosed = do
