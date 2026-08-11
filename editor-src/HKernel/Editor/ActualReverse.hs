@@ -134,8 +134,12 @@ suggestActualReverseEventIdText existingIds targetId = go 1
   where
     used = Set.fromList (map actualTransactionIdText existingIds)
     stem = actualTransactionIdText targetId <> "-reversal"
+
+    candidate :: Int -> Text
     candidate 1 = stem
     candidate index = stem <> "-" <> T.pack (show index)
+
+    go :: Int -> Text
     go index
       | candidate index `Set.member` used = go (index + 1)
       | otherwise = candidate index
