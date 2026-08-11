@@ -100,7 +100,7 @@ Do not combine these merely because coordinated publication connects them.
 
 # Batch C1: Household application orchestration
 
-Status: **ACCEPTED / MERGED / POST-MERGE REQUALIFICATION BLOCKED BY CI INFRASTRUCTURE**
+Status: **ACCEPTED / MERGED / MAIN REQUALIFIED**
 
 Implementation PR: #208 `cleanup(household): linearize canonical application assembly`
 Base: `31d427b2ec98a96d704206523b46ab5b2d292fbf`
@@ -179,19 +179,21 @@ This review reinforces the cleanup rule:
 
 PR CI #668 passed GHC 9.10.3 / 9.12.4 / 9.14.1. The GHC 9.10.3 job also passed repository ownership audit and complete report contracts.
 
-## Post-merge CI #669 infrastructure observation
+## Post-merge CI #669 infrastructure observation and requalification
 
 Main CI #669 targets the accepted merge commit `e9f088b25f8eb2b366d69dddfe8af3f0d19c7de8`.
 
-The GHC 9.10.3 job failed during dependency resolution, before compilation. Its `cabal update` selected Hackage index-state `2025-09-28T23:18:24Z`, under which the available `toml-parser` did not satisfy the repository's existing `>=2.0.2 && <2.1` bound.
+The first GHC 9.10.3 attempt failed during dependency resolution, before compilation. Its `cabal update` selected Hackage index-state `2025-09-28T23:18:24Z`, under which the available `toml-parser` did not satisfy the repository's existing `>=2.0.2 && <2.1` bound.
 
-The immediately preceding PR #668 GHC 9.10.3 job used index-state `2026-08-11T16:49:51Z`, resolved `toml-parser-2.0.2.0`, and passed build, tests, ownership audit, and complete report contracts on the exact reviewed source.
+The immediately preceding PR #668 GHC 9.10.3 job had used index-state `2026-08-11T16:49:51Z`, resolved `toml-parser-2.0.2.0`, and passed build, tests, ownership audit, and complete report contracts on the exact reviewed source.
 
-Therefore the #669 9.10.3 failure is currently classified as Hackage/index-state infrastructure behavior, not a C1 code regression. Do not change C1 code or dependency bounds from this single failure. Re-run the failed job once the workflow run is complete; GitHub rejects job reruns while other matrix jobs in the same run remain active.
+The failed GHC 9.10.3 job was re-run without any code or dependency-bound change. The rerun passed Build, Test, repository ownership audit, and complete report contracts. GHC 9.12.4 and 9.14.1 also passed. The transient Hackage/index-state regression did not reproduce.
+
+Therefore C1 is fully requalified on merged main. No CI workaround or dependency-bound change was introduced.
 
 # Batch C2: safe publication owner observation
 
-Status: **OBSERVED / IMPLEMENTATION HELD UNTIL MAIN REQUALIFICATION**
+Status: **OBSERVED / READY FOR IMPLEMENTATION**
 
 Merged-main observation confirms `HKernel.Editor.ActualWriter` is now a misleadingly narrow historical module name.
 
@@ -228,13 +230,30 @@ The owner is not Actual-local in production:
 - `PlanCompleteAdvance` imports only `WriterFileSystem` / `defaultWriterFileSystem` from `ActualWriter` for coordinated Plan+Actual publication;
 - `ActualAppend` imports the generic `WriteError` type.
 
-`EditorActualWriterSpec` likewise covers generic stale/staging/rollback/final-verification laws plus Actual and Plan adapters, so its test owner name has drifted with the production module name.
+Actual code search on the merged baseline found 15 repository references to `HKernel.Editor.ActualWriter`, fully accounted for as:
+
+```text
+3 editor-src
+1 editor-app
+3 editor-tui-app
+7 tests
+1 h-kernel.cabal
+```
+
+There is no unexplained consumer inside the repository. `EditorActualWriterSpec` covers generic stale/staging/rollback/final-verification laws plus Actual and Plan adapters, so its test owner name has drifted with the production module name.
 
 ## Ownership conclusion
 
-The smallest honest correction currently appears to be a **rename-only owner correction**, not a structural split.
+The smallest honest correction is a **rename-only owner correction**, not a structural split.
 
-A source-publication name such as `HKernel.Editor.SourcePublication` describes what the module actually owns without implying that every source using the capability has transferred canonical writer authority to h-kernel.
+Use:
+
+```text
+HKernel.Editor.ActualWriter
+  -> HKernel.Editor.SourcePublication
+```
+
+`SourcePublication` describes the capability actually owned by the module without implying that every source using the capability has transferred canonical writer authority to h-kernel.
 
 This distinction is essential:
 
@@ -244,7 +263,7 @@ safe publication capability
 canonical writer authority
 ```
 
-Current product/source-authority documents that speak about the canonical Actual writer remain semantically Actual-specific and should not be mechanically renamed merely because a code module changes name.
+Current product/source-authority documents that speak about the canonical Actual writer remain semantically Actual-specific and should not be mechanically renamed merely because a code module changes name. A docs code search found no literal `ActualWriter` module-name references requiring migration.
 
 ## Why split is not currently justified
 
@@ -252,19 +271,24 @@ Splitting generic mechanics from domain admission adapters would add module boun
 
 Likewise, do not fan out into `ActualWriter`, `PlanWriter`, `BudgetWriter`, `IssueWriter` modules for symmetry.
 
-## API/test consequence if implementation proceeds
+## API/test consequence
 
-`HKernel.Editor.ActualWriter` is an exposed module, so a rename is API-visible. Before implementation, recheck whether any concrete external compatibility requirement justifies a temporary re-export. Do not add a compatibility wrapper merely from fear of change.
+`HKernel.Editor.ActualWriter` is an exposed module, so the rename is API-visible. Actual repository inspection found no releases and no tags. There is therefore no concrete repository evidence requiring a compatibility re-export of the stale module name.
 
-If no such requirement is found, the coherent rename slice would naturally update:
+Do not keep `HKernel.Editor.ActualWriter` as a compatibility wrapper unless new concrete consumer evidence appears during implementation recheck. The repository is cleaner if the stale exposed owner disappears.
 
-- module/file name;
+The coherent rename slice should update:
+
+- `editor-src/HKernel/Editor/ActualWriter.hs` -> `editor-src/HKernel/Editor/SourcePublication.hs`;
+- module declaration only, without renaming the existing public types/functions;
 - all production imports;
 - `h-kernel.cabal` exposed module;
-- safe-publication test file/test-suite naming;
-- module/test comments that incorrectly say Actual when they describe the common publication law.
+- `tests/EditorActualWriterSpec.hs` -> `tests/EditorSourcePublicationSpec.hs`;
+- test-suite name -> `h-kernel-editor-source-publication-test`;
+- `main-is` accordingly;
+- comments that describe the common owner as the "Actual writer" when they really mean safe source publication.
 
-It should not change any public function/type signatures or publication behavior.
+Do not rename domain-specific functions/types merely because the module changes owner name. `publishActual*`, Actual/Plan/Budget admission error types, and `WriterFileSystem` remain semantically valid names.
 
 ## C2 explicit non-goals
 
@@ -277,8 +301,23 @@ It should not change any public function/type signatures or publication behavior
 - no Account-in-Actual retirement;
 - no removal of currently exposed adapters merely because code search finds few callers;
 - no coordinated Plan+Actual writer refactor;
-- no mechanical rewrite of Actual writer-authority documentation.
+- no mechanical rewrite of Actual writer-authority documentation;
+- no compatibility re-export without concrete consumer evidence;
+- no unrelated warning/import cleanup.
 
-# Next gate
+# Next implementation batch
 
-Finish/re-run main CI #669 first. If main requalifies without code changes, prepare one coherent C2 rename-only implementation instruction from the actual then-current main. If the rerun reproduces the Hackage index regression, treat CI dependency-index reproducibility as a separate infrastructure problem before changing C2.
+Implement C2 as one coherent rename-only owner correction from the actual then-current `main`.
+
+Qualification remains:
+
+```bash
+cabal build all
+cabal test all
+cabal run exe:repository-audit
+./report-build
+./report-verify --fixture
+./report-verify --corpus
+```
+
+Push the implementation to a dedicated branch, open one PR, and STOP BEFORE MERGE for independent actual-diff and CI review.
