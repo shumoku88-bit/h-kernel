@@ -89,6 +89,9 @@ import HKernel.Editor.TUI.Model
   , AppEvent
   , Name(..)
   , WorkspaceFocus(..)
+  , contextHouseholdState
+  , contextSource
+  , contextSourcePath
   , reloadWorkspaceContext
   )
 import HKernel.Household.Application
