@@ -64,6 +64,7 @@ main = do
   putStrLn "Running CanonicalHouseholdSpec..."
   testSyntheticRootLoading
   testActualWholeHouseholdRollback
+  testAccountWriteSnapshotOwnership
   testBudgetWriteSnapshotOwnership
   testBudgetWholeHouseholdRollback
   testIssueWriteSnapshotOwnership
@@ -135,6 +136,28 @@ testActualWholeHouseholdRollback = do
   restoredActual <- TIO.readFile actualPath
   unless (restoredActual == syntheticActual)
     (die "Whole-Household admission failure did not restore actual.journal")
+
+  removeDirectoryRecursive dir
+
+testAccountWriteSnapshotOwnership :: IO ()
+testAccountWriteSnapshotOwnership = do
+  let dir = "/tmp/synthetic_household_account_snapshot_spec"
+  resetDirectory dir
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+
+  root <- case mkHouseholdRoot dir of
+    Left err -> die ("mkHouseholdRoot failed: " <> show err)
+    Right r -> pure r
+
+  snapshotResult <- loadCanonicalHouseholdWriteSnapshot root
+  snapshot <- case snapshotResult of
+    Left errs -> die
+      ("loadCanonicalHouseholdWriteSnapshot failed:\n"
+        <> unlines (map show (NonEmpty.toList errs)))
+    Right value -> pure value
+
+  unless (householdWriteSnapshotAccountsSource snapshot == syntheticAccounts)
+    (die "Household write snapshot did not retain exact accounts.journal root bytes")
 
   removeDirectoryRecursive dir
 
