@@ -1,0 +1,60 @@
+name: Run Household Graduation Refactor
+
+on:
+  push:
+    branches:
+      - refactor/graduate-household-report-spike
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    if: github.event.head_commit.message == 'ci: run household report graduation refactor'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Execute staged refactor script
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/graduate-household-report-spike.yml').read_text()
+          marker = "python3 - <<'PY'\n"
+          start = source.index(marker) + len(marker)
+          end = source.index('\n          PY', start)
+          staged = source[start:end]
+          script = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in staged.splitlines()
+          )
+          exec(compile(script, 'graduate_household_report_spike.py', 'exec'))
+          PY
+
+          rm .github/workflows/graduate-household-report-spike.yml
+          rm .github/workflows/run-household-graduation-refactor.yml
+          rmdir -p spike-src/HKernel/Spike/HouseholdReport 2>/dev/null || true
+          rmdir -p spike-src/HKernel/Spike 2>/dev/null || true
+          rmdir -p spike-src/HKernel 2>/dev/null || true
+          rmdir spike-src 2>/dev/null || true
+
+          echo '=== final changed files ==='
+          git status --short
+          echo '=== stale spike references ==='
+          grep -R -n -E 'HKernel\.Spike\.|h-kernel-spike-household-report|spike-src/' README.md docs h-kernel.cabal app editor-app editor-tui-app household-src household-app-src tests 2>/dev/null || true
+
+      - name: Commit refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'shumoku88-bit'
+          git config user.email 'shumoku88@gmail.com'
+          git add -A
+          git commit -m 'refactor(household): graduate report spike'
+          git push origin HEAD:refactor/graduate-household-report-spike
