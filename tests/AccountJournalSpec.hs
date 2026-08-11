@@ -208,4 +208,3 @@ assertErrors label expected result = case result of
     putStrLn "    source was unexpectedly accepted"
     exitFailure
 
-

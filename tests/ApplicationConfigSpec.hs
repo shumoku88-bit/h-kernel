@@ -116,4 +116,3 @@ assertLeft label expectedLine expectedMessage result = case result of
 
 
 
-

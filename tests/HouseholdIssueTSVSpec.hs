@@ -165,4 +165,3 @@ assertLeftAt label expectedLine expectedMessage result = case result of
       householdIssueTSVErrorLine err == expectedLine
         && householdIssueTSVErrorMessage err == expectedMessage
 
-

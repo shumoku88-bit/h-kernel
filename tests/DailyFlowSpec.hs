@@ -2,7 +2,7 @@
 
 module Main (main) where
 
-import Test.Support (mustRight, assertEqual)
+import Test.Support (mustRight, assertEqual, assertTrue)
 import Data.List.NonEmpty (NonEmpty((:|)))
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -331,7 +331,5 @@ journalInput = T.unlines
 
 
 
-assertTrue :: String -> Bool -> IO ()
-assertTrue label actual = assertEqual label True actual
 
 

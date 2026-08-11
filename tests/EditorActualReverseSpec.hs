@@ -2,7 +2,7 @@
 
 module Main (main) where
 
-import Test.Support (mustRight, assertEqual)
+import Test.Support (assertEqual)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -189,7 +189,10 @@ fixtureSource = T.unlines
   , "  expenses:food  -100 JPY"
   ]
 
-
+mustRight :: Show error => Either error value -> value
+mustRight result = case result of
+  Left err -> error ("invalid test setup: " ++ show err)
+  Right value -> value
 
 assertLeftEqual
   :: (Eq error, Show error)
@@ -203,5 +206,4 @@ assertLeftEqual label expected result = case result of
     putStrLn ("  [FAIL] " ++ label)
     putStrLn "    unexpectedly succeeded"
     exitFailure
-
 

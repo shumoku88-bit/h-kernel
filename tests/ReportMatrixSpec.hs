@@ -78,4 +78,3 @@ rowFor key rows = case filter ((== key) . balanceRowKey) rows of
 
 
 
-

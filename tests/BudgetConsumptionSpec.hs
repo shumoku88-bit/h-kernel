@@ -2,7 +2,7 @@
 
 module Main (main) where
 
-import Test.Support (mustRight, mustJust, assertEqual)
+import Test.Support (mustRight, assertEqual)
 import Data.List (find)
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
@@ -222,6 +222,7 @@ journalInput = T.unlines
 
 
 
-
-
+mustJust :: Maybe value -> value
+mustJust (Just value) = value
+mustJust Nothing = error "invalid test fixture: expected a value"
 

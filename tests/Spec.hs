@@ -2,7 +2,7 @@
 
 module Main (main) where
 
-import Test.Support (mustRight, mustJust, assertEqual)
+import Test.Support (mustRight, assertEqual)
 import Control.Monad (unless)
 import Data.List.NonEmpty (NonEmpty((:|)))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -582,7 +582,9 @@ integerBalance code value =
 
 
 
-
+mustJust :: Maybe value -> value
+mustJust (Just value) = value
+mustJust Nothing      = error "missing test fixture"
 
 assertRight :: Show error => String -> Either error value -> IO value
 assertRight label result = case result of

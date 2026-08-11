@@ -159,4 +159,3 @@ assertRight label result = case result of
     putStrLn ("    unexpectedly rejected: " ++ show err)
     exitFailure
 
-

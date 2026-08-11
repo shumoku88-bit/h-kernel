@@ -435,4 +435,3 @@ assertShadowErrors label expected result = case result of
     putStrLn "    declaration was unexpectedly rendered"
     exitFailure
 
-

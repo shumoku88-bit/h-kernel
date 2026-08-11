@@ -2,7 +2,7 @@
 
 module Main (main) where
 
-import Test.Support (mustRight, assertEqual)
+import Test.Support (mustRight, assertEqual, assertTrue)
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Journal (parseJournal)
@@ -79,7 +79,5 @@ integerBalance value =
 
 
 
-assertTrue :: String -> Bool -> IO ()
-assertTrue label actual = assertEqual label True actual
 
 

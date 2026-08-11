@@ -2,7 +2,7 @@
 
 module Main (main) where
 
-import Test.Support (mustRight, mustJust)
+import Test.Support (mustRight)
 import Data.List (find)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
@@ -161,7 +161,9 @@ policyInput = T.unlines
 
 
 
-
+mustJust :: Maybe value -> value
+mustJust (Just value) = value
+mustJust Nothing = error "invalid test fixture: expected a value"
 
 assertErrors
   :: String

@@ -229,4 +229,3 @@ assertLeft label result = case result of
     putStrLn ("    unexpectedly accepted: " ++ show value)
     exitFailure
 
-

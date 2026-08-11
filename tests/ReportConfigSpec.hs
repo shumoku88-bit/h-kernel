@@ -231,4 +231,3 @@ assertLeft label result = case result of
     putStrLn ("    unexpectedly decoded: " ++ show value)
     exitFailure
 
-

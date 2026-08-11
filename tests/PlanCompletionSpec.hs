@@ -324,4 +324,3 @@ assertLeftSatisfies label predicate result = case result of
     putStrLn ("    unexpectedly accepted: " ++ show value)
     exitFailure
 
-
