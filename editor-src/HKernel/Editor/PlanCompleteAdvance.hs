@@ -31,7 +31,6 @@ module HKernel.Editor.PlanCompleteAdvance
 
 import Control.Exception (IOException, catch, onException)
 import Data.Bifunctor (first)
-import Data.Char (isAsciiLower, isAsciiUpper, toLower)
 import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -54,6 +53,10 @@ import HKernel.Editor.ActualAppend
 import HKernel.Editor.ActualWriter
   ( WriterFileSystem(..)
   , defaultWriterFileSystem
+  )
+import HKernel.Editor.PlanIdentity
+  ( descriptionPlanIdStem
+  , generateAvailablePlanId
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Editor.TransactionBlock
@@ -92,7 +95,6 @@ import HKernel.Money
 import HKernel.Plan
   ( PlanId
   , PlanIdError
-  , mkPlanId
   , planIdText
   )
 import HKernel.Plan.Completion (declaredCompletionPlanId)
@@ -277,10 +279,11 @@ preparePlanCompleteAdvance planJournal actualJournal planSource actualSource int
         (transactionDescription transaction)
         successorPostings
       successorId <- first (pure . CompleteAdvanceGeneratedPlanIdError)
-        (generateSuccessorPlanId
-          successorDate
-          (transactionDescription transaction)
-          (metadataValue "series" metadata)
+        (generateAvailablePlanId
+          (T.pack (show successorDate))
+          (successorPlanIdStem
+            (transactionDescription transaction)
+            (metadataValue "series" metadata))
           (map identifiedPlanId (planJournalTransactions planJournal)
             ++ map declaredCompletionPlanId
               (actualJournalCompletionDeclarations actualJournal)))
@@ -499,6 +502,11 @@ nonBlankMetadataValue key metadata = do
   let stripped = T.strip value
   if T.null stripped then Nothing else Just stripped
 
+successorPlanIdStem :: Text -> Maybe Text -> Text
+successorPlanIdStem description maybeSeries = case maybeSeries of
+  Just series | not (T.null (T.strip series)) -> T.strip series
+  _ -> descriptionPlanIdStem description
+
 admitRecurrence :: Metadata -> Either (NonEmpty PlanCompleteAdvanceError) PlanRecurrence
 admitRecurrence metadata = case fmap T.toCaseFold (metadataValue "recur" metadata) of
   Nothing -> Right PlanRecurrenceUnspecified
@@ -526,32 +534,6 @@ duplicates = go []
     go seen (value : values)
       | value `elem` seen = value : go seen values
       | otherwise = go (value : seen) values
-
-slugify :: Text -> Text
-slugify textValue = T.intercalate "-" (filter (not . T.null) (T.splitOn "-" mapped))
-  where
-    mapped = T.map mapCharacter textValue
-    mapCharacter character
-      | isAsciiUpper character = toLower character
-      | isAsciiLower character = character
-      | character >= '0' && character <= '9' = character
-      | otherwise = '-'
-
-generateSuccessorPlanId :: Day -> Text -> Maybe Text -> [PlanId] -> Either PlanIdError PlanId
-generateSuccessorPlanId date description maybeSeries existing = go 1
-  where
-    dateText = T.pack (show date)
-    suffix = case maybeSeries of
-      Just series | not (T.null (T.strip series)) -> T.strip series
-      _ -> let slug = slugify description in if T.null slug then "plan" else slug
-    base = "plan-" <> dateText <> "-" <> suffix
-    candidate n
-      | n == 1 = base
-      | n < 10 = base <> "-0" <> T.pack (show n)
-      | otherwise = base <> "-" <> T.pack (show n)
-    go n = do
-      planId <- mkPlanId (candidate n)
-      if planId `elem` existing then go (n + 1) else Right planId
 
 data PlanCompleteAdvanceWriteIntent = PlanCompleteAdvanceWriteIntent
   { writeActualPath      :: FilePath
