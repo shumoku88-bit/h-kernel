@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -260,10 +261,7 @@ declaration name accountType commodity =
     accountType
     commodity
 
-mustRight :: Show error => Either error value -> value
-mustRight result = case result of
-  Left err -> error ("invalid test fixture: " ++ show err)
-  Right value -> value
+
 
 assertLeftEqual
   :: (Eq error, Show error)

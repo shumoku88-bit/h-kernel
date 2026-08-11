@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight)
 import Control.Monad (unless)
 import qualified Data.Foldable as Foldable
 import Data.Text (Text)
@@ -113,7 +114,3 @@ amount code value =
     (mustRight (mkCommodity code))
     (quantityFromInteger (toInteger value))
 
-mustRight :: Show error => Either error value -> value
-mustRight result = case result of
-  Right value -> value
-  Left err -> error ("invalid Balance law fixture: " ++ show err)

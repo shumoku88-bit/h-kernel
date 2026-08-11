@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight, mustJust, assertEqual)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -390,15 +391,9 @@ actualRegistry input =
   journalAccountRegistry
     (actualJournalValue (mustRight (parseActualJournal input)))
 
-mustRight :: Show error => Either error value -> value
-mustRight result = case result of
-  Left err -> error ("invalid test fixture: " ++ show err)
-  Right value -> value
 
-mustJust :: Maybe value -> value
-mustJust value = case value of
-  Just result -> result
-  Nothing -> error "invalid test fixture: missing expected value"
+
+
 
 assertRight :: Show error => String -> Either error value -> IO ()
 assertRight label result = case result of
@@ -440,11 +435,4 @@ assertShadowErrors label expected result = case result of
     putStrLn "    declaration was unexpectedly rendered"
     exitFailure
 
-assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
-assertEqual label expected actual
-  | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure
+

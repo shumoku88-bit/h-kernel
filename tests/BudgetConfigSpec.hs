@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight)
 import Data.List (foldl')
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
@@ -240,9 +241,7 @@ registryFrom = foldl' addDeclaration emptyAccountRegistry
           (declareAccount (mustRight (mkAccount name)) accountType)
           registry)
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
+
 
 mustJust :: String -> Maybe value -> value
 mustJust _ (Just value) = value

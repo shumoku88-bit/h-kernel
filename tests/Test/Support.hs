@@ -1,5 +1,6 @@
 module Test.Support
   ( assertEqual
+  , assertTrue
   , mustRight
   , mustJust
   ) where
@@ -13,6 +14,13 @@ assertEqual label expected actual
       putStrLn ("  [FAIL] " ++ label)
       putStrLn ("    expected: " ++ show expected)
       putStrLn ("    but got:  " ++ show actual)
+      exitFailure
+
+assertTrue :: String -> Bool -> IO ()
+assertTrue label condition
+  | condition = putStrLn ("  [PASS] " ++ label)
+  | otherwise = do
+      putStrLn ("  [FAIL] " ++ label)
       exitFailure
 
 mustRight :: Show error => Either error value -> value

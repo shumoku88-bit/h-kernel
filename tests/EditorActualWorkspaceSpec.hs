@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight)
 import Data.List (find)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
@@ -88,10 +89,7 @@ accountNamed :: Text -> [Account] -> Maybe Account
 accountNamed expectedName =
   find ((== expectedName) . accountName)
 
-mustRight :: Show error => Either error value -> value
-mustRight result = case result of
-  Left err -> error ("invalid test setup: " ++ show err)
-  Right value -> value
+
 
 duplicateShapeSource :: Text
 duplicateShapeSource = T.unlines

@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight, assertEqual)
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Engine (rangeEnd, rangeStart)
@@ -220,9 +221,7 @@ journalInput = T.unlines
   , "    equity:opening"
   ]
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
+
 
 assertLeft :: Show value => String -> Either error value -> IO ()
 assertLeft label result = case result of
@@ -232,11 +231,4 @@ assertLeft label result = case result of
     putStrLn ("    unexpectedly decoded: " ++ show value)
     exitFailure
 
-assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
-assertEqual label expected actual
-  | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise = do
-    putStrLn ("  [FAIL] " ++ label)
-    putStrLn ("    expected: " ++ show expected)
-    putStrLn ("    but got:  " ++ show actual)
-    exitFailure
+

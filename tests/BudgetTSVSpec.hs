@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
 import HKernel.Budget
@@ -189,9 +190,7 @@ isNegativeAtLine expectedLine expectedQuantity err =
       NegativeBudgetEntitlement _ _ _ quantity -> quantity == expectedQuantity
       _                                         -> False
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
+
 
 assertRight :: Show error => String -> Either error value -> IO ()
 assertRight label result = case result of

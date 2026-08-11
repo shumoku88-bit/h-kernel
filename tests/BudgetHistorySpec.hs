@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import Data.Time.Calendar (Day, addDays, fromGregorian)
@@ -91,9 +92,7 @@ change cycle envelope effectiveDay quantity note = mustRight
       (quantityFromInteger quantity))
     note)
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
+
 
 assertRight :: Show error => String -> Either error value -> IO ()
 assertRight label result = case result of

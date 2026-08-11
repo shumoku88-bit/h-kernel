@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight, assertEqual)
 import Data.Time.Calendar (fromGregorian)
 import HKernel.HouseholdIssue
 import HKernel.HouseholdIssue.Render
@@ -130,9 +131,7 @@ characterizeCompleteLineRendering = do
     "2026-08-02 | resolved | due undetermined | no amount | 契約を続けるか確認する | 確認済み"
     (renderHouseholdIssueLine noDateOrAmount)
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
+
 
 assertLeft :: Show value => String -> Either error value -> IO ()
 assertLeft label result = case result of
@@ -142,11 +141,4 @@ assertLeft label result = case result of
     putStrLn ("    unexpectedly accepted: " ++ show value)
     exitFailure
 
-assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
-assertEqual label expected actual
-  | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure
+

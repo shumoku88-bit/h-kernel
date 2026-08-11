@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (assertEqual)
 import Control.Exception (bracket)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
@@ -400,14 +401,7 @@ withTemporaryDirectory = bracket create removePathForcibly
       createDirectory path
       pure path
 
-assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
-assertEqual label expected actual
-  | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure
+
 
 failTest :: String -> IO value
 failTest message = do

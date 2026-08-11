@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight)
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Household.Backing
 import HKernel.Money
@@ -64,10 +65,7 @@ one :: Commodity -> Integer -> Balance
 one commodity value =
   singletonBalance (mkAmount commodity (quantityFromInteger value))
 
-mustRight :: Show error => Either error value -> value
-mustRight result = case result of
-  Right value -> value
-  Left err -> error (show err)
+
 
 assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
 assertEqual label expected actual
