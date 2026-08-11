@@ -17,7 +17,6 @@ module HKernel.Account.Journal
   ) where
 
 import Data.Char (isSpace)
-import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
