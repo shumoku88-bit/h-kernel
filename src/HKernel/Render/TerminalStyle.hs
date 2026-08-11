@@ -7,13 +7,11 @@ module HKernel.Render.TerminalStyle
   , plainCell
   , styledCell
   , plainBalanceCell
-  , greenBalanceCell
-  , redBalanceCell
   , signedBalanceCell
   , signedAmountCell
   , plainBalanceCellWith
-  , greenBalanceCellWith
-  , redBalanceCellWith
+  , positiveBalanceCellWith
+  , negativeBalanceCellWith
   , signedBalanceCellWith
   , signedAmountCellWith
   , terminalHeader
@@ -28,16 +26,11 @@ module HKernel.Render.TerminalStyle
   , terminalRed
   , terminalPositiveAmountWith
   , terminalNegativeAmountWith
-  , terminalRedWith
   , renderTerminalTable
   , renderBalancePlain
-  , renderBalanceGreen
-  , renderBalanceRed
   , renderBalanceSigned
   , renderAmountSigned
   , renderBalancePlainWith
-  , renderBalanceGreenWith
-  , renderBalanceRedWith
   , renderBalanceSignedWith
   , renderAmountSignedWith
   , displayWidth
@@ -131,9 +124,6 @@ terminalNegativeAmountWith :: PresentationConfig -> Text -> Text
 terminalNegativeAmountWith config =
   terminalColor (presentationNegativeAmountColor config)
 
-terminalRedWith :: PresentationColor -> Text -> Text
-terminalRedWith = terminalColor
-
 wrap :: Text -> Text -> Text
 wrap code value = code <> value <> clrReset
 
@@ -160,12 +150,6 @@ data BalanceTone
 plainBalanceCell :: Balance -> Cell
 plainBalanceCell = plainBalanceCellWith defaultPresentationConfig
 
-greenBalanceCell :: Balance -> Cell
-greenBalanceCell = greenBalanceCellWith defaultPresentationConfig
-
-redBalanceCell :: Balance -> Cell
-redBalanceCell = redBalanceCellWith defaultPresentationConfig
-
 signedBalanceCell :: Balance -> Cell
 signedBalanceCell = signedBalanceCellWith defaultPresentationConfig
 
@@ -175,12 +159,12 @@ signedAmountCell = signedAmountCellWith defaultPresentationConfig
 plainBalanceCellWith :: PresentationConfig -> Balance -> Cell
 plainBalanceCellWith config = balanceCell config PlainTone
 
-greenBalanceCellWith :: PresentationConfig -> Balance -> Cell
-greenBalanceCellWith config =
+positiveBalanceCellWith :: PresentationConfig -> Balance -> Cell
+positiveBalanceCellWith config =
   balanceCell config (PositiveTone (presentationPositiveAmountColor config))
 
-redBalanceCellWith :: PresentationConfig -> Balance -> Cell
-redBalanceCellWith config =
+negativeBalanceCellWith :: PresentationConfig -> Balance -> Cell
+negativeBalanceCellWith config =
   balanceCell config (NegativeTone (presentationNegativeAmountColor config))
 
 signedBalanceCellWith :: PresentationConfig -> Balance -> Cell
@@ -203,12 +187,6 @@ signedAmountCellWith config amount =
 renderBalancePlain :: Balance -> Text
 renderBalancePlain = cellStyled . plainBalanceCell
 
-renderBalanceGreen :: Balance -> Text
-renderBalanceGreen = cellStyled . greenBalanceCell
-
-renderBalanceRed :: Balance -> Text
-renderBalanceRed = cellStyled . redBalanceCell
-
 renderBalanceSigned :: Balance -> Text
 renderBalanceSigned = cellStyled . signedBalanceCell
 
@@ -217,12 +195,6 @@ renderAmountSigned = cellStyled . signedAmountCell
 
 renderBalancePlainWith :: PresentationConfig -> Balance -> Text
 renderBalancePlainWith config = cellStyled . plainBalanceCellWith config
-
-renderBalanceGreenWith :: PresentationConfig -> Balance -> Text
-renderBalanceGreenWith config = cellStyled . greenBalanceCellWith config
-
-renderBalanceRedWith :: PresentationConfig -> Balance -> Text
-renderBalanceRedWith config = cellStyled . redBalanceCellWith config
 
 renderBalanceSignedWith :: PresentationConfig -> Balance -> Text
 renderBalanceSignedWith config = cellStyled . signedBalanceCellWith config
