@@ -12,9 +12,14 @@ import System.IO (hPutStrLn, stderr)
 
 import HKernel.Actual.Journal
   ( admitActualJournalFromResolvedJournal
-  , parseActualJournal
   )
-import HKernel.Application.Config (HouseholdSourcePaths(..), householdSourcePaths, mkHouseholdRoot)
+import HKernel.Application.Config
+  ( HouseholdRoot
+  , HouseholdRootError(..)
+  , HouseholdSourcePaths(..)
+  , householdSourcePaths
+  , mkHouseholdRoot
+  )
 import qualified HKernel.Editor.ActualAccountAppend as ActualAccountAppend
 import qualified HKernel.Editor.ActualAppend as ActualAppend
 import qualified HKernel.Editor.ActualReverse as ActualReverse
@@ -37,10 +42,18 @@ import HKernel.Journal (Journal)
 import HKernel.Loader (loadJournal, loadJournalFromRootSource)
 import HKernel.Plan (mkPlanId)
 import HKernel.Plan.Journal (admitPlanJournalFromResolvedJournal)
-import System.FilePath ((</>), normalise, takeDirectory)
+import System.FilePath (normalise, takeDirectory)
 
 die :: String -> IO a
 die message = hPutStrLn stderr message >> exitFailure
+
+resolveHouseholdRoot
+  :: FilePath
+  -> Either HouseholdRootError HouseholdRoot
+resolveHouseholdRoot targetFile =
+  let dir = takeDirectory targetFile
+      rootDir = if null dir then "." else dir
+  in mkHouseholdRoot rootDir
 
 main :: IO ()
 main = do
@@ -88,13 +101,9 @@ executeCommand commitMode command = case command of
 
   AccountCmd journalFile declaration -> do
     existingSource <- TIO.readFile journalFile
-    let dir = takeDirectory journalFile
-        rootDir = if dir == "" then "." else dir
-    root <- case mkHouseholdRoot rootDir of
+    root <- case resolveHouseholdRoot journalFile of
+      Left err -> die ("Invalid Household root: " <> show err)
       Right r -> pure r
-      Left _ -> case mkHouseholdRoot "." of
-        Right r -> pure r
-        Left _ -> error "unreachable"
     let paths = householdSourcePaths root
     if normalise journalFile == normalise (householdAccountsJournalPath paths)
       then case ActualAccountAppend.prepareAccountJournalAppend existingSource declaration of
@@ -119,13 +128,9 @@ executeCommand commitMode command = case command of
             commitMode
 
   BudgetMovementCmd targetFile movement -> do
-    let dir = takeDirectory targetFile
-        rootDir = if dir == "" then "." else dir
-    root <- case mkHouseholdRoot rootDir of
+    root <- case resolveHouseholdRoot targetFile of
+      Left err -> die ("Invalid Household root: " <> show err)
       Right r -> pure r
-      Left _ -> case mkHouseholdRoot "." of
-        Right r -> pure r
-        Left _ -> error "unreachable"
     let paths = householdSourcePaths root
     if normalise targetFile == normalise (householdBudgetJournalPath paths)
       then do
@@ -160,13 +165,9 @@ executeCommand commitMode command = case command of
               commitMode
 
   IssueCmd tsvFile intent -> do
-    let dir = takeDirectory tsvFile
-        rootDir = if dir == "" then "." else dir
-    root <- case mkHouseholdRoot rootDir of
+    root <- case resolveHouseholdRoot tsvFile of
+      Left err -> die ("Invalid Household root: " <> show err)
       Right r -> pure r
-      Left _ -> case mkHouseholdRoot "." of
-        Right r -> pure r
-        Left _ -> error "unreachable"
     let paths = householdSourcePaths root
     if normalise tsvFile == normalise (householdIssuesPath paths)
       then do
