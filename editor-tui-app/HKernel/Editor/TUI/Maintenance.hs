@@ -77,6 +77,10 @@ import HKernel.Editor.TUI.Model
   , AppEvent
   , HouseholdSection(..)
   , Name(..)
+  , contextAccountsSource
+  , contextBudgetSource
+  , contextHouseholdState
+  , contextIssuesSource
   , reloadWorkspaceContext
   )
 import HKernel.Household.Application
