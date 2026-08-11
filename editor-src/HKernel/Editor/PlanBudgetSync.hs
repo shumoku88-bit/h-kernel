@@ -55,8 +55,7 @@ import HKernel.Journal
   , journalTransactionSourceMetadata
   )
 import HKernel.Ledger
-  ( Transaction
-  , postingAccount
+  ( postingAccount
   , postingAmount
   , transactionDate
   , transactionPostings

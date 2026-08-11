@@ -50,8 +50,7 @@ import HKernel.Journal
   , parseJournalDocument
   )
 import HKernel.Ledger
-  ( Posting
-  , postingAccount
+  ( postingAccount
   , postingAmount
   , transactionDate
   , transactionDescription

@@ -73,9 +73,7 @@ import HKernel.Journal
 import HKernel.Money
   ( Balance
   , amountQuantity
-  , emptyBalance
   , isZeroBalance
-  , singletonBalance
   , subtractBalance
   , sumBalances
   , zeroQuantity
