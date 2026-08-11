@@ -93,6 +93,13 @@ import HKernel.Household.Policy
   , HouseholdPolicyAccountError
   , validateHouseholdPolicyAccounts
   )
+import HKernel.Household.Report
+  ( HouseholdReportSurface
+  , HouseholdSourceError
+  , admitPlanJournal
+  , admittedOutgoingPlanValues
+  , buildHouseholdReportSurfaceFromAdmitted
+  )
 import HKernel.HouseholdIssue (HouseholdIssue)
 import HKernel.Journal
   ( Journal
@@ -120,13 +127,6 @@ import HKernel.Plan.Journal
 import HKernel.Report.Config
   ( ReportConfiguration
   , parseReportConfiguration
-  )
-import HKernel.Spike.HouseholdReport
-  ( HouseholdReportSurface
-  , HouseholdSourceError
-  , admitPlanJournal
-  , admittedOutgoingPlanValues
-  , buildHouseholdReportSurfaceFromAdmitted
   )
 
 -- | The canonical Household application state loaded from the 8 canonical paths.
