@@ -45,12 +45,14 @@ generateAvailablePlanId dateText stem existingIds = go 1
   where
     base = "plan-" <> dateText <> "-" <> stem
 
+    candidateText :: Int -> Text
     candidateText candidateNumber
       | candidateNumber == 1 = base
       | candidateNumber < 10 =
           base <> "-0" <> T.pack (show candidateNumber)
       | otherwise = base <> "-" <> T.pack (show candidateNumber)
 
+    go :: Int -> Either PlanIdError PlanId
     go candidateNumber = do
       candidateId <- mkPlanId (candidateText candidateNumber)
       if candidateId `elem` existingIds
