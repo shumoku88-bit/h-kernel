@@ -49,7 +49,13 @@ h-kernel-household
   source: household-src/
   depends on: h-kernel
   owns: HouseholdPolicy, DailyTarget, HouseholdBacking,
-        BudgetMovement, Household Issue admission
+        BudgetMovement, Household Issue admission, Household Report
+
+h-kernel-household-application
+  source: household-app-src/
+  depends on: h-kernel + h-kernel-household
+  owns: canonical Household admission, HouseholdWriteSnapshot,
+        admitted Household Report composition entrypoint
 
 h-kernel-editor
   source: editor-src/
@@ -60,6 +66,10 @@ h-kernel-editor
 ```
 
 Delivery adapterはlibraryとは別に置く。CLI/TUI/shell routerへ会計ruleやwriter lawを複製しない。
+
+このcomponent一覧は現在の意味を説明する地図であり、layer数やmodule数を維持するための設計目標ではない。既存ownerの直接な関数と値で十分な処理にwrapper、context、service、generic helperを追加しない。新しい境界は、実在するdomain invariant、lifecycle、dependency direction、effect ownershipのいずれかを明瞭にするときだけ導入する。
+
+一時的なcompatibility aliasや移行用moduleは、callerがstable ownerへ移った後にarchitectureとして保存しない。安全性を保つための型は残すが、型で保証済みの意味をdelivery層や別wrapperで儀式的に再表現しない。
 
 ## 4. Effectの所有者
 
@@ -118,16 +128,17 @@ Actualのdurable identityとreversal relationは`HKernel.Actual.Journal`がadmit
 
 Reportはvalidated factsから作るpure projectionである。合計はCommodity別の`Balance`を保ち、unknown classificationやunassigned evidenceを黙って消さない。
 
-Household policy、Daily Target、Backing、Budget movement、Issueはそれぞれnamed ownerが意味を所有する。
+Household policy、Daily Target、Backing、Budget movement、Issueはそれぞれnamed ownerが意味を所有する。Household Reportのstable ownerは`HKernel.Household.Report`と`HKernel.Household.Report.Render`であり、canonical Householdからのcomposition entrypointは`HKernel.Household.Application`が所有する。
 
 ## 7. Dependency direction
 
 ```text
-h-kernel-household -> h-kernel
-h-kernel-editor    -> h-kernel + h-kernel-household
-report app         -> admitted report owners
-editor adapters    -> h-kernel-editor
-tools/hk           -> existing adapters / checks
+h-kernel-household             -> h-kernel
+h-kernel-household-application -> h-kernel + h-kernel-household
+h-kernel-editor                -> h-kernel + h-kernel-household
+report app                     -> admitted report owners
+editor adapters                -> h-kernel-editor
+tools/hk                       -> existing adapters / checks
 ```
 
 禁止:
