@@ -83,7 +83,7 @@ renderEnvelopePolicyErrors =
         <> renderPolicyReason (envelopePolicyErrorReason err)
 
 renderPolicyReason :: EnvelopePolicyErrorReason -> Text
-renderPolicyReason reason = case reason of
+renderPolicyReason = \case
   InvalidEnvelopePolicyRow row ->
     "invalid envelope policy row: " <> quoted row
   InvalidEnvelopePolicyEnvelope err ->
@@ -115,7 +115,7 @@ renderEnvelopeBudgetErrors =
         <> renderBudgetReason (envelopeBudgetErrorReason err)
 
 renderBudgetReason :: EnvelopeBudgetErrorReason -> Text
-renderBudgetReason reason = case reason of
+renderBudgetReason = \case
   EnvelopeAssignedAccountUndeclared account ->
     "envelope policy assigns an undeclared account: " <> accountName account
   EnvelopeAssignedAccountNotExpense account accountType ->
@@ -123,7 +123,7 @@ renderBudgetReason reason = case reason of
       <> " with type " <> T.toLower (tshow accountType)
 
 renderEnvelopeNameError :: EnvelopeNameError -> Text
-renderEnvelopeNameError err = case err of
+renderEnvelopeNameError = \case
   EmptyEnvelopeName -> "name is empty"
   EnvelopeNameHasSurroundingWhitespace name ->
     "name has surrounding whitespace: " <> quoted name
@@ -131,7 +131,7 @@ renderEnvelopeNameError err = case err of
     "name contains a control character: " <> quoted name
 
 renderAccountError :: AccountError -> Text
-renderAccountError err = case err of
+renderAccountError = \case
   EmptyAccount -> "account name is empty"
   AccountHasSurroundingWhitespace name ->
     "account has surrounding whitespace: " <> quoted name
@@ -139,7 +139,7 @@ renderAccountError err = case err of
     "account contains a control character: " <> quoted name
 
 renderCommodityError :: CommodityError -> Text
-renderCommodityError err = case err of
+renderCommodityError = \case
   EmptyCommodity -> "commodity code is empty"
   CommodityContainsWhitespace code ->
     "commodity contains whitespace: " <> quoted code
