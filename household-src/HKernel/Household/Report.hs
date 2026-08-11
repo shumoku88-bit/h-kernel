@@ -1,11 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Read-only observation adapter for the current household source set.
+-- | Pure Household report composition from already admitted typed values.
 --
--- General Budget policy, Household policy, and Daily Target meaning are owned
--- by stable components. This module composes their typed values with retained
--- compatibility sources; it does not write, migrate, or generate any source.
-module HKernel.Spike.HouseholdReport
+-- Source admission, writer authority, and delivery effects remain outside this
+-- module. It composes stable Household, Plan, Budget, Actual, and Report owners
+-- without reparsing physical compatibility sources.
+module HKernel.Household.Report
   ( HouseholdSourceError(..)
   , HouseholdCycleComparison(..)
   , HouseholdCycleComparisonUnavailable(..)
@@ -28,7 +28,6 @@ module HKernel.Spike.HouseholdReport
   , admitPlanJournal
   , admittedOutgoingPlanValues
   , buildHouseholdReportSurfaceFromAdmitted
-  , buildHouseholdReportSurfaceFromPlanJournal
   ) where
 
 import Data.List (sortOn)
@@ -45,17 +44,9 @@ import HKernel.Actual.Journal
   , actualJournalIdentifiedTransactions
   , actualJournalValue
   )
-import HKernel.Budget.Config (parseBudgetPolicy)
 import HKernel.Engine
   ( LedgerEntry(..)
   , journalEntries
-  )
-import HKernel.Household.AccountProfile.TSV
-  ( AccountProfileTSVError
-  , accountProfileTSVErrorLine
-  , accountProfileTSVErrorMessage
-  , accountProfileTSVErrorSource
-  , admitRetainedAccountProfiles
   )
 import HKernel.Household.Backing
   ( HouseholdBackingPlan(..)
@@ -70,19 +61,12 @@ import HKernel.Household.Backing
   , deriveHouseholdBacking
   )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement)
-import HKernel.Household.BudgetMovement.TSV
-import HKernel.Household.Config
-  ( parseHouseholdPolicy
-  )
 import HKernel.Household.DailyTarget
-import HKernel.Household.DailyTarget.TSV
-import HKernel.Household.Issue.TSV
 import HKernel.Household.Policy
   ( AccountValidatedHouseholdPolicy
   , HouseholdPolicy
   , householdCycleIncomeAccount
   , householdPolicyCycle
-  , validateHouseholdPolicyAccounts
   )
 import HKernel.HouseholdIssue
 import HKernel.Journal (Journal, journalAccountRegistry)
@@ -112,7 +96,7 @@ import HKernel.Plan.Journal
   , projectedCommittedOutgoingPlan
   )
 import HKernel.Report.CycleAccounts
-import HKernel.Spike.HouseholdConsumption
+import HKernel.Household.BudgetObservation
   ( deriveHouseholdBudgetObservation
   , householdBudgetObservationPolicy
   , householdBudgetConsumption
@@ -180,51 +164,6 @@ data HouseholdReportSurface = HouseholdReportSurface
   , householdEnvelopeBacking      :: EnvelopeBacking
   , householdDailyTarget          :: DailyTarget
   } deriving (Eq, Show)
-
-buildHouseholdReportSurfaceFromPlanJournal
-  :: Day
-  -> ActualJournal
-  -> Text
-  -> Text
-  -> Text
-  -> Text
-  -> PlanJournal
-  -> Text
-  -> Text
-  -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
-buildHouseholdReportSurfaceFromPlanJournal observation actualJournal accountsText budgetText budgetPolicyText householdPolicyText planJournal issuesText dailyScopeText = do
-  _ <- mapLeft accountProfileSourceErrors
-    (admitRetainedAccountProfiles
-      (journalAccountRegistry journal)
-      accountsText)
-  budgetPolicy <- mapLeft budgetPolicySourceErrors
-    (parseBudgetPolicy budgetPolicyText)
-  policy <- mapLeft policySourceErrors
-    (parseHouseholdPolicy budgetPolicy householdPolicyText)
-  validatedPolicy <- mapLeft
-    (fmap (sourceError "household.toml" 0 . tshow))
-    (validateHouseholdPolicyAccounts (journalAccountRegistry journal) policy)
-  validatePlanJournalRegistry journal planJournal
-  admittedPlans <- admitPlanJournal planJournal
-  budget <- mapLeft budgetMovementSourceErrors
-    (parseHouseholdBudgetMovements budgetText)
-  issues <- mapLeft issueSourceErrors (parseHouseholdIssues issuesText)
-  dailyScope <- mapLeft dailyTargetSourceErrors
-    (parseDailyTargetScope
-      (journalAccountRegistry journal)
-      (admittedOutgoingPlanValues admittedPlans)
-      dailyScopeText)
-  buildHouseholdReportSurfaceFromAdmitted
-    observation
-    actualJournal
-    policy
-    validatedPolicy
-    admittedPlans
-    budget
-    issues
-    dailyScope
-  where
-    journal = actualJournalValue actualJournal
 
 -- | Calculate the Household report surface from already admitted typed values.
 -- Admission adapters may differ, but cycle, Plan completion, Budget observation,
@@ -331,26 +270,6 @@ classifyPlannedTransactions current = map classifyOne
       | periodContains current day = InCurrentCycle
       | otherwise = AfterCurrentCycle
 
-validatePlanJournalRegistry
-  :: Journal
-  -> PlanJournal
-  -> Either (NonEmpty HouseholdSourceError) ()
-validatePlanJournalRegistry actual planJournal =
-  case NonEmpty.nonEmpty errors of
-    Nothing -> Right ()
-    Just values -> Left values
-  where
-    actualRegistry = journalAccountRegistry actual
-    planRegistry = journalAccountRegistry (planJournalValue planJournal)
-    errors =
-      [ sourceError "plan.journal" 0
-          ("Account metadata disagrees with actual.journal for "
-            <> accountName account)
-      | declaration <- accountDeclarations planRegistry
-      , let account = declaredAccount declaration
-      , lookupAccountDeclaration account actualRegistry /= Just declaration
-      ]
-
 admitPlanJournal
   :: PlanJournal
   -> Either (NonEmpty HouseholdSourceError) AdmittedPlans
@@ -432,62 +351,6 @@ completionDeclarationsForOutgoingPlans plans declarations =
 
 sourceError :: Text -> Int -> Text -> HouseholdSourceError
 sourceError = HouseholdSourceError
-
-budgetPolicySourceErrors :: [Text] -> NonEmpty HouseholdSourceError
-budgetPolicySourceErrors errors = case NonEmpty.nonEmpty mapped of
-  Just values -> values
-  Nothing -> sourceError "budget.toml" 0
-    "unknown Budget policy admission failure" NonEmpty.:| []
-  where
-    mapped = map (sourceError "budget.toml" 0) errors
-
-policySourceErrors :: [Text] -> NonEmpty HouseholdSourceError
-policySourceErrors errors = case NonEmpty.nonEmpty mapped of
-  Just values -> values
-  Nothing -> sourceError "household.toml" 0
-    "unknown Household policy admission failure" NonEmpty.:| []
-  where
-    mapped = map (sourceError "household.toml" 0) errors
-
-accountProfileSourceErrors
-  :: NonEmpty AccountProfileTSVError
-  -> NonEmpty HouseholdSourceError
-accountProfileSourceErrors = fmap toSourceError
-  where
-    toSourceError err = sourceError
-      (accountProfileTSVErrorSource err)
-      (accountProfileTSVErrorLine err)
-      (accountProfileTSVErrorMessage err)
-
-dailyTargetSourceErrors
-  :: NonEmpty DailyTargetTSVError
-  -> NonEmpty HouseholdSourceError
-dailyTargetSourceErrors = fmap toSourceError
-  where
-    toSourceError err = sourceError
-      "daily_target_scope.tsv"
-      (dailyTargetTSVErrorLine err)
-      (dailyTargetTSVErrorMessage err)
-
-budgetMovementSourceErrors
-  :: NonEmpty HouseholdBudgetMovementTSVError
-  -> NonEmpty HouseholdSourceError
-budgetMovementSourceErrors = fmap toSourceError
-  where
-    toSourceError err = sourceError
-      "budget_alloc.tsv"
-      (householdBudgetMovementTSVErrorLine err)
-      (householdBudgetMovementTSVErrorMessage err)
-
-issueSourceErrors
-  :: NonEmpty HouseholdIssueTSVError
-  -> NonEmpty HouseholdSourceError
-issueSourceErrors = fmap toSourceError
-  where
-    toSourceError err = sourceError
-      "issues.tsv"
-      (householdIssueTSVErrorLine err)
-      (householdIssueTSVErrorMessage err)
 
 resolveCycles
   :: Day
