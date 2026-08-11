@@ -28,22 +28,18 @@ jobs:
 
           cabal = Path('h-kernel.cabal').read_text()
 
-          library_source_dirs = {
-              'h-kernel': 'src',
-              'h-kernel-household': 'household-src',
-              'h-kernel-editor': 'editor-src',
-              'h-kernel-spike-household-report': 'spike-src',
-          }
+          component_order = [
+              'h-kernel',
+              'h-kernel-household',
+              'h-kernel-editor',
+              'h-kernel-spike-household-report',
+          ]
 
-          # Extract exposed modules from the four library stanzas. The current
-          # Cabal file uses a first item on the field line followed by comma-led
-          # continuation lines.
           exposed_by_component: dict[str, list[str]] = {}
-          lines = cabal.splitlines()
           current_component = None
           collecting = False
 
-          for line in lines:
+          for line in cabal.splitlines():
               if line and not line[0].isspace():
                   m = re.fullmatch(r'library(?:\s+(.+))?', line.strip())
                   if m:
@@ -69,8 +65,9 @@ jobs:
                       collecting = False
                   continue
 
-              for module in re.findall(r'HKernel(?:\.[A-Za-z][A-Za-z0-9_]*)+', payload):
-                  exposed_by_component[current_component].append(module)
+              exposed_by_component[current_component].extend(
+                  re.findall(r'HKernel(?:\.[A-Za-z][A-Za-z0-9_]*)+', payload)
+              )
 
           exposed_to_component = {
               module: component
@@ -84,50 +81,39 @@ jobs:
               'app', 'editor-app', 'editor-tui-app', 'tests', 'tools'
           ]
 
-          module_path: dict[str, Path] = {}
-          imports_by_module: dict[str, set[str]] = {}
-          explicit_exports: dict[str, bool] = {}
-          loc: dict[str, int] = {}
-          path_module: dict[Path, str] = {}
-
           module_decl = re.compile(r'^\s*module\s+([A-Z][A-Za-z0-9_.\']*)', re.M)
           import_decl = re.compile(
               r'^\s*import\s+(?:qualified\s+)?(?:"[^"]+"\s+)?([A-Z][A-Za-z0-9_.\']*)',
               re.M,
           )
 
+          source_info: dict[str, tuple[Path, int, bool]] = {}
+          importer_records: list[tuple[Path, str | None, set[str]]] = []
+
           for root in roots:
-              p = Path(root)
-              if not p.exists():
+              base = Path(root)
+              if not base.exists():
                   continue
-              for hs in p.rglob('*.hs'):
+              for hs in base.rglob('*.hs'):
                   text = hs.read_text(errors='replace')
                   m = module_decl.search(text)
-                  if not m:
-                      # Main modules are relevant as importers even without an
-                      # explicit module declaration.
-                      name = f'<main:{hs}>'
-                  else:
-                      name = m.group(1)
-                      module_path[name] = hs
-                  path_module[hs] = name
-                  imports_by_module[name] = set(import_decl.findall(text))
-                  loc[name] = len(text.splitlines())
+                  declared = m.group(1) if m else None
+                  imports = set(import_decl.findall(text))
+                  importer_records.append((hs, declared, imports))
 
-                  if m:
+                  if declared:
                       where_pos = text.find('where', m.end())
                       between = text[m.end():where_pos] if where_pos != -1 else ''
-                      explicit_exports[name] = '(' in between
+                      source_info[declared] = (
+                          hs,
+                          len(text.splitlines()),
+                          '(' in between,
+                      )
 
-          importers: dict[str, list[tuple[str, Path]]] = defaultdict(list)
-          for importer, imports in imports_by_module.items():
-              importer_path = module_path.get(importer)
-              if importer_path is None and importer.startswith('<main:'):
-                  importer_path = Path(importer[len('<main:'):-1])
-              if importer_path is None:
-                  continue
+          importers: dict[str, list[tuple[Path, str | None]]] = defaultdict(list)
+          for path, declared, imports in importer_records:
               for imported in imports:
-                  importers[imported].append((importer, importer_path))
+                  importers[imported].append((path, declared))
 
           def category(path: Path) -> str:
               s = path.as_posix()
@@ -143,44 +129,48 @@ jobs:
 
           print('=== PUBLIC MODULE SURFACE SUMMARY ===')
           print(f'exposed modules total: {len(exposed)}')
-          for component in library_source_dirs:
-              modules = exposed_by_component.get(component, [])
-              print(f'{component}: {len(modules)}')
+          for component in component_order:
+              print(f'{component}: {len(exposed_by_component.get(component, []))}')
 
-          missing_source = sorted(module for module in exposed if module not in module_path)
+          missing_source = sorted(module for module in exposed if module not in source_info)
           print(f'exposed modules without located source: {len(missing_source)}')
           for module in missing_source:
               print(f'  MISSING {module}')
 
-          export_counter = Counter(explicit_exports.get(module, False) for module in exposed)
-          print(f'explicit export list: {export_counter[True]}')
-          print(f'implicit export-all: {export_counter[False]}')
+          explicit_count = sum(source_info.get(module, (None, 0, False))[2] for module in exposed)
+          print(f'explicit export list: {explicit_count}')
+          print(f'implicit export-all: {len(exposed) - explicit_count}')
 
-          only_internal_public = []
-          no_delivery_or_test = []
           zero_importers = []
           imported_only_by_tests = []
+          no_delivery_or_test = []
+          only_exposed_library_importers = []
 
           print('=== PER-MODULE SURFACE ===')
           print('component\tmodule\tloc\texplicit_exports\tpublic_importers\tlibrary_importers\tdelivery_importers\ttest_importers\ttool_importers')
           for module in sorted(exposed):
-              counts = Counter(category(path) for _, path in importers.get(module, []))
-              public_importers = sum(1 for importer, _ in importers.get(module, []) if importer in exposed)
-              total = sum(counts.values())
+              records = importers.get(module, [])
+              counts = Counter(category(path) for path, _ in records)
+              public_importers = sum(1 for _, declared in records if declared in exposed)
+              path, lines, explicit = source_info.get(module, (Path('?'), 0, False))
               print(
-                  f'{exposed_to_component[module]}\t{module}\t{loc.get(module, 0)}\t'
-                  f'{explicit_exports.get(module, False)}\t{public_importers}\t'
-                  f'{counts["library"]}\t{counts["delivery"]}\t{counts["test"]}\t{counts["tool"]}'
+                  f'{exposed_to_component[module]}\t{module}\t{lines}\t{explicit}\t'
+                  f'{public_importers}\t{counts["library"]}\t{counts["delivery"]}\t'
+                  f'{counts["test"]}\t{counts["tool"]}'
               )
 
+              total = sum(counts.values())
               if total == 0:
                   zero_importers.append(module)
               if counts['test'] > 0 and counts['library'] == 0 and counts['delivery'] == 0 and counts['tool'] == 0:
                   imported_only_by_tests.append(module)
               if counts['delivery'] == 0 and counts['test'] == 0 and counts['tool'] == 0:
                   no_delivery_or_test.append(module)
-              if public_importers > 0 and counts['delivery'] == 0 and counts['test'] == 0 and counts['tool'] == 0:
-                  only_internal_public.append(module)
+              if (
+                  records
+                  and all(category(path) == 'library' and declared in exposed for path, declared in records)
+              ):
+                  only_exposed_library_importers.append(module)
 
           print('=== SHAPE SIGNALS ===')
           print(f'zero in-repository importers: {len(zero_importers)}')
@@ -192,8 +182,8 @@ jobs:
           print(f'no delivery/test/tool importer: {len(no_delivery_or_test)}')
           for module in no_delivery_or_test:
               print(f'  LIB_ONLY {module}')
-          print(f'only other exposed library modules import it: {len(only_internal_public)}')
-          for module in only_internal_public:
+          print(f'only exposed library modules import it: {len(only_exposed_library_importers)}')
+          for module in only_exposed_library_importers:
               print(f'  PUBLIC_INTERNAL {module}')
 
           suffix_buckets = {
