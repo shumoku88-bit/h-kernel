@@ -651,6 +651,7 @@ executable h-kernel-editor-tui
                     , HKernel.Editor.TUI.Maintenance
                     , HKernel.Editor.TUI.Model
                     , HKernel.Editor.TUI.Plan
+                    , HKernel.Editor.TUI.Report
                     , HKernel.Editor.TUI.ReportStyle
                     , HKernel.Spike.HouseholdReport
                     , HKernel.Spike.HouseholdReport.Render

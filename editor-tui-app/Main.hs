@@ -35,13 +35,13 @@ import HKernel.Editor.TUI.Model
   , AppEvent
   , HouseholdSection(..)
   , Name(..)
-  , ReportChoice(..)
+  , ReportChoice
   , WorkspaceFocus(..)
   , contextHouseholdState
   , makeWorkspaceContext
   )
 import qualified HKernel.Editor.TUI.Plan as Plan
-import qualified HKernel.Editor.TUI.ReportStyle as ReportStyle
+import qualified HKernel.Editor.TUI.Report as Report
 import HKernel.Household.Application
   ( HouseholdState(..)
   , loadCanonicalHouseholdWriteSnapshot
@@ -57,25 +57,9 @@ import qualified HKernel.Ledger
 import HKernel.Plan (planIdText)
 import HKernel.Plan.Completion (declaredCompletionPlanId)
 import qualified HKernel.Plan.Journal
-import HKernel.Render
-  ( renderBalanceSheetWithPresentation
-  , renderDailyFlowWithPresentation
-  , renderMonthlyAccountsWithPresentation
-  , renderProfitAndLossWithPresentation
-  , renderRecentTransactionsWithPresentation
-  , renderTrialBalanceWithPresentation
-  )
-import HKernel.Report (ReportBook(..))
 import HKernel.Report.Config
   ( reportConfigurationPlan
   , reportConfigurationPresentation
-  )
-import HKernel.Report.Plan (ReportPlanError(..))
-import HKernel.Spike.HouseholdReport.Render
-  ( HouseholdReportSection(..)
-  , IssueVisibility(..)
-  , renderHouseholdReportSection
-  , renderReportBookWithHouseholdPresentation
   )
 
 data UIState
@@ -144,7 +128,7 @@ drawUI (AppWrapper context Workspace) = [drawHouseholdShell context]
 drawUI (AppWrapper context (ActualFlow state)) = [Actual.drawFlow context state]
 drawUI (AppWrapper _ (PlanFlow state)) = [Plan.drawFlow state]
 drawUI (AppWrapper _ (MaintenanceFlow state)) = [Maintenance.drawFlow state]
-drawUI (AppWrapper _ (ReportPicker choices)) = [drawReportPicker choices]
+drawUI (AppWrapper _ (ReportPicker choices)) = [Report.drawPicker choices]
 drawUI (AppWrapper _ (PlanBudgetSyncPicker plans)) = [drawPlanBudgetSyncPicker plans]
 drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
   [ center
@@ -198,30 +182,8 @@ drawSectionBody context = case contextCurrentSection context of
   BudgetSection -> Maintenance.drawBudgetWorkspace context
   AccountsSection -> Maintenance.drawAccountsWorkspace context
   IssuesSection -> Maintenance.drawIssuesWorkspace context
-  ReportsSection -> drawReportsView context
+  ReportsSection -> Report.drawWorkspace context
   SettingsSection -> drawSettingsView context
-
-drawReportsView :: AppContext -> Widget Name
-drawReportsView context =
-  vBox
-    [ borderWithLabel (txt ("Household Report: " <> reportChoiceLabel selected))
-        (viewport ReportsViewport Both (renderSelectedReport context))
-    , str "[Enter] Choose report   [wheel/↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page"
-    , str "[Home/End] Top/Bottom   [r/R] Next/Previous report   [1-7] Switch section   [q] Quit"
-    ]
-  where
-    selected = contextSelectedReport context
-
-drawReportPicker :: L.List Name ReportChoice -> Widget Name
-drawReportPicker choices =
-  center
-    (borderWithLabel (str "Choose Household Report")
-      (hLimit 64
-        (vLimit 22
-          (padAll 1
-            (L.renderList renderReportChoice True choices
-              <=> str " "
-              <=> str "[wheel/↑/↓ or j/k] Move   [click/Enter] Open   [Esc] Back   [Q] Quit")))))
 
 drawPlanBudgetSyncPicker
   :: L.List Name HKernel.Plan.Journal.IdentifiedPlanTransaction
@@ -247,87 +209,6 @@ renderCompletedPlan selected identified
         <> "  " <> HKernel.Ledger.transactionDescription transaction
         <> "  [" <> planIdText (HKernel.Plan.Journal.identifiedPlanId identified) <> "]"
       )
-
-renderReportChoice :: Bool -> ReportChoice -> Widget Name
-renderReportChoice selected choice
-  | selected = withAttr L.listSelectedAttr row
-  | otherwise = row
-  where
-    row = txt (reportChoiceLabel choice)
-
-reportChoiceLabel :: ReportChoice -> Text
-reportChoiceLabel choice = case choice of
-  ReportTrialBalance -> "Account Balances"
-  ReportBalanceSheet -> "Balance Sheet"
-  ReportProfitAndLoss -> "Profit & Loss"
-  ReportDailyFlow -> "Daily Flow"
-  ReportMonthlyAccounts -> "Monthly Accounts"
-  ReportHousehold section -> case section of
-    HouseholdCycleAccounts -> "Cycle Accounts & Comparison"
-    HouseholdDailyTarget -> "Daily Target"
-    HouseholdPlannedTransactions -> "Planned Transactions"
-    HouseholdIssues visibility -> case visibility of
-      OpenIssuesOnly -> "Open Issues"
-      AllIssues -> "All Issues"
-    HouseholdEnvelopeBacking -> "Envelope & Backing"
-  ReportRecentTransactions -> "Recent Actual"
-  ReportCombinedBook -> "Full Household Report"
-
-reportChoices :: [ReportChoice]
-reportChoices =
-  [ ReportTrialBalance
-  , ReportBalanceSheet
-  , ReportProfitAndLoss
-  , ReportDailyFlow
-  , ReportMonthlyAccounts
-  , ReportHousehold HouseholdCycleAccounts
-  , ReportHousehold HouseholdDailyTarget
-  , ReportHousehold HouseholdPlannedTransactions
-  , ReportHousehold (HouseholdIssues OpenIssuesOnly)
-  , ReportHousehold HouseholdEnvelopeBacking
-  , ReportRecentTransactions
-  , ReportCombinedBook
-  ]
-
-renderSelectedReport :: AppContext -> Widget Name
-renderSelectedReport context = case contextSelectedReport context of
-  ReportTrialBalance -> withReportBook $ \(ReportBook trial _ _ _ _ _) ->
-    reportText (renderTrialBalanceWithPresentation pres trial)
-  ReportBalanceSheet -> withReportBook $ \(ReportBook _ balance _ _ _ _) ->
-    reportText (renderBalanceSheetWithPresentation pres balance)
-  ReportProfitAndLoss -> withReportBook $ \(ReportBook _ _ profit _ _ _) ->
-    reportText (renderProfitAndLossWithPresentation pres profit)
-  ReportDailyFlow -> withReportBook $ \(ReportBook _ _ _ daily _ _) ->
-    reportText (renderDailyFlowWithPresentation pres daily)
-  ReportMonthlyAccounts -> withReportBook $ \(ReportBook _ _ _ _ _ monthly) ->
-    reportText (renderMonthlyAccountsWithPresentation pres monthly)
-  ReportHousehold section -> renderHouseholdSection section
-  ReportRecentTransactions -> withReportBook $ \(ReportBook _ _ _ _ recent _) ->
-    reportText (renderRecentTransactionsWithPresentation pres recent)
-  ReportCombinedBook -> withReportBook $ \book -> case householdSurface of
-    Left err -> reportText ("Report surface error: " <> T.pack (show err))
-    Right surface -> reportText
-      (renderReportBookWithHouseholdPresentation pres book surface)
-  where
-    state = contextHouseholdState context
-    reportConfig = householdStateReportConfig state
-    pres = reportConfigurationPresentation reportConfig
-    householdSurface = contextHouseholdReportSurface context
-    resolvedReportBook = contextResolvedReportBook context
-    withReportBook renderBook = case resolvedReportBook of
-      Left err -> reportText ("Report plan error: " <> renderReportPlanError err)
-      Right book -> renderBook book
-    renderHouseholdSection section = case householdSurface of
-      Left err -> reportText ("Report surface error: " <> T.pack (show err))
-      Right surface -> reportText (renderHouseholdReportSection pres section surface)
-
-renderReportPlanError :: ReportPlanError -> Text
-renderReportPlanError (InvalidReportRange reportName start end) =
-  "invalid " <> reportName <> " range: start " <> T.pack (show start)
-    <> " is after end " <> T.pack (show end)
-
-reportText :: Text -> Widget Name
-reportText = ReportStyle.renderTerminalReport
 
 drawSettingsView :: AppContext -> Widget Name
 drawSettingsView context =
@@ -458,32 +339,10 @@ handleWorkspaceEvent context event = case event of
     | inReports -> vScrollToBeginning reportsViewport
   VtyEvent (V.EvKey V.KEnd [])
     | inReports -> vScrollToEnd reportsViewport
-  VtyEvent (V.EvKey (V.KChar 't') [])
-    | inReports -> selectReport ReportTrialBalance
-  VtyEvent (V.EvKey (V.KChar 'b') [])
-    | inReports -> selectReport ReportBalanceSheet
-  VtyEvent (V.EvKey (V.KChar 'p') [])
-    | inReports -> selectReport ReportProfitAndLoss
-  VtyEvent (V.EvKey (V.KChar 'd') [])
-    | inReports -> selectReport ReportDailyFlow
-  VtyEvent (V.EvKey (V.KChar 'm') [])
-    | inReports -> selectReport ReportMonthlyAccounts
-  VtyEvent (V.EvKey (V.KChar 'c') [])
-    | inReports -> selectReport (ReportHousehold HouseholdCycleAccounts)
-  VtyEvent (V.EvKey (V.KChar 'T') [])
-    | inReports -> selectReport (ReportHousehold HouseholdDailyTarget)
-  VtyEvent (V.EvKey (V.KChar 'P') [])
-    | inReports -> selectReport (ReportHousehold HouseholdPlannedTransactions)
-  VtyEvent (V.EvKey (V.KChar 'E') [])
-    | inReports -> selectReport (ReportHousehold HouseholdEnvelopeBacking)
-  VtyEvent (V.EvKey (V.KChar 'a') [])
-    | inReports -> selectReport ReportRecentTransactions
-  VtyEvent (V.EvKey (V.KChar 'h') [])
-    | inReports -> selectReport ReportCombinedBook
-  VtyEvent (V.EvKey (V.KChar 'r') [])
-    | inReports -> selectReport (cycleReport (contextSelectedReport context))
-  VtyEvent (V.EvKey (V.KChar 'R') [])
-    | inReports -> selectReport (cycleReportBack (contextSelectedReport context))
+  VtyEvent (V.EvKey (V.KChar key) [])
+    | inReports
+    , Just report <- Report.reportSelectionForKey (contextSelectedReport context) key ->
+        selectReport report
   VtyEvent (V.EvKey (V.KChar 'a') [])
     | inActual -> openActualDaily
   VtyEvent (V.EvKey (V.KChar 'A') [])
@@ -568,8 +427,8 @@ handleWorkspaceEvent context event = case event of
       vScrollToBeginning reportsViewport
       hScrollToBeginning reportsViewport
     openReportPicker =
-      let picker = L.list ReportPickerList (Vec.fromList reportChoices) 1
-          selectedIndex = reportChoiceIndex (contextSelectedReport context)
+      let picker = L.list ReportPickerList (Vec.fromList Report.reportChoices) 1
+          selectedIndex = Report.reportChoiceIndex (contextSelectedReport context)
       in put (AppWrapper context (ReportPicker (L.listMoveTo selectedIndex picker)))
     openPlanBudgetSyncPicker =
       let state = contextHouseholdState context
@@ -617,14 +476,6 @@ moveListSelection traversal row =
     items <- get
     put (L.listMoveTo row items)
 
-reportChoiceIndex :: ReportChoice -> Int
-reportChoiceIndex choice = go 0 reportChoices
-  where
-    go _ [] = 0
-    go index (candidate : rest)
-      | candidate == choice = index
-      | otherwise = go (index + 1) rest
-
 handleReportPicker :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleReportPicker context event = case event of
   MouseDown ReportPickerList V.BScrollUp _ _ ->
@@ -632,9 +483,9 @@ handleReportPicker context event = case event of
   MouseDown ReportPickerList V.BScrollDown _ _ ->
     zoom zoomReportPicker (L.handleListEvent (V.EvKey V.KDown []))
   MouseDown ReportPickerList V.BLeft _ (Location (_, row)) ->
-    case drop row reportChoices of
-      [] -> pure ()
-      choice : _ -> openChoice choice
+    case Report.reportChoiceAt row of
+      Nothing -> pure ()
+      Just choice -> openChoice choice
   VtyEvent (V.EvKey V.KEsc []) -> put (AppWrapper context Workspace)
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
@@ -746,23 +597,6 @@ handleExitOnlyEvent event = case event of
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
   _ -> pure ()
-
-cycleReport :: ReportChoice -> ReportChoice
-cycleReport choice = go reportChoices
-  where
-    go [] = ReportTrialBalance
-    go [_] = ReportTrialBalance
-    go (current : next : rest)
-      | current == choice = next
-      | otherwise = go (next : rest)
-
-cycleReportBack :: ReportChoice -> ReportChoice
-cycleReportBack choice = go ReportCombinedBook reportChoices
-  where
-    go previous [] = previous
-    go previous (current : rest)
-      | current == choice = previous
-      | otherwise = go current rest
 
 app :: App AppWrapper AppEvent Name
 app = App
