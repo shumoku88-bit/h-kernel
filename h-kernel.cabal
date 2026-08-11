@@ -104,7 +104,8 @@ library h-kernel-editor
                     , HKernel.Editor.PlanLifecycle
                     , HKernel.Editor.PlanCompleteAdvance
                     , HKernel.Editor.TransactionBlock
-    other-modules:    HKernel.Editor.SourceAppend
+    other-modules:    HKernel.Editor.PlanIdentity
+                    , HKernel.Editor.SourceAppend
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
                     , h-kernel

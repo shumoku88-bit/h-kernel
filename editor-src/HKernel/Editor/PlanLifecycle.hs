@@ -21,7 +21,6 @@ module HKernel.Editor.PlanLifecycle
   ) where
 
 import Data.Bifunctor (first)
-import Data.Char (isAsciiLower, isAsciiUpper, toLower)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
@@ -35,6 +34,10 @@ import HKernel.Actual.Journal
   , actualJournalCompletionDeclarations
   , admitActualJournalFromResolvedJournal
   , parseActualJournal
+  )
+import HKernel.Editor.PlanIdentity
+  ( descriptionPlanIdStem
+  , generateAvailablePlanId
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Editor.TransactionBlock
@@ -123,41 +126,6 @@ data PlanAddError
   | AddGeneratedIdError PlanIdError
   deriving (Eq, Show)
 
-slugify :: Text -> Text
-slugify t =
-  let
-    mapped = T.map (\c -> if isAsciiUpper c then toLower c else if isAsciiLower c || (c >= '0' && c <= '9') then c else '-') t
-    collapsed = T.intercalate "-" (filter (not . T.null) (T.splitOn "-" mapped))
-  in collapsed
-
-generatePlanId
-  :: Day
-  -> Text
-  -> Maybe Text
-  -> [PlanId]
-  -> Either PlanIdError PlanId
-generatePlanId date desc mSeries existingIds = go 1
-  where
-    prefix = "plan-" <> T.pack (formatTime defaultTimeLocale "%Y-%m-%d" date) <> "-"
-    suffix = case mSeries of
-      Just series -> series
-      Nothing ->
-        let slug = slugify desc
-        in if T.null slug then "plan" else slug
-    base = prefix <> suffix
-
-    candidateText candidateNumber
-      | candidateNumber == 1 = base
-      | candidateNumber < 10 =
-          base <> "-0" <> T.pack (show candidateNumber)
-      | otherwise = base <> "-" <> T.pack (show candidateNumber)
-
-    go candidateNumber = do
-      candidateId <- mkPlanId (candidateText candidateNumber)
-      if candidateId `elem` existingIds
-        then go (candidateNumber + 1)
-        else Right candidateId
-
 preparePlanAdd
   :: Text
   -> Text
@@ -209,10 +177,11 @@ preparePlanAddFromJournals planJ planSource actualJ intent = do
 
   newPlanId <- case addRequestedId intent of
     Nothing -> first (pure . AddGeneratedIdError)
-      (generatePlanId
-        (addDate intent)
-        (addDescription intent)
-        (addSeries intent)
+      (generateAvailablePlanId
+        (T.pack (formatTime defaultTimeLocale "%Y-%m-%d" (addDate intent)))
+        (case addSeries intent of
+          Just series -> series
+          Nothing -> descriptionPlanIdStem (addDescription intent))
         existingPlanIds)
     Just requested -> do
       pId <- first (pure . AddInvalidId) (mkPlanId requested)

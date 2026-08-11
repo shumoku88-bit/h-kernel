@@ -33,6 +33,7 @@ main :: IO ()
 main = do
   let results =
         [ ("testPlanAddSuccess", testPlanAddSuccess)
+        , ("testPlanAddCollisionSuffix", testPlanAddCollisionSuffix)
         , ("testPlanAddUsesPlanAdmissionOnly", testPlanAddUsesPlanAdmissionOnly)
         , ("testPlanAddInvalidSeries", testPlanAddInvalidSeries)
         , ("testPlanEditDateAndAmountPreservesMetadata", testPlanEditDateAndAmountPreservesMetadata)
@@ -248,6 +249,26 @@ testPlanAddSuccess =
       "plan-2023-01-03-test-dinner"
         `T.isInfixOf` addCandidateBlock preview
     Left err -> error (show err)
+
+testPlanAddCollisionSuffix :: Bool
+testPlanAddCollisionSuffix =
+  let collisionSource = planFixture <> T.unlines
+        [ ""
+        , "2023-01-02 reserved generated identity"
+        , "  ; plan-id: plan-2023-01-03-test-dinner"
+        , "  assets:bank  -100 JPY"
+        , "  expenses:food  100 JPY"
+        , ""
+        , "2023-01-02 reserved generated identity 02"
+        , "  ; plan-id: plan-2023-01-03-test-dinner-02"
+        , "  assets:bank  -100 JPY"
+        , "  expenses:food  100 JPY"
+        ]
+  in case preparePlanAdd collisionSource actualFixture (planAddIntent Nothing) of
+      Right preview ->
+        "plan-2023-01-03-test-dinner-03"
+          `T.isInfixOf` addCandidateBlock preview
+      Left err -> error (show err)
 
 testPlanAddUsesPlanAdmissionOnly :: Bool
 testPlanAddUsesPlanAdmissionOnly =
