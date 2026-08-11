@@ -10,7 +10,7 @@ import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
-import HKernel.Editor.ActualWriter
+import HKernel.Editor.SourcePublication
   ( CandidateSource(..)
   , ExpectedSource(..)
   , WriteIntent(..)

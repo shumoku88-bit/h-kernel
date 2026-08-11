@@ -23,7 +23,7 @@ import HKernel.Application.Config
 import qualified HKernel.Editor.ActualAccountAppend as ActualAccountAppend
 import qualified HKernel.Editor.ActualAppend as ActualAppend
 import qualified HKernel.Editor.ActualReverse as ActualReverse
-import HKernel.Editor.ActualWriter
+import HKernel.Editor.SourcePublication
 import qualified HKernel.Editor.BudgetMovementAppend as BudgetMovementAppend
 import HKernel.Editor.CLI
 import qualified HKernel.Editor.IssueAppend as IssueAppend

@@ -21,7 +21,7 @@ import HKernel.Actual.Journal
   , reversedTransactionId
   , reversalTransactionId
   )
-import HKernel.Editor.ActualWriter
+import HKernel.Editor.SourcePublication
 import HKernel.Journal (journalAccountRegistry, journalTransactions)
 import HKernel.Ledger (Transaction)
 import HKernel.Plan.Completion

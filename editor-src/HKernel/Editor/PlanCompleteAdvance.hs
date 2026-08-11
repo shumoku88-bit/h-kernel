@@ -49,7 +49,7 @@ import HKernel.Editor.ActualAppend
   , ActualEditIntent(..)
   , prepareActualAppendFromResolvedJournal
   )
-import HKernel.Editor.ActualWriter
+import HKernel.Editor.SourcePublication
   ( WriterFileSystem(..)
   , defaultWriterFileSystem
   )

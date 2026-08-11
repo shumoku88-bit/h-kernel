@@ -57,7 +57,7 @@ import HKernel.Editor.ActualAccountAppend
   ( AccountJournalAppendPreview(..)
   , prepareAccountJournalAppend
   )
-import HKernel.Editor.ActualWriter
+import HKernel.Editor.SourcePublication
   ( CandidateSource(..)
   , ExpectedSource(..)
   , WriteIntent(..)

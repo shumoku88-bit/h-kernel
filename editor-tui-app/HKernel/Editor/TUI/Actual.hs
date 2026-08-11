@@ -65,7 +65,7 @@ import HKernel.Editor.ActualReverse
   , suggestActualReverseEventIdText
   )
 import HKernel.Editor.ActualWorkspace (transactionEntriesForAccount)
-import HKernel.Editor.ActualWriter (publishActualBlockWithPathAdmission)
+import HKernel.Editor.SourcePublication (publishActualBlockWithPathAdmission)
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
   , actualMultiPostingAt
