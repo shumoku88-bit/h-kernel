@@ -3,10 +3,12 @@
 module HKernel.Editor.TUI.Actual
   ( PublishResult(..)
   , State(..)
+  , WorkspaceAction(..)
   , applyWorkspaceAccountFilter
   , drawFlow
   , drawWorkspace
   , handleFlowEvent
+  , handleWorkspaceEvent
   , publishCandidate
   , startDaily
   , startIncome
@@ -87,6 +89,8 @@ import HKernel.Editor.TUI.Model
   , contextHouseholdState
   , contextSource
   , contextSourcePath
+  , contextWorkspaceAccountsL
+  , contextWorkspaceListL
   , reloadWorkspaceContext
   )
 import HKernel.Household.Application
@@ -1142,3 +1146,68 @@ writeFailureText :: ActualAddWriteFailure -> Text
 writeFailureText failure = case failure of
   ActualAddPostAdmissionFailure -> "The published candidate failed complete-source admission."
   ActualAddPostPublishReadFailure -> "The published source could not be read for post-admission."
+
+data WorkspaceAction
+  = MaintainContext
+  | OpenDaily
+  | OpenIncome
+  | OpenMulti
+  | OpenReverse
+
+handleWorkspaceEvent
+  :: BrickEvent Name AppEvent
+  -> EventM Name AppContext WorkspaceAction
+handleWorkspaceEvent event = case event of
+  MouseDown WorkspaceAccountList V.BScrollUp _ _ ->
+    selectAccountEvent (V.EvKey V.KUp [])
+  MouseDown WorkspaceAccountList V.BScrollDown _ _ ->
+    selectAccountEvent (V.EvKey V.KDown [])
+  MouseDown WorkspaceAccountList V.BLeft _ (Location (_, row)) -> do
+    zoom contextWorkspaceAccountsL (modify (L.listMoveTo row))
+    modify (\ctx -> applyWorkspaceAccountFilter (ctx { contextWorkspaceFocus = AccountsFocus }))
+    pure MaintainContext
+  MouseDown WorkspaceTransactionList V.BScrollUp _ _ ->
+    selectTransactionEvent (V.EvKey V.KUp [])
+  MouseDown WorkspaceTransactionList V.BScrollDown _ _ ->
+    selectTransactionEvent (V.EvKey V.KDown [])
+  MouseDown WorkspaceTransactionList V.BLeft _ (Location (_, row)) -> do
+    zoom contextWorkspaceListL (modify (L.listMoveTo row))
+    modify (\ctx -> ctx { contextWorkspaceFocus = TransactionsFocus })
+    pure MaintainContext
+  VtyEvent (V.EvKey (V.KChar 'a') []) -> pure OpenDaily
+  VtyEvent (V.EvKey (V.KChar 'A') []) -> pure OpenDaily
+  VtyEvent (V.EvKey (V.KChar 'i') []) -> pure OpenIncome
+  VtyEvent (V.EvKey (V.KChar 'I') []) -> pure OpenIncome
+  VtyEvent (V.EvKey (V.KChar 'm') []) -> pure OpenMulti
+  VtyEvent (V.EvKey (V.KChar 'M') []) -> pure OpenMulti
+  VtyEvent (V.EvKey V.KEnter []) -> do
+    context <- get
+    if contextWorkspaceFocus context == AccountsFocus
+      then do
+        modify (\ctx -> ctx { contextWorkspaceFocus = TransactionsFocus })
+        pure MaintainContext
+      else pure OpenReverse
+  VtyEvent (V.EvKey (V.KChar '\t') []) -> do
+    modify toggleWorkspaceFocus
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KLeft []) -> do
+    modify (\ctx -> ctx { contextWorkspaceFocus = AccountsFocus })
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KRight []) -> do
+    modify (\ctx -> ctx { contextWorkspaceFocus = TransactionsFocus })
+    pure MaintainContext
+  VtyEvent (V.EvKey vtyKey vtyMods) -> do
+    context <- get
+    case contextWorkspaceFocus context of
+      AccountsFocus -> selectAccountEvent (V.EvKey vtyKey vtyMods)
+      TransactionsFocus -> selectTransactionEvent (V.EvKey vtyKey vtyMods)
+  _ -> pure MaintainContext
+  where
+    selectAccountEvent ev = do
+      zoom contextWorkspaceAccountsL (L.handleListEventVi L.handleListEvent ev)
+      modify (\ctx -> applyWorkspaceAccountFilter (ctx { contextWorkspaceFocus = AccountsFocus }))
+      pure MaintainContext
+    selectTransactionEvent ev = do
+      zoom contextWorkspaceListL (L.handleListEventVi L.handleListEvent ev)
+      modify (\ctx -> ctx { contextWorkspaceFocus = TransactionsFocus })
+      pure MaintainContext

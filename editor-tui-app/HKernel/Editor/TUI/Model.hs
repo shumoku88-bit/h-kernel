@@ -8,16 +8,21 @@ module HKernel.Editor.TUI.Model
   , contextAccountsSource
   , contextBudgetSource
   , contextHouseholdState
+  , contextIssueListL
   , contextIssuesSource
+  , contextPlanListL
   , contextPlanSource
   , contextSource
   , contextSourcePath
+  , contextWorkspaceAccountsL
+  , contextWorkspaceListL
   , makeWorkspaceContext
   , reloadWorkspaceContext
   ) where
 
 import qualified Brick.Widgets.List as L
 import Data.List.NonEmpty (NonEmpty)
+import Lens.Micro (Lens')
 import Data.Text (Text)
 import Data.Time.Calendar (Day)
 import qualified Data.Vector as Vec
@@ -234,3 +239,19 @@ reloadWorkspaceContext context = do
           { contextEntryDay = contextEntryDay context
           , contextCurrentSection = contextCurrentSection context
           }))
+
+contextWorkspaceAccountsL :: Lens' AppContext (L.List Name (Maybe Account))
+contextWorkspaceAccountsL f context =
+  (\updated -> context { contextWorkspaceAccounts = updated }) <$> f (contextWorkspaceAccounts context)
+
+contextWorkspaceListL :: Lens' AppContext (L.List Name Transaction)
+contextWorkspaceListL f context =
+  (\updated -> context { contextWorkspaceList = updated }) <$> f (contextWorkspaceList context)
+
+contextPlanListL :: Lens' AppContext (L.List Name IdentifiedPlanTransaction)
+contextPlanListL f context =
+  (\updated -> context { contextPlanList = updated }) <$> f (contextPlanList context)
+
+contextIssueListL :: Lens' AppContext (L.List Name HouseholdIssue)
+contextIssueListL f context =
+  (\updated -> context { contextIssueList = updated }) <$> f (contextIssueList context)

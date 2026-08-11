@@ -1,14 +1,20 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HKernel.Editor.TUI.Maintenance
-  ( PublishRequest(..)
+  ( AccountsWorkspaceAction(..)
+  , BudgetWorkspaceAction(..)
+  , IssuesWorkspaceAction(..)
+  , PublishRequest(..)
   , PublishResult(..)
   , State(..)
   , drawAccountsWorkspace
   , drawBudgetWorkspace
   , drawIssuesWorkspace
   , drawFlow
+  , handleAccountsWorkspaceEvent
+  , handleBudgetWorkspaceEvent
   , handleFlowEvent
+  , handleIssuesWorkspaceEvent
   , publishCandidate
   , startAccountAdd
   , startBudgetMovement
@@ -79,6 +85,7 @@ import HKernel.Editor.TUI.Model
   , contextAccountsSource
   , contextBudgetSource
   , contextHouseholdState
+  , contextIssueListL
   , contextIssuesSource
   , reloadWorkspaceContext
   )
@@ -671,3 +678,75 @@ renderIssue issue =
 
 showText :: Show value => value -> Text
 showText = T.pack . show
+
+data BudgetWorkspaceAction
+  = BudgetActionMaintain
+  | BudgetActionStartMovement
+  deriving (Eq, Show)
+
+handleBudgetWorkspaceEvent
+  :: BrickEvent Name AppEvent
+  -> EventM Name s BudgetWorkspaceAction
+handleBudgetWorkspaceEvent event = case event of
+  MouseDown BudgetViewport V.BScrollUp _ _ -> do
+    vScrollBy (viewportScroll BudgetViewport) (-3)
+    pure BudgetActionMaintain
+  MouseDown BudgetViewport V.BScrollDown _ _ -> do
+    vScrollBy (viewportScroll BudgetViewport) 3
+    pure BudgetActionMaintain
+  VtyEvent (V.EvKey V.KEnter []) -> pure BudgetActionStartMovement
+  VtyEvent (V.EvKey (V.KChar 'm') []) -> pure BudgetActionStartMovement
+  VtyEvent (V.EvKey (V.KChar 'M') []) -> pure BudgetActionStartMovement
+  _ -> pure BudgetActionMaintain
+
+data AccountsWorkspaceAction
+  = AccountsActionMaintain
+  | AccountsActionStartAdd
+  deriving (Eq, Show)
+
+handleAccountsWorkspaceEvent
+  :: BrickEvent Name AppEvent
+  -> EventM Name s AccountsWorkspaceAction
+handleAccountsWorkspaceEvent event = case event of
+  MouseDown AccountsViewport V.BScrollUp _ _ -> do
+    vScrollBy (viewportScroll AccountsViewport) (-3)
+    pure AccountsActionMaintain
+  MouseDown AccountsViewport V.BScrollDown _ _ -> do
+    vScrollBy (viewportScroll AccountsViewport) 3
+    pure AccountsActionMaintain
+  VtyEvent (V.EvKey V.KEnter []) -> pure AccountsActionStartAdd
+  VtyEvent (V.EvKey (V.KChar 'a') []) -> pure AccountsActionStartAdd
+  VtyEvent (V.EvKey (V.KChar 'A') []) -> pure AccountsActionStartAdd
+  _ -> pure AccountsActionMaintain
+
+data IssuesWorkspaceAction
+  = IssuesActionMaintain
+  | IssuesActionStartAdd
+  | IssuesActionStartClose (State AppEvent)
+
+handleIssuesWorkspaceEvent
+  :: BrickEvent Name AppEvent
+  -> EventM Name AppContext IssuesWorkspaceAction
+handleIssuesWorkspaceEvent event = case event of
+  MouseDown IssueList V.BScrollUp _ _ -> do
+    zoom contextIssueListL (L.handleListEvent (V.EvKey V.KUp []))
+    pure IssuesActionMaintain
+  MouseDown IssueList V.BScrollDown _ _ -> do
+    zoom contextIssueListL (L.handleListEvent (V.EvKey V.KDown []))
+    pure IssuesActionMaintain
+  MouseDown IssueList V.BLeft _ (Location (_, row)) -> do
+    zoom contextIssueListL (modify (L.listMoveTo row))
+    pure IssuesActionMaintain
+  VtyEvent (V.EvKey (V.KChar 'a') []) -> pure IssuesActionStartAdd
+  VtyEvent (V.EvKey (V.KChar 'A') []) -> pure IssuesActionStartAdd
+  VtyEvent (V.EvKey V.KEnter []) -> openSelectedIssueClose
+  VtyEvent (V.EvKey vtyKey vtyMods) -> do
+    zoom contextIssueListL (L.handleListEventVi L.handleListEvent (V.EvKey vtyKey vtyMods))
+    pure IssuesActionMaintain
+  _ -> pure IssuesActionMaintain
+  where
+    openSelectedIssueClose = do
+      context <- get
+      case startSelectedIssueClose context of
+        Nothing -> pure IssuesActionMaintain
+        Just flow -> pure (IssuesActionStartClose flow)
