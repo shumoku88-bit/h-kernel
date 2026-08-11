@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TupleSections #-}
 
 -- | TOML admission for household coordinates layered on an admitted
 -- 'BudgetPolicy'.

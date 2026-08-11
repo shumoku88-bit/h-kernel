@@ -93,8 +93,6 @@ HouseholdState
   -> HKernel.Household.Report.Render
 ```
 
-`HKernel.Spike.HouseholdReport`をcurrent architecture ownerとして扱わない。
-
 ## Retained compatibility source
 
 `accounts.tsv`、`plan.tsv`、`budget_alloc.tsv`、`cycle.tsv`、`config.tsv`、`daily_target_scope.tsv`、legacy Report manifestsは、current `h-kernel` canonical Household bootstrapの入力ではない。

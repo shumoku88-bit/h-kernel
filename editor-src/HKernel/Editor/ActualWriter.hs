@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module HKernel.Editor.ActualWriter
   ( ExpectedSource(..)
