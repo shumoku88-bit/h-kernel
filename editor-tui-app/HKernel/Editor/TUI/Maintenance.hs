@@ -22,7 +22,6 @@ import Brick.Forms
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import qualified Brick.Widgets.List as L
-import Control.Monad.IO.Class (liftIO)
 import qualified Graphics.Vty as V
 import Lens.Micro (Lens', Traversal')
 
@@ -30,8 +29,6 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
-import System.IO.Error (tryIOError)
 
 import HKernel.Account
   ( AccountDeclaration
@@ -434,16 +431,12 @@ handleAccountInput context form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
   VtyEvent (V.EvKey V.KEnter []) -> case prepareAccountDeclaration (formState form) of
     Left message -> put (AccountPreviewState (PreviewRejected message) form)
-    Right declaration -> do
-      let paths = householdStatePaths (contextHouseholdState context)
-      sourceResult <- liftIO (tryIOError (TIO.readFile (householdAccountsJournalPath paths)))
-      case sourceResult of
-        Left err -> put (AccountPreviewState
-          (PreviewRejected ("Cannot read accounts.journal: " <> T.pack (show err))) form)
-        Right source -> case prepareAccountJournalAppend source declaration of
-          Left errors -> put (AccountPreviewState
-            (PreviewRejected ("Account rejected: " <> T.pack (show (NonEmpty.toList errors)))) form)
-          Right preview -> put (AccountPreviewState (PreviewReady (source, preview)) form)
+    Right declaration ->
+      let source = contextAccountsSource context
+      in case prepareAccountJournalAppend source declaration of
+        Left errors -> put (AccountPreviewState
+          (PreviewRejected ("Account rejected: " <> T.pack (show (NonEmpty.toList errors)))) form)
+        Right preview -> put (AccountPreviewState (PreviewReady (source, preview)) form)
   _ -> zoom zoomAccountForm (handleFormEvent event)
 
 handleIssueAddInput :: AppContext -> Form IssueInput AppEvent Name -> BrickEvent Name AppEvent -> EventM Name (State AppEvent) ()
