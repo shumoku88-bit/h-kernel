@@ -161,17 +161,18 @@ householdStateBudgetMovements =
 -- | One admitted Household observation together with the exact root bytes used
 -- by current coordinated Editor operations.
 --
--- This is deliberately narrower than a repository/session abstraction. Actual,
--- Plan, Budget, and Issues are retained because current mutation paths need
--- their exact roots and typed Household meaning to share the same expected-old
--- observation; other source families should join only when a concrete operation
--- needs the same ownership.
+-- This is deliberately narrower than a repository/session abstraction.
+-- Accounts, Actual, Plan, Budget, and Issues are retained because current
+-- mutation paths need their exact roots and typed Household meaning to share
+-- the same expected-old observation; other source families should join only
+-- when a concrete operation needs the same ownership.
 data HouseholdWriteSnapshot = HouseholdWriteSnapshot
-  { householdWriteSnapshotState        :: HouseholdState
-  , householdWriteSnapshotActualSource :: Text
-  , householdWriteSnapshotPlanSource   :: Text
-  , householdWriteSnapshotBudgetSource :: Text
-  , householdWriteSnapshotIssuesSource :: Text
+  { householdWriteSnapshotState          :: HouseholdState
+  , householdWriteSnapshotAccountsSource :: Text
+  , householdWriteSnapshotActualSource   :: Text
+  , householdWriteSnapshotPlanSource     :: Text
+  , householdWriteSnapshotBudgetSource   :: Text
+  , householdWriteSnapshotIssuesSource   :: Text
   } deriving (Eq, Show)
 
 -- | Errors during canonical Household loading.
@@ -233,14 +234,15 @@ loadCanonicalHouseholdWriteSnapshot root = do
     Left errors -> pure (Left errors)
     Right accountsContent -> case parseAccountJournal accountsContent of
       Left errors -> pure (Left (pure (HouseholdAccountsParseFailed errors)))
-      Right accountsRegistry -> loadActual root paths accountsRegistry
+      Right accountsRegistry -> loadActual root paths accountsContent accountsRegistry
 
 loadActual
   :: HouseholdRoot
   -> HouseholdSourcePaths
+  -> Text
   -> AccountRegistry
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
-loadActual root paths accountsRegistry = do
+loadActual root paths accountsRootText accountsRegistry = do
   rootTextResult <- readHouseholdSource (householdActualJournalPath paths)
   case rootTextResult of
     Left errors -> pure (Left errors)
@@ -260,16 +262,18 @@ loadActual root paths accountsRegistry = do
                   pure (Left (pure (HouseholdAccountRegistryDisagreement
                     accountsRegistry
                     (journalAccountRegistry (actualJournalValue actualJournal)))))
-              | otherwise -> loadPlan root paths accountsRegistry rootText actualJournal
+              | otherwise -> loadPlan
+                  root paths accountsRootText accountsRegistry rootText actualJournal
 
 loadPlan
   :: HouseholdRoot
   -> HouseholdSourcePaths
+  -> Text
   -> AccountRegistry
   -> Text
   -> ActualJournal
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
-loadPlan root paths accountsRegistry actualRootText actualJournal = do
+loadPlan root paths accountsRootText accountsRegistry actualRootText actualJournal = do
   rootTextResult <- readHouseholdSource (householdPlanJournalPath paths)
   case rootTextResult of
     Left errors -> pure (Left errors)
@@ -292,6 +296,7 @@ loadPlan root paths accountsRegistry actualRootText actualJournal = do
               | otherwise -> loadBudget
                   root
                   paths
+                  accountsRootText
                   accountsRegistry
                   actualRootText
                   actualJournal
@@ -301,13 +306,14 @@ loadPlan root paths accountsRegistry actualRootText actualJournal = do
 loadBudget
   :: HouseholdRoot
   -> HouseholdSourcePaths
+  -> Text
   -> AccountRegistry
   -> Text
   -> ActualJournal
   -> Text
   -> PlanJournal
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
-loadBudget root paths accountsRegistry actualRootText actualJournal planRootText planJournal = do
+loadBudget root paths accountsRootText accountsRegistry actualRootText actualJournal planRootText planJournal = do
   rootTextResult <- readHouseholdSource (householdBudgetJournalPath paths)
   case rootTextResult of
     Left errors -> pure (Left errors)
@@ -331,6 +337,7 @@ loadBudget root paths accountsRegistry actualRootText actualJournal planRootText
                 loadConfigsAndIssues
                   root
                   paths
+                  accountsRootText
                   accountsRegistry
                   actualRootText
                   actualJournal
@@ -342,6 +349,7 @@ loadBudget root paths accountsRegistry actualRootText actualJournal planRootText
 loadConfigsAndIssues
   :: HouseholdRoot
   -> HouseholdSourcePaths
+  -> Text
   -> AccountRegistry
   -> Text
   -> ActualJournal
@@ -350,7 +358,7 @@ loadConfigsAndIssues
   -> Text
   -> HouseholdBudgetMovementJournal
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
-loadConfigsAndIssues root paths accountsRegistry actualRootText actualJournal planRootText planJournal budgetRootText budgetMovementJournal = do
+loadConfigsAndIssues root paths accountsRootText accountsRegistry actualRootText actualJournal planRootText planJournal budgetRootText budgetMovementJournal = do
   budgetTextResult <- readHouseholdSource (householdBudgetConfigPath paths)
   case budgetTextResult of
     Left errors -> pure (Left errors)
@@ -404,6 +412,7 @@ loadConfigsAndIssues root paths accountsRegistry actualRootText actualJournal pl
                                         }
                                   in pure (Right HouseholdWriteSnapshot
                                       { householdWriteSnapshotState = state
+                                      , householdWriteSnapshotAccountsSource = accountsRootText
                                       , householdWriteSnapshotActualSource = actualRootText
                                       , householdWriteSnapshotPlanSource = planRootText
                                       , householdWriteSnapshotBudgetSource = budgetRootText

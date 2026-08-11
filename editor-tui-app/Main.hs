@@ -803,11 +803,12 @@ main = do
       let state = householdWriteSnapshotState snapshot
           paths = householdStatePaths state
           journalFile = householdActualJournalPath paths
+          accountsSource = householdWriteSnapshotAccountsSource snapshot
           source = householdWriteSnapshotActualSource snapshot
           planSource = householdWriteSnapshotPlanSource snapshot
           budgetSource = householdWriteSnapshotBudgetSource snapshot
           issuesSource = householdWriteSnapshotIssuesSource snapshot
-          context = makeWorkspaceContext False today journalFile source planSource budgetSource issuesSource state
+          context = makeWorkspaceContext False today journalFile accountsSource source planSource budgetSource issuesSource state
           initialState = AppWrapper context Workspace
           buildVty = do
             vty <- mkVty V.defaultConfig
