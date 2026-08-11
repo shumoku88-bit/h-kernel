@@ -72,6 +72,10 @@ path = "docs/HOUSEHOLD_REPORT_OWNERSHIP.md"
 role = "architecture"
 
 [[documents]]
+path = "docs/HOUSEHOLD_REPORT_GRADUATION_001.md"
+role = "observation"
+
+[[documents]]
 path = "docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md"
 role = "architecture"
 
