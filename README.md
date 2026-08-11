@@ -1,10 +1,43 @@
 # h-kernel
 
-型で不正な状態を減らし、exact multi-commodity arithmetic、identity、provenance、safe publicationを保つHaskellの家計簿・複式簿記システムです。
+h-kernelは、日々の記帳、予定、予算、振り返りを一つの流れで扱うHaskell製の家計簿です。
 
-目標は、日常の記帳、予定、予算、レポート、Household operationを一つのcanonical source contractの上で安全かつ自然に扱うことです。
+普段使うときに必要なのは、家計簿としての操作です。記帳する、複数の勘定にまたがる取引を記録する、予定を実績にする、次の予定を補充する、予算を見る、レポートを見る。会計や内部実装の知識を日々の操作に要求しないことを目指します。
 
-## Current shape
+その内側では、日本の家計簿の実用、パチョーリ以来の複式簿記と帳簿群の考え方、現代のデジタル技術を組み合わせています。金額を正確に扱い、Account、Transaction、Planなどの意味とidentity / provenanceを保ち、正データを安全に更新します。
+
+## できること
+
+- 日々のActual記帳
+- 3つ以上のpostingを持つmulti-posting記帳
+- Actualのreverse
+- Planの追加・編集・完了と次回予定の補充
+- Plan完了後のBudget sync
+- Account、Budget movement、Issueの編集
+- Trial Balance、Balance Sheet、Profit and Loss、Daily Flow、Monthly Accounts、Recent Transactions、Cycle Accounts
+- keyboardとmouseの両方で使えるHousehold TUI
+
+## 日常の入口
+
+```bash
+./tools/hk
+./tools/hk --base /path/to/private-ledger-data
+./tools/hk report all
+./tools/hk actual-add [/absolute/path/to/actual.journal]
+./tools/hk actual-multi [/absolute/path/to/actual.journal] ...
+./tools/hk actual-reverse [--commit] ...
+./tools/hk account ...
+./tools/hk plan ...
+./tools/hk budget ...
+./tools/hk issue ...
+./tools/hk edit ...
+./tools/hk check
+./tools/hk help
+```
+
+`tools/hk`はroutingだけを担当し、会計計算、Report rendering、editor admission、source mutationの意味を再実装しません。
+
+## 内部の仕組み
 
 ```text
 private household source
@@ -26,40 +59,16 @@ edit intent
 - `h-kernel-editor`: edit intent、candidate preparation、source placement、safe writer
 - report CLI、editor CLI、Household TUI、daily entrypoint
 
-## Current capabilities
+内部では次を保ちます。
 
 - `Scientific`によるexact decimal Quantity
 - runtimeで検証されるCommodity
 - Commodityごとのdouble-entry balance validation
-- invalid/unbalanced `Transaction`を後段へ渡さないtyped admission
+- invalid / unbalanced `Transaction`を後段へ渡さないtyped admission
 - explicit `AccountType`と`AccountRegistry`
 - include graphを読むtyped Journal loader
 - typed `DateRange`とpure Report projections
-- Trial Balance、Balance Sheet、Profit and Loss、Daily Flow、Monthly Accounts、Recent Transactions、Cycle Accounts
-- Household policy、Daily Target、Backing、Budget、Plan、Issue observation
-- Actual append、multi-posting、reverse、Plan lifecycle、Account/Budget/Issue editor operations
 - preview、stale rejection、backup、atomic publication、post-admission、restore-capable failure
-- keyboard-complete / mouse-friendly Household TUI
-
-## Daily entrypoint
-
-```bash
-./tools/hk
-./tools/hk --base /path/to/private-ledger-data
-./tools/hk report all
-./tools/hk actual-add [/absolute/path/to/actual.journal]
-./tools/hk actual-multi [/absolute/path/to/actual.journal] ...
-./tools/hk actual-reverse [--commit] ...
-./tools/hk account ...
-./tools/hk plan ...
-./tools/hk budget ...
-./tools/hk issue ...
-./tools/hk edit ...
-./tools/hk check
-./tools/hk help
-```
-
-`tools/hk`はroutingだけを担当し、会計計算、Report rendering、editor admission、source mutationの意味を再実装しません。
 
 ## Build and verification
 
@@ -77,7 +86,7 @@ Reportへ影響する変更では必要に応じて次も実行します。
 ./report-verify --corpus
 ```
 
-## Canonical household source
+## 正データ
 
 canonical household sourceはpublic `h-kernel` repositoryではなくuser-owned private repositoryに置きます。
 
@@ -92,7 +101,7 @@ private source、backup、temporary file、recovery workspace、generated report
 
 writer authorityはsourceごとに明示します。現在の契約は[`docs/SOURCE_DATA_MIGRATION_PLAN.md`](docs/SOURCE_DATA_MIGRATION_PLAN.md)と[`docs/ACTUAL_WRITER_CUTOVER_001.md`](docs/ACTUAL_WRITER_CUTOVER_001.md)を参照してください。
 
-## Core invariants
+## 内部で守っていること
 
 - Accountの意味を名前から推測しない
 - QuantityとCommodityを失わない
@@ -102,7 +111,7 @@ writer authorityはsourceごとに明示します。現在の契約は[`docs/SOU
 - UIやCLIへ会計ruleを複製しない
 - publicationはexpected source、admitted candidate、stale check、post-admissionを通す
 
-## Documentation
+## ドキュメント
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): component、dependency、effect、domain invariant
 - [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): editor current capabilityとactive roadmap
