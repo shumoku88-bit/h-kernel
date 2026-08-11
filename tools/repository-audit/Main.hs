@@ -100,8 +100,8 @@ admitPaths owner output =
 
 renderLoadError :: InventoryLoadError -> Text
 renderLoadError err = case err of
-  ExternalCommandCouldNotStart command ioError ->
-    "could not start " <> T.pack command <> ": " <> T.pack (show ioError)
+  ExternalCommandCouldNotStart command exception ->
+    "could not start " <> T.pack command <> ": " <> T.pack (show exception)
   ExternalCommandFailed command arguments exitCode errorOutput ->
     "command failed (" <> T.pack (show exitCode) <> "): "
       <> T.unwords (map T.pack (command : arguments))
@@ -109,8 +109,8 @@ renderLoadError err = case err of
   InventoryContainsInvalidPaths owner errors ->
     owner <> " produced invalid repository paths: "
       <> T.intercalate "; " (map (T.pack . show) errors)
-  DocumentIndexCouldNotBeRead path ioError ->
-    "could not read " <> T.pack path <> ": " <> T.pack (show ioError)
+  DocumentIndexCouldNotBeRead path exception ->
+    "could not read " <> T.pack path <> ": " <> T.pack (show exception)
   DocumentIndexWasInvalid errors ->
     "invalid docs/INDEX.toml:\n" <> T.unlines (map ("  " <>) errors)
 
