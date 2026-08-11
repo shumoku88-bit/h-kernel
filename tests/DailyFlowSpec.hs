@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight, assertEqual, assertTrue)
 import Data.List.NonEmpty (NonEmpty((:|)))
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -328,18 +329,7 @@ journalInput = T.unlines
   , "    wallet:dollars"
   ]
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
 
-assertTrue :: String -> Bool -> IO ()
-assertTrue label actual = assertEqual label True actual
 
-assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
-assertEqual label expected actual
-  | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure
+
+

@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight, assertEqual)
 import Data.List.NonEmpty (NonEmpty((:|)))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
@@ -357,18 +358,9 @@ matchesDuplicate expected reason = case reason of
   DuplicateEnvelopeAllocation actual _ -> actual == expected
   _                                    -> False
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
 
-assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
-assertEqual label expected actual
-  | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure
+
+
 
 failTest :: String -> IO value
 failTest message = do

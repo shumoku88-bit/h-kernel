@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight, assertEqual)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
 import HKernel.Journal
@@ -444,9 +445,7 @@ declarations = T.unlines
   , "    commodity: JPY"
   ]
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
+
 
 assertLeftSatisfies
   :: (Show error, Show value)
@@ -466,11 +465,3 @@ assertLeftSatisfies label predicate result = case result of
     putStrLn ("    unexpectedly accepted: " ++ show value)
     exitFailure
 
-assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
-assertEqual label expected actual
-  | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure

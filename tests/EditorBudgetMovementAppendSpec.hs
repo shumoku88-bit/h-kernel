@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight)
 import Control.Exception (IOException, catch)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -519,9 +520,7 @@ account = mustRight . mkAccount
 
 jpy = mustRight (mkCommodity "JPY")
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
+
 
 cleanup :: FilePath -> IO ()
 cleanup path = do

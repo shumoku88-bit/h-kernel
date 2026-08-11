@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight, assertEqual)
 import HKernel.Money
 import HKernel.Report.Matrix
 import System.Exit (exitFailure)
@@ -75,15 +76,5 @@ rowFor key rows = case filter ((== key) . balanceRowKey) rows of
   [row] -> row
   unexpected -> error ("expected one matrix row, got " ++ show (length unexpected))
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
 
-assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
-assertEqual label expected actual
-  | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure
+

@@ -7,11 +7,22 @@ license:             MIT
 license-file:        LICENSE
 category:            Finance
 build-type:          Simple
+tested-with:         GHC == 9.10.3, GHC == 9.12.4, GHC == 9.14.1
 extra-source-files: docs/*.md
                   , docs/INDEX.toml
                   , tests/fixtures/editor/*.journal
 
+common common-defaults
+    default-language: GHC2024
+    ghc-options:      -Wall -Werror=incomplete-patterns
+
+common test-defaults
+    import:           common-defaults
+    hs-source-dirs:   tests
+    other-modules:    Test.Support
+
 library
+    import:           common-defaults
     exposed-modules:  HKernel.Account
                     , HKernel.Account.Journal
                     , HKernel.Actual.Journal
@@ -62,10 +73,9 @@ library
                     , toml-parser >= 2.0.2 && < 2.1
                     , transformers >= 0.5 && < 0.7
     hs-source-dirs:   src
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 library h-kernel-household
+    import:           common-defaults
     exposed-modules:  HKernel.Household.AccountProfile
                     , HKernel.Household.AccountProfile.TSV
                     , HKernel.Household.Backing
@@ -86,10 +96,9 @@ library h-kernel-household
                     , time >= 1.9 && < 1.15
                     , toml-parser >= 2.0.2 && < 2.1
     hs-source-dirs:   household-src
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 library h-kernel-editor
+    import:           common-defaults
     exposed-modules:  HKernel.Editor.ActualAppend
                     , HKernel.Editor.ActualAccountAppend
                     , HKernel.Editor.ActualReverse
@@ -114,10 +123,9 @@ library h-kernel-editor
                     , time >= 1.9 && < 1.15
                     , directory >= 1.3 && < 1.4
     hs-source-dirs:   editor-src
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 library h-kernel-household-application
+    import:           common-defaults
     exposed-modules:  HKernel.Household.Application
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
@@ -126,10 +134,9 @@ library h-kernel-household-application
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
     hs-source-dirs:   household-app-src
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 executable h-kernel
+    import:           common-defaults
     main-is:          Main.hs
     build-depends:    base >= 4.14 && < 5
                     , directory
@@ -140,10 +147,9 @@ executable h-kernel
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
     hs-source-dirs:   app
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 executable repository-audit
+    import:           common-defaults
     main-is:          Main.hs
     other-modules:    RepositoryAudit
     build-depends:    base >= 4.14 && < 5
@@ -153,11 +159,10 @@ executable repository-audit
                     , text >= 1.2 && < 2.2
                     , toml-parser >= 2.0.2 && < 2.1
     hs-source-dirs:   tools/repository-audit
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 
 test-suite h-kernel-editor-actual-append-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorActualAppendSpec.hs
     build-depends:    base >= 4.14 && < 5
@@ -166,22 +171,18 @@ test-suite h-kernel-editor-actual-append-test
                     , text
                     , time
                     , QuickCheck
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-actual-workspace-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorActualWorkspaceSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-editor
                     , text
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-actual-reverse-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorActualReverseSpec.hs
     build-depends:    base >= 4.14 && < 5
@@ -189,11 +190,9 @@ test-suite h-kernel-editor-actual-reverse-test
                     , h-kernel-editor
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     build-depends:    base >= 4.14 && < 5
@@ -201,21 +200,17 @@ test-suite h-kernel-test
                     , QuickCheck
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-application-config-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          ApplicationConfigSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-account-profile-contract-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          AccountProfileContractSpec.hs
     build-depends:    base >= 4.14 && < 5
@@ -223,11 +218,9 @@ test-suite h-kernel-account-profile-contract-test
                     , h-kernel
                     , h-kernel-household
                     , text
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-account-profile-tsv-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          AccountProfileTSVSpec.hs
     build-depends:    base >= 4.14 && < 5
@@ -235,22 +228,18 @@ test-suite h-kernel-account-profile-tsv-test
                     , h-kernel
                     , h-kernel-household
                     , text
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-balance-law-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BalanceLawSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , QuickCheck
                     , text
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-daily-target-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          DailyTargetSpec.hs
     build-depends:    base >= 4.14 && < 5
@@ -259,11 +248,9 @@ test-suite h-kernel-daily-target-test
                     , h-kernel-household
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-household-backing-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          HouseholdBackingSpec.hs
     build-depends:    base >= 4.14 && < 5
@@ -271,11 +258,9 @@ test-suite h-kernel-household-backing-test
                     , h-kernel-household
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-household-budget-movement-tsv-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          HouseholdBudgetMovementTSVSpec.hs
     build-depends:    base >= 4.14 && < 5
@@ -283,43 +268,35 @@ test-suite h-kernel-household-budget-movement-tsv-test
                     , h-kernel-household
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-account-journal-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          AccountJournalSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-actual-journal-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          ActualJournalSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-balance-sheet-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BalanceSheetSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-loader-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          LoaderSpec.hs
     build-depends:    base >= 4.14 && < 5
@@ -327,42 +304,34 @@ test-suite h-kernel-loader-test
                     , filepath
                     , h-kernel
                     , text
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-report-book-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          ReportBookSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-report-config-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          ReportConfigSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-report-matrix-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          ReportMatrixSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-daily-flow-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          DailyFlowSpec.hs
     build-depends:    base >= 4.14 && < 5
@@ -370,43 +339,35 @@ test-suite h-kernel-daily-flow-test
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-monthly-accounts-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          MonthlyAccountsSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-cycle-accounts-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          CycleAccountsSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-period-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          PeriodSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-household-report-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          HouseholdReportSpec.hs
     build-depends:    base >= 4.14 && < 5
@@ -415,22 +376,18 @@ test-suite h-kernel-household-report-test
                     , h-kernel-household-application
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-household-issue-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          HouseholdIssueSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-household-issue-tsv-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          HouseholdIssueTSVSpec.hs
     build-depends:    base >= 4.14 && < 5
@@ -438,172 +395,140 @@ test-suite h-kernel-household-issue-tsv-test
                     , h-kernel-household
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-plan-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          PlanSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-plan-journal-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          PlanJournalSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-plan-completion-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          PlanCompletionSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-plan-reservation-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          PlanReservationSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-recent-transactions-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          RecentTransactionsSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-model-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BudgetModelSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-history-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BudgetHistorySpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-entitlement-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BudgetEntitlementSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-remaining-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BudgetRemainingSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-tsv-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BudgetTSVSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-config-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BudgetConfigSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-routing-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BudgetRoutingSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-consumption-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BudgetConsumptionSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-envelope-budget-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EnvelopeBudgetSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-cli-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          CLISpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time
-    hs-source-dirs:   tests
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite repository-audit-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          RepositoryAuditSpec.hs
     other-modules:    RepositoryAudit
@@ -612,24 +537,20 @@ test-suite repository-audit-test
                     , filepath >= 1.4 && < 1.6
                     , text >= 1.2 && < 2.2
                     , toml-parser >= 2.0.2 && < 2.1
-    hs-source-dirs:   tests
-                    , tools/repository-audit
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
+    hs-source-dirs:   tools/repository-audit
 
 test-suite h-kernel-editor-actual-writer-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorActualWriterSpec.hs
-    hs-source-dirs:   tests
     build-depends:    base >= 4.14 && < 5
                     , text >= 1.2 && < 2.2
                     , directory >= 1.3 && < 1.4
                     , h-kernel
                     , h-kernel-editor
-    default-language: GHC2024
-    ghc-options:      -Wall
 
 executable h-kernel-editor-cli
+    import:           common-defaults
     main-is:          Main.hs
     build-depends:    base >= 4.14 && < 5
                     , text >= 1.2 && < 2.2
@@ -640,10 +561,9 @@ executable h-kernel-editor-cli
                     , h-kernel-household-application
                     , h-kernel-editor
     hs-source-dirs:   editor-app
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 executable h-kernel-editor-tui
+    import:           common-defaults
     main-is:          Main.hs
     other-modules:    HKernel.Editor.TUI.Actual
                     , HKernel.Editor.TUI.Maintenance
@@ -668,100 +588,85 @@ executable h-kernel-editor-tui
                     , h-kernel-household-application
                     , h-kernel-editor
     hs-source-dirs:   editor-tui-app
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns -threaded
+    ghc-options:      -threaded
 
 test-suite h-kernel-editor-actual-account-append-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorActualAccountAppendSpec.hs
-    hs-source-dirs:   tests
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-editor
                     , text
                     , time
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-budget-movement-append-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorBudgetMovementAppendSpec.hs
-    hs-source-dirs:   tests
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-household
                     , h-kernel-editor
                     , text
                     , time
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-issue-append-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorIssueAppendSpec.hs
-    hs-source-dirs:   tests
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-household
                     , h-kernel-editor
                     , text
                     , time
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-plan-lifecycle-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorPlanLifecycleSpec.hs
-    hs-source-dirs:   tests
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-editor
                     , text
                     , time
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-plan-complete-advance-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorPlanCompleteAdvanceSpec.hs
-    hs-source-dirs:   tests
     build-depends:    base >= 4.14 && < 5
                     , directory >= 1.3 && < 1.4
                     , h-kernel
                     , h-kernel-editor
                     , text
                     , time
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-cli-contract-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorCLIContractSpec.hs
-    hs-source-dirs:   tests
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-household
                     , h-kernel-editor
                     , text
                     , time
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-tui-actual-add-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorTUIActualAddSpec.hs
-    hs-source-dirs:   tests
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-editor
                     , text
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-canonical-household-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          CanonicalHouseholdSpec.hs
-    hs-source-dirs:   tests
     build-depends:    base >= 4.14 && < 5
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
@@ -771,13 +676,11 @@ test-suite h-kernel-canonical-household-test
                     , h-kernel-household
                     , h-kernel-household-application
                     , h-kernel-editor
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-account-publication-test
+    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorAccountPublicationSpec.hs
-    hs-source-dirs:   tests
     build-depends:    base >= 4.14 && < 5
                     , directory >= 1.3 && < 1.4
                     , filepath >= 1.4 && < 1.6
@@ -786,5 +689,3 @@ test-suite h-kernel-editor-account-publication-test
                     , h-kernel-household-application
                     , h-kernel-editor
                     , text >= 1.2 && < 2.2
-    default-language: GHC2024
-    ghc-options:      -Wall -Werror=incomplete-patterns

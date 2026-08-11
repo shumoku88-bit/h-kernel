@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight)
 import Data.List (find)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
@@ -269,9 +270,7 @@ journalInput = T.unlines
   , "    wallet:cash       -30 JPY"
   ]
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
+
 
 mustJust :: Maybe value -> value
 mustJust (Just value) = value

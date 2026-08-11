@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight, assertEqual)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
@@ -238,10 +239,7 @@ invalidCommodityBudget :: T.Text
 invalidCommodityBudget =
   "2026-06-15\tallocate\tbudget:opening\tbudget:food\t1000\tcurrency=\n"
 
-mustRight :: Show error => Either error value -> value
-mustRight result = case result of
-  Right value -> value
-  Left err -> error ("invalid test fixture: " ++ show err)
+
 
 assertLeftAt
   :: String
@@ -288,11 +286,3 @@ assertLeftOnLine label expectedLine result = case result of
     putStrLn "    unexpectedly accepted source"
     exitFailure
 
-assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
-assertEqual label expected actual
-  | expected == actual = putStrLn ("  [PASS] " ++ label)
-  | otherwise = do
-      putStrLn ("  [FAIL] " ++ label)
-      putStrLn ("    expected: " ++ show expected)
-      putStrLn ("    but got:  " ++ show actual)
-      exitFailure

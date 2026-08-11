@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Test.Support (mustRight)
 import Data.List (find)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
@@ -158,9 +159,7 @@ policyInput = T.unlines
   , "expense-accounts = []"
   ]
 
-mustRight :: Show error => Either error value -> value
-mustRight (Right value) = value
-mustRight (Left err) = error ("invalid test fixture: " ++ show err)
+
 
 mustJust :: Maybe value -> value
 mustJust (Just value) = value
