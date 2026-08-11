@@ -54,10 +54,6 @@ path = "docs/HOUSEHOLD_BACKING.md"
 role = "contract"
 
 [[documents]]
-path = "docs/HOUSEHOLD_REPORT_SPIKE_REVIEW.md"
-role = "architecture"
-
-[[documents]]
 path = "docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md"
 role = "architecture"
 
