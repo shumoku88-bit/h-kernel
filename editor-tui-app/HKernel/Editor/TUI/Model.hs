@@ -41,6 +41,8 @@ import HKernel.Household.Application
   , buildHouseholdReportSurfaceFromHousehold
   , loadCanonicalHouseholdWriteSnapshot
   )
+import HKernel.Household.Report (HouseholdReportSurface)
+import HKernel.Household.Report.Render (HouseholdReportSection)
 import HKernel.HouseholdIssue (HouseholdIssue)
 import HKernel.Ledger (Transaction)
 import HKernel.Plan.Completion (declaredCompletionPlanId)
@@ -52,8 +54,6 @@ import HKernel.Plan.Journal
 import HKernel.Report (ReportBook, reportBookWithPlan)
 import HKernel.Report.Config (reportConfigurationPlan)
 import HKernel.Report.Plan (ReportPlanError, resolveReportPlan)
-import HKernel.Spike.HouseholdReport (HouseholdReportSurface)
-import HKernel.Spike.HouseholdReport.Render (HouseholdReportSection)
 
 data Name
   = DateField
