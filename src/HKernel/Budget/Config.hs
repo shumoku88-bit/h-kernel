@@ -12,7 +12,6 @@ module HKernel.Budget.Config
   ) where
 
 import Data.Either (partitionEithers)
-import Data.List (foldl')
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
