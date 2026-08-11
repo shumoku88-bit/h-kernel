@@ -5,252 +5,241 @@ Started: 2026-08-11
 Audit basis: `main` at `ce225f195546c19dc0bc2b7532c168359d774f53`
 Parent observation: `CODE_QUALITY_CLEANUP_ROUND_AUDIT_2026-08-11.md`
 
-## Purpose
-
-This file is the operational ledger for the repository-wide code-quality cleanup round.
-
-The audit documents record evidence and rejected hypotheses. This ledger records what work is actually authorized, what the terminal implementation agent reports, what review finds, and what becomes the next coherent batch.
-
-The ledger is not a substitute for re-reading current remote state. Every implementation batch and every review starts by checking actual `main`, open PRs, changed files, and CI because parallel pushes may occur.
-
 ## Working loop
 
 ```text
-current ledger + current remote
-  -> one coherent implementation instruction
-  -> terminal AI implements, tests, pushes, opens/updates PR
-  -> stop before merge
-  -> reviewer re-checks actual remote, diff, tests, CI and semantics
-  -> ledger records accepted/rejected findings and new evidence
-  -> next coherent implementation instruction
+current ledger + actual remote
+  -> one coherent terminal-AI implementation batch
+  -> tests / push / PR
+  -> STOP BEFORE MERGE
+  -> independent actual-diff / CI review
+  -> ledger update
+  -> merge decision
+  -> next coherent batch
 ```
 
-The implementation agent does not merge its own cleanup PR. Review happens before merge so the ledger can remain the authority for what was actually learned.
+Every implementation and every review starts by rechecking actual `main`, open PRs, changed files, and CI. Parallel pushes are possible.
 
 ## Batch sizing rule
 
-Do not optimize for the smallest possible PR.
+Do not optimize for the smallest possible PR. Prefer one coherent batch with a few logical commits over one PR per helper/import/stanza/case expression.
 
-A useful batch normally contains several changes that share one broad reason to change and can be qualified together. It may contain multiple commits inside one PR when that makes review easier.
-
-Prefer:
-
-```text
-one coherent repository-plumbing batch
-one coherent TUI ownership batch
-one coherent canonical-observation batch
-```
-
-over:
-
-```text
-one PR for one helper
-one PR for one import
-one PR for one stanza
-one PR for one case expression
-```
-
-Split a batch only when:
-
-- a change has materially different semantic risk;
-- qualification requirements differ enough that review becomes unclear;
-- one change blocks another but should not be coupled to it;
-- the combined diff obscures ownership rather than clarifying it.
-
-A large diff is not automatically bad, and a small diff is not automatically coherent.
+Split only when semantic risk, qualification, blocking dependencies, or ownership clarity materially differ.
 
 ## Permanent guardrails
 
 - Sharing is not a goal by itself.
-- Repeated shapes with different semantic owners may correctly remain duplicated.
-- Prefer deletion or an existing owner over new `Common`, `Utils`, `Framework`, or `Shared` architecture.
+- `same shape + same semantic owner + same reason to change` is a sharing candidate.
+- Repeated shapes with different owners or diagnostics may correctly remain local.
+- Prefer deletion or an existing owner over new generic `Common`, `Utils`, `Framework`, `Shared`, Form, navigation, or effect infrastructure.
 - Do not split modules by size alone.
-- Do not adopt a test framework, effect stack, generic navigation system, Form DSL, formatter, linter, or dead-code tool as repository law without independent evidence.
-- Do not modernize syntax merely because GHC2024 permits a newer spelling.
-- Preserve exact arithmetic, identity, provenance, source ownership, writer authority, include-graph meaning, stale-write rejection, post-admission, recovery, multi-posting ordering, and current policy versus historical evidence.
-- Existing CLI/TUI behavior remains stable unless a separate UX change explicitly authorizes behavior change.
-
-## Review checklist for every implementation batch
-
-Reviewer checks:
-
-1. actual remote `main` and implementation PR head have not moved unexpectedly;
-2. changed files match the batch purpose;
-3. no unrelated refactor or formatting churn entered the diff;
-4. shared code has one real owner and one reason to change;
-5. no domain fixture or workflow was generalized merely for DRYness;
-6. partiality was reduced rather than hidden;
-7. component/public API changes are intentional;
-8. current CLI/TUI semantics remain characterized where applicable;
-9. required build/tests/repository audit pass;
-10. new evidence is written here before choosing the next batch.
+- Do not adopt formatter/linter/dead-code/test-framework tooling as repository law without separate evidence.
+- Do not modernize syntax merely because GHC2024 permits it.
+- Preserve exact arithmetic, Commodity separation, identity, provenance, source ownership, writer authority, include-graph meaning, fail-closed admission, stale-write rejection, post-admission/recovery, multi-posting ordering, and current-policy versus historical-evidence separation.
+- Existing CLI/TUI behavior remains stable unless a separate UX change authorizes behavior change.
 
 ## Baseline findings
 
-The fresh audit currently classifies the strongest candidates as:
+Strongest cleanup candidates from the fresh audit:
 
-- Cabal mechanical repetition and warning/support-policy drift;
-- Editor CLI target-path -> Household-root repetition and production `error "unreachable"`;
-- neutral test-helper duplication;
-- TUI `Main` knowing section-local interaction grammar;
-- hand-threaded canonical Household load orchestration;
-- cross-domain safe-publication ownership living under the `ActualWriter` name.
+1. Cabal mechanical repetition and support/warning drift.
+2. Editor CLI target-path -> Household-root repetition and production partial escape.
+3. Neutral test-helper duplication.
+4. TUI `Main` knowing too much section-local interaction grammar.
+5. Hand-threaded canonical Household load orchestration.
+6. Cross-domain safe-publication ownership living under the `ActualWriter` name.
 
-Counter-findings remain important:
+Important counter-findings:
 
 - large `Journal`, `PlanCompleteAdvance`, and `Render` modules are not size-driven split targets;
-- retained Account-in-Actual compatibility is still live and is not automatic dead code;
-- blanket `!!` removal, lint-driven rewriting, formatter migration, or public-surface shrinking is not authorized by this round.
+- Account-in-Actual compatibility is still live, not automatic dead code;
+- blanket `!!` removal, lint-driven rewriting, formatter migration, or public-surface shrinking is not authorized.
 
-## Batch A: mechanical repository plumbing
+# Batch A: mechanical repository plumbing
 
-Status: REVIEW BLOCKED / ONE CORRECTION REQUESTED
+Status: **REVIEW BLOCKED / SECOND CORRECTION REQUESTED**
 
-### Goal
+Implementation PR: #206 `cleanup: reduce repository plumbing`
+Base: `ce225f195546c19dc0bc2b7532c168359d774f53`
+Current reviewed head: `09804db8464882717e0b582cb13707b719d659fd`
 
-Remove a meaningful layer of mechanical repository and adapter plumbing in one pass before touching TUI or canonical Household architecture.
+## Authorized scope
 
-### Included work
+### A1 Cabal defaults
 
-1. Cabal defaults
-   - introduce conservative `common` stanza(s) for truly shared compiler/test metadata;
-   - keep component-specific `build-depends` explicit;
-   - investigate the `h-kernel-editor-actual-writer-test` warning difference instead of silently normalizing it;
-   - only change `tested-with` / `base` bounds if current compiler/package evidence justifies the exact statement.
+- conservative common stanza(s) for genuinely shared compiler/test metadata;
+- keep component-specific `build-depends` explicit;
+- inspect, do not blindly normalize, the historical `h-kernel-editor-actual-writer-test` warning difference;
+- only state compiler/base support that actual CI/package evidence supports.
 
-2. Editor CLI root admission
-   - remove the repeated target-path -> directory -> `mkHouseholdRoot` plumbing used by Account, Budget Movement, and Issue commands;
-   - remove production `error "unreachable"` from that path;
-   - use one small total adapter-level helper and ordinary/typed CLI failure;
-   - keep Account/Budget/Issue preparation and publication explicit and distinct.
+### A2 Editor CLI root admission
 
-3. Neutral test plumbing
-   - measure current exact helper bodies first;
-   - consolidate only clearly mechanical neutral helpers where the final diff is a net simplification;
-   - domain fixtures, source snippets, scenarios, Account/Plan/Journal/Budget meaning stay local by default;
-   - do not migrate to Hspec/Tasty or create a test framework.
+- remove repeated target-path -> directory -> `mkHouseholdRoot` plumbing for Account/Budget Movement/Issue;
+- remove production partial escape;
+- use one small total adapter-level helper and ordinary/typed CLI failure;
+- keep domain preparation/publication explicit and distinct.
 
-### Explicit non-goals
+### A3 Neutral test plumbing
 
-- no TUI routing refactor yet;
-- no Household.Application refactor yet;
-- no `ActualWriter` rename/split yet;
-- no Account compatibility retirement;
-- no source-format or private Household changes;
-- no broad formatting/lint cleanup;
-- no unrelated import-only cleanup unless required by the touched code.
+- re-measure current helper bodies first;
+- share only exact neutral helper variants where net simplification is real;
+- keep differing signatures/diagnostics local;
+- keep domain fixtures/source snippets/scenarios local by default;
+- no Hspec/Tasty migration or new test framework.
 
-### Qualification
+## Accepted parts after review
 
-At minimum:
+### Cabal
+
+Accepted direction:
+
+- `common-defaults` contains shared GHC2024/warning defaults;
+- `test-defaults` carries ordinary test-source plumbing;
+- component-specific dependency lists remain explicit;
+- `tested-with` matches the actual CI GHC matrix;
+- no `base` bound change was mixed in;
+- no unrelated formatter/linter migration entered the PR.
+
+### Editor CLI
+
+First review found the initial `resolveHouseholdRoot` still ended in a production `error` and rejected the claimed totalization.
+
+The corrected head `09804db...` fixes that blocker:
+
+```haskell
+resolveHouseholdRoot
+  :: FilePath
+  -> Either HouseholdRootError HouseholdRoot
+resolveHouseholdRoot targetFile =
+  let dir = takeDirectory targetFile
+      rootDir = if null dir then "." else dir
+  in mkHouseholdRoot rootDir
+```
+
+Account, Budget Movement, and Issue commands now handle `Left` through the ordinary CLI `die` path. No `fromJust`, `fromRight`, impossible-pattern assertion, or replacement production `error` was introduced in this path.
+
+**CLI totalization is accepted.**
+
+## Second-review blocker: helper variants were normalized beyond the contract
+
+The first review accepted the general `Test.Support` direction but a deeper pass over the actual commit diff found that some local helpers imported from `Test.Support` were not exact variants.
+
+Concrete evidence:
+
+### `BalanceLawSpec`
+
+The local helper previously failed with:
+
+```haskell
+error ("invalid Balance law fixture: " ++ show err)
+```
+
+It was replaced by shared `Test.Support.mustRight`, whose failure text is:
+
+```haskell
+error ("invalid test fixture: " ++ show err)
+```
+
+The observable diagnostic differs.
+
+### `AccountJournalSpec`
+
+The local helper previously had:
+
+```haskell
+mustJust Nothing = error "invalid test fixture: missing expected value"
+```
+
+The shared helper has:
+
+```haskell
+mustJust Nothing = error "invalid test fixture: expected Just"
+```
+
+Again, these are not exact variants.
+
+The Batch A rule was deliberately narrower than ordinary DRY cleanup: differing diagnostics/signatures should remain local instead of being normalized merely to increase sharing.
+
+This is not an accounting/runtime correctness failure and the tests may all pass. It is an ownership/cleanup-contract failure: the first cleanup batch must demonstrate that shared mechanics do not erase useful local distinctions.
+
+## Required correction for PR #206
+
+Keep the same PR. Do not create a micro-PR.
+
+1. Re-measure every helper occurrence actually replaced by `Test.Support` against current base `ce225f...`.
+2. Share only helpers whose semantics and observable diagnostics are genuinely identical, allowing irrelevant formatting/pattern-spelling differences only when behavior/diagnostics are the same.
+3. Restore local variants whose error text, label behavior, failure mechanism, or signature differs.
+4. Do **not** add message/config parameters to `Test.Support` merely to absorb variants.
+5. Update PR body/counts/net reduction to the corrected actual scope.
+6. Re-run targeted test suites plus:
 
 ```bash
 cabal build all
 cabal test all
 cabal run exe:repository-audit
+./report-build
+./report-verify --fixture
+./report-verify --corpus
 ```
 
-Also run the repository's normal CI matrix after pushing. Run targeted CLI tests during development. If Cabal support bounds or compiler declarations change, verify them against the actual supported GHC matrix rather than inference.
+7. Push to the existing PR and re-run the GHC 9.10.3 / 9.12.4 / 9.14.1 CI matrix.
 
-### Delivery shape
+## Current merge decision
 
-Prefer one PR for Batch A, with a few logical commits if useful. Do not split Cabal, CLI root totalization, and exact neutral test-helper cleanup into tiny PRs merely because they can be separated mechanically.
+**DO NOT MERGE #206 YET.**
 
-If one subpart proves materially unsafe or produces a worse diff, leave it out and report the evidence rather than forcing the planned shape.
+At second review time:
 
-### Implementation result
+- actual `main` still remained `ce225f195546c19dc0bc2b7532c168359d774f53`;
+- PR #206 remained mergeable and 3 commits ahead of that base;
+- open cleanup PRs #201 and #202 had no changed-file overlap with #206's production paths (`#201`: three import-only production files; `#202`: repository-audit Haskell files);
+- CI run #657 for head `09804db...` was still in progress;
+- CI success cannot override the exact-helper-boundary blocker.
 
-PR #206 `cleanup: reduce repository plumbing`
+# Later batches
 
-- base remained `ce225f195546c19dc0bc2b7532c168359d774f53` during first review;
-- head reviewed: `c143b3184071ba28a6561922032d1ecb594e5bbd`;
-- 43 changed files, concentrated in `h-kernel.cabal`, `editor-app/Main.hs`, `tests/Test/Support.hs`, and mechanical test-helper consumers;
-- Cabal introduced `common-defaults`, `test-defaults`, and `tested-with` matching the current CI matrix while keeping component-specific dependency lists explicit;
-- neutral test support consolidated exact mechanical helper variants while leaving known diagnostic/signature variants local;
-- implementation report claimed Editor CLI root routing was totalized and production partiality removed.
+## Batch B: TUI delivery ownership
 
-### Reviewer result
+Candidate scope only after Batch A is accepted/merged:
 
-First independent review: **not accepted yet**.
+- reduce `handleWorkspaceEvent` knowledge;
+- retain real global keys/application transitions in the shell;
+- delegate section-local Actual / Plan / Budget / Accounts / Issues / Reports behavior to concrete owners;
+- preserve and characterize keyboard/mouse behavior;
+- only after routing is clearer, reassess tiny presentation duplicates such as `PreviewResult` and `labelField`.
 
-Accepted direction so far:
+No generic navigation framework and no size-based module splitting.
 
-- Cabal common stanzas are scoped to build/test plumbing rather than dependency architecture;
-- `tested-with` matches the current CI matrix and no `base` bound change was mixed in;
-- `Test.Support` contains only neutral test apparatus (`assertEqual`, `assertTrue`, one-argument `mustRight`, one-argument `mustJust`);
-- known two-argument / custom-diagnostic helper variants remain local;
-- no TUI, Household.Application, ActualWriter ownership, source-format, or compatibility changes entered the batch;
-- current `main` had not moved at review time.
-
-Blocking finding:
-
-`editor-app/Main.hs` still contains a production partial escape inside the new helper:
-
-```haskell
-resolveHouseholdRoot :: FilePath -> HouseholdRoot
-...
-Left _ -> error "empty household root path"
-```
-
-Therefore the implementation report and PR description overstate the result: repetition was reduced, but totalization was not achieved.
-
-Current `mkHouseholdRoot` rejects only an empty path. The helper converts an empty `takeDirectory` result to `"."`, so its constructed `rootDir` is always nonempty. The second fallback `mkHouseholdRoot "."` and final `error` are therefore unnecessary-looking control flow. The correction must not replace the `error` with another unsafe extraction. Totality should be represented explicitly by the helper type/control flow, for example `Either HouseholdRootError HouseholdRoot` converted through the normal CLI failure path.
-
-A review comment recording this blocker was added to PR #206.
-
-### Merge decision
-
-**DO NOT MERGE YET.**
-
-Required correction:
-
-1. remove the remaining production `error` rather than merely renaming the old partial branch;
-2. make root resolution genuinely total through an explicit result/failure path;
-3. update PR description so its claims match the code;
-4. rerun targeted CLI/canonical Household qualification and full Batch A verification;
-5. push the correction to the existing PR rather than creating a micro-PR.
-
-After the corrected head is pushed, repeat independent review of the full PR and CI before deciding merge or Batch B.
-
-## Later batches
-
-### Batch B: TUI delivery ownership
-
-Candidate scope after Batch A review:
-
-- shrink `handleWorkspaceEvent` knowledge;
-- keep true global keys/transitions in shell;
-- delegate section-local Actual / Plan / Budget / Accounts / Issues / Reports interaction to concrete owners;
-- characterize keyboard/mouse behavior before/while moving it;
-- only then reconsider tiny presentation helpers such as `PreviewResult` / `labelField`.
-
-No generic navigation framework.
-
-### Batch C: canonical observation and publication ownership
+## Batch C: canonical observation and publication ownership
 
 Candidate scope after Batch B review:
 
-- make `HKernel.Household.Application` load orchestration more linear while preserving the sealed `HouseholdWriteSnapshot` observation;
-- then re-audit generic safe publication versus Actual/Plan/Budget admission ownership currently living in `HKernel.Editor.ActualWriter`;
-- treat Account-in-Actual compatibility as an explicit product/source-contract decision, not incidental cleanup.
+- make `HKernel.Household.Application` load orchestration more linear while preserving sealed `HouseholdWriteSnapshot` semantics;
+- then re-audit generic safe publication versus Actual/Plan/Budget source admission currently living under `HKernel.Editor.ActualWriter`;
+- handle Account-in-Actual compatibility as a separate explicit product/source-contract decision.
 
-These are higher-risk ownership changes and should not be mixed into Batch A.
+# History
 
-## History
+## 2026-08-12 / Batch A second independent review
 
-### 2026-08-11 / Batch A first independent review
+- corrected PR head `09804db8464882717e0b582cb13707b719d659fd` independently re-read;
+- CLI totalization blocker is fixed and accepted;
+- current `main` independently rechecked and unchanged;
+- deeper test-helper review found non-exact diagnostic variants had been collapsed into `Test.Support`;
+- concrete examples recorded from `BalanceLawSpec` and `AccountJournalSpec`;
+- correction comment added to PR #206;
+- merge remains blocked until exact-helper scope is restored and verification/CI rerun.
 
-- terminal implementation produced PR #206 at head `c143b3184071ba28a6561922032d1ecb594e5bbd`;
-- actual diff verified that Cabal and neutral test-helper work stayed within the authorized plumbing scope;
-- current `main` independently rechecked and remained `ce225f195546c19dc0bc2b7532c168359d774f53`;
-- review found one blocking mismatch: new `resolveHouseholdRoot` still contains `error "empty household root path"`, so claimed totalization is incomplete;
-- PR #206 received a correction comment; merge remains blocked pending a same-PR fix and requalification;
-- CI run #655 was still in progress during this first review and is not sufficient to override the source-level totality finding.
+## 2026-08-11 / Batch A first independent review
 
-### 2026-08-11 / ledger initialization
+- first reviewed head `c143b3184071ba28a6561922032d1ecb594e5bbd`;
+- Cabal/test-support direction stayed within Batch A's broad plumbing scope;
+- first blocker: new CLI helper still contained `error "empty household root path"` despite claiming totality;
+- same-PR correction requested.
 
-- repository-wide cleanup Draft and fresh audit created in Draft PR #205;
-- fresh audit found domain core generally cohesive and accidental complexity concentrated in adapters/orchestration/test/build plumbing;
-- operating model changed from potentially separate micro-slices to reviewer-mediated coherent batches;
+## 2026-08-11 / ledger initialization
+
+- cleanup Draft and fresh audit established in Draft PR #205;
+- operating model changed from potential micro-slices to reviewer-mediated coherent batches;
 - Batch A defined as Cabal defaults + Editor CLI root totalization + exact neutral test plumbing;
-- implementation must stop before merge for independent review and ledger update.
+- implementation agents stop before merge so review evidence is recorded before the next batch.
