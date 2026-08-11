@@ -1,0 +1,89 @@
+name: Cabal Gild Observation
+
+on:
+  push:
+    branches:
+      - obs/cabal-gild-experiment-001
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install cabal-gild 1.8.4.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=/tmp/cabal-gild-1.8.4.1-linux-x64.tar.gz
+          curl --fail --location --silent --show-error \
+            https://github.com/tfausak/cabal-gild/releases/download/1.8.4.1/cabal-gild-1.8.4.1-linux-x64.tar.gz \
+            --output "$archive"
+          echo "257c3182ee0ba38f9f729295a3badd585f6128ec19c44f817058041118f4ad22  $archive" | sha256sum --check --strict
+          mkdir -p /tmp/cabal-gild-unpack "$HOME/.local/bin"
+          tar -xzf "$archive" -C /tmp/cabal-gild-unpack
+          binary="$(find /tmp/cabal-gild-unpack -type f -name cabal-gild | head -n 1)"
+          test -n "$binary"
+          cp "$binary" "$HOME/.local/bin/cabal-gild"
+          chmod +x "$HOME/.local/bin/cabal-gild"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Observe formatter diff and idempotence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cabal-gild --version
+
+          echo "=== cabal-gild pragmas already present ==="
+          grep -n -- '-- cabal-gild:' h-kernel.cabal || true
+
+          cp h-kernel.cabal /tmp/h-kernel.cabal.before
+
+          set +e
+          cabal-gild --mode=check h-kernel.cabal
+          before_status=$?
+          set -e
+          echo "check status before formatting: $before_status"
+
+          cabal-gild h-kernel.cabal
+          cp h-kernel.cabal /tmp/h-kernel.cabal.after-one
+
+          set +e
+          cabal-gild --mode=check h-kernel.cabal
+          after_status=$?
+          set -e
+          echo "check status after formatting: $after_status"
+          test "$after_status" -eq 0
+
+          cabal-gild h-kernel.cabal
+          cmp /tmp/h-kernel.cabal.after-one h-kernel.cabal
+          echo "second format pass: byte-identical"
+
+          diff -u /tmp/h-kernel.cabal.before /tmp/h-kernel.cabal.after-one > /tmp/cabal-gild.diff || true
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          before = Path('/tmp/h-kernel.cabal.before').read_text().splitlines()
+          after = Path('/tmp/h-kernel.cabal.after-one').read_text().splitlines()
+          diff = Path('/tmp/cabal-gild.diff').read_text().splitlines()
+
+          added = sum(line.startswith('+') and not line.startswith('+++') for line in diff)
+          removed = sum(line.startswith('-') and not line.startswith('---') for line in diff)
+          hunks = sum(line.startswith('@@') for line in diff)
+
+          print('=== CABAL-GILD OBSERVATION SUMMARY ===')
+          print(f'before lines: {len(before)}')
+          print(f'after lines: {len(after)}')
+          print(f'unified diff hunks: {hunks}')
+          print(f'added diff lines: {added}')
+          print(f'removed diff lines: {removed}')
+          print(f'net line change: {len(after) - len(before):+d}')
+          PY
+
+          echo "=== EXACT FORMAT DIFF ==="
+          cat /tmp/cabal-gild.diff
