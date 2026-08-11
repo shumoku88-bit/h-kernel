@@ -288,17 +288,21 @@ loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
   configuration <- liftEither . first (pure . HouseholdPolicyParseFailed) $
     parseHouseholdConfiguration budgetPolicy householdPolicySource
 
-  -- 7. report.toml
+  -- 7. Household policy Account validation & Household Account policy validation
+  (policy, validatedPolicy) <- liftEither $
+    validateHouseholdPolicyAndAccounts accountsRegistry configuration
+
+  -- 8. report.toml
   reportConfigSource <- readHouseholdSourceExcept (householdReportConfigPath paths)
   reportConfig <- liftEither . first (pure . HouseholdReportConfigParseFailed) $
     parseReportConfiguration reportConfigSource
 
-  -- 8. issues.tsv
+  -- 9. issues.tsv
   issuesSource <- readHouseholdSourceExcept (householdIssuesPath paths)
   issues <- liftEither . first (pure . HouseholdIssuesParseFailed) $
     parseHouseholdIssues issuesSource
 
-  -- 9. Post-admission validation & state assembly
+  -- 10. Post-admission validation & state assembly
   state <- liftEither $ assembleCanonicalHouseholdState
     root
     paths
@@ -308,6 +312,8 @@ loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
     budgetMovementJournal
     budgetPolicy
     configuration
+    policy
+    validatedPolicy
     reportConfig
     issues
 
@@ -341,6 +347,18 @@ validateAccountRegistryAgreement expected actual mkErr
   | expected == actual = Right ()
   | otherwise = Left (pure (mkErr actual))
 
+validateHouseholdPolicyAndAccounts
+  :: AccountRegistry
+  -> HouseholdConfiguration
+  -> Either (NonEmpty HouseholdLoadError) (HouseholdPolicy, AccountValidatedHouseholdPolicy)
+validateHouseholdPolicyAndAccounts registry configuration = do
+  let policy = householdConfigurationPolicy configuration
+  validatedPolicy <- first (pure . HouseholdPolicyAccountValidationFailed)
+    (validateHouseholdPolicyAccounts registry policy)
+  validateHouseholdAccountPolicy registry
+    (householdConfigurationAccountPolicy configuration)
+  pure (policy, validatedPolicy)
+
 assembleCanonicalHouseholdState
   :: HouseholdRoot
   -> HouseholdSourcePaths
@@ -350,15 +368,12 @@ assembleCanonicalHouseholdState
   -> HouseholdBudgetMovementJournal
   -> BudgetPolicy
   -> HouseholdConfiguration
+  -> HouseholdPolicy
+  -> AccountValidatedHouseholdPolicy
   -> ReportConfiguration
   -> [HouseholdIssue]
   -> Either (NonEmpty HouseholdLoadError) HouseholdState
-assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJournal budgetMovementJournal budgetPolicy configuration reportConfig issues = do
-  let policy = householdConfigurationPolicy configuration
-  validatedPolicy <- first (pure . HouseholdPolicyAccountValidationFailed)
-    (validateHouseholdPolicyAccounts accountsRegistry policy)
-  validateHouseholdAccountPolicy accountsRegistry
-    (householdConfigurationAccountPolicy configuration)
+assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJournal budgetMovementJournal budgetPolicy configuration policy validatedPolicy reportConfig issues = do
   dailyScope <- assembleDailyScope
     accountsRegistry
     (householdConfigurationDailyTargetAssets configuration)
@@ -486,6 +501,9 @@ admitCanonicalHousehold root accountsText actualText planText budgetText budgetP
     (parseBudgetPolicy budgetPolicyText)
   configuration <- first (pure . HouseholdPolicyParseFailed)
     (parseHouseholdConfiguration budgetPolicy householdPolicyText)
+  (policy, validatedPolicy) <- validateHouseholdPolicyAndAccounts
+    accountsRegistry
+    configuration
   reportConfig <- first (pure . HouseholdReportConfigParseFailed)
     (parseReportConfiguration reportConfigText)
   issues <- first (pure . HouseholdIssuesParseFailed)
@@ -500,6 +518,8 @@ admitCanonicalHousehold root accountsText actualText planText budgetText budgetP
     budgetMovementJournal
     budgetPolicy
     configuration
+    policy
+    validatedPolicy
     reportConfig
     issues
 

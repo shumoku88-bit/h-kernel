@@ -71,6 +71,7 @@ main = do
   testIssueWholeHouseholdRollback
   testRegistryDisagreementFailure
   testInMemoryAdmission
+  testFirstFailurePrecedence
   testNativePlanMetadataFailsClosed
   testMissingSourceFailure
   testUnknownIncludeRejected
@@ -367,6 +368,79 @@ testInMemoryAdmission = do
   case buildHouseholdReportSurfaceFromHousehold observation pureState of
     Left errs -> die ("buildHouseholdReportSurfaceFromHousehold in memory failed:\n" <> unlines (map show (NonEmpty.toList errs)))
     Right _ -> pure ()
+
+  removeDirectoryRecursive dir
+
+testFirstFailurePrecedence :: IO ()
+testFirstFailurePrecedence = do
+  let dir = "/tmp/synthetic_household_precedence_spec"
+      invalidHouseholdToml = T.unlines
+        [ "[cycle]"
+        , "mode = \"income-anchor\""
+        , "income-account = \"Income:Salary\""
+        , ""
+        , "[budget]"
+        , "unassigned-accounts = [\"Budget:Living\", \"Budget:Unassigned\"]"
+        , ""
+        , "[[budget.envelopes]]"
+        , "id = \"Daily\""
+        , "allocation-account = \"Budget:Daily\""
+        , ""
+        , "[daily-target]"
+        , ""
+        , "[[daily-target.assets]]"
+        , "id = \"bank\""
+        , "account = \"Assets:Bank\""
+        , ""
+        , "[account-policy.assets]"
+        , "liquid = [\"Assets:Bank\"]"
+        , "savings = []"
+        , "investment = []"
+        , ""
+        , "[account-policy.budget.kind]"
+        , "opening = []"
+        , "unassigned = [\"Budget:Living\", \"Budget:Unassigned\"]"
+        , "spent = []"
+        , "envelope = [\"Budget:Daily\"]"
+        , ""
+        , "[account-policy.budget.envelope-role]"
+        , "unassigned = [\"Budget:Living\", \"Budget:Unassigned\"]"
+        , "dynamic = [\"Budget:Daily\"]"
+        , "execution = []"
+        , ""
+        , "[account-policy.budget.group]"
+        , "daily = [\"Budget:Daily\"]"
+        , "flex = []"
+        , "reserve = [\"Budget:Living\", \"Budget:Unassigned\"]"
+        , ""
+        , "[account-policy.expenses]"
+        , "fixed = []"
+        , "variable = [\"Expenses:Groceries\", \"Expenses:UndeclaredAccount\"]"
+        ]
+      invalidReportToml = "[reports.trial-balance\n"
+
+  resetDirectory dir
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml invalidHouseholdToml invalidReportToml syntheticIssues
+
+  root <- case mkHouseholdRoot dir of
+    Left err -> die ("mkHouseholdRoot failed: " <> show err)
+    Right r -> pure r
+
+  fsResult <- loadCanonicalHousehold root
+  case fsResult of
+    Left errs -> case NonEmpty.head errs of
+      HouseholdPolicyAccountValidationFailed {} -> pure ()
+      HouseholdAccountPolicyRegistryDisagreement {} -> pure ()
+      other -> die ("Expected Household policy validation error first on filesystem path, got: " <> show other <> "\nFull errors: " <> show (NonEmpty.toList errs))
+    Right _ -> die "Expected failure on invalid household policy, but succeeded"
+
+  let pureResult = admitCanonicalHousehold root syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml invalidHouseholdToml invalidReportToml syntheticIssues
+  case pureResult of
+    Left errs -> case NonEmpty.head errs of
+      HouseholdPolicyAccountValidationFailed {} -> pure ()
+      HouseholdAccountPolicyRegistryDisagreement {} -> pure ()
+      other -> die ("Expected Household policy validation error first on pure path, got: " <> show other)
+    Right _ -> die "Expected failure on invalid household policy, but succeeded"
 
   removeDirectoryRecursive dir
 
