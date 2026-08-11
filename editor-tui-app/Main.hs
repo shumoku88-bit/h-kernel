@@ -26,7 +26,7 @@ import System.FilePath (takeDirectory)
 import HKernel.Account (accountName)
 import qualified HKernel.Account
 import HKernel.Actual.Journal (actualJournalCompletionDeclarations)
-import HKernel.Application.Config (HouseholdSourcePaths(..), mkHouseholdRoot)
+import HKernel.Application.Config (mkHouseholdRoot)
 import HKernel.Budget.Policy (budgetPolicyEnvelopeDefinitions)
 import qualified HKernel.Editor.TUI.Actual as Actual
 import qualified HKernel.Editor.TUI.Maintenance as Maintenance
@@ -37,13 +37,13 @@ import HKernel.Editor.TUI.Model
   , Name(..)
   , ReportChoice(..)
   , WorkspaceFocus(..)
+  , contextHouseholdState
   , makeWorkspaceContext
   )
 import qualified HKernel.Editor.TUI.Plan as Plan
 import qualified HKernel.Editor.TUI.ReportStyle as ReportStyle
 import HKernel.Household.Application
   ( HouseholdState(..)
-  , HouseholdWriteSnapshot(..)
   , loadCanonicalHouseholdWriteSnapshot
   )
 import HKernel.Household.Policy
@@ -800,15 +800,7 @@ main = do
           ("Failed to load canonical Household:\n"
             <> unlines (map show (NonEmpty.toList errs)))
         Right value -> pure value
-      let state = householdWriteSnapshotState snapshot
-          paths = householdStatePaths state
-          journalFile = householdActualJournalPath paths
-          accountsSource = householdWriteSnapshotAccountsSource snapshot
-          source = householdWriteSnapshotActualSource snapshot
-          planSource = householdWriteSnapshotPlanSource snapshot
-          budgetSource = householdWriteSnapshotBudgetSource snapshot
-          issuesSource = householdWriteSnapshotIssuesSource snapshot
-          context = makeWorkspaceContext False today journalFile accountsSource source planSource budgetSource issuesSource state
+      let context = makeWorkspaceContext False today snapshot
           initialState = AppWrapper context Workspace
           buildVty = do
             vty <- mkVty V.defaultConfig
