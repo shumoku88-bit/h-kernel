@@ -185,6 +185,31 @@ drawSectionBody context = case contextCurrentSection context of
   ReportsSection -> Report.drawWorkspace context
   SettingsSection -> drawSettingsView context
 
+drawPlanBudgetSyncPicker
+  :: L.List Name HKernel.Plan.Journal.IdentifiedPlanTransaction
+  -> Widget Name
+drawPlanBudgetSyncPicker plans =
+  center
+    (borderWithLabel (str "Retry completed Plan Budget sync")
+      (hLimit 86
+        (vLimit 24
+          (padAll 1
+            ( L.renderList renderCompletedPlan True plans
+              <=> str " "
+              <=> str "[wheel/↑/↓ or j/k] Move   [Enter] Retry sync   [Esc] Back   [Q] Quit")))))
+
+renderCompletedPlan :: Bool -> HKernel.Plan.Journal.IdentifiedPlanTransaction -> Widget Name
+renderCompletedPlan selected identified
+  | selected = withAttr L.listSelectedAttr row
+  | otherwise = row
+  where
+    transaction = HKernel.Plan.Journal.identifiedPlanTransaction identified
+    row = txt
+      ( T.pack (show (HKernel.Ledger.transactionDate transaction))
+        <> "  " <> HKernel.Ledger.transactionDescription transaction
+        <> "  [" <> planIdText (HKernel.Plan.Journal.identifiedPlanId identified) <> "]"
+      )
+
 drawSettingsView :: AppContext -> Widget Name
 drawSettingsView context =
   vBox
