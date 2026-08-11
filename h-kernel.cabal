@@ -62,7 +62,7 @@ library
                     , toml-parser >= 2.0.2 && < 2.1
                     , transformers >= 0.5 && < 0.7
     hs-source-dirs:   src
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 library h-kernel-household
@@ -86,7 +86,7 @@ library h-kernel-household
                     , time >= 1.9 && < 1.15
                     , toml-parser >= 2.0.2 && < 2.1
     hs-source-dirs:   household-src
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 library h-kernel-editor
@@ -114,7 +114,7 @@ library h-kernel-editor
                     , time >= 1.9 && < 1.15
                     , directory >= 1.3 && < 1.4
     hs-source-dirs:   editor-src
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 library h-kernel-household-application
@@ -127,7 +127,7 @@ library h-kernel-household-application
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
     hs-source-dirs:   household-app-src
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 executable h-kernel
@@ -143,7 +143,7 @@ executable h-kernel
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
     hs-source-dirs:   app
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 executable repository-audit
@@ -156,7 +156,7 @@ executable repository-audit
                     , text >= 1.2 && < 2.2
                     , toml-parser >= 2.0.2 && < 2.1
     hs-source-dirs:   tools/repository-audit
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 
@@ -170,7 +170,7 @@ test-suite h-kernel-editor-actual-append-test
                     , time
                     , QuickCheck
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-actual-workspace-test
@@ -181,7 +181,7 @@ test-suite h-kernel-editor-actual-workspace-test
                     , h-kernel-editor
                     , text
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-actual-reverse-test
@@ -193,7 +193,7 @@ test-suite h-kernel-editor-actual-reverse-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-test
@@ -205,7 +205,7 @@ test-suite h-kernel-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-application-config-test
@@ -215,7 +215,7 @@ test-suite h-kernel-application-config-test
                     , h-kernel
                     , text
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-account-profile-contract-test
@@ -227,7 +227,7 @@ test-suite h-kernel-account-profile-contract-test
                     , h-kernel-household
                     , text
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-account-profile-tsv-test
@@ -239,7 +239,7 @@ test-suite h-kernel-account-profile-tsv-test
                     , h-kernel-household
                     , text
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-balance-law-test
@@ -250,7 +250,7 @@ test-suite h-kernel-balance-law-test
                     , QuickCheck
                     , text
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-daily-target-test
@@ -263,7 +263,7 @@ test-suite h-kernel-daily-target-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-household-backing-test
@@ -275,7 +275,7 @@ test-suite h-kernel-household-backing-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-household-budget-movement-tsv-test
@@ -287,7 +287,7 @@ test-suite h-kernel-household-budget-movement-tsv-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-account-journal-test
@@ -297,7 +297,7 @@ test-suite h-kernel-account-journal-test
                     , h-kernel
                     , text
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-actual-journal-test
@@ -308,7 +308,7 @@ test-suite h-kernel-actual-journal-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-balance-sheet-test
@@ -319,7 +319,7 @@ test-suite h-kernel-balance-sheet-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-loader-test
@@ -331,7 +331,7 @@ test-suite h-kernel-loader-test
                     , h-kernel
                     , text
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-report-book-test
@@ -342,7 +342,7 @@ test-suite h-kernel-report-book-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-report-config-test
@@ -353,7 +353,7 @@ test-suite h-kernel-report-config-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-report-matrix-test
@@ -362,7 +362,7 @@ test-suite h-kernel-report-matrix-test
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-daily-flow-test
@@ -374,7 +374,7 @@ test-suite h-kernel-daily-flow-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-monthly-accounts-test
@@ -385,7 +385,7 @@ test-suite h-kernel-monthly-accounts-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-cycle-accounts-test
@@ -396,7 +396,7 @@ test-suite h-kernel-cycle-accounts-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-period-test
@@ -406,7 +406,7 @@ test-suite h-kernel-period-test
                     , h-kernel
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-household-report-test
@@ -419,7 +419,7 @@ test-suite h-kernel-household-report-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-household-issue-test
@@ -430,7 +430,7 @@ test-suite h-kernel-household-issue-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-household-issue-tsv-test
@@ -442,7 +442,7 @@ test-suite h-kernel-household-issue-tsv-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-plan-test
@@ -453,7 +453,7 @@ test-suite h-kernel-plan-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-plan-journal-test
@@ -463,7 +463,7 @@ test-suite h-kernel-plan-journal-test
                     , h-kernel
                     , text
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-plan-completion-test
@@ -474,7 +474,7 @@ test-suite h-kernel-plan-completion-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-plan-reservation-test
@@ -485,7 +485,7 @@ test-suite h-kernel-plan-reservation-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-recent-transactions-test
@@ -496,7 +496,7 @@ test-suite h-kernel-recent-transactions-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-model-test
@@ -506,7 +506,7 @@ test-suite h-kernel-budget-model-test
                     , h-kernel
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-history-test
@@ -517,7 +517,7 @@ test-suite h-kernel-budget-history-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-entitlement-test
@@ -528,7 +528,7 @@ test-suite h-kernel-budget-entitlement-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-remaining-test
@@ -539,7 +539,7 @@ test-suite h-kernel-budget-remaining-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-tsv-test
@@ -550,7 +550,7 @@ test-suite h-kernel-budget-tsv-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-config-test
@@ -560,7 +560,7 @@ test-suite h-kernel-budget-config-test
                     , h-kernel
                     , text
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-routing-test
@@ -570,7 +570,7 @@ test-suite h-kernel-budget-routing-test
                     , h-kernel
                     , text
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-budget-consumption-test
@@ -581,7 +581,7 @@ test-suite h-kernel-budget-consumption-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-envelope-budget-test
@@ -592,7 +592,7 @@ test-suite h-kernel-envelope-budget-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-cli-test
@@ -603,7 +603,7 @@ test-suite h-kernel-cli-test
                     , text
                     , time
     hs-source-dirs:   tests
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite repository-audit-test
@@ -617,7 +617,7 @@ test-suite repository-audit-test
                     , toml-parser >= 2.0.2 && < 2.1
     hs-source-dirs:   tests
                     , tools/repository-audit
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-actual-writer-test
@@ -629,7 +629,7 @@ test-suite h-kernel-editor-actual-writer-test
                     , directory >= 1.3 && < 1.4
                     , h-kernel
                     , h-kernel-editor
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall
 
 executable h-kernel-editor-cli
@@ -643,7 +643,7 @@ executable h-kernel-editor-cli
                     , h-kernel-household-application
                     , h-kernel-editor
     hs-source-dirs:   editor-app
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 executable h-kernel-editor-tui
@@ -673,7 +673,7 @@ executable h-kernel-editor-tui
                     , h-kernel-household-application
                     , h-kernel-editor
     hs-source-dirs:   editor-tui-app
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns -threaded
 
 test-suite h-kernel-editor-actual-account-append-test
@@ -685,7 +685,7 @@ test-suite h-kernel-editor-actual-account-append-test
                     , h-kernel-editor
                     , text
                     , time
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-budget-movement-append-test
@@ -698,7 +698,7 @@ test-suite h-kernel-editor-budget-movement-append-test
                     , h-kernel-editor
                     , text
                     , time
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-issue-append-test
@@ -711,7 +711,7 @@ test-suite h-kernel-editor-issue-append-test
                     , h-kernel-editor
                     , text
                     , time
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-plan-lifecycle-test
@@ -723,7 +723,7 @@ test-suite h-kernel-editor-plan-lifecycle-test
                     , h-kernel-editor
                     , text
                     , time
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-plan-complete-advance-test
@@ -736,7 +736,7 @@ test-suite h-kernel-editor-plan-complete-advance-test
                     , h-kernel-editor
                     , text
                     , time
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-cli-contract-test
@@ -749,7 +749,7 @@ test-suite h-kernel-editor-cli-contract-test
                     , h-kernel-editor
                     , text
                     , time
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-tui-actual-add-test
@@ -760,7 +760,7 @@ test-suite h-kernel-editor-tui-actual-add-test
                     , h-kernel
                     , h-kernel-editor
                     , text
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-canonical-household-test
@@ -776,7 +776,7 @@ test-suite h-kernel-canonical-household-test
                     , h-kernel-household
                     , h-kernel-household-application
                     , h-kernel-editor
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
 
 test-suite h-kernel-editor-account-publication-test
@@ -791,5 +791,5 @@ test-suite h-kernel-editor-account-publication-test
                     , h-kernel-household-application
                     , h-kernel-editor
                     , text >= 1.2 && < 2.2
-    default-language: Haskell2010
+    default-language: GHC2024
     ghc-options:      -Wall -Werror=incomplete-patterns
