@@ -1,17 +1,17 @@
 # h-kernel アーキテクチャ
 
 ステータス: アクティブな正規architecture  
-更新日: 2026-08-07
+更新日: 2026-08-11
 
 ## 1. この文書の役割
 
 この文書は、`h-kernel`の安定したcomponent境界、依存方向、会計上の不変条件、effectの置き場所を所有する。
 
-全体の現在地と未決定案は[`CODE_MAP_AND_DESIGN_SKETCH.md`](CODE_MAP_AND_DESIGN_SKETCH.md)、Haskellの書法は[`HASKELL_NATIVE_CODE_POLICY.md`](HASKELL_NATIVE_CODE_POLICY.md)、writer authorityは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)と[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
+editorの現在地は[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)、writer authorityは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)と[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
 
 ## 2. Functional coreと明示的なeffect boundary
 
-`h-kernel`は、一つの巨大な`Main`ではなく、複数のpure componentと狭いdelivery adapterから構成する。
+`h-kernel`は複数のpure componentと狭いdelivery adapterから構成する。
 
 ```text
 external source / user intent
@@ -35,68 +35,37 @@ rendered result or validated candidate
 stdout / exit status / atomic publication
 ```
 
-pure coreは、file path、process exit、interactive event loop、atomic renameを会計計算へ持ち込まない。effect boundaryは、effectを隠すためではなく、どの外界へ触れているかを型とcomponentから読めるようにするために置く。
+pure coreはfile path、process exit、interactive event loop、atomic renameを会計計算へ持ち込まない。effect boundaryは、外界との接触をdomain calculationから分離する。
 
 ## 3. Current components
 
 ```text
 h-kernel
   source: src/
-  owns:
-    Account, Money, Ledger, Journal, Actual, Plan, Budget,
-    Engine, Report, rendering primitives, application config admission
+  owns: Account, Money, Ledger, Journal, Actual, Plan, Budget,
+        Engine, Report, rendering primitives, application config admission
 
 h-kernel-household
   source: household-src/
   depends on: h-kernel
-  owns:
-    AccountProfile admission, HouseholdPolicy, DailyTarget,
-    HouseholdBacking, BudgetMovement, Household Issue admission
+  owns: HouseholdPolicy, DailyTarget, HouseholdBacking,
+        BudgetMovement, Household Issue admission
 
 h-kernel-editor
   source: editor-src/
   depends on: h-kernel + h-kernel-household
-  owns:
-    typed edit intent, pure candidate preparation, source placement,
-    complete-source admission, stale check, backup, atomic publication,
-    post-admission and restore-capable writer result,
-    typed Actual workspace projection, UI-independent Actual add interaction
-
-h-kernel-spike-household-report
-  source: spike-src/
-  depends on: h-kernel + h-kernel-household
-  owns:
-    provisional Household Report composition and rendering
+  owns: typed edit intent, pure candidate preparation, source placement,
+        complete-source admission, stale check, backup, atomic publication,
+        post-admission and restore-capable writer result
 ```
 
-Delivery adaptersはlibraryとは別に置く。
-
-```text
-app/             h-kernel report executable
-editor-app/      h-kernel-editor-cli
-editor-tui-app/  Brick Actual workspace executable
-repository root  report launchers and build helpers
-tools/hk         workspace-first daily doorway + explicit command routing
-tools/           repository audit and verification tools
-```
-
-`tools/hk`はdomain ownerではない。TTY no-argではActual workspaceへ入り、explicit commandではreport / actual-add / actual-multi / actual-reverse / account / plan / budget / issue / edit / check / helpを既存entrypointへrouteする。会計計算、Report rendering、editor admission、source mutation、audit ruleを再実装しない。
+Delivery adapterはlibraryとは別に置く。CLI/TUI/shell routerへ会計ruleやwriter lawを複製しない。
 
 ## 4. Effectの所有者
 
 ### 4.1 Journal load
 
-`HKernel.Journal`のparserとinclude解決はpureである。`HKernel.Loader`はfilesystem上のinclude graphを読むadapterであり、必要なeffectを次の重なりとして明示する。
-
-```haskell
-StateT LoadedFiles (ExceptT LoadError IO)
-```
-
-- `LoadedFiles`: include循環と既読状態
-- `LoadError`: typed failure
-- `IO`: file readとpath resolution
-
-loaderが読んだ後のAccount validation、Transaction validation、集計、Report projectionはpure ownerへ戻す。
+`HKernel.Journal`のparserとinclude解決はpureである。`HKernel.Loader`はfilesystem上のinclude graphを読むadapterである。load後のAccount validation、Transaction validation、集計、Report projectionはpure ownerへ戻す。
 
 ### 4.2 Editor publication
 
@@ -113,15 +82,11 @@ expected old bytes
   -> success or restore-capable failure
 ```
 
-CLIやTUIはこの順序を複製しない。UI-independent interaction stateへcomplete private source、backup、writer authorityを持ち込まない。
-
-Delivery adapterがpreviewとsafe writerのexpected-old-bytes境界を接続するため読み込んだsource bytesを保持する場合、その値はdomain / interaction stateではなくeffect-delivery contextとして明示する。このplacement自体を変更するときはwriter correctnessとstale contractを別sliceで検証する。
+CLIやTUIはこの順序を複製しない。UI stateへcomplete private source、backup、writer authorityを持ち込まない。
 
 ### 4.3 Application and terminal
 
-report app、editor app、Brick TUI、shell launcherは、引数、環境変数、標準入出力、終了状態、terminal eventを扱う。会計ruleやsource admissionをadapter都合で再実装しない。
-
-Brick固有のpane、focus、cursor、key mapping、widget、renderingは`editor-tui-app/`に置く。Account selection identity、workspace projection、Actual add interaction transitionは共有typed ownerへ委譲する。
+report app、editor app、Brick TUI、shell launcherは引数、環境変数、標準入出力、終了状態、terminal eventを扱う。会計ruleやsource admissionをadapter都合で再実装しない。
 
 ## 5. Domain invariants
 
@@ -133,73 +98,49 @@ Quantityは`Scientific`による正確な10進数として保持する。`Amount
 
 `Balance`はCommodityごとのQuantityを保持するopaqueなcanonical valueであり、zero entryを持たない。
 
-`Semigroup` / `Monoid`は、同じ観察文脈にあるBalance contributionの結合を所有する。Transaction、Journal、Plan lifecycleなど、順序、identity、provenanceを持つ値へ同じinstanceを機械的に広げない。
+`Semigroup` / `Monoid`はBalance contributionの結合を所有する。Transaction、Journal、Plan lifecycleなど、順序、identity、provenanceを持つ値へ同じinstanceを機械的に広げない。
 
 ### 5.3 Account
 
 Accountの意味は名前から推測しない。`AccountRegistry`と検証済みdeclarationがAccount identity、`AccountType`、optional default Commodityを所有する。
 
-UIでadmitted Accountを選択する場合も、表示Textをidentityとして使わず`Account`を保持し、presentation boundaryでだけ`accountName`へ落とす。
+UIでも表示Textをidentityとして使わずtyped `Account`を保持する。
 
 ### 5.4 Transaction
 
-`Transaction` constructorは公開しない。smart constructorとJournal admissionは少なくとも次を保証する。
-
-- descriptionが空でない
-- Postingが二件以上ある
-- Accountが宣言済みである
-- QuantityとCommodityが正確である
-- Commodityごとにzero balanceである
-
-不均衡または未解決のTransactionをEngineやReportへ渡さない。
+`Transaction` constructorは公開しない。admissionは少なくともdescription、2+ Postings、declared Account、exact Quantity/Commodity、Commodityごとのzero balanceを保証する。
 
 ### 5.5 Actual identityとreversal
 
 Actualのdurable identityとreversal relationは`HKernel.Actual.Journal`がadmitする。reversalは元Transactionを変更せず、新しいdurable `event-id`とexplicit `reverses` relationを持つinverse Transactionとして追加する。
 
-詳細は[`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)が所有する。
-
 ## 6. Report and Household projections
 
-Reportはvalidated factsから作るpure projectionである。
+Reportはvalidated factsから作るpure projectionである。合計はCommodity別の`Balance`を保ち、unknown classificationやunassigned evidenceを黙って消さない。
 
-- Trial Balanceは指定日以前のAccount balanceを観察する
-- Profit and Lossはvalidated `DateRange`内のIncomeとExpenseを観察する
-- Balance Sheetは未締めIncome / Expenseからcurrent earningsを導出する
-- Daily Flow、Monthly Accounts、Recent Transactions、Cycle Accountsはそれぞれ名前付きownerを持つ
-- 合計はCommodity別の`Balance`を保つ
-- unknown classificationやunassigned evidenceを黙って消さない
-
-Household policy、Daily Target、Backing、Budget movement、Account profile admissionはstable `h-kernel-household` componentにある。現在のHousehold Report compositionだけがspike componentに残る。
+Household policy、Daily Target、Backing、Budget movement、Issueはそれぞれnamed ownerが意味を所有する。
 
 ## 7. Dependency direction
 
 ```text
-h-kernel-household              -> h-kernel
-h-kernel-editor                 -> h-kernel
-h-kernel-editor                 -> h-kernel-household
-h-kernel-spike-household-report -> h-kernel
-h-kernel-spike-household-report -> h-kernel-household
-
-report app                      -> h-kernel + h-kernel-spike-household-report
-editor app / editor TUI         -> h-kernel-editor
-tools/hk                        -> existing report launcher / editor CLI / editor TUI / checks
+h-kernel-household -> h-kernel
+h-kernel-editor    -> h-kernel + h-kernel-household
+report app         -> admitted report owners
+editor adapters    -> h-kernel-editor
+tools/hk           -> existing adapters / checks
 ```
 
-次は禁止する。
+禁止:
 
 - `h-kernel`から`h-kernel-editor`への依存
 - `h-kernel-household`からeditorへの依存
 - Report ownerからfilesystem writerへの依存
 - Render ownerからsource readへの依存
-- daily routerまたはdelivery adapterへの会計rule / mutation ruleの移動
-- UI toolkit型のshared interaction ownerへの流入
-- spike-local parserによるstable admissionの再実装
+- delivery adapterへの会計rule / mutation ruleの移動
+- UI toolkit型のshared domain ownerへの流入
 
 ## 8. Writer authority
 
-componentにwrite capabilityが存在することと、canonical writer authorityは別である。
+componentにwrite capabilityが存在することとcanonical writer authorityは別である。
 
-2026-08-06の明示的なcutoverにより、canonical `actual.journal`のwriter authorityは`h-kernel` editorが持つ。`bqn-ledger`は同じsourceをreaderとして使えるが、canonical `actual.journal`を変更するoperationには使わない。
-
-他のprivate source fileのwriter authorityは、このActual-only cutoverでは変更しない。source別authority、activation、single-writer law、stop、rollbackは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)、[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)、[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
+source別authority、activation、single-writer law、stop、rollbackは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)、[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)、[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。

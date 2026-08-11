@@ -1,7 +1,5 @@
 # repository-audit 用の正規ドキュメント一覧。
-#
 # role は、そのドキュメントが稼働中のリポジトリに属する理由を示す。
-# ライフサイクルと詳細なステータスは各ドキュメント内に残し、ここでは重複させない。
 
 [[documents]]
 path = "docs/REPOSITORY_POLICY.md"
@@ -26,10 +24,6 @@ role = "observation"
 [[documents]]
 path = "docs/BUDGET_PLAN_COMMITMENT_OBSERVATION.md"
 role = "observation"
-
-[[documents]]
-path = "docs/CODE_MAP_AND_DESIGN_SKETCH.md"
-role = "architecture"
 
 [[documents]]
 path = "docs/DAILY_TARGET_POLICY.md"
@@ -58,10 +52,6 @@ role = "contract"
 [[documents]]
 path = "docs/ACTUAL_WRITER_CUTOVER_001.md"
 role = "contract"
-
-[[documents]]
-path = "docs/HASKELL_NATIVE_CODE_POLICY.md"
-role = "policy"
 
 [[documents]]
 path = "docs/HOUSEHOLD_BACKING.md"

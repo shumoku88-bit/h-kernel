@@ -17,17 +17,9 @@ characterizeCleanInventory :: IO ()
 characterizeCleanInventory = do
   let source = mustPath "src/HKernel/Owned.hs"
       document = mustPath "docs/ARCHITECTURE.md"
-      index = mustIndex
-        [documentEntry document Architecture]
-      inventory = repositoryInventory
-        [source, document]
-        [source]
-        index
-
-  assertEqual
-    "a Cabal-owned source and indexed document produce no findings"
-    []
-    (auditRepository inventory)
+      index = mustIndex [documentEntry document Architecture]
+      inventory = repositoryInventory [source, document] [source] index
+  assertEqual "a Cabal-owned source and indexed document produce no findings" [] (auditRepository inventory)
 
 characterizeOwnershipFindings :: IO ()
 characterizeOwnershipFindings = do
@@ -35,56 +27,31 @@ characterizeOwnershipFindings = do
       orphanSource = mustPath "tools/Orphan.hs"
       unindexedDocument = mustPath "docs/UNINDEXED.md"
       missingDocument = mustPath "docs/MISSING.md"
-      index = mustIndex
-        [documentEntry missingDocument Reference]
-      inventory = repositoryInventory
-        [ownedSource, orphanSource, unindexedDocument]
-        [ownedSource]
-        index
-      expected =
-        [ UnregisteredHaskellFile orphanSource
-        , UnindexedDocument unindexedDocument
-        , MissingIndexedDocument missingDocument
-        ]
-
-  assertEqual
-    "findings preserve Cabal, document coverage, and stale-index order"
-    expected
-    (auditRepository inventory)
+      index = mustIndex [documentEntry missingDocument Reference]
+      inventory = repositoryInventory [ownedSource, orphanSource, unindexedDocument] [ownedSource] index
+      expected = [UnregisteredHaskellFile orphanSource, UnindexedDocument unindexedDocument, MissingIndexedDocument missingDocument]
+  assertEqual "findings preserve Cabal, document coverage, and stale-index order" expected (auditRepository inventory)
 
 characterizeDocumentIndexAdmission :: IO ()
 characterizeDocumentIndexAdmission = do
   let manifest =
         "[[documents]]\n"
-          <> "path = \"docs/HASKELL_NATIVE_CODE_POLICY.md\"\n"
+          <> "path = \"docs/REPOSITORY_POLICY.md\"\n"
           <> "role = \"policy\"\n"
-      path = mustPath "docs/HASKELL_NATIVE_CODE_POLICY.md"
+      path = mustPath "docs/REPOSITORY_POLICY.md"
 
   case parseDocumentIndex manifest of
-    Left errors -> failTest
-      "valid document index"
-      ("unexpected errors: " ++ show errors)
-    Right index -> assertEqual
-      "document index retains the declared role"
-      (Just Policy)
-      (lookupDocumentRole path index)
+    Left errors -> failTest "valid document index" ("unexpected errors: " ++ show errors)
+    Right index -> assertEqual "document index retains the declared role" (Just Policy) (lookupDocumentRole path index)
 
   assertLeft
     "unknown document roles are rejected"
-    (parseDocumentIndex
-      ("[[documents]]\n"
-        <> "path = \"docs/UNKNOWN.md\"\n"
-        <> "role = \"misc\"\n"))
+    (parseDocumentIndex ("[[documents]]\n" <> "path = \"docs/UNKNOWN.md\"\n" <> "role = \"misc\"\n"))
 
   let duplicate = documentEntry path Policy
   case mkDocumentIndex [duplicate, duplicate] of
-    Left errors -> assertEqual
-      "duplicate document paths remain a typed index conflict"
-      [DuplicateIndexedDocument path]
-      (NonEmpty.toList errors)
-    Right value -> failTest
-      "duplicate document index"
-      ("unexpectedly accepted: " ++ show value)
+    Left errors -> assertEqual "duplicate document paths remain a typed index conflict" [DuplicateIndexedDocument path] (NonEmpty.toList errors)
+    Right value -> failTest "duplicate document index" ("unexpectedly accepted: " ++ show value)
 
 mustPath :: String -> RepositoryPath
 mustPath value = case mkRepositoryPath (T.pack value) of
@@ -104,8 +71,7 @@ assertLeft label result = case result of
 assertEqual :: (Eq value, Show value) => String -> value -> value -> IO ()
 assertEqual label expected actual
   | expected == actual = pass label
-  | otherwise = failTest label
-      ("expected " ++ show expected ++ ", but got " ++ show actual)
+  | otherwise = failTest label ("expected " ++ show expected ++ ", but got " ++ show actual)
 
 pass :: String -> IO ()
 pass label = putStrLn ("  [PASS] " ++ label)
