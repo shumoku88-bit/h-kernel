@@ -133,6 +133,7 @@ library h-kernel-household-application
                     , h-kernel-household
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
+                    , transformers
     hs-source-dirs:   household-app-src
 
 executable h-kernel
