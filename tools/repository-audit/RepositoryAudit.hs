@@ -185,19 +185,20 @@ rawToDocumentIndex (RawDocumentIndex rawDocuments) =
 parseRawDocument :: Int -> RawDocument -> Either [Text] DocumentEntry
 parseRawDocument index (RawDocument rawPath rawRole) =
   case (pathResult, roleResult, errors) of
-    (Right path, Right role, []) -> Right (DocumentEntry path role)
+    (Right repositoryPath, Right role, []) ->
+      Right (DocumentEntry repositoryPath role)
     _ -> Left errors
   where
     pathResult = mkRepositoryPath rawPath
     roleResult = parseDocumentRole rawRole
-    path = indexedPath index
+    diagnosticPath = indexedPath index
     errors =
       either
-        (pure . renderRepositoryPathError (path <> ".path"))
+        (pure . renderRepositoryPathError (diagnosticPath <> ".path"))
         (const [])
         pathResult
         ++ either
-          (pure . renderDocumentRoleError (path <> ".role"))
+          (pure . renderDocumentRoleError (diagnosticPath <> ".role"))
           (const [])
           roleResult
 
