@@ -8,12 +8,11 @@ import Brick.Widgets.Center
 import qualified Brick.Widgets.List as L
 import qualified Graphics.Vty as V
 import Graphics.Vty.CrossPlatform (mkVty)
-import Lens.Micro (Traversal')
+import Lens.Micro (Lens', Traversal')
 import Lens.Micro.Mtl ()
 
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Set as Set
-import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.LocalTime (getZonedTime, localDay, zonedTimeToLocalTime)
 import qualified Data.Vector as Vec
@@ -23,7 +22,6 @@ import System.Exit (die)
 import System.FilePath (takeDirectory)
 
 import HKernel.Account (accountName)
-import qualified HKernel.Account
 import HKernel.Actual.Journal (actualJournalCompletionDeclarations)
 import HKernel.Application.Config (mkHouseholdRoot)
 import HKernel.Budget.Policy (budgetPolicyEnvelopeDefinitions)
@@ -35,7 +33,6 @@ import HKernel.Editor.TUI.Model
   , HouseholdSection(..)
   , Name(..)
   , ReportChoice
-  , WorkspaceFocus(..)
   , contextHouseholdState
   , makeWorkspaceContext
   )
@@ -51,7 +48,6 @@ import HKernel.Household.Policy
   , householdPolicyCycle
   , householdUnassignedBudgetAccounts
   )
-import qualified HKernel.HouseholdIssue
 import qualified HKernel.Ledger
 import HKernel.Plan (planIdText)
 import HKernel.Plan.Completion (declaredCompletionPlanId)
@@ -98,29 +94,9 @@ zoomPlanBudgetSyncPicker f (AppWrapper context (PlanBudgetSyncPicker plans)) =
   (\updated -> AppWrapper context (PlanBudgetSyncPicker updated)) <$> f plans
 zoomPlanBudgetSyncPicker _ wrapper = pure wrapper
 
-zoomWorkspaceAccounts :: Traversal' AppWrapper (L.List Name (Maybe HKernel.Account.Account))
-zoomWorkspaceAccounts f (AppWrapper context Workspace) =
-  (\updated -> AppWrapper (context { contextWorkspaceAccounts = updated }) Workspace)
-    <$> f (contextWorkspaceAccounts context)
-zoomWorkspaceAccounts _ wrapper = pure wrapper
-
-zoomWorkspaceList :: Traversal' AppWrapper (L.List Name HKernel.Ledger.Transaction)
-zoomWorkspaceList f (AppWrapper context Workspace) =
-  (\updated -> AppWrapper (context { contextWorkspaceList = updated }) Workspace)
-    <$> f (contextWorkspaceList context)
-zoomWorkspaceList _ wrapper = pure wrapper
-
-zoomPlanList :: Traversal' AppWrapper (L.List Name HKernel.Plan.Journal.IdentifiedPlanTransaction)
-zoomPlanList f (AppWrapper context Workspace) =
-  (\updated -> AppWrapper (context { contextPlanList = updated }) Workspace)
-    <$> f (contextPlanList context)
-zoomPlanList _ wrapper = pure wrapper
-
-zoomIssueList :: Traversal' AppWrapper (L.List Name HKernel.HouseholdIssue.HouseholdIssue)
-zoomIssueList f (AppWrapper context Workspace) =
-  (\updated -> AppWrapper (context { contextIssueList = updated }) Workspace)
-    <$> f (contextIssueList context)
-zoomIssueList _ wrapper = pure wrapper
+zoomContext :: Lens' AppWrapper AppContext
+zoomContext f (AppWrapper context state) =
+  (\updated -> AppWrapper updated state) <$> f context
 
 drawUI :: AppWrapper -> [Widget Name]
 drawUI (AppWrapper context Workspace) = [drawHouseholdShell context]
@@ -262,50 +238,10 @@ appEvent event = do
 handleWorkspaceEvent :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleWorkspaceEvent context event = case event of
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
-  MouseDown ReportsViewport V.BScrollUp _ _
-    | inReports -> vScrollBy reportsViewport (-3)
-  MouseDown ReportsViewport V.BScrollDown _ _
-    | inReports -> vScrollBy reportsViewport 3
-  MouseDown BudgetViewport V.BScrollUp _ _
-    | inBudget -> vScrollBy (viewportScroll BudgetViewport) (-3)
-  MouseDown BudgetViewport V.BScrollDown _ _
-    | inBudget -> vScrollBy (viewportScroll BudgetViewport) 3
-  MouseDown AccountsViewport V.BScrollUp _ _
-    | inAccounts -> vScrollBy (viewportScroll AccountsViewport) (-3)
-  MouseDown AccountsViewport V.BScrollDown _ _
-    | inAccounts -> vScrollBy (viewportScroll AccountsViewport) 3
   MouseDown SettingsViewport V.BScrollUp _ _
     | inSettings -> vScrollBy (viewportScroll SettingsViewport) (-3)
   MouseDown SettingsViewport V.BScrollDown _ _
     | inSettings -> vScrollBy (viewportScroll SettingsViewport) 3
-  MouseDown WorkspaceAccountList V.BScrollUp _ _
-    | inActual -> handleActualListEvent
-        (context { contextWorkspaceFocus = AccountsFocus }) (V.EvKey V.KUp [])
-  MouseDown WorkspaceAccountList V.BScrollDown _ _
-    | inActual -> handleActualListEvent
-        (context { contextWorkspaceFocus = AccountsFocus }) (V.EvKey V.KDown [])
-  MouseDown WorkspaceAccountList V.BLeft _ (Location (_, row))
-    | inActual -> selectActualAccountRow row
-  MouseDown WorkspaceTransactionList V.BScrollUp _ _
-    | inActual -> handleActualListEvent
-        (context { contextWorkspaceFocus = TransactionsFocus }) (V.EvKey V.KUp [])
-  MouseDown WorkspaceTransactionList V.BScrollDown _ _
-    | inActual -> handleActualListEvent
-        (context { contextWorkspaceFocus = TransactionsFocus }) (V.EvKey V.KDown [])
-  MouseDown WorkspaceTransactionList V.BLeft _ (Location (_, row))
-    | inActual -> selectActualTransactionRow row
-  MouseDown PlanList V.BScrollUp _ _
-    | inPlans -> zoom zoomPlanList (L.handleListEvent (V.EvKey V.KUp []))
-  MouseDown PlanList V.BScrollDown _ _
-    | inPlans -> zoom zoomPlanList (L.handleListEvent (V.EvKey V.KDown []))
-  MouseDown PlanList V.BLeft _ (Location (_, row))
-    | inPlans -> moveListSelection zoomPlanList row
-  MouseDown IssueList V.BScrollUp _ _
-    | inIssues -> zoom zoomIssueList (L.handleListEvent (V.EvKey V.KUp []))
-  MouseDown IssueList V.BScrollDown _ _
-    | inIssues -> zoom zoomIssueList (L.handleListEvent (V.EvKey V.KDown []))
-  MouseDown IssueList V.BLeft _ (Location (_, row))
-    | inIssues -> moveListSelection zoomIssueList row
   VtyEvent (V.EvKey V.KEsc []) -> halt
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
@@ -316,115 +252,55 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey (V.KChar '5') []) -> switchSection IssuesSection
   VtyEvent (V.EvKey (V.KChar '6') []) -> switchSection ReportsSection
   VtyEvent (V.EvKey (V.KChar '7') []) -> switchSection SettingsSection
-  VtyEvent (V.EvKey V.KEnter [])
-    | inReports -> openReportPicker
-  VtyEvent (V.EvKey V.KUp [])
-    | inReports -> vScrollBy reportsViewport (-1)
-  VtyEvent (V.EvKey V.KDown [])
-    | inReports -> vScrollBy reportsViewport 1
-  VtyEvent (V.EvKey V.KLeft [V.MShift])
-    | inReports -> hScrollPage reportsViewport Up
-  VtyEvent (V.EvKey V.KRight [V.MShift])
-    | inReports -> hScrollPage reportsViewport Down
-  VtyEvent (V.EvKey V.KLeft [])
-    | inReports -> hScrollBy reportsViewport (-4)
-  VtyEvent (V.EvKey V.KRight [])
-    | inReports -> hScrollBy reportsViewport 4
-  VtyEvent (V.EvKey V.KPageUp [])
-    | inReports -> vScrollPage reportsViewport Up
-  VtyEvent (V.EvKey V.KPageDown [])
-    | inReports -> vScrollPage reportsViewport Down
-  VtyEvent (V.EvKey V.KHome [])
-    | inReports -> vScrollToBeginning reportsViewport
-  VtyEvent (V.EvKey V.KEnd [])
-    | inReports -> vScrollToEnd reportsViewport
-  VtyEvent (V.EvKey (V.KChar key) [])
-    | inReports
-    , Just report <- Report.reportSelectionForKey (contextSelectedReport context) key ->
-        selectReport report
-  VtyEvent (V.EvKey (V.KChar 'a') [])
-    | inActual -> openActualDaily
-  VtyEvent (V.EvKey (V.KChar 'A') [])
-    | inActual -> openActualDaily
-  VtyEvent (V.EvKey (V.KChar 'i') [])
-    | inActual -> openActualIncome
-  VtyEvent (V.EvKey (V.KChar 'I') [])
-    | inActual -> openActualIncome
-  VtyEvent (V.EvKey (V.KChar 'm') [])
-    | inActual -> openActualMulti
-  VtyEvent (V.EvKey (V.KChar 'M') [])
-    | inActual -> openActualMulti
-  VtyEvent (V.EvKey V.KEnter [])
-    | inBudget -> put (AppWrapper context (MaintenanceFlow Maintenance.startBudgetMovement))
-  VtyEvent (V.EvKey (V.KChar 'm') [])
-    | inBudget -> put (AppWrapper context (MaintenanceFlow Maintenance.startBudgetMovement))
-  VtyEvent (V.EvKey (V.KChar 'M') [])
-    | inBudget -> put (AppWrapper context (MaintenanceFlow Maintenance.startBudgetMovement))
-  VtyEvent (V.EvKey V.KEnter [])
-    | inAccounts -> put (AppWrapper context (MaintenanceFlow Maintenance.startAccountAdd))
-  VtyEvent (V.EvKey (V.KChar 'a') [])
-    | inAccounts -> put (AppWrapper context (MaintenanceFlow Maintenance.startAccountAdd))
-  VtyEvent (V.EvKey (V.KChar 'A') [])
-    | inAccounts -> put (AppWrapper context (MaintenanceFlow Maintenance.startAccountAdd))
-  VtyEvent (V.EvKey (V.KChar 'a') [])
-    | inIssues -> put (AppWrapper context (MaintenanceFlow Maintenance.startIssueAdd))
-  VtyEvent (V.EvKey (V.KChar 'A') [])
-    | inIssues -> put (AppWrapper context (MaintenanceFlow Maintenance.startIssueAdd))
-  VtyEvent (V.EvKey V.KEnter [])
-    | inIssues -> openSelectedIssue
-  VtyEvent (V.EvKey (V.KChar 'a') [])
-    | inPlans -> put (AppWrapper context (PlanFlow (Plan.startAdd context)))
-  VtyEvent (V.EvKey (V.KChar 'A') [])
-    | inPlans -> put (AppWrapper context (PlanFlow (Plan.startAdd context)))
-  VtyEvent (V.EvKey (V.KChar 'e') [])
-    | inPlans -> openSelectedPlanEdit
-  VtyEvent (V.EvKey (V.KChar 'E') [])
-    | inPlans -> openSelectedPlanEdit
-  VtyEvent (V.EvKey (V.KChar 'b') [])
-    | inPlans -> openPlanBudgetSyncPicker
-  VtyEvent (V.EvKey (V.KChar 'B') [])
-    | inPlans -> openPlanBudgetSyncPicker
-  VtyEvent (V.EvKey V.KEnter [])
-    | inActual && contextWorkspaceFocus context == AccountsFocus ->
-        put (AppWrapper (context { contextWorkspaceFocus = TransactionsFocus }) Workspace)
-  VtyEvent (V.EvKey V.KEnter [])
-    | inActual -> put (AppWrapper context (ActualFlow (Actual.startSelectedReverse context)))
-  VtyEvent (V.EvKey V.KEnter [])
-    | inPlans -> openSelectedPlan
-  VtyEvent (V.EvKey (V.KChar 'c') [])
-    | inPlans -> openSelectedPlan
-  VtyEvent (V.EvKey (V.KChar 'C') [])
-    | inPlans -> openSelectedPlan
-  VtyEvent (V.EvKey (V.KChar '\t') [])
-    | inActual -> put (AppWrapper (Actual.toggleWorkspaceFocus context) Workspace)
-  VtyEvent (V.EvKey V.KLeft [])
-    | inActual -> put (AppWrapper (context { contextWorkspaceFocus = AccountsFocus }) Workspace)
-  VtyEvent (V.EvKey V.KRight [])
-    | inActual -> put (AppWrapper (context { contextWorkspaceFocus = TransactionsFocus }) Workspace)
-  VtyEvent vtyEvent
-    | inActual -> handleActualListEvent context vtyEvent
-  VtyEvent vtyEvent
-    | inPlans -> zoom zoomPlanList (L.handleListEventVi L.handleListEvent vtyEvent)
-  VtyEvent vtyEvent
-    | inIssues -> zoom zoomIssueList (L.handleListEventVi L.handleListEvent vtyEvent)
-  _ -> pure ()
+  _ -> case contextCurrentSection context of
+    ActualSection -> do
+      action <- zoom zoomContext (Actual.handleWorkspaceEvent event)
+      AppWrapper currentContext _ <- get
+      case action of
+        Actual.MaintainContext -> pure ()
+        Actual.OpenDaily -> put (AppWrapper currentContext (ActualFlow (Actual.startDaily (contextEntryDay currentContext))))
+        Actual.OpenIncome -> put (AppWrapper currentContext (ActualFlow (Actual.startIncome (contextEntryDay currentContext))))
+        Actual.OpenMulti -> put (AppWrapper currentContext (ActualFlow (Actual.startMulti (contextEntryDay currentContext))))
+        Actual.OpenReverse -> put (AppWrapper currentContext (ActualFlow (Actual.startSelectedReverse currentContext)))
+    PlansSection -> do
+      action <- zoom zoomContext (Plan.handleWorkspaceEvent event)
+      AppWrapper currentContext _ <- get
+      case action of
+        Plan.MaintainContext -> pure ()
+        Plan.StartFlow flow -> put (AppWrapper currentContext (PlanFlow flow))
+        Plan.OpenBudgetSyncPicker -> openPlanBudgetSyncPicker
+    BudgetSection -> do
+      action <- Maintenance.handleBudgetWorkspaceEvent event
+      case action of
+        Maintenance.BudgetActionMaintain -> pure ()
+        Maintenance.BudgetActionStartMovement ->
+          put (AppWrapper context (MaintenanceFlow Maintenance.startBudgetMovement))
+    AccountsSection -> do
+      action <- Maintenance.handleAccountsWorkspaceEvent event
+      case action of
+        Maintenance.AccountsActionMaintain -> pure ()
+        Maintenance.AccountsActionStartAdd ->
+          put (AppWrapper context (MaintenanceFlow Maintenance.startAccountAdd))
+    IssuesSection -> do
+      action <- zoom zoomContext (Maintenance.handleIssuesWorkspaceEvent event)
+      AppWrapper currentContext _ <- get
+      case action of
+        Maintenance.IssuesActionMaintain -> pure ()
+        Maintenance.IssuesActionStartAdd ->
+          put (AppWrapper currentContext (MaintenanceFlow Maintenance.startIssueAdd))
+        Maintenance.IssuesActionStartClose flow ->
+          put (AppWrapper currentContext (MaintenanceFlow flow))
+    ReportsSection -> do
+      action <- zoom zoomContext (Report.handleWorkspaceEvent event)
+      case action of
+        Report.MaintainContext -> pure ()
+        Report.OpenPicker -> openReportPicker
+    SettingsSection -> pure ()
   where
-    inActual = contextCurrentSection context == ActualSection
-    inPlans = contextCurrentSection context == PlansSection
-    inBudget = contextCurrentSection context == BudgetSection
-    inAccounts = contextCurrentSection context == AccountsSection
-    inIssues = contextCurrentSection context == IssuesSection
-    inReports = contextCurrentSection context == ReportsSection
     inSettings = contextCurrentSection context == SettingsSection
-    reportsViewport = viewportScroll ReportsViewport
     switchSection :: HouseholdSection -> EventM Name AppWrapper ()
     switchSection section =
       put (AppWrapper (context { contextCurrentSection = section }) Workspace)
-    selectReport :: ReportChoice -> EventM Name AppWrapper ()
-    selectReport report = do
-      put (AppWrapper (context { contextSelectedReport = report }) Workspace)
-      vScrollToBeginning reportsViewport
-      hScrollToBeginning reportsViewport
     openReportPicker =
       let picker = L.list ReportPickerList (Vec.fromList Report.reportChoices) 1
           selectedIndex = Report.reportChoiceIndex (contextSelectedReport context)
@@ -441,30 +317,6 @@ handleWorkspaceEvent context event = case event of
             (PlanFlow (Plan.WriteOutcome "No completed Plans are available for Budget sync retry.")))
           _ -> put (AppWrapper context
             (PlanBudgetSyncPicker (L.list PlanList (Vec.fromList completedPlans) 1)))
-    openActualDaily = put (AppWrapper context (ActualFlow (Actual.startDaily (contextEntryDay context))))
-    openActualIncome = put (AppWrapper context (ActualFlow (Actual.startIncome (contextEntryDay context))))
-    openActualMulti = put (AppWrapper context (ActualFlow (Actual.startMulti (contextEntryDay context))))
-    openSelectedPlan :: EventM Name AppWrapper ()
-    openSelectedPlan = case Plan.startSelectedCompletion context of
-      Nothing -> pure ()
-      Just flow -> put (AppWrapper context (PlanFlow flow))
-    openSelectedPlanEdit :: EventM Name AppWrapper ()
-    openSelectedPlanEdit = case Plan.startSelectedEdit context of
-      Nothing -> pure ()
-      Just flow -> put (AppWrapper context (PlanFlow flow))
-    openSelectedIssue :: EventM Name AppWrapper ()
-    openSelectedIssue = case Maintenance.startSelectedIssueClose context of
-      Nothing -> pure ()
-      Just flow -> put (AppWrapper context (MaintenanceFlow flow))
-    selectActualAccountRow row = do
-      moveListSelection zoomWorkspaceAccounts row
-      AppWrapper updatedContext _ <- get
-      let focused = updatedContext { contextWorkspaceFocus = AccountsFocus }
-      put (AppWrapper (Actual.applyWorkspaceAccountFilter focused) Workspace)
-    selectActualTransactionRow row = do
-      moveListSelection zoomWorkspaceList row
-      AppWrapper updatedContext _ <- get
-      put (AppWrapper (updatedContext { contextWorkspaceFocus = TransactionsFocus }) Workspace)
 
 moveListSelection
   :: Traversal' AppWrapper (L.List Name a)
@@ -527,15 +379,6 @@ handlePlanBudgetSyncPicker context event = case event of
   VtyEvent vtyEvent ->
     zoom zoomPlanBudgetSyncPicker (L.handleListEventVi L.handleListEvent vtyEvent)
   _ -> pure ()
-
-handleActualListEvent :: AppContext -> V.Event -> EventM Name AppWrapper ()
-handleActualListEvent context vtyEvent = case contextWorkspaceFocus context of
-  AccountsFocus -> do
-    zoom zoomWorkspaceAccounts (L.handleListEventVi L.handleListEvent vtyEvent)
-    AppWrapper updatedContext _ <- get
-    put (AppWrapper (Actual.applyWorkspaceAccountFilter updatedContext) Workspace)
-  TransactionsFocus ->
-    zoom zoomWorkspaceList (L.handleListEventVi L.handleListEvent vtyEvent)
 
 handleActualFlow :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleActualFlow context event = do

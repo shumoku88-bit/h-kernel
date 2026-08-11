@@ -1,8 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HKernel.Editor.TUI.Report
-  ( drawWorkspace
+  ( WorkspaceAction(..)
+  , drawWorkspace
   , drawPicker
+  , handleWorkspaceEvent
   , reportChoices
   , reportChoiceIndex
   , reportChoiceAt
@@ -13,12 +15,14 @@ import Brick
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import qualified Brick.Widgets.List as L
+import qualified Graphics.Vty as V
 
 import Data.Text (Text)
 import qualified Data.Text as T
 
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
+  , AppEvent
   , Name(..)
   , ReportChoice(..)
   , contextHouseholdState
@@ -198,3 +202,61 @@ cycleReportBack choice = go ReportCombinedBook reportChoices
     go previous (current : rest)
       | current == choice = previous
       | otherwise = go current rest
+
+data WorkspaceAction
+  = MaintainContext
+  | OpenPicker
+
+handleWorkspaceEvent
+  :: BrickEvent Name AppEvent
+  -> EventM Name AppContext WorkspaceAction
+handleWorkspaceEvent event = case event of
+  MouseDown ReportsViewport V.BScrollUp _ _ -> do
+    vScrollBy reportsViewport (-3)
+    pure MaintainContext
+  MouseDown ReportsViewport V.BScrollDown _ _ -> do
+    vScrollBy reportsViewport 3
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KEnter []) -> pure OpenPicker
+  VtyEvent (V.EvKey V.KUp []) -> do
+    vScrollBy reportsViewport (-1)
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KDown []) -> do
+    vScrollBy reportsViewport 1
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KLeft [V.MShift]) -> do
+    hScrollPage reportsViewport Up
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KRight [V.MShift]) -> do
+    hScrollPage reportsViewport Down
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KLeft []) -> do
+    hScrollBy reportsViewport (-4)
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KRight []) -> do
+    hScrollBy reportsViewport 4
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KPageUp []) -> do
+    vScrollPage reportsViewport Up
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KPageDown []) -> do
+    vScrollPage reportsViewport Down
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KHome []) -> do
+    vScrollToBeginning reportsViewport
+    pure MaintainContext
+  VtyEvent (V.EvKey V.KEnd []) -> do
+    vScrollToEnd reportsViewport
+    pure MaintainContext
+  VtyEvent (V.EvKey (V.KChar key) []) -> do
+    context <- get
+    case reportSelectionForKey (contextSelectedReport context) key of
+      Nothing -> pure MaintainContext
+      Just report -> do
+        modify (\ctx -> ctx { contextSelectedReport = report })
+        vScrollToBeginning reportsViewport
+        hScrollToBeginning reportsViewport
+        pure MaintainContext
+  _ -> pure MaintainContext
+  where
+    reportsViewport = viewportScroll ReportsViewport

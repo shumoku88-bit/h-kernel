@@ -4,9 +4,11 @@ module HKernel.Editor.TUI.Plan
   ( PublishRequest(..)
   , PublishResult(..)
   , State(..)
+  , WorkspaceAction(..)
   , drawFlow
   , drawWorkspace
   , handleFlowEvent
+  , handleWorkspaceEvent
   , publishCandidate
   , startAdd
   , startSelectedCompletion
@@ -76,6 +78,7 @@ import HKernel.Editor.TUI.Model
   , Name(..)
   , contextBudgetSource
   , contextHouseholdState
+  , contextPlanListL
   , contextPlanSource
   , contextSource
   , contextSourcePath
@@ -813,3 +816,49 @@ renderPosting posting =
 
 showText :: Show value => value -> Text
 showText = T.pack . show
+
+data WorkspaceAction
+  = MaintainContext
+  | StartFlow (State AppEvent)
+  | OpenBudgetSyncPicker
+
+handleWorkspaceEvent
+  :: BrickEvent Name AppEvent
+  -> EventM Name AppContext WorkspaceAction
+handleWorkspaceEvent event = case event of
+  MouseDown PlanList V.BScrollUp _ _ -> do
+    zoom contextPlanListL (L.handleListEvent (V.EvKey V.KUp []))
+    pure MaintainContext
+  MouseDown PlanList V.BScrollDown _ _ -> do
+    zoom contextPlanListL (L.handleListEvent (V.EvKey V.KDown []))
+    pure MaintainContext
+  MouseDown PlanList V.BLeft _ (Location (_, row)) -> do
+    zoom contextPlanListL (modify (L.listMoveTo row))
+    pure MaintainContext
+  VtyEvent (V.EvKey (V.KChar 'a') []) -> openAdd
+  VtyEvent (V.EvKey (V.KChar 'A') []) -> openAdd
+  VtyEvent (V.EvKey (V.KChar 'e') []) -> openSelectedEdit
+  VtyEvent (V.EvKey (V.KChar 'E') []) -> openSelectedEdit
+  VtyEvent (V.EvKey (V.KChar 'b') []) -> pure OpenBudgetSyncPicker
+  VtyEvent (V.EvKey (V.KChar 'B') []) -> pure OpenBudgetSyncPicker
+  VtyEvent (V.EvKey V.KEnter []) -> openSelectedCompletion
+  VtyEvent (V.EvKey (V.KChar 'c') []) -> openSelectedCompletion
+  VtyEvent (V.EvKey (V.KChar 'C') []) -> openSelectedCompletion
+  VtyEvent (V.EvKey vtyKey vtyMods) -> do
+    zoom contextPlanListL (L.handleListEventVi L.handleListEvent (V.EvKey vtyKey vtyMods))
+    pure MaintainContext
+  _ -> pure MaintainContext
+  where
+    openAdd = do
+      context <- get
+      pure (StartFlow (startAdd context))
+    openSelectedEdit = do
+      context <- get
+      case startSelectedEdit context of
+        Nothing -> pure MaintainContext
+        Just flow -> pure (StartFlow flow)
+    openSelectedCompletion = do
+      context <- get
+      case startSelectedCompletion context of
+        Nothing -> pure MaintainContext
+        Just flow -> pure (StartFlow flow)
