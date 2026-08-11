@@ -71,12 +71,14 @@ jobs:
           for module in exposed:
               print(f"  {module}")
 
-          strict = """roots = [ '.*\\.main$', '^Paths_.*' ]
-type-class-roots = true
-root-instances = []
-root-modules = []
-unused-types = false
-"""
+          strict = "\n".join([
+              "roots = [ '.*\\.main$', '^Paths_.*' ]",
+              "type-class-roots = true",
+              "root-instances = []",
+              "root-modules = []",
+              "unused-types = false",
+              "",
+          ])
           Path("/tmp/weeder-strict.toml").write_text(strict)
 
           module_patterns = ["'^" + re.escape(module) + "$'" for module in exposed]
