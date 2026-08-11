@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | One household operation for closing a Plan with an Actual transaction and,
 -- when requested, appending its next occurrence.

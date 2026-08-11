@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
 
 module HKernel.Editor.TUI.Maintenance
   ( PublishRequest(..)
