@@ -100,7 +100,7 @@ Do not combine these merely because coordinated publication connects them.
 
 # Batch C1: Household application orchestration
 
-Status: **ACCEPTED / MERGED / POST-MERGE CI RUNNING**
+Status: **ACCEPTED / MERGED / POST-MERGE REQUALIFICATION BLOCKED BY CI INFRASTRUCTURE**
 
 Implementation PR: #208 `cleanup(household): linearize canonical application assembly`
 Base: `31d427b2ec98a96d704206523b46ab5b2d292fbf`
@@ -179,15 +179,25 @@ This review reinforces the cleanup rule:
 
 PR CI #668 passed GHC 9.10.3 / 9.12.4 / 9.14.1. The GHC 9.10.3 job also passed repository ownership audit and complete report contracts.
 
-Post-merge main CI #669 started for `e9f088b25f8eb2b366d69dddfe8af3f0d19c7de8` and was still running at this ledger update.
+## Post-merge CI #669 infrastructure observation
 
-# Next: Batch C2 observation only
+Main CI #669 targets the accepted merge commit `e9f088b25f8eb2b366d69dddfe8af3f0d19c7de8`.
 
-Do not jump directly to a rename or split.
+The GHC 9.10.3 job failed during dependency resolution, before compilation. Its `cabal update` selected Hackage index-state `2025-09-28T23:18:24Z`, under which the available `toml-parser` did not satisfy the repository's existing `>=2.0.2 && <2.1` bound.
 
-Re-observe safe publication on merged main after C1 and determine the smallest honest owner correction.
+The immediately preceding PR #668 GHC 9.10.3 job used index-state `2026-08-11T16:49:51Z`, resolved `toml-parser-2.0.2.0`, and passed build, tests, ownership audit, and complete report contracts on the exact reviewed source.
 
-Current evidence already established that `HKernel.Editor.ActualWriter` contains a real source-neutral publication kernel:
+Therefore the #669 9.10.3 failure is currently classified as Hackage/index-state infrastructure behavior, not a C1 code regression. Do not change C1 code or dependency bounds from this single failure. Re-run the failed job once the workflow run is complete; GitHub rejects job reruns while other matrix jobs in the same run remain active.
+
+# Batch C2: safe publication owner observation
+
+Status: **OBSERVED / IMPLEMENTATION HELD UNTIL MAIN REQUALIFICATION**
+
+Merged-main observation confirms `HKernel.Editor.ActualWriter` is now a misleadingly narrow historical module name.
+
+## Current responsibility
+
+The module owns a real source-neutral publication boundary:
 
 - `ExpectedSource`
 - `CandidateSource`
@@ -197,40 +207,78 @@ Current evidence already established that `HKernel.Editor.ActualWriter` contains
 - `defaultWriterFileSystem`
 - `publishWithAdmission*`
 - `publishWithPathAdmission*`
-- stale detection
-- unique sibling staging
-- atomic publication
-- post-admission
-- guarded rollback
-- final candidate re-check
+- unique sibling staging;
+- stale checks before staging/rename;
+- atomic publication;
+- post-publication exact candidate verification;
+- admission callback;
+- guarded rollback only while the target still contains this writer's exact candidate;
+- final candidate re-check after admission.
 
-It is used across Actual, Plan, Account, Budget, Issue and coordinated Plan+Actual paths, so the historical module name is genuinely narrower than its current responsibility.
+It also exposes named source-specific admission/publication adapters for Actual, Plan, and Budget. That coexistence is not by itself evidence for a split: those adapters define the admission boundary used by the common publication law.
 
-However writer capability and canonical writer authority remain different concepts. Current source-authority documentation says canonical `actual.journal` writer authority belongs to h-kernel editor, while Plan / Budget / Issue write capability does not itself transfer canonical writer authority.
+## Cross-domain use
 
-Before implementation, inventory on actual merged main:
+The owner is not Actual-local in production:
 
-1. every production import of `HKernel.Editor.ActualWriter`;
-2. every exported source-neutral type/function versus Actual/Plan/Budget-specific admission adapter;
-3. `EditorActualWriterSpec` law coverage and whether the test name is also stale;
-4. `PlanCompleteAdvance` dependency on `WriterFileSystem`;
-5. h-kernel.cabal exposed-module/API consequences;
-6. writer-authority and migration docs that could be semantically confused by a source-neutral module name;
-7. retained Account-in-Actual compatibility paths.
+- Editor CLI uses generic publication for canonical Account, Budget, and Issue paths as well as Actual/Plan-specific adapters;
+- TUI Actual uses Actual-specific block publication;
+- TUI Plan uses generic publication coordinates plus Plan-specific admission/publication;
+- TUI Maintenance uses generic publication for Budget, Account, and Issue workflows;
+- `PlanCompleteAdvance` imports only `WriterFileSystem` / `defaultWriterFileSystem` from `ActualWriter` for coordinated Plan+Actual publication;
+- `ActualAppend` imports the generic `WriteError` type.
 
-Possible outcomes to compare, not preselect:
+`EditorActualWriterSpec` likewise covers generic stale/staging/rollback/final-verification laws plus Actual and Plan adapters, so its test owner name has drifted with the production module name.
 
-- rename the existing owner with minimal movement;
-- extract one source-neutral publication owner and keep named domain adapters nearby;
-- split only the publication kernel from domain-specific admission if that yields a clearer owner with fewer misleading imports.
+## Ownership conclusion
 
-Explicit non-goals:
+The smallest honest correction currently appears to be a **rename-only owner correction**, not a structural split.
 
-- no generic repository/session framework;
-- no universal Writer typeclass/framework;
-- no `ActualWriter` / `PlanWriter` / `BudgetWriter` / `IssueWriter` symmetry fan-out;
-- no writer-authority migration;
-- no source-format change;
+A source-publication name such as `HKernel.Editor.SourcePublication` describes what the module actually owns without implying that every source using the capability has transferred canonical writer authority to h-kernel.
+
+This distinction is essential:
+
+```text
+safe publication capability
+!=
+canonical writer authority
+```
+
+Current product/source-authority documents that speak about the canonical Actual writer remain semantically Actual-specific and should not be mechanically renamed merely because a code module changes name.
+
+## Why split is not currently justified
+
+Splitting generic mechanics from domain admission adapters would add module boundaries without current evidence of different reasons to change. The adapters are thin named admission choices around the same stale/atomic/post-admission/rollback law. Module size and mixed domain names alone are insufficient evidence.
+
+Likewise, do not fan out into `ActualWriter`, `PlanWriter`, `BudgetWriter`, `IssueWriter` modules for symmetry.
+
+## API/test consequence if implementation proceeds
+
+`HKernel.Editor.ActualWriter` is an exposed module, so a rename is API-visible. Before implementation, recheck whether any concrete external compatibility requirement justifies a temporary re-export. Do not add a compatibility wrapper merely from fear of change.
+
+If no such requirement is found, the coherent rename slice would naturally update:
+
+- module/file name;
+- all production imports;
+- `h-kernel.cabal` exposed module;
+- safe-publication test file/test-suite naming;
+- module/test comments that incorrectly say Actual when they describe the common publication law.
+
+It should not change any public function/type signatures or publication behavior.
+
+## C2 explicit non-goals
+
+- no safe-writer algorithm rewrite;
+- no generic Writer typeclass/framework;
+- no repository/session abstraction;
+- no domain-specific writer fan-out;
+- no source authority migration;
+- no source format change;
 - no Account-in-Actual retirement;
-- no coordinated writer rewrite merely to reuse more code;
-- no behavior change to stale checks, atomic staging, rollback, or final verification.
+- no removal of currently exposed adapters merely because code search finds few callers;
+- no coordinated Plan+Actual writer refactor;
+- no mechanical rewrite of Actual writer-authority documentation.
+
+# Next gate
+
+Finish/re-run main CI #669 first. If main requalifies without code changes, prepare one coherent C2 rename-only implementation instruction from the actual then-current main. If the rerun reproduces the Hackage index regression, treat CI dependency-index reproducibility as a separate infrastructure problem before changing C2.
