@@ -118,6 +118,7 @@ library h-kernel-editor
 
 library h-kernel-household-application
     exposed-modules:  HKernel.Household.Application
+    other-modules:    HKernel.Spike.HouseholdReport
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
                     , h-kernel
@@ -130,6 +131,8 @@ library h-kernel-household-application
 
 executable h-kernel
     main-is:          Main.hs
+    other-modules:    HKernel.Spike.HouseholdReport
+                    , HKernel.Spike.HouseholdReport.Render
     build-depends:    base >= 4.14 && < 5
                     , directory
                     , filepath >= 1.4 && < 1.6
@@ -649,6 +652,8 @@ executable h-kernel-editor-tui
                     , HKernel.Editor.TUI.Model
                     , HKernel.Editor.TUI.Plan
                     , HKernel.Editor.TUI.ReportStyle
+                    , HKernel.Spike.HouseholdReport
+                    , HKernel.Spike.HouseholdReport.Render
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
                     , directory >= 1.3 && < 1.4
