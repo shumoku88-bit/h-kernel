@@ -26,6 +26,7 @@ import HKernel.Editor.IssueAppend
   , IssueCloseError(..)
   , IssueCloseIntent(..)
   , IssueClosePreview(..)
+  , generateAvailableIssueId
   , prepareIssueAppend
   , prepareIssueClose
   )
@@ -53,7 +54,9 @@ import HKernel.Money
 main :: IO ()
 main = do
   let tests =
-        [ ("testValidIssueAppend", pure testValidIssueAppend)
+        [ ("testGeneratedIssueIdStartsAtOne", pure testGeneratedIssueIdStartsAtOne)
+        , ("testGeneratedIssueIdSkipsExisting", pure testGeneratedIssueIdSkipsExisting)
+        , ("testValidIssueAppend", pure testValidIssueAppend)
         , ("testOptionalAmountAppend", pure testOptionalAmountAppend)
         , ("testEmptySourceAddsHeader", pure testEmptySourceAddsHeader)
         , ("testCommentOnlySourceAddsHeader", pure testCommentOnlySourceAddsHeader)
@@ -127,6 +130,23 @@ dropIntent = IssueCloseIntent
   , closeDisposition = DropIssue
   , closeDecisionMemo = "2026-08-08 no longer needed"
   }
+
+testGeneratedIssueIdStartsAtOne :: Bool
+testGeneratedIssueIdStartsAtOne =
+  case generateAvailableIssueId (fromGregorian 2026 8 11) [] of
+    Right identifier -> identifier == mustIssueId "ISS20260811-1"
+    Left err -> error (show err)
+
+testGeneratedIssueIdSkipsExisting :: Bool
+testGeneratedIssueIdSkipsExisting =
+  case generateAvailableIssueId
+      (fromGregorian 2026 8 11)
+      [ mustIssueId "ISS20260811-1"
+      , mustIssueId "ISS20260811-2"
+      , mustIssueId "ISS20260810-3"
+      ] of
+    Right identifier -> identifier == mustIssueId "ISS20260811-3"
+    Left err -> error (show err)
 
 testValidIssueAppend :: Bool
 testValidIssueAppend =

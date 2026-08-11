@@ -4,6 +4,7 @@ module HKernel.Editor.IssueAppend
   ( IssueAppendIntent(..)
   , IssueAppendError(..)
   , IssueAppendPreview(..)
+  , generateAvailableIssueId
   , prepareIssueAppend
   , IssueCloseDisposition(..)
   , IssueCloseIntent(..)
@@ -15,6 +16,7 @@ module HKernel.Editor.IssueAppend
 import Data.Bifunctor (first)
 import Data.Char (isControl)
 import Data.List.NonEmpty (NonEmpty)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -25,11 +27,13 @@ import HKernel.HouseholdIssue
   ( HouseholdIssue
   , HouseholdIssueError
   , IssueId
+  , IssueIdError
   , IssueStatus(..)
   , IssueDue(..)
   , householdIssueId
   , householdIssueStatus
   , mkHouseholdIssue
+  , mkIssueId
   , issueIdText
   )
 import HKernel.Household.Issue.TSV
@@ -66,6 +70,27 @@ data IssueAppendPreview = IssueAppendPreview
   { candidateBlock          :: Text
   , candidateCompleteSource :: Text
   } deriving (Eq, Show)
+
+-- | Generate the first unused Editor-owned Issue identity for one day.
+--
+-- The stable Issue domain admits explicit durable identifiers. This function
+-- owns only the current Editor convention for generated identifiers; callers
+-- supply the day and already-admitted identities from their Household
+-- observation.
+generateAvailableIssueId
+  :: Day
+  -> [IssueId]
+  -> Either IssueIdError IssueId
+generateAvailableIssueId day existingIds = go (1 :: Int)
+  where
+    dayText = T.filter (/= '-') (T.pack (show day))
+    existing = Set.fromList (map issueIdText existingIds)
+
+    go index =
+      let candidateText = "ISS" <> dayText <> "-" <> T.pack (show index)
+      in if candidateText `Set.member` existing
+          then go (index + 1)
+          else mkIssueId candidateText
 
 prepareIssueAppend
   :: Text
