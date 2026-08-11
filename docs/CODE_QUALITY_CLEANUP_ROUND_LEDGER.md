@@ -104,7 +104,7 @@ Counter-findings remain important:
 
 ## Batch A: mechanical repository plumbing
 
-Status: READY FOR IMPLEMENTATION
+Status: REVIEW BLOCKED / ONE CORRECTION REQUESTED
 
 ### Goal
 
@@ -158,11 +158,59 @@ Prefer one PR for Batch A, with a few logical commits if useful. Do not split Ca
 
 If one subpart proves materially unsafe or produces a worse diff, leave it out and report the evidence rather than forcing the planned shape.
 
-### Review state
+### Implementation result
 
-Implementation result: pending.
-Reviewer result: pending.
-Merge decision: pending.
+PR #206 `cleanup: reduce repository plumbing`
+
+- base remained `ce225f195546c19dc0bc2b7532c168359d774f53` during first review;
+- head reviewed: `c143b3184071ba28a6561922032d1ecb594e5bbd`;
+- 43 changed files, concentrated in `h-kernel.cabal`, `editor-app/Main.hs`, `tests/Test/Support.hs`, and mechanical test-helper consumers;
+- Cabal introduced `common-defaults`, `test-defaults`, and `tested-with` matching the current CI matrix while keeping component-specific dependency lists explicit;
+- neutral test support consolidated exact mechanical helper variants while leaving known diagnostic/signature variants local;
+- implementation report claimed Editor CLI root routing was totalized and production partiality removed.
+
+### Reviewer result
+
+First independent review: **not accepted yet**.
+
+Accepted direction so far:
+
+- Cabal common stanzas are scoped to build/test plumbing rather than dependency architecture;
+- `tested-with` matches the current CI matrix and no `base` bound change was mixed in;
+- `Test.Support` contains only neutral test apparatus (`assertEqual`, `assertTrue`, one-argument `mustRight`, one-argument `mustJust`);
+- known two-argument / custom-diagnostic helper variants remain local;
+- no TUI, Household.Application, ActualWriter ownership, source-format, or compatibility changes entered the batch;
+- current `main` had not moved at review time.
+
+Blocking finding:
+
+`editor-app/Main.hs` still contains a production partial escape inside the new helper:
+
+```haskell
+resolveHouseholdRoot :: FilePath -> HouseholdRoot
+...
+Left _ -> error "empty household root path"
+```
+
+Therefore the implementation report and PR description overstate the result: repetition was reduced, but totalization was not achieved.
+
+Current `mkHouseholdRoot` rejects only an empty path. The helper converts an empty `takeDirectory` result to `"."`, so its constructed `rootDir` is always nonempty. The second fallback `mkHouseholdRoot "."` and final `error` are therefore unnecessary-looking control flow. The correction must not replace the `error` with another unsafe extraction. Totality should be represented explicitly by the helper type/control flow, for example `Either HouseholdRootError HouseholdRoot` converted through the normal CLI failure path.
+
+A review comment recording this blocker was added to PR #206.
+
+### Merge decision
+
+**DO NOT MERGE YET.**
+
+Required correction:
+
+1. remove the remaining production `error` rather than merely renaming the old partial branch;
+2. make root resolution genuinely total through an explicit result/failure path;
+3. update PR description so its claims match the code;
+4. rerun targeted CLI/canonical Household qualification and full Batch A verification;
+5. push the correction to the existing PR rather than creating a micro-PR.
+
+After the corrected head is pushed, repeat independent review of the full PR and CI before deciding merge or Batch B.
 
 ## Later batches
 
@@ -189,6 +237,15 @@ Candidate scope after Batch B review:
 These are higher-risk ownership changes and should not be mixed into Batch A.
 
 ## History
+
+### 2026-08-11 / Batch A first independent review
+
+- terminal implementation produced PR #206 at head `c143b3184071ba28a6561922032d1ecb594e5bbd`;
+- actual diff verified that Cabal and neutral test-helper work stayed within the authorized plumbing scope;
+- current `main` independently rechecked and remained `ce225f195546c19dc0bc2b7532c168359d774f53`;
+- review found one blocking mismatch: new `resolveHouseholdRoot` still contains `error "empty household root path"`, so claimed totalization is incomplete;
+- PR #206 received a correction comment; merge remains blocked pending a same-PR fix and requalification;
+- CI run #655 was still in progress during this first review and is not sufficient to override the source-level totality finding.
 
 ### 2026-08-11 / ledger initialization
 
