@@ -111,11 +111,11 @@ main = do
     ("-1,000 JPY" `T.isInfixOf` renderedWithPresentation
       && not ("(1,000 JPY)" `T.isInfixOf` renderedWithPresentation))
   assertEqual
-    "configured heading color reaches combined report headings"
+    "configured heading color reaches combined Journal report headings"
     True
     ("\ESC[1;34m== Account Balances (h-kernel Engine) ==\ESC[0m"
       `T.isInfixOf` renderedWithPresentation
-      && "\ESC[1;34m== Envelope & Backing ==\ESC[0m"
+      && "\ESC[1;34m== Monthly Accounts (Account × Month) ==\ESC[0m"
         `T.isInfixOf` renderedWithPresentation)
   assertEqual
     "configured section color reaches report hierarchy"
@@ -154,12 +154,15 @@ main = do
     True
     ("Balanced: \ESC[32mYES\ESC[0m" `T.isInfixOf` renderedWithPresentation)
   assertEqual
-    "missing household semantics remain explicit instead of looking empty"
-    True
-    ("== Daily Target ==" `T.isInfixOf` renderedWithPresentation
-      && "Status: NOT IMPLEMENTED" `T.isInfixOf` renderedWithPresentation
-      && "Status: NOT AVAILABLE IN COMBINED REPORT"
-        `T.isInfixOf` renderedWithPresentation)
+    "Journal-only ReportBook does not manufacture Household sections"
+    False
+    (any (`T.isInfixOf` renderedWithPresentation)
+      [ "== Cycle Accounts & Comparison Matrix =="
+      , "== Daily Target =="
+      , "== Planned Transactions =="
+      , "== Household Issues =="
+      , "== Envelope & Backing =="
+      ])
 
   budgetAccountTests dateRange
 
@@ -268,11 +271,6 @@ expectedHeadings =
   , "\ESC[1;36m== Daily Flow (Category × Date) ==\ESC[0m"
   , "\ESC[1;36m== Recent Transactions (Last 5 Transactions) ==\ESC[0m"
   , "\ESC[1;36m== Monthly Accounts (Account × Month) ==\ESC[0m"
-  , "\ESC[1;36m== Cycle Accounts & Comparison Matrix ==\ESC[0m"
-  , "\ESC[1;36m== Daily Target ==\ESC[0m"
-  , "\ESC[1;36m== Planned Transactions ==\ESC[0m"
-  , "\ESC[1;36m== Household Issues ==\ESC[0m"
-  , "\ESC[1;36m== Envelope & Backing ==\ESC[0m"
   ]
 
 journalInput :: T.Text

@@ -138,23 +138,3 @@ Total Expenses        |    11,750 JPY, 180 USD |    11,750 JPY, 180 USD
 Net Profit            | (1,750 JPY), (180 USD) | (1,750 JPY), (180 USD)
 
 
-
-== Cycle Accounts & Comparison Matrix ==
-Status: NOT IMPLEMENTED
-explicit current and previous cycles are not part of the combined report input; use cycle-accounts with two half-open periods
-
-== Daily Target ==
-Status: NOT IMPLEMENTED
-no typed Daily Target model exists for eligible backing, open commitments, target date policy, and commodity-separated allowance
-
-== Planned Transactions ==
-Status: NOT IMPLEMENTED
-Plan admission exists, but no typed source collection or completion projection is connected
-
-== Household Issues ==
-Status: NOT IMPLEMENTED
-HouseholdIssue values exist, but no typed source collection is connected
-
-== Envelope & Backing ==
-Status: NOT AVAILABLE IN COMBINED REPORT
-Envelope entitlement/consumption/remaining requires an explicit external policy; use envelope-budget. Pool backing, commitments, unallocated, and shortage remain NOT IMPLEMENTED.

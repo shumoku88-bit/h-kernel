@@ -65,15 +65,7 @@ renderReportBookWithPresentation
   :: PresentationConfig
   -> ReportBook
   -> Text
-renderReportBookWithPresentation presentation report =
-  T.intercalate "\n"
-    [ renderReportBookCoreWithPresentation presentation report
-    , renderUnavailableCycleAccounts presentation
-    , renderUnavailableDailyTarget presentation
-    , renderUnavailablePlannedTransactions presentation
-    , renderUnavailableHouseholdIssues presentation
-    , renderUnavailableEnvelopeBacking presentation
-    ]
+renderReportBookWithPresentation = renderReportBookCoreWithPresentation
 
 renderReportBookCoreWithPresentation
   :: PresentationConfig
@@ -549,43 +541,6 @@ renderPeriod period =
   "[" <> renderDay (periodStart period)
     <> ", " <> renderDay (periodEndExclusive period) <> ")"
 
--- These sections deliberately complete the observable household surface without
--- manufacturing domain facts. Each message names the evidence still missing.
-renderUnavailableCycleAccounts :: PresentationConfig -> Text
-renderUnavailableCycleAccounts presentation = unavailableSection presentation
-  "Cycle Accounts & Comparison Matrix"
-  "explicit current and previous cycles are not part of the combined report input; use cycle-accounts with two half-open periods"
-
-renderUnavailableDailyTarget :: PresentationConfig -> Text
-renderUnavailableDailyTarget presentation = unavailableSection presentation
-  "Daily Target"
-  "no typed Daily Target model exists for eligible backing, open commitments, target date policy, and commodity-separated allowance"
-
-renderUnavailablePlannedTransactions :: PresentationConfig -> Text
-renderUnavailablePlannedTransactions presentation = unavailableSection presentation
-  "Planned Transactions"
-  "Plan admission exists, but no typed source collection or completion projection is connected"
-
-renderUnavailableHouseholdIssues :: PresentationConfig -> Text
-renderUnavailableHouseholdIssues presentation = unavailableSection presentation
-  "Household Issues"
-  "HouseholdIssue values exist, but no typed source collection is connected"
-
-renderUnavailableEnvelopeBacking :: PresentationConfig -> Text
-renderUnavailableEnvelopeBacking presentation = T.intercalate "\n"
-  [ terminalHeaderWith presentation "Envelope & Backing"
-  , terminalMeta "Status: NOT AVAILABLE IN COMBINED REPORT"
-  , terminalDim "Envelope entitlement/consumption/remaining requires an explicit external policy; use envelope-budget. Pool backing, commitments, unallocated, and shortage remain NOT IMPLEMENTED."
-  , ""
-  ]
-
-unavailableSection :: PresentationConfig -> Text -> Text -> Text
-unavailableSection presentation title reason = T.intercalate "\n"
-  [ terminalHeaderWith presentation title
-  , terminalMeta "Status: NOT IMPLEMENTED"
-  , terminalDim reason
-  , ""
-  ]
 
 renderRecentTransactions :: RecentTransactions -> Text
 renderRecentTransactions =
