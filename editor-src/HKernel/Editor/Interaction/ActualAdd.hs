@@ -17,19 +17,11 @@ module HKernel.Editor.Interaction.ActualAdd
   , filterDailyAccountCandidates
   , groupAccountCandidates
   , stepAccountCandidate
-  , ActualMultiAddState(..)
-  , initialActualMultiAddStateForDay
-  , setActualMultiAddDate
-  , setActualMultiDateText
-  , setActualMultiDescription
-  , selectActualMultiPosting
+  , initialActualMultiAddInputForDay
   , resizeActualMultiPostings
-  , appendActualMultiPosting
-  , removeSelectedActualMultiPosting
-  , setSelectedActualMultiAccount
-  , setSelectedActualMultiAccountText
-  , setSelectedActualMultiAmount
-  , selectedActualMultiPosting
+  , actualMultiPostingAt
+  , setActualMultiPostingAccountText
+  , setActualMultiPostingAmount
   , multiAccountCandidates
   , filterMultiAccountCandidates
   ) where
@@ -180,123 +172,66 @@ matchesIncomeRole registry target account =
 
 -- Multi-posting daily interaction
 
--- | General Actual row editor state. The selected index is zero-based and is
--- always clamped to an existing posting row. The operation owner still decides
--- whether these rows form a valid balanced transaction.
-data ActualMultiAddState = ActualMultiAddState
-  { actualMultiAddInput        :: ActualMultiAddInput
-  , actualMultiSelectedPosting :: Int
-  } deriving (Eq, Show)
-
-initialActualMultiAddStateForDay :: Day -> ActualMultiAddState
-initialActualMultiAddStateForDay day =
-  ActualMultiAddState
-    { actualMultiAddInput = ActualMultiAddInput
-        { multiAddDateText = renderDay day
-        , multiAddDescriptionText = ""
-        , multiAddPostings =
-            ActualPostingInput "" ""
-              NonEmpty.:| [ActualPostingInput "" "", ActualPostingInput "" ""]
-        }
-    , actualMultiSelectedPosting = 0
-    }
-
-setActualMultiAddDate :: Day -> ActualMultiAddState -> ActualMultiAddState
-setActualMultiAddDate day = setActualMultiDateText (renderDay day)
-
--- | Replace the raw date text without assigning date parsing to the delivery
--- toolkit. This keeps the multi-posting form usable with ordinary text entry
--- even when terminal-specific modified keys are unavailable.
-setActualMultiDateText :: Text -> ActualMultiAddState -> ActualMultiAddState
-setActualMultiDateText dateText state = state
-  { actualMultiAddInput =
-      (actualMultiAddInput state) { multiAddDateText = dateText }
+-- | Start one delivery-neutral multi-posting draft. Selection and other widget
+-- state belong to the delivery adapter rather than to the Actual input.
+initialActualMultiAddInputForDay :: Day -> ActualMultiAddInput
+initialActualMultiAddInputForDay day = ActualMultiAddInput
+  { multiAddDateText = renderDay day
+  , multiAddDescriptionText = ""
+  , multiAddPostings =
+      ActualPostingInput "" ""
+        NonEmpty.:| [ActualPostingInput "" "", ActualPostingInput "" ""]
   }
-
-setActualMultiDescription :: Text -> ActualMultiAddState -> ActualMultiAddState
-setActualMultiDescription description state = state
-  { actualMultiAddInput =
-      (actualMultiAddInput state) { multiAddDescriptionText = description }
-  }
-
-selectActualMultiPosting :: Int -> ActualMultiAddState -> ActualMultiAddState
-selectActualMultiPosting requested state =
-  state { actualMultiSelectedPosting = clampIndex requested rows }
-  where
-    rows = NonEmpty.toList (multiAddPostings (actualMultiAddInput state))
 
 -- | Resize the editable posting table while preserving source order and the
 -- contents of retained rows. Multi-posting entry always keeps at least three
 -- rows because the ordinary two-posting case has its own shorter workflow.
 -- A delivery can therefore expose posting count as an ordinary text field
 -- instead of requiring function or modified keys for row insertion/removal.
-resizeActualMultiPostings :: Int -> ActualMultiAddState -> ActualMultiAddState
-resizeActualMultiPostings requested state = state
-  { actualMultiAddInput = input { multiAddPostings = toNonEmpty resized }
-  , actualMultiSelectedPosting = clampIndex selected resized
-  }
+resizeActualMultiPostings :: Int -> ActualMultiAddInput -> ActualMultiAddInput
+resizeActualMultiPostings requested input =
+  input { multiAddPostings = toNonEmpty resized }
   where
-    input = actualMultiAddInput state
     rows = NonEmpty.toList (multiAddPostings input)
-    selected = actualMultiSelectedPosting state
     desired = max 3 requested
     blanks = replicate (max 0 (desired - length rows)) (ActualPostingInput "" "")
     resized = take desired (rows <> blanks)
 
-appendActualMultiPosting :: ActualMultiAddState -> ActualMultiAddState
-appendActualMultiPosting state =
-  let resized = resizeActualMultiPostings (length rows + 1) state
-  in resized { actualMultiSelectedPosting = length rows }
+actualMultiPostingAt :: Int -> ActualMultiAddInput -> ActualPostingInput
+actualMultiPostingAt requested input = rows !! clampIndex requested rows
   where
-    rows = NonEmpty.toList (multiAddPostings (actualMultiAddInput state))
-
-removeSelectedActualMultiPosting :: ActualMultiAddState -> ActualMultiAddState
-removeSelectedActualMultiPosting state
-  | length rows <= 3 = state
-  | otherwise = state
-      { actualMultiAddInput = input { multiAddPostings = toNonEmpty remaining }
-      , actualMultiSelectedPosting = clampIndex selected remaining
-      }
-  where
-    input = actualMultiAddInput state
     rows = NonEmpty.toList (multiAddPostings input)
-    selected = actualMultiSelectedPosting state
-    remaining = take selected rows <> drop (selected + 1) rows
 
-setSelectedActualMultiAccount :: Account -> ActualMultiAddState -> ActualMultiAddState
-setSelectedActualMultiAccount account =
-  setSelectedActualMultiAccountText (accountName account)
-
--- | Set the selected row's Account text directly. Canonical Account admission
--- remains downstream in Actual candidate preparation; this function exists so
--- ordinary form editing does not depend on a terminal shortcut to open a picker.
-setSelectedActualMultiAccountText :: Text -> ActualMultiAddState -> ActualMultiAddState
-setSelectedActualMultiAccountText accountText =
-  updateSelectedActualMultiPosting
+-- | Set one row's raw Account text. Canonical Account admission remains
+-- downstream in Actual candidate preparation.
+setActualMultiPostingAccountText
+  :: Int
+  -> Text
+  -> ActualMultiAddInput
+  -> ActualMultiAddInput
+setActualMultiPostingAccountText selected accountText =
+  updateActualMultiPosting selected
     (\posting -> posting { multiPostingAccountText = accountText })
 
-setSelectedActualMultiAmount :: Text -> ActualMultiAddState -> ActualMultiAddState
-setSelectedActualMultiAmount amount =
-  updateSelectedActualMultiPosting
+setActualMultiPostingAmount
+  :: Int
+  -> Text
+  -> ActualMultiAddInput
+  -> ActualMultiAddInput
+setActualMultiPostingAmount selected amount =
+  updateActualMultiPosting selected
     (\posting -> posting { multiPostingAmountText = amount })
 
-selectedActualMultiPosting :: ActualMultiAddState -> ActualPostingInput
-selectedActualMultiPosting state = rows !! selected
+updateActualMultiPosting
+  :: Int
+  -> (ActualPostingInput -> ActualPostingInput)
+  -> ActualMultiAddInput
+  -> ActualMultiAddInput
+updateActualMultiPosting requested update input =
+  input { multiAddPostings = toNonEmpty updatedRows }
   where
-    rows = NonEmpty.toList (multiAddPostings (actualMultiAddInput state))
-    selected = clampIndex (actualMultiSelectedPosting state) rows
-
-updateSelectedActualMultiPosting
-  :: (ActualPostingInput -> ActualPostingInput)
-  -> ActualMultiAddState
-  -> ActualMultiAddState
-updateSelectedActualMultiPosting update state = state
-  { actualMultiAddInput = input { multiAddPostings = toNonEmpty updatedRows }
-  }
-  where
-    input = actualMultiAddInput state
     rows = NonEmpty.toList (multiAddPostings input)
-    selected = clampIndex (actualMultiSelectedPosting state) rows
+    selected = clampIndex requested rows
     updatedRows =
       [ if index == selected then update posting else posting
       | (index, posting) <- zip [0 ..] rows
