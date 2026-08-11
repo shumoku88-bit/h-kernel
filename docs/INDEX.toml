@@ -150,3 +150,7 @@ role = "observation"
 [[documents]]
 path = "docs/CABAL_GILD_OBSERVATION_001.md"
 role = "observation"
+
+[[documents]]
+path = "docs/PUBLIC_MODULE_SURFACE_OBSERVATION_001.md"
+role = "observation"
