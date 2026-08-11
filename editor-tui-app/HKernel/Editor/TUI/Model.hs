@@ -140,6 +140,7 @@ data AppContext = AppContext
   , contextPlanList                :: L.List Name IdentifiedPlanTransaction
   , contextIssueList               :: L.List Name HouseholdIssue
   , contextSourcePath              :: FilePath
+  , contextAccountsSource          :: Text
   , contextSource                  :: Text
   , contextPlanSource              :: Text
   , contextBudgetSource            :: Text
@@ -156,9 +157,10 @@ makeWorkspaceContext
   -> Text
   -> Text
   -> Text
+  -> Text
   -> HouseholdState
   -> AppContext
-makeWorkspaceContext focusLatest today journalFile source planSource budgetSource issuesSource state =
+makeWorkspaceContext focusLatest today journalFile accountsSource source planSource budgetSource issuesSource state =
   AppContext
     { contextHouseholdState = state
     , contextCurrentSection = ActualSection
@@ -173,6 +175,7 @@ makeWorkspaceContext focusLatest today journalFile source planSource budgetSourc
     , contextPlanList = planList
     , contextIssueList = issueList
     , contextSourcePath = journalFile
+    , contextAccountsSource = accountsSource
     , contextSource = source
     , contextPlanSource = planSource
     , contextBudgetSource = budgetSource
@@ -215,6 +218,7 @@ reloadWorkspaceContext context = do
       let freshState = householdWriteSnapshotState snapshot
           freshPaths = householdStatePaths freshState
           actualPath = householdActualJournalPath freshPaths
+          freshAccounts = householdWriteSnapshotAccountsSource snapshot
           freshActual = householdWriteSnapshotActualSource snapshot
           freshPlan = householdWriteSnapshotPlanSource snapshot
           freshBudget = householdWriteSnapshotBudgetSource snapshot
@@ -222,7 +226,7 @@ reloadWorkspaceContext context = do
       pure (Just
         ((makeWorkspaceContext True
             (contextObservationDay context)
-            actualPath freshActual freshPlan freshBudget freshIssues freshState)
+            actualPath freshAccounts freshActual freshPlan freshBudget freshIssues freshState)
           { contextEntryDay = contextEntryDay context
           , contextCurrentSection = contextCurrentSection context
           }))
