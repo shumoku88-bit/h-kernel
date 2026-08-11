@@ -1,0 +1,14 @@
+name: Test Helper Duplication Observation
+
+on:
+  push:
+    branches:
+      - obs/test-helper-duplication-001
+
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Measure exact helper duplication
+        run: python3 tools/observe_test_helpers.py
