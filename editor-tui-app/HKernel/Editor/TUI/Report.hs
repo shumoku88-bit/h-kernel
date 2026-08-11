@@ -1,0 +1,199 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+module HKernel.Editor.TUI.Report
+  ( drawWorkspace
+  , drawPicker
+  , reportChoices
+  , reportChoiceIndex
+  , reportChoiceAt
+  , reportSelectionForKey
+  ) where
+
+import Brick
+import Brick.Widgets.Border
+import Brick.Widgets.Center
+import qualified Brick.Widgets.List as L
+
+import Data.Text (Text)
+import qualified Data.Text as T
+
+import HKernel.Editor.TUI.Model
+  ( AppContext(..)
+  , Name(..)
+  , ReportChoice(..)
+  )
+import qualified HKernel.Editor.TUI.ReportStyle as ReportStyle
+import HKernel.Household.Application (HouseholdState(..))
+import HKernel.Household.Report.Render
+  ( HouseholdReportSection(..)
+  , IssueVisibility(..)
+  , renderHouseholdReportSection
+  , renderReportBookWithHouseholdPresentation
+  )
+import HKernel.Render
+  ( renderBalanceSheetWithPresentation
+  , renderDailyFlowWithPresentation
+  , renderMonthlyAccountsWithPresentation
+  , renderProfitAndLossWithPresentation
+  , renderRecentTransactionsWithPresentation
+  , renderTrialBalanceWithPresentation
+  )
+import HKernel.Report (ReportBook(..))
+import HKernel.Report.Config (reportConfigurationPresentation)
+import HKernel.Report.Plan (ReportPlanError(..))
+
+-- | Render the Reports section of the Household workspace.
+drawWorkspace :: AppContext -> Widget Name
+drawWorkspace context =
+  vBox
+    [ borderWithLabel (txt ("Household Report: " <> reportChoiceLabel selected))
+        (viewport ReportsViewport Both (renderSelectedReport context))
+    , str "[Enter] Choose report   [wheel/↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page"
+    , str "[Home/End] Top/Bottom   [r/R] Next/Previous report   [1-7] Switch section   [q] Quit"
+    ]
+  where
+    selected = contextSelectedReport context
+
+-- | Render the modal picker for the named Household reports.
+drawPicker :: L.List Name ReportChoice -> Widget Name
+drawPicker choices =
+  center
+    (borderWithLabel (str "Choose Household Report")
+      (hLimit 64
+        (vLimit 22
+          (padAll 1
+            (L.renderList renderReportChoice True choices
+              <=> str " "
+              <=> str "[wheel/↑/↓ or j/k] Move   [click/Enter] Open   [Esc] Back   [Q] Quit")))))
+
+reportChoices :: [ReportChoice]
+reportChoices =
+  [ ReportTrialBalance
+  , ReportBalanceSheet
+  , ReportProfitAndLoss
+  , ReportDailyFlow
+  , ReportMonthlyAccounts
+  , ReportHousehold HouseholdCycleAccounts
+  , ReportHousehold HouseholdDailyTarget
+  , ReportHousehold HouseholdPlannedTransactions
+  , ReportHousehold (HouseholdIssues OpenIssuesOnly)
+  , ReportHousehold HouseholdEnvelopeBacking
+  , ReportRecentTransactions
+  , ReportCombinedBook
+  ]
+
+reportChoiceIndex :: ReportChoice -> Int
+reportChoiceIndex choice = go 0 reportChoices
+  where
+    go _ [] = 0
+    go index (candidate : rest)
+      | candidate == choice = index
+      | otherwise = go (index + 1) rest
+
+reportChoiceAt :: Int -> Maybe ReportChoice
+reportChoiceAt row = case drop row reportChoices of
+  [] -> Nothing
+  choice : _ -> Just choice
+
+-- | Interpret only Report-specific direct-selection keys.
+--
+-- Application-shell keys such as section switching, scrolling, quitting, and
+-- opening the picker remain owned by @Main@.
+reportSelectionForKey :: ReportChoice -> Char -> Maybe ReportChoice
+reportSelectionForKey current key = case key of
+  't' -> Just ReportTrialBalance
+  'b' -> Just ReportBalanceSheet
+  'p' -> Just ReportProfitAndLoss
+  'd' -> Just ReportDailyFlow
+  'm' -> Just ReportMonthlyAccounts
+  'c' -> Just (ReportHousehold HouseholdCycleAccounts)
+  'T' -> Just (ReportHousehold HouseholdDailyTarget)
+  'P' -> Just (ReportHousehold HouseholdPlannedTransactions)
+  'E' -> Just (ReportHousehold HouseholdEnvelopeBacking)
+  'a' -> Just ReportRecentTransactions
+  'h' -> Just ReportCombinedBook
+  'r' -> Just (cycleReport current)
+  'R' -> Just (cycleReportBack current)
+  _ -> Nothing
+
+renderReportChoice :: Bool -> ReportChoice -> Widget Name
+renderReportChoice selected choice
+  | selected = withAttr L.listSelectedAttr row
+  | otherwise = row
+  where
+    row = txt (reportChoiceLabel choice)
+
+reportChoiceLabel :: ReportChoice -> Text
+reportChoiceLabel choice = case choice of
+  ReportTrialBalance -> "Account Balances"
+  ReportBalanceSheet -> "Balance Sheet"
+  ReportProfitAndLoss -> "Profit & Loss"
+  ReportDailyFlow -> "Daily Flow"
+  ReportMonthlyAccounts -> "Monthly Accounts"
+  ReportHousehold section -> case section of
+    HouseholdCycleAccounts -> "Cycle Accounts & Comparison"
+    HouseholdDailyTarget -> "Daily Target"
+    HouseholdPlannedTransactions -> "Planned Transactions"
+    HouseholdIssues visibility -> case visibility of
+      OpenIssuesOnly -> "Open Issues"
+      AllIssues -> "All Issues"
+    HouseholdEnvelopeBacking -> "Envelope & Backing"
+  ReportRecentTransactions -> "Recent Actual"
+  ReportCombinedBook -> "Full Household Report"
+
+renderSelectedReport :: AppContext -> Widget Name
+renderSelectedReport context = case contextSelectedReport context of
+  ReportTrialBalance -> withReportBook $ \(ReportBook trial _ _ _ _ _) ->
+    reportText (renderTrialBalanceWithPresentation pres trial)
+  ReportBalanceSheet -> withReportBook $ \(ReportBook _ balance _ _ _ _) ->
+    reportText (renderBalanceSheetWithPresentation pres balance)
+  ReportProfitAndLoss -> withReportBook $ \(ReportBook _ _ profit _ _ _) ->
+    reportText (renderProfitAndLossWithPresentation pres profit)
+  ReportDailyFlow -> withReportBook $ \(ReportBook _ _ _ daily _ _) ->
+    reportText (renderDailyFlowWithPresentation pres daily)
+  ReportMonthlyAccounts -> withReportBook $ \(ReportBook _ _ _ _ _ monthly) ->
+    reportText (renderMonthlyAccountsWithPresentation pres monthly)
+  ReportHousehold section -> renderHouseholdSection section
+  ReportRecentTransactions -> withReportBook $ \(ReportBook _ _ _ _ recent _) ->
+    reportText (renderRecentTransactionsWithPresentation pres recent)
+  ReportCombinedBook -> withReportBook $ \book -> case householdSurface of
+    Left err -> reportText ("Report surface error: " <> T.pack (show err))
+    Right surface -> reportText
+      (renderReportBookWithHouseholdPresentation pres book surface)
+  where
+    state = contextHouseholdState context
+    reportConfig = householdStateReportConfig state
+    pres = reportConfigurationPresentation reportConfig
+    householdSurface = contextHouseholdReportSurface context
+    resolvedReportBook = contextResolvedReportBook context
+    withReportBook renderBook = case resolvedReportBook of
+      Left err -> reportText ("Report plan error: " <> renderReportPlanError err)
+      Right book -> renderBook book
+    renderHouseholdSection section = case householdSurface of
+      Left err -> reportText ("Report surface error: " <> T.pack (show err))
+      Right surface -> reportText (renderHouseholdReportSection pres section surface)
+
+renderReportPlanError :: ReportPlanError -> Text
+renderReportPlanError (InvalidReportRange reportName start end) =
+  "invalid " <> reportName <> " range: start " <> T.pack (show start)
+    <> " is after end " <> T.pack (show end)
+
+reportText :: Text -> Widget Name
+reportText = ReportStyle.renderTerminalReport
+
+cycleReport :: ReportChoice -> ReportChoice
+cycleReport choice = go reportChoices
+  where
+    go [] = ReportTrialBalance
+    go [_] = ReportTrialBalance
+    go (current : next : rest)
+      | current == choice = next
+      | otherwise = go (next : rest)
+
+cycleReportBack :: ReportChoice -> ReportChoice
+cycleReportBack choice = go ReportCombinedBook reportChoices
+  where
+    go previous [] = previous
+    go previous (current : rest)
+      | current == choice = previous
+      | otherwise = go current rest
