@@ -65,7 +65,7 @@ PR CI #659 and post-merge main CI #660 passed GHC 9.10.3 / 9.12.4 / 9.14.1. The 
 
 # Batch B: TUI delivery ownership
 
-Status: **ACCEPTED / MERGED / POST-MERGE CI RUNNING**
+Status: **ACCEPTED / MERGED / MAIN REQUALIFIED**
 
 Implementation PR: #207 `cleanup(tui): return workspace interactions to section owners`
 Base: `fb5c3409677710b007230e9c15516dbbdacf1ccc`
@@ -162,41 +162,180 @@ No dedicated Brick event-test infrastructure was added. This was not treated as 
 
 PR CI #663 passed GHC 9.10.3 / 9.12.4 / 9.14.1. The 9.10.3 job also passed repository ownership audit and complete report contracts.
 
-Post-merge main CI #664 started for `31d427b2...` and was still running when this ledger entry was written.
+Post-merge main CI #664 also passed all three supported GHC versions; the GHC 9.10.3 job again passed repository ownership audit and complete report contracts.
 
-# Next: Batch C observation before implementation
+# Batch C observation: canonical observation and safe publication ownership
 
-Do not jump directly into a preselected refactor.
+Status: **OBSERVED / SPLIT BY SEMANTIC RISK**
 
-The next work is a fresh merged-main observation of two higher-risk ownership areas:
+Observation baseline: `main` at `31d427b2ec98a96d704206523b46ab5b2d292fbf`, main CI #664 successful.
 
-1. `HKernel.Household.Application` canonical Household load orchestration;
-2. generic safe-publication machinery currently living under the historical `HKernel.Editor.ActualWriter` owner/name.
+The two original Batch C candidates are related by coordinated publication, but they are not the same kind of cleanup debt. Do not force them into one PR merely because they were listed together in the repository-wide audit.
 
-## Observation questions
+```text
+C1 Household.Application
+  -> correct owner, hand-threaded orchestration
 
-For `Household.Application`:
+C2 publication owner / historical ActualWriter name
+  -> cross-domain mechanics already exist, ownership/name may be stale
+```
 
-- Is the staged Account -> Actual -> Plan -> Budget -> configs/issues pipeline merely verbose, or does its sequencing encode real admission dependencies?
-- Can control flow be made more linear without weakening the rule that `HouseholdWriteSnapshot` seals typed state and exact root source bytes from one observation?
-- Would an in-progress observation record reduce hand-threading, or merely rename arguments?
-- Is `ExceptT` actually clearer here, or would it hide domain admission stages?
+The risk differs enough to justify separate coherent implementation/review cycles.
 
-For safe publication / `ActualWriter`:
+## C1 observation: `HKernel.Household.Application`
 
-- Which types/functions are genuinely cross-domain publication mechanics?
-- Which functions are Actual/Plan/Budget-specific source admission?
-- Is the problem only the historical module name, or is ownership actually mixed?
-- Can a source-neutral publication owner emerge without creating a generic writer framework?
-- What callers and tests depend on the current owner/API?
+### What is already correct
 
-Treat Account-in-Actual compatibility as a separate explicit product/source-contract decision. Do not retire it incidentally during this observation.
+`HKernel.Household.Application` is the correct canonical composition owner.
 
-## Non-goals for the observation
+Current source topology remains eight canonical inputs:
 
-- no implementation before evidence is accumulated;
+```text
+accounts.journal
+actual.journal
+plan.journal
+budget.journal
+budget.toml
+household.toml
+report.toml
+issues.tsv
+```
+
+`loadCanonicalHouseholdWriteSnapshot` remains the canonical observation boundary. `HouseholdWriteSnapshot` deliberately retains exact mutable root bytes for Accounts / Actual / Plan / Budget / Issues together with the typed `HouseholdState` produced by the same load pass. It is not a repository/session abstraction and must not grow merely for symmetry.
+
+Actual / Plan / Budget still use named source-specific admission after Loader root observation. Config and Issue sources retain their own parsers. No generic source parser is wanted.
+
+### The actual debt
+
+The IO path is currently expressed as a nested chain:
+
+```text
+loadCanonicalHouseholdWriteSnapshot
+  -> accounts read/parse
+  -> loadActual
+  -> loadPlan
+  -> loadBudget
+  -> loadConfigsAndIssues
+```
+
+Each stage carries an increasing positional argument list containing exact root `Text` plus the typed value admitted from that root. The semantics are coherent, but the control flow makes the ownership harder to scan and creates repeated `read -> case -> parse/admit -> case` scaffolding.
+
+This is orchestration debt, not domain-model debt.
+
+### A second duplication seam
+
+`admitCanonicalHousehold` independently performs the same broad assembly invariants for the pure in-memory path:
+
+- Account registry admission;
+- Actual / Plan / Budget registry agreement;
+- Budget policy and Household configuration;
+- Household policy Account validation;
+- Household Account policy registry validation;
+- Report configuration;
+- Issues;
+- Daily Target scope;
+- final `HouseholdState` construction.
+
+Its source acquisition differs intentionally from the IO path: the in-memory helper resolves only the explicitly supplied canonical text relationship, while the filesystem Loader supports ordinary include graphs. Do not collapse those source-acquisition semantics.
+
+The promising shared boundary is therefore **after source-specific admission**, at common Household validation/assembly, not before it.
+
+### C1 likely implementation direction
+
+One coherent C1 PR should investigate a linear orchestration with these constraints:
+
+1. Preserve source read/admission order and first-failure behavior.
+2. Preserve exact root bytes paired with the typed meaning admitted from those bytes.
+3. Preserve Loader include-graph behavior for filesystem Journal roots.
+4. Keep source-specific Actual / Plan / Budget admission named and visible.
+5. Extract only genuinely common post-admission Household validation/assembly shared by the IO and in-memory paths.
+6. Remove growing positional hand-threading where a small private typed record materially prevents source/value mismatches.
+7. `ExceptT` is an allowed implementation candidate because this is genuinely sequential fail-closed IO, but it is not a predetermined requirement. Adopt it only if the final code is visibly more linear and the extra `transformers` dependency on the Household application library is a net simplification.
+8. Do not parallelize source reads. Current sequencing controls dependencies and observable first failure.
+9. Do not accumulate independent errors merely for cleanup aesthetics; current loader is fail-closed and effectively first-failure.
+10. Do not change public `HouseholdState`, `HouseholdWriteSnapshot`, or `HouseholdLoadError` semantics in this cleanup slice unless an actual impossibility is discovered.
+
+A focused synthetic parity law would be useful if the refactor exposes the seam naturally: for a direct canonical synthetic source set, filesystem `loadCanonicalHousehold` and pure `admitCanonicalHousehold` should assemble the same `HouseholdState`. This does not claim parity for arbitrary filesystem include graphs; it only protects the common post-admission assembly contract.
+
+### C1 non-goals
+
 - no generic repository/session/source-loader framework;
-- no automatic `ExceptT` migration;
-- no writer rename/split for aesthetics;
-- no compatibility retirement;
-- no source-format or private Household change.
+- no new universal `LoadedSource` hierarchy merely to reduce argument count;
+- no change to canonical source count or formats;
+- no change to source-specific include semantics;
+- no `HouseholdWriteSnapshot` widening for config files without a concrete coordinated writer need;
+- no publication/writer rename in the same PR.
+
+## C2 observation: safe publication under `HKernel.Editor.ActualWriter`
+
+### The generic kernel is already real
+
+The current module name understates the responsibility. The following exported machinery is source-neutral:
+
+- `ExpectedSource`
+- `CandidateSource`
+- `WriteIntent`
+- `WriteError`
+- `WriterFileSystem`
+- `defaultWriterFileSystem`
+- `publishWithAdmission*`
+- `publishWithPathAdmission*`
+- stale detection, unique sibling staging, atomic rename, post-admission, guarded rollback, and final candidate re-check.
+
+The test suite named `EditorActualWriterSpec` already exercises generic safe-publication laws and Plan publication in addition to Actual publication.
+
+`PlanCompleteAdvance` imports `WriterFileSystem` and `defaultWriterFileSystem` from `HKernel.Editor.ActualWriter` solely for coordinated Plan+Actual publication. This is direct evidence that the filesystem/publication kernel is not Actual-owned.
+
+### Production callers are cross-domain
+
+The current Editor CLI imports `HKernel.Editor.ActualWriter` broadly and uses its generic publication functions for canonical Account, Budget and Issue publication, while also using Actual and Plan-specific adapters.
+
+The TUI likewise uses:
+
+- Actual-specific block publication for Actual;
+- Plan-specific root admission/publication for Plan;
+- generic whole-Household `publishWithPathAdmission` for Budget, Account, Issue, and Plan Budget-sync publication.
+
+Therefore the naming mismatch is not hypothetical.
+
+### But writer authority is a separate product contract
+
+Current writer-authority documentation deliberately states that canonical `actual.journal` writer authority belongs to the h-kernel editor, while write capability for Plan / Budget / Issue does **not** automatically move canonical writer authority for those sources.
+
+A source-neutral code owner must not be named or documented in a way that implies:
+
+```text
+has safe publication capability
+== canonical writer authority for every source
+```
+
+This is the main semantic risk in C2.
+
+### C2 conclusion for now
+
+Do **not** preselect a module rename/split yet.
+
+After C1 is reviewed, re-audit whether the smallest honest correction is:
+
+- a source-neutral publication module with domain-named adapters;
+- a rename of the existing module without structural splitting;
+- or a generic publication kernel plus thin Actual/Plan/Budget admission owners.
+
+Module size alone is not evidence. Avoid creating `ActualWriter`, `PlanWriter`, `BudgetWriter`, `IssueWriter` merely for symmetry.
+
+Any C2 proposal must separately inventory:
+
+- exposed-module/API impact;
+- all production imports;
+- safe-writer law tests;
+- writer-authority documentation;
+- coordinated `PlanCompleteAdvance` filesystem dependency;
+- retained compatibility paths.
+
+Account-in-Actual compatibility remains a separate product/source-contract decision and must not be retired incidentally.
+
+# Next coherent implementation candidate
+
+**C1 only: linearize `HKernel.Household.Application` orchestration and unify only the genuinely shared post-admission Household assembly boundary.**
+
+Do not implement C2 in the same PR. Re-observe publication ownership after C1 is independently reviewed and merged.
