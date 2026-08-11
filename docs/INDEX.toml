@@ -38,10 +38,6 @@ path = "docs/EDITOR_CORRECTNESS_REVIEW.md"
 role = "observation"
 
 [[documents]]
-path = "docs/CURRENT_STATE_AUDIT_2026-08-09.md"
-role = "observation"
-
-[[documents]]
 path = "docs/EDITOR_DEVELOPMENT_PLAN.md"
 role = "architecture"
 
@@ -108,10 +104,6 @@ role = "contract"
 [[documents]]
 path = "docs/SOURCE_DATA_MIGRATION_PLAN.md"
 role = "architecture"
-
-[[documents]]
-path = "docs/ARCHITECTURE_CODE_QUALITY_REVIEW.md"
-role = "observation"
 
 [[documents]]
 path = "docs/EDITOR_TUI_HUB_DESIGN.md"
