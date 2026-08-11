@@ -124,3 +124,7 @@ role = "observation"
 [[documents]]
 path = "docs/CODE_QUALITY_CLEANUP_ROUND_AUDIT_2026-08-11.md"
 role = "observation"
+
+[[documents]]
+path = "docs/CODE_QUALITY_CLEANUP_ROUND_LEDGER.md"
+role = "observation"
