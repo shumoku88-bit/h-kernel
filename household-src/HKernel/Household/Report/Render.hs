@@ -1,11 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Terminal publication of the read-only real household report observation adapter.
+-- | Pure terminal publication of an admitted Household report surface.
 --
--- Note: This module is a temporary observation adapter renderer for private source data.
--- It is not the canonical domain owner of Plan, cycle, budget, backing, allocation,
--- lifecycle, tax, or filing semantics.
-module HKernel.Spike.HouseholdReport.Render
+-- Rendering owns presentation only. Plan, cycle, Budget, backing, allocation,
+-- lifecycle, source admission, and writer semantics remain with their named owners.
+module HKernel.Household.Report.Render
   ( IssueVisibility(..)
   , HouseholdReportSection(..)
   , renderHouseholdReportSection
@@ -47,7 +46,7 @@ import HKernel.Render.TerminalStyle
 import HKernel.Report (ReportBook)
 import HKernel.Report.CycleAccounts
 import HKernel.Report.Presentation
-import HKernel.Spike.HouseholdReport
+import HKernel.Household.Report
 
 data IssueVisibility
   = OpenIssuesOnly

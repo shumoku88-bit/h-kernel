@@ -190,7 +190,7 @@ The desired subtraction is not arbitrary file splitting. Existing semantic owner
 
 ### High: production owners remain under Spike namespace/source tree
 
-`HKernel.Spike.HouseholdReport` and canonical Household application dependencies now participate in production reports and TUI behavior. Their names and physical source placement no longer describe their responsibility.
+`HKernel.Household.Report` and canonical Household application dependencies now participate in production reports and TUI behavior. Their names and physical source placement no longer describe their responsibility.
 
 This is an ownership/readability debt, not a correctness emergency.
 

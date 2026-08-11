@@ -1,11 +1,11 @@
--- | Temporary adapter from admitted household Budget movements into one aligned
+-- | Stable composition of admitted household Budget movements into one aligned
 -- domain observation.
 --
 -- Stable Household policy is admitted by 'HKernel.Household.Config' and checked
 -- against the canonical AccountRegistry before it reaches this module. This
 -- adapter owns only the interpretation of ordered movements as named
 -- Consumption, Entitlement, and Remaining calculations.
-module HKernel.Spike.HouseholdConsumption
+module HKernel.Household.BudgetObservation
   ( HouseholdBudgetObservation
   , householdBudgetObservationPolicy
   , householdBudgetConsumption

@@ -121,7 +121,7 @@ import HKernel.Report.Config
   ( ReportConfiguration
   , parseReportConfiguration
   )
-import HKernel.Spike.HouseholdReport
+import HKernel.Household.Report
   ( HouseholdReportSurface
   , HouseholdSourceError
   , admitPlanJournal

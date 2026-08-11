@@ -45,8 +45,8 @@ import HKernel.Plan.Journal
 import HKernel.Report (ReportBook, reportBookWithPlan)
 import HKernel.Report.Config (reportConfigurationPlan)
 import HKernel.Report.Plan (ReportPlanError, resolveReportPlan)
-import HKernel.Spike.HouseholdReport (HouseholdReportSurface)
-import HKernel.Spike.HouseholdReport.Render (HouseholdReportSection)
+import HKernel.Household.Report (HouseholdReportSurface)
+import HKernel.Household.Report.Render (HouseholdReportSection)
 
 data Name
   = DateField

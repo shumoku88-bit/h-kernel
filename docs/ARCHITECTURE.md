@@ -62,7 +62,7 @@ h-kernel-editor
     post-admission and restore-capable writer result,
     typed Actual workspace projection, UI-independent Actual add interaction
 
-h-kernel-spike-household-report
+h-kernel-household-application
   source: spike-src/
   depends on: h-kernel + h-kernel-household
   owns:
@@ -178,10 +178,10 @@ Household policy、Daily Target、Backing、Budget movement、Account profile ad
 h-kernel-household              -> h-kernel
 h-kernel-editor                 -> h-kernel
 h-kernel-editor                 -> h-kernel-household
-h-kernel-spike-household-report -> h-kernel
-h-kernel-spike-household-report -> h-kernel-household
+h-kernel-household-application -> h-kernel
+h-kernel-household-application -> h-kernel-household
 
-report app                      -> h-kernel + h-kernel-spike-household-report
+report app                      -> h-kernel + h-kernel-household-application
 editor app / editor TUI         -> h-kernel-editor
 tools/hk                        -> existing report launcher / editor CLI / editor TUI / checks
 ```

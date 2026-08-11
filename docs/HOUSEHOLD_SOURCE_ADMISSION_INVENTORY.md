@@ -21,7 +21,7 @@ household.toml
 issues.tsv
 daily_target_scope.tsv
   -> named admission owners
-  -> HKernel.Spike.HouseholdReport
+  -> HKernel.Household.Report
   -> HouseholdReportSurface
 ```
 

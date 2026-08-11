@@ -79,7 +79,7 @@ h-kernel-editor
         complete-source admission, safe writer result,
         typed Actual workspace projection, UI-independent Actual add interaction
 
-h-kernel-spike-household-report
+h-kernel-household-application
   source: spike-src/
   depends on: h-kernel + h-kernel-household
   owns: provisional Household Report composition
@@ -197,7 +197,7 @@ fact、selected policy、validated policy、derived resultを別の声部とし�
 **CURRENT**
 
 - Account profile admission、Household policy、Daily Target、Backing、Budget movement admissionはstable componentにある
-- `HKernel.Spike.HouseholdReport`はstable ownerの値を一つのsurfaceへ合成する
+- `HKernel.Household.Report`はstable ownerの値を一つのsurfaceへ合成する
 - Spike-local Account parserとmetadata classifierは削除済みである
 - Actual writer authorityはh-kernelへ移ったが、Report pathは引き続きread-onlyである
 

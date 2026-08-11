@@ -42,7 +42,7 @@ graph TD
     A["h-kernel<br/>(純粋コア)"] --> B["h-kernel-household<br/>(世帯固有規則)"]
     A --> C["h-kernel-editor<br/>(編集操作)"]
     B --> C
-    A --> D["h-kernel-spike-household-report<br/>(レポート実験)"]
+    A --> D["h-kernel-household-application<br/>(レポート実験)"]
     B --> D
     C --> E["editor-cli / editor-tui<br/>(UI アダプタ)"]
 

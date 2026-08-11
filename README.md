@@ -24,7 +24,7 @@ edit intent
 - `h-kernel`: Account、Money、Ledger、Journal、Actual、Plan、Budget、Engine、Report
 - `h-kernel-household`: Account profile admission、Household policy、Daily Target、Backing、Budget movement、Issue admission
 - `h-kernel-editor`: edit intent、candidate preparation、source placement、safe writer
-- `h-kernel-spike-household-report`: provisional Household Report composition
+- `h-kernel-household-application`: provisional Household Report composition
 - report CLI、editor CLI、Actual workspace TUI、daily entrypoint
 
 全体の編成と未決定案は[`docs/CODE_MAP_AND_DESIGN_SKETCH.md`](docs/CODE_MAP_AND_DESIGN_SKETCH.md)にあります。

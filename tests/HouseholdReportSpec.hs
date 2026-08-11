@@ -3,29 +3,29 @@
 module Main (main) where
 
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time.Calendar (fromGregorian)
-import HKernel.Actual.Journal (parseActualJournal)
+import Data.Time.Calendar (Day, fromGregorian)
+import HKernel.Application.Config (mkHouseholdRoot)
+import HKernel.Household.Application
+  ( admitCanonicalHousehold
+  , buildHouseholdReportSurfaceFromHousehold
+  )
+import HKernel.Household.Report
+import HKernel.Household.Report.Render
 import HKernel.HouseholdIssue
 import HKernel.Money
 import HKernel.Period
 import HKernel.Plan
-import HKernel.Plan.Journal
 import HKernel.Report.CycleAccounts
 import HKernel.Report.Presentation (defaultPresentationConfig)
-import HKernel.Spike.HouseholdReport
-import HKernel.Spike.HouseholdReport.Render
 import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
-  let actual = mustRight (parseActualJournal actualJournal)
-      observation = fromGregorian 2026 7 31
-      planJournal = mustRight (parsePlanJournal planJournalText)
-      surface = mustRight
-        (buildHouseholdReportSurfaceFromPlanJournal observation actual
-          accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
-          issuesTSV dailyScopeTSV)
+  let observation = fromGregorian 2026 7 31
+      surface = mustRightText
+        (buildSurfaceAt observation actualJournal planJournalText householdTOML issuesTSV)
       currentCycle = householdCurrentCycleAccounts surface
       currentPeriod = currentCycleAccountsPeriod currentCycle
       backing = householdEnvelopeBacking surface
@@ -39,15 +39,14 @@ main = do
 
   assertEqual "current income-anchor cycle is resolved from Actual and Plan Journal"
     (fromGregorian 2026 6 15, fromGregorian 2026 8 14)
-    ( periodStart currentPeriod
-    , periodEndExclusive currentPeriod
-    )
+    (periodStart currentPeriod, periodEndExclusive currentPeriod)
   assertEqual "precise current-cycle report observes through the Household observation day"
     observation
     (currentCycleAccountsObservation currentCycle)
   assertEqual "precise current-cycle report publishes the complete declared Account axis"
     8
     (length (currentCycleAccountsRows currentCycle))
+
   case householdCycleComparison surface of
     HouseholdCycleComparisonAvailable comparison -> do
       let baseline = cycleComparisonBaseline comparison
@@ -62,10 +61,8 @@ main = do
       assertEqual "Household daily comparison observes the previous cycle at the same elapsed day"
         (fromGregorian 2026 5 31)
         (currentCycleAccountsObservation baseline)
-    unavailable -> do
-      putStrLn "  [FAIL] aligned Household Cycle Comparison should be available"
-      putStrLn ("    actual: " ++ show unavailable)
-      exitFailure
+    unavailable -> failWith "aligned Household Cycle Comparison should be available" unavailable
+
   assertEqual "explicit completion removes the completed outgoing Plan without hiding other horizons"
     ["plan-prior", "plan-overdue", "plan-wifi", "plan-next-cycle"]
     (map (planIdText . committedPlanId) openPlans)
@@ -77,16 +74,12 @@ main = do
     ]
     (map committedPlanDate openPlans)
   assertEqual "Plan horizon classification keeps before current and after current visible"
-    [ BeforeCurrentCycle
-    , InCurrentCycle
-    , InCurrentCycle
-    , AfterCurrentCycle
-    ]
+    [BeforeCurrentCycle, InCurrentCycle, InCurrentCycle, AfterCurrentCycle]
     (map classifiedPlanHorizon classifiedPlans)
   assertEqual "issue category evidence remains visible without affecting balances"
     "[planning] decide funding"
     (householdIssueDetails issue)
-  assertEqual "budget movement becomes exact envelope entitlement"
+  assertEqual "native Budget movement becomes exact envelope entitlement"
     (one jpy 1000)
     (envelopeEntitlement foodLine)
   assertEqual "Actual Expense movement becomes exact consumption"
@@ -98,10 +91,10 @@ main = do
   assertEqual "liquid Asset backing is selected by explicit Budget policy"
     (one jpy 1900)
     (envelopeFundingBalance backing)
-  assertEqual "Daily Target Asset selection is owned by its explicit scope"
+  assertEqual "Daily Target Asset selection is owned by household.toml"
     (one jpy 1900)
     (dailyTargetEligibleAssets target)
-  assertEqual "Daily Target retains bounded reservation evidence"
+  assertEqual "Daily Target retains native Plan reservation evidence"
     (one jpy 50)
     (dailyTargetAlreadyExcluded target)
   assertEqual "Daily Target keeps capacity net of bounded reservation evidence"
@@ -112,8 +105,7 @@ main = do
     (dailyTargetRate target)
 
   let renderedSurface = renderHouseholdReportSections
-        defaultPresentationConfig
-        surface
+        defaultPresentationConfig surface
   assertEqual "Household cycle delivery publishes the precise current-cycle report"
     True
     ("Current Cycle Accounts" `T.isInfixOf` renderedSurface
@@ -129,8 +121,7 @@ main = do
     ("Cycle Accounts & Comparison Matrix" `T.isInfixOf` renderedSurface)
   assertEqual "Planned Transactions identifies the native Plan Journal source"
     True
-    ("Source: plan.journal" `T.isInfixOf` renderedSurface
-      && not ("Source: plan.tsv" `T.isInfixOf` renderedSurface))
+    ("Source: plan.journal" `T.isInfixOf` renderedSurface)
   assertEqual "Planned Transactions exposes still-open commitments before the current cycle"
     True
     ("Open before current cycle" `T.isInfixOf` renderedSurface
@@ -142,31 +133,23 @@ main = do
     True
     ("2026-08-20 | plan-next-cycle" `T.isInfixOf` renderedSurface)
 
-  let shortPreviousActual = mustRight
-        (parseActualJournal
-          (T.replace "2026-04-15 Pension" "2026-05-15 Pension" actualJournal))
-      shortPreviousSurface = mustRight
-        (buildHouseholdReportSurfaceFromPlanJournal observation shortPreviousActual
-          accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
-          issuesTSV dailyScopeTSV)
+  let shortPreviousActual =
+        T.replace "2026-04-15 Pension" "2026-05-15 Pension" actualJournal
+      shortPreviousSurface = mustRightText
+        (buildSurfaceAt observation shortPreviousActual planJournalText householdTOML issuesTSV)
       shortPreviousRendered = renderHouseholdReportSections
         defaultPresentationConfig shortPreviousSurface
   case householdCycleComparison shortPreviousSurface of
-    HouseholdCycleComparisonUnavailable _ -> do
+    HouseholdCycleComparisonUnavailable _ ->
       assertEqual "unavailable aligned comparison does not fail the Household surface"
         True
         ("Status: NOT AVAILABLE" `T.isInfixOf` shortPreviousRendered
-          && "Daily Target" `T.isInfixOf` shortPreviousRendered
-          && "Envelope & Backing" `T.isInfixOf` shortPreviousRendered)
-    available -> do
-      putStrLn "  [FAIL] short previous cycle should make aligned comparison unavailable"
-      putStrLn ("    actual: " ++ show available)
-      exitFailure
+&& "Daily Target" `T.isInfixOf` shortPreviousRendered
+&& "Envelope & Backing" `T.isInfixOf` shortPreviousRendered)
+    available -> failWith "short previous cycle should make aligned comparison unavailable" available
 
-  let defaultIssues = renderHouseholdIssues OpenIssuesOnly
-        (householdIssues surface)
-      allIssues = renderHouseholdIssues AllIssues
-        (householdIssues surface)
+  let defaultIssues = renderHouseholdIssues OpenIssuesOnly (householdIssues surface)
+      allIssues = renderHouseholdIssues AllIssues (householdIssues surface)
   assertEqual "default Issue report uses vertical cards"
     True
     ("┌─ OPEN " `T.isInfixOf` defaultIssues
@@ -180,105 +163,71 @@ main = do
     ("issue-resolved" `T.isInfixOf` allIssues
       && "┌─ RESOLVED " `T.isInfixOf` allIssues)
 
-  let actualWithExtraAccount =
-        mustRight (parseActualJournal actualJournalWithExtraAccount)
-      bidirectionalRegistryFailure =
-        buildHouseholdReportSurfaceFromPlanJournal observation
-          actualWithExtraAccount accountsWithExtraAccountTSV budgetTSV
-          budgetPolicyTOML householdTOML planJournal issuesTSV dailyScopeTSV
-  assertLeftContaining
-    "Account reconciliation rejects source-only Accounts"
-    "accounts.tsv Account is not declared in actual.journal: assets:source-only"
-    bidirectionalRegistryFailure
-  assertLeftContaining
-    "Account reconciliation rejects Journal-only Accounts in the same gate"
-    "actual.journal Account is missing from accounts.tsv: assets:journal-only"
-    bidirectionalRegistryFailure
-  assertLeftContaining
-    "Account reconciliation diagnoses declared role disagreement"
-    "Account type disagrees between accounts.tsv and actual.journal for assets:cash: accounts.tsv=Liability, actual.journal=Asset"
-    (buildHouseholdReportSurfaceFromPlanJournal observation actual
-      roleMismatchAccountsTSV budgetTSV budgetPolicyTOML householdTOML
-      planJournal issuesTSV dailyScopeTSV)
-  assertLeftContaining
-    "Account metadata rejects fields without key=value syntax"
-    "malformed metadata field broken; expected non-empty key=value"
-    (buildHouseholdReportSurfaceFromPlanJournal observation actual
-      malformedAccountsTSV budgetTSV budgetPolicyTOML householdTOML
-      planJournal issuesTSV dailyScopeTSV)
-  assertLeftContaining
-    "Account metadata rejects empty values"
-    "malformed metadata field type=; expected non-empty key=value"
-    (buildHouseholdReportSurfaceFromPlanJournal observation actual
-      emptyValueAccountsTSV budgetTSV budgetPolicyTOML householdTOML
-      planJournal issuesTSV dailyScopeTSV)
-  assertLeftContaining
-    "Account metadata rejects duplicate keys before overwrite"
-    "duplicate metadata key role"
-    (buildHouseholdReportSurfaceFromPlanJournal observation actual
-      duplicateRoleAccountsTSV budgetTSV budgetPolicyTOML householdTOML
-      planJournal issuesTSV dailyScopeTSV)
-  assertLeftContaining
-    "Household cycle Account must be declared Income"
+  assertLeftContaining "Household cycle Account must be declared Income"
     "HouseholdCycleIncomeAccountNotIncome"
-    (buildHouseholdReportSurfaceFromPlanJournal observation actual
-      accountsTSV budgetTSV budgetPolicyTOML cycleRoleMismatchTOML
-      planJournal issuesTSV dailyScopeTSV)
-  assertLeftContaining
-    "Household allocation Account must be declared Budget"
+    (buildSurfaceAt observation actualJournal planJournalText cycleRoleMismatchTOML issuesTSV)
+  assertLeftContaining "Household allocation Account must be declared Budget"
     "HouseholdAllocationAccountNotBudget"
-    (buildHouseholdReportSurfaceFromPlanJournal observation actual
-      accountsTSV budgetTSV budgetPolicyTOML allocationRoleMismatchTOML
-      planJournal issuesTSV dailyScopeTSV)
-
-  let unsupportedPlanJournal =
-        mustRight (parsePlanJournal unsupportedPlanJournalText)
+    (buildSurfaceAt observation actualJournal planJournalText allocationRoleMismatchTOML issuesTSV)
   assertLeftContaining "unsupported Plan Journal directions fail at admission"
     "UnsupportedPlanRoleFlow"
-    (buildHouseholdReportSurfaceFromPlanJournal observation actual
-      accountsTSV budgetTSV budgetPolicyTOML householdTOML
-      unsupportedPlanJournal issuesTSV dailyScopeTSV)
-
-  let unknownActual = mustRight (parseActualJournal unknownPlanActualJournal)
+    (buildSurfaceAt observation actualJournal unsupportedPlanJournalText householdTOML issuesTSV)
   assertLeftContaining "unknown completion Plan references fail closed"
     "unknown PlanId"
-    (buildHouseholdReportSurfaceFromPlanJournal observation unknownActual
-      accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
-      issuesTSV dailyScopeTSV)
-
+    (buildSurfaceAt observation unknownPlanActualJournal planJournalText householdTOML issuesTSV)
   assertLeftContaining "Daily Target rejects reservation above the Plan amount"
     "ReservationExceedsPlanAmount"
-    (buildHouseholdReportSurfaceFromPlanJournal observation actual
-      accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
-      issuesTSV overReservedDailyScopeTSV)
-
+    (buildSurfaceAt observation actualJournal overReservedPlanJournalText householdTOML issuesTSV)
   assertLeftContaining "Daily Target rejects cross-Commodity reservation"
     "ReservationCommodityMismatch"
-    (buildHouseholdReportSurfaceFromPlanJournal observation actual
-      accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
-      issuesTSV crossCommodityDailyScopeTSV)
-
+    (buildSurfaceAt observation actualJournal crossCommodityPlanJournalText householdTOML issuesTSV)
   assertLeftContaining "Daily Target rejects duplicate reservation identity"
     "DuplicateReservationId"
-    (buildHouseholdReportSurfaceFromPlanJournal observation actual
-      accountsTSV budgetTSV budgetPolicyTOML householdTOML planJournal
-      issuesTSV duplicateReservationDailyScopeTSV)
+    (buildSurfaceAt observation actualJournal duplicateReservationPlanJournalText householdTOML issuesTSV)
 
 one :: Commodity -> Integer -> Balance
-one commodity value =
-  singletonBalance (mkAmount commodity (quantityFromInteger value))
+one commodity value = singletonBalance
+  (mkAmount commodity (quantityFromInteger value))
 
-actualJournal :: T.Text
-actualJournal = declarations <> T.unlines
+buildSurfaceAt
+  :: Day
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Either Text HouseholdReportSurface
+buildSurfaceAt observation actual plan household issues = do
+  state <- leftShow
+    (admitCanonicalHousehold householdRoot accountsJournal actual plan budgetJournal
+      budgetPolicyTOML household reportTOML issues)
+  leftShow (buildHouseholdReportSurfaceFromHousehold observation state)
+
+householdRoot = case mkHouseholdRoot "." of
+  Right value -> value
+  Left err -> error ("invalid Household root fixture: " ++ show err)
+
+leftShow :: Show error => Either error value -> Either Text value
+leftShow result = case result of
+  Left err -> Left (T.pack (show err))
+  Right value -> Right value
+
+accountsJournal :: Text
+accountsJournal = declarations
+
+actualJournal :: Text
+actualJournal = "include accounts.journal\n\n" <> T.unlines
   [ "2026-04-15 Pension"
   , "    assets:cash  1000 JPY"
   , "    income:pension"
+  , ""
   , "2026-06-15 Pension"
   , "    assets:cash  1000 JPY"
   , "    income:pension"
+  , ""
   , "2026-07-20 Food"
   , "    expenses:food  100 JPY"
   , "    assets:cash"
+  , ""
   , "2026-07-25 Card settlement"
   , "    ; event-id: actual-card"
   , "    ; plan-id: plan-card"
@@ -286,97 +235,63 @@ actualJournal = declarations <> T.unlines
   , "    assets:savings"
   ]
 
-actualJournalWithExtraAccount :: T.Text
-actualJournalWithExtraAccount = T.unlines
-  [ "account assets:journal-only"
-  , "    type: asset"
-  , "    commodity: JPY"
-  ] <> actualJournal
-
-unknownPlanActualJournal :: T.Text
+unknownPlanActualJournal :: Text
 unknownPlanActualJournal = actualJournal <> T.unlines
-  [ "2026-07-26 Unknown completion"
+  [ ""
+  , "2026-07-26 Unknown completion"
   , "    ; event-id: actual-unknown"
   , "    ; plan-id: plan-missing"
   , "    liabilities:card  1 JPY"
   , "    assets:savings"
   ]
 
-declarations :: T.Text
+declarations :: Text
 declarations = T.unlines
   [ "account assets:cash"
   , "    type: asset"
   , "    commodity: JPY"
+  , ""
   , "account assets:savings"
   , "    type: asset"
   , "    commodity: JPY"
+  , ""
   , "account liabilities:card"
   , "    type: liability"
   , "    commodity: JPY"
+  , ""
   , "account income:pension"
   , "    type: income"
   , "    commodity: JPY"
+  , ""
   , "account expenses:food"
   , "    type: expense"
   , "    commodity: JPY"
+  , ""
   , "account budget:opening"
   , "    type: budget"
   , "    commodity: JPY"
+  , ""
   , "account budget:unassigned"
   , "    type: budget"
   , "    commodity: JPY"
+  , ""
   , "account budget:food"
   , "    type: budget"
   , "    commodity: JPY"
   ]
 
-accountsTSV :: T.Text
-accountsTSV = T.unlines
-  [ "assets:cash\trole=asset\ttype=liquid\tcurrency=JPY"
-  , "assets:savings\trole=asset\ttype=savings\tcurrency=JPY"
-  , "liabilities:card\trole=liability\tcurrency=JPY"
-  , "income:pension\trole=income\tcurrency=JPY"
-  , "expenses:food\trole=expense\tbudget=Food\tcurrency=JPY"
-  , "budget:opening\trole=budget\tkind=opening\tcurrency=JPY"
-  , "budget:unassigned\trole=budget\tkind=unassigned\tcurrency=JPY"
-  , "budget:food\trole=budget\tkind=envelope\tbudget=Food\tcurrency=JPY"
+budgetJournal :: Text
+budgetJournal = "include accounts.journal\n\n" <> T.unlines
+  [ "2026-06-15 allocate"
+  , "    budget:opening  -1000 JPY"
+  , "    budget:food      1000 JPY"
+  , ""
+  , "2026-06-15 unassigned"
+  , "    budget:opening     -50 JPY"
+  , "    budget:unassigned   50 JPY"
   ]
 
-accountsWithExtraAccountTSV :: T.Text
-accountsWithExtraAccountTSV = accountsTSV <>
-  "assets:source-only\trole=asset\ttype=liquid\tcurrency=JPY\n"
-
-roleMismatchAccountsTSV :: T.Text
-roleMismatchAccountsTSV = T.replace
-  "assets:cash\trole=asset\ttype=liquid\tcurrency=JPY"
-  "assets:cash\trole=liability\ttype=liquid\tcurrency=JPY"
-  accountsTSV
-
-malformedAccountsTSV :: T.Text
-malformedAccountsTSV = T.replace
-  "assets:cash\trole=asset\ttype=liquid\tcurrency=JPY"
-  "assets:cash\trole=asset\ttype=liquid\tcurrency=JPY\tbroken"
-  accountsTSV
-
-emptyValueAccountsTSV :: T.Text
-emptyValueAccountsTSV = T.replace
-  "assets:cash\trole=asset\ttype=liquid\tcurrency=JPY"
-  "assets:cash\trole=asset\ttype=\tcurrency=JPY"
-  accountsTSV
-
-duplicateRoleAccountsTSV :: T.Text
-duplicateRoleAccountsTSV = T.replace
-  "assets:cash\trole=asset\ttype=liquid\tcurrency=JPY"
-  "assets:cash\trole=asset\ttype=liquid\tcurrency=JPY\trole=liability"
-  accountsTSV
-
-budgetTSV :: T.Text
-budgetTSV = T.unlines
-  [ "2026-06-15\tallocate\tbudget:opening\tbudget:food\t1000\tcurrency=JPY"
-  , "2026-06-15\tunassigned\tbudget:opening\tbudget:unassigned\t50\tcurrency=JPY"
-  ]
-
-budgetPolicyTOML :: T.Text
+budgetPolicyTOML :: Text
 budgetPolicyTOML = T.unlines
   [ "[[backing-pools]]"
   , "id = \"operating\""
@@ -390,7 +305,7 @@ budgetPolicyTOML = T.unlines
   , "expense-accounts = [\"expenses:food\"]"
   ]
 
-householdTOML :: T.Text
+householdTOML :: Text
 householdTOML = T.unlines
   [ "[cycle]"
   , "mode = \"income-anchor\""
@@ -402,22 +317,28 @@ householdTOML = T.unlines
   , "[[budget.envelopes]]"
   , "id = \"Food\""
   , "allocation-account = \"budget:food\""
+  , ""
+  , "[daily-target]"
+  , ""
+  , "[[daily-target.assets]]"
+  , "id = \"cash\""
+  , "account = \"assets:cash\""
   ]
 
-cycleRoleMismatchTOML :: T.Text
+cycleRoleMismatchTOML :: Text
 cycleRoleMismatchTOML = T.replace
   "income-account = \"income:pension\""
   "income-account = \"assets:cash\""
   householdTOML
 
-allocationRoleMismatchTOML :: T.Text
+allocationRoleMismatchTOML :: Text
 allocationRoleMismatchTOML = T.replace
   "allocation-account = \"budget:food\""
   "allocation-account = \"expenses:food\""
   householdTOML
 
-planJournalText :: T.Text
-planJournalText = declarations <> T.unlines
+planJournalText :: Text
+planJournalText = "include accounts.journal\n\n" <> T.unlines
   [ "2026-06-10 prior cycle"
   , "    ; plan-id: plan-prior"
   , "    expenses:food    50 JPY"
@@ -430,6 +351,10 @@ planJournalText = declarations <> T.unlines
   , ""
   , "2026-08-08 wifi"
   , "    ; plan-id: plan-wifi"
+  , "    ; daily-target-id: wifi"
+  , "    ; reservation-id: reservation:wifi"
+  , "    ; reservation-amount: 50"
+  , "    ; reservation-commodity: JPY"
   , "    expenses:food   200 JPY"
   , "    assets:cash    -200 JPY"
   , ""
@@ -449,7 +374,7 @@ planJournalText = declarations <> T.unlines
   , "    assets:cash    -300 JPY"
   ]
 
-unsupportedPlanJournalText :: T.Text
+unsupportedPlanJournalText :: Text
 unsupportedPlanJournalText = planJournalText <> T.unlines
   [ ""
   , "2026-08-10 transfer"
@@ -458,44 +383,67 @@ unsupportedPlanJournalText = planJournalText <> T.unlines
   , "    assets:cash     -10 JPY"
   ]
 
-issuesTSV :: T.Text
+overReservedPlanJournalText :: Text
+overReservedPlanJournalText = T.replace
+  "; reservation-amount: 50"
+  "; reservation-amount: 300"
+  planJournalText
+
+crossCommodityPlanJournalText :: Text
+crossCommodityPlanJournalText = T.replace
+  "; reservation-commodity: JPY"
+  "; reservation-commodity: USD"
+  planJournalText
+
+duplicateReservationPlanJournalText :: Text
+duplicateReservationPlanJournalText = T.replace
+  "; reservation-id: reservation:wifi"
+  "; reservation-id: reservation:shared"
+  (T.replace
+    "    ; plan-id: plan-overdue\n"
+    (T.unlines
+      [ "    ; plan-id: plan-overdue"
+      , "    ; daily-target-id: overdue"
+      , "    ; reservation-id: reservation:shared"
+      , "    ; reservation-amount: 25"
+      , "    ; reservation-commodity: JPY"
+      ])
+    planJournalText)
+
+issuesTSV :: Text
 issuesTSV = T.unlines
   [ "issue_id\tstatus\tdate\tcategory\ttitle\tamount\tcurrency\tdetails"
   , "issue-one\topen\t2026-07-20\tplanning\twifi\t200\tJPY\tdecide funding"
   , "issue-resolved\tresolved\t2026-07-01\tsubscription\tcancelled\t0\tJPY\tdone"
   ]
 
-dailyScopeHeader :: T.Text
-dailyScopeHeader =
-  "kind\tscope_id\taccount_key\tplan_id\texcluded_amount\tcurrency\treservation_ref"
-
-dailyScopeTSV :: T.Text
-dailyScopeTSV = T.unlines
-  [ dailyScopeHeader
-  , "asset\tcash\tassets:cash\t\t\t\t"
-  , "obligation\twifi\t\tplan-wifi\t50\tJPY\treservation:wifi"
-  ]
-
-overReservedDailyScopeTSV :: T.Text
-overReservedDailyScopeTSV = T.unlines
-  [ dailyScopeHeader
-  , "asset\tcash\tassets:cash\t\t\t\t"
-  , "obligation\twifi\t\tplan-wifi\t300\tJPY\treservation:wifi"
-  ]
-
-crossCommodityDailyScopeTSV :: T.Text
-crossCommodityDailyScopeTSV = T.unlines
-  [ dailyScopeHeader
-  , "asset\tcash\tassets:cash\t\t\t\t"
-  , "obligation\twifi\t\tplan-wifi\t50\tUSD\treservation:wifi"
-  ]
-
-duplicateReservationDailyScopeTSV :: T.Text
-duplicateReservationDailyScopeTSV = T.unlines
-  [ dailyScopeHeader
-  , "asset\tcash\tassets:cash\t\t\t\t"
-  , "obligation\toverdue\t\tplan-overdue\t25\tJPY\treservation:shared"
-  , "obligation\twifi\t\tplan-wifi\t50\tJPY\treservation:shared"
+reportTOML :: Text
+reportTOML = T.unlines
+  [ "[presentation.amounts]"
+  , "negative-style = \"parentheses\""
+  , ""
+  , "[reports.trial-balance]"
+  , "as-of = \"latest\""
+  , ""
+  , "[reports.balance-sheet]"
+  , "as-of = \"latest\""
+  , ""
+  , "[reports.profit-and-loss]"
+  , "from = \"2026-07-01\""
+  , "through = \"latest\""
+  , ""
+  , "[reports.daily-flow]"
+  , "from = \"2026-07-01\""
+  , "through = \"latest\""
+  , "max-date-columns = 5"
+  , ""
+  , "[reports.monthly-accounts]"
+  , "from = \"2026-07-01\""
+  , "through = \"latest\""
+  , ""
+  , "[reports.recent-transactions]"
+  , "through = \"latest\""
+  , "count = 5"
   ]
 
 exactlyOne :: Show value => [value] -> value
@@ -506,20 +454,18 @@ mustRight :: Show error => Either error value -> value
 mustRight (Right value) = value
 mustRight (Left err) = error ("invalid test fixture: " ++ show err)
 
-assertLeftContaining
-  :: String
-  -> T.Text
-  -> Either (NonEmpty.NonEmpty HouseholdSourceError) value
-  -> IO ()
+mustRightText :: Either Text value -> value
+mustRightText (Right value) = value
+mustRightText (Left err) = error ("invalid test fixture: " ++ T.unpack err)
+
+assertLeftContaining :: String -> Text -> Either Text value -> IO ()
 assertLeftContaining label expected result = case result of
-  Left errors
-    | any (T.isInfixOf expected . householdSourceMessage)
-        (NonEmpty.toList errors) ->
-        putStrLn ("  [PASS] " ++ label)
+  Left err
+    | expected `T.isInfixOf` err -> putStrLn ("  [PASS] " ++ label)
     | otherwise -> do
         putStrLn ("  [FAIL] " ++ label)
-        putStrLn ("    errors did not contain: " ++ T.unpack expected)
-        putStrLn ("    actual errors: " ++ show errors)
+        putStrLn ("    error did not contain: " ++ T.unpack expected)
+        putStrLn ("    actual error: " ++ T.unpack err)
         exitFailure
   Right _ -> do
     putStrLn ("  [FAIL] " ++ label)
@@ -534,3 +480,9 @@ assertEqual label expected actual
       putStrLn ("    expected: " ++ show expected)
       putStrLn ("    but got:  " ++ show actual)
       exitFailure
+
+failWith :: Show value => String -> value -> IO a
+failWith label actual = do
+  putStrLn ("  [FAIL] " ++ label)
+  putStrLn ("    actual: " ++ show actual)
+  exitFailure

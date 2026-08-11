@@ -28,8 +28,8 @@ import HKernel.Report.Config
 import HKernel.Report.CycleAccounts (cycleAccounts)
 import HKernel.Report.Plan
 import HKernel.Report.Presentation
-import HKernel.Spike.HouseholdReport
-import HKernel.Spike.HouseholdReport.Render
+import HKernel.Household.Report
+import HKernel.Household.Report.Render
   ( renderReportBookWithHouseholdPresentation
   )
 import System.Directory (doesFileExist)

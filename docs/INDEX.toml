@@ -68,7 +68,7 @@ path = "docs/HOUSEHOLD_BACKING.md"
 role = "contract"
 
 [[documents]]
-path = "docs/HOUSEHOLD_REPORT_SPIKE_REVIEW.md"
+path = "docs/HOUSEHOLD_REPORT_OWNERSHIP.md"
 role = "architecture"
 
 [[documents]]

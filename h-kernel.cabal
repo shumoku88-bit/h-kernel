@@ -76,6 +76,9 @@ library h-kernel-household
                     , HKernel.Household.DailyTarget.TSV
                     , HKernel.Household.Issue.TSV
                     , HKernel.Household.Policy
+                    , HKernel.Household.Report
+                    , HKernel.Household.Report.Render
+    other-modules:    HKernel.Household.BudgetObservation
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
                     , h-kernel
@@ -113,23 +116,15 @@ library h-kernel-editor
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
 
-library h-kernel-spike-household-report
+library h-kernel-household-application
     exposed-modules:  HKernel.Household.Application
-                    , HKernel.Spike.HouseholdReport
-                    , HKernel.Spike.HouseholdReport.Render
-    other-modules:    HKernel.Spike.HouseholdConsumption
     build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
-                    , directory >= 1.3 && < 1.4
-                    , filepath >= 1.4 && < 1.6
-                    , h-kernel
-                    , h-kernel-household
-                    , scientific >= 0.3 && < 0.4
-                    , text >= 1.2 && < 2.2
-                    , time >= 1.9 && < 1.15
-                    , toml-parser >= 2.0.2 && < 2.1
-                    , transformers >= 0.5 && < 0.7
-    hs-source-dirs:   spike-src
+          , containers >= 0.6 && < 0.8
+          , h-kernel
+          , h-kernel-household
+          , text >= 1.2 && < 2.2
+          , time >= 1.9 && < 1.15
+    hs-source-dirs:   household-app-src
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
 
@@ -139,7 +134,8 @@ executable h-kernel
                     , directory
                     , filepath >= 1.4 && < 1.6
                     , h-kernel
-                    , h-kernel-spike-household-report
+                    , h-kernel-household
+                    , h-kernel-household-application
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
     hs-source-dirs:   app
@@ -415,7 +411,7 @@ test-suite h-kernel-household-report-test
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-household
-                    , h-kernel-spike-household-report
+                    , h-kernel-household-application
                     , text
                     , time
     hs-source-dirs:   tests
@@ -640,7 +636,7 @@ executable h-kernel-editor-cli
                     , filepath >= 1.4 && < 1.6
                     , h-kernel
                     , h-kernel-household
-                    , h-kernel-spike-household-report
+                    , h-kernel-household-application
                     , h-kernel-editor
     hs-source-dirs:   editor-app
     default-language: Haskell2010
@@ -667,7 +663,7 @@ executable h-kernel-editor-tui
                     , vector
                     , h-kernel
                     , h-kernel-household
-                    , h-kernel-spike-household-report
+                    , h-kernel-household-application
                     , h-kernel-editor
     hs-source-dirs:   editor-tui-app
     default-language: Haskell2010
@@ -771,7 +767,7 @@ test-suite h-kernel-canonical-household-test
                     , filepath >= 1.4 && < 1.6
                     , h-kernel
                     , h-kernel-household
-                    , h-kernel-spike-household-report
+                    , h-kernel-household-application
                     , h-kernel-editor
     default-language: Haskell2010
     ghc-options:      -Wall -Werror=incomplete-patterns
@@ -785,7 +781,7 @@ test-suite h-kernel-editor-account-publication-test
                     , filepath >= 1.4 && < 1.6
                     , h-kernel
                     , h-kernel-household
-                    , h-kernel-spike-household-report
+                    , h-kernel-household-application
                     , h-kernel-editor
                     , text >= 1.2 && < 2.2
     default-language: Haskell2010

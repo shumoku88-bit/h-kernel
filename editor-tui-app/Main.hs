@@ -71,7 +71,7 @@ import HKernel.Report.Config
   , reportConfigurationPresentation
   )
 import HKernel.Report.Plan (ReportPlanError(..))
-import HKernel.Spike.HouseholdReport.Render
+import HKernel.Household.Report.Render
   ( HouseholdReportSection(..)
   , IssueVisibility(..)
   , renderHouseholdReportSection
