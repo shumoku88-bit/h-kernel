@@ -5,6 +5,13 @@ module HKernel.Editor.TUI.Model
   , Name(..)
   , ReportChoice(..)
   , WorkspaceFocus(..)
+  , contextAccountsSource
+  , contextBudgetSource
+  , contextHouseholdState
+  , contextIssuesSource
+  , contextPlanSource
+  , contextSource
+  , contextSourcePath
   , makeWorkspaceContext
   , reloadWorkspaceContext
   ) where
@@ -127,7 +134,7 @@ data ReportChoice
   deriving (Eq, Show)
 
 data AppContext = AppContext
-  { contextHouseholdState          :: HouseholdState
+  { contextHouseholdSnapshot       :: HouseholdWriteSnapshot
   , contextCurrentSection          :: HouseholdSection
   , contextSelectedReport          :: ReportChoice
   , contextObservationDay          :: Day
@@ -139,30 +146,40 @@ data AppContext = AppContext
   , contextWorkspaceFocus          :: WorkspaceFocus
   , contextPlanList                :: L.List Name IdentifiedPlanTransaction
   , contextIssueList               :: L.List Name HouseholdIssue
-  , contextSourcePath              :: FilePath
-  , contextAccountsSource          :: Text
-  , contextSource                  :: Text
-  , contextPlanSource              :: Text
-  , contextBudgetSource            :: Text
-  , contextIssuesSource            :: Text
   }
 
 type AppEvent = ()
 
+contextHouseholdState :: AppContext -> HouseholdState
+contextHouseholdState = householdWriteSnapshotState . contextHouseholdSnapshot
+
+contextAccountsSource :: AppContext -> Text
+contextAccountsSource = householdWriteSnapshotAccountsSource . contextHouseholdSnapshot
+
+contextSource :: AppContext -> Text
+contextSource = householdWriteSnapshotActualSource . contextHouseholdSnapshot
+
+contextPlanSource :: AppContext -> Text
+contextPlanSource = householdWriteSnapshotPlanSource . contextHouseholdSnapshot
+
+contextBudgetSource :: AppContext -> Text
+contextBudgetSource = householdWriteSnapshotBudgetSource . contextHouseholdSnapshot
+
+contextIssuesSource :: AppContext -> Text
+contextIssuesSource = householdWriteSnapshotIssuesSource . contextHouseholdSnapshot
+
+contextSourcePath :: AppContext -> FilePath
+contextSourcePath =
+  householdActualJournalPath . householdStatePaths . contextHouseholdState
+
 makeWorkspaceContext
   :: Bool
   -> Day
-  -> FilePath
-  -> Text
-  -> Text
-  -> Text
-  -> Text
-  -> Text
-  -> HouseholdState
+  -> HouseholdWriteSnapshot
   -> AppContext
-makeWorkspaceContext focusLatest today journalFile accountsSource source planSource budgetSource issuesSource state =
+makeWorkspaceContext focusLatest today snapshot =
   AppContext
-    { contextHouseholdState = state
+    { contextHouseholdSnapshot = snapshot
     , contextCurrentSection = ActualSection
     , contextSelectedReport = ReportTrialBalance
     , contextObservationDay = today
@@ -174,14 +191,9 @@ makeWorkspaceContext focusLatest today journalFile accountsSource source planSou
     , contextWorkspaceFocus = TransactionsFocus
     , contextPlanList = planList
     , contextIssueList = issueList
-    , contextSourcePath = journalFile
-    , contextAccountsSource = accountsSource
-    , contextSource = source
-    , contextPlanSource = planSource
-    , contextBudgetSource = budgetSource
-    , contextIssuesSource = issuesSource
     }
   where
+    state = householdWriteSnapshotState snapshot
     declarations = accountDeclarations (householdStateAccountsRegistry state)
     transactions =
       map actualTransactionEntryTransaction
@@ -214,19 +226,11 @@ reloadWorkspaceContext context = do
   loadResult <- loadCanonicalHouseholdWriteSnapshot root
   case loadResult of
     Left _ -> pure Nothing
-    Right snapshot -> do
-      let freshState = householdWriteSnapshotState snapshot
-          freshPaths = householdStatePaths freshState
-          actualPath = householdActualJournalPath freshPaths
-          freshAccounts = householdWriteSnapshotAccountsSource snapshot
-          freshActual = householdWriteSnapshotActualSource snapshot
-          freshPlan = householdWriteSnapshotPlanSource snapshot
-          freshBudget = householdWriteSnapshotBudgetSource snapshot
-          freshIssues = householdWriteSnapshotIssuesSource snapshot
+    Right snapshot ->
       pure (Just
         ((makeWorkspaceContext True
             (contextObservationDay context)
-            actualPath freshAccounts freshActual freshPlan freshBudget freshIssues freshState)
+            snapshot)
           { contextEntryDay = contextEntryDay context
           , contextCurrentSection = contextCurrentSection context
           }))
