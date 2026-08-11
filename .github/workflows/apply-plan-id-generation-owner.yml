@@ -1,0 +1,30 @@
+name: Apply PlanId Generation Owner
+
+on:
+  push:
+    branches:
+      - refactor/plan-id-generation-owner
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply focused PlanId ownership cleanup
+        run: python3 tools/apply_plan_identity_owner.py
+      - name: Commit focused cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm tools/apply_plan_identity_owner.py
+          rm .github/workflows/apply-plan-id-generation-owner.yml
+          git config user.name 'shumoku88-bit'
+          git config user.email 'shumoku88@gmail.com'
+          git add -A
+          git commit -m 'refactor(plan): centralize generated PlanId policy'
+          git push origin HEAD:refactor/plan-id-generation-owner
