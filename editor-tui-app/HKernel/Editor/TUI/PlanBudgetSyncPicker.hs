@@ -3,6 +3,7 @@
 module HKernel.Editor.TUI.PlanBudgetSyncPicker
   ( Action(..)
   , State
+  , action
   , draw
   , handleEvent
   , start
@@ -13,7 +14,7 @@ import Brick.Widgets.Border
 import Brick.Widgets.Center
 import qualified Brick.Widgets.List as L
 import qualified Graphics.Vty as V
-import Lens.Micro (Lens')
+import Lens.Micro (Traversal')
 import Lens.Micro.Mtl ()
 
 import qualified Data.Text as T
@@ -37,7 +38,11 @@ import HKernel.Plan.Journal
   , planJournalTransactions
   )
 
-newtype State = State (L.List Name IdentifiedPlanTransaction)
+data State
+  = Picking (L.List Name IdentifiedPlanTransaction)
+  | PickerReturnRequested
+  | PickerQuitRequested
+  | PickerRetryRequested PlanId
 
 data Action
   = Maintain
@@ -49,7 +54,7 @@ start :: AppContext -> Either T.Text State
 start context =
   case completedPlans of
     [] -> Left "No completed Plans are available for Budget sync retry."
-    _ -> Right (State (L.list PlanList (Vec.fromList completedPlans) 1))
+    _ -> Right (Picking (L.list PlanList (Vec.fromList completedPlans) 1))
   where
     household = contextHouseholdState context
     completedIds = map declaredCompletionPlanId
@@ -58,16 +63,27 @@ start context =
       (\identified -> identifiedPlanId identified `elem` completedIds)
       (planJournalTransactions (householdStatePlanJournal household))
 
+action :: State -> Action
+action state = case state of
+  Picking _ -> Maintain
+  PickerReturnRequested -> ReturnToWorkspace
+  PickerQuitRequested -> QuitRequested
+  PickerRetryRequested planId -> Retry planId
+
 draw :: State -> Widget Name
-draw (State plans) =
-  center
-    (borderWithLabel (str "Retry completed Plan Budget sync")
-      (hLimit 86
-        (vLimit 24
-          (padAll 1
-            ( L.renderList renderCompletedPlan True plans
-              <=> str " "
-              <=> str "[wheel/↑/↓ or j/k] Move   [Enter] Retry sync   [Esc] Back   [Q] Quit")))))
+draw state = case state of
+  Picking plans ->
+    center
+      (borderWithLabel (str "Retry completed Plan Budget sync")
+        (hLimit 86
+          (vLimit 24
+            (padAll 1
+              ( L.renderList renderCompletedPlan True plans
+                <=> str " "
+                <=> str "[wheel/↑/↓ or j/k] Move   [Enter] Retry sync   [Esc] Back   [Q] Quit")))))
+  PickerReturnRequested -> emptyWidget
+  PickerQuitRequested -> emptyWidget
+  PickerRetryRequested _ -> emptyWidget
 
 renderCompletedPlan :: Bool -> IdentifiedPlanTransaction -> Widget Name
 renderCompletedPlan selected identified
@@ -81,31 +97,41 @@ renderCompletedPlan selected identified
         <> "  [" <> planIdText (identifiedPlanId identified) <> "]"
       )
 
-stateListL :: Lens' State (L.List Name IdentifiedPlanTransaction)
-stateListL f (State plans) = State <$> f plans
+stateListL :: Traversal' State (L.List Name IdentifiedPlanTransaction)
+stateListL f (Picking plans) = Picking <$> f plans
+stateListL _ state = pure state
 
 handleEvent
   :: BrickEvent Name AppEvent
-  -> EventM Name State Action
-handleEvent event = case event of
-  MouseDown PlanList V.BScrollUp _ _ -> do
+  -> EventM Name State ()
+handleEvent event = do
+  state <- get
+  case state of
+    Picking _ -> handlePickingEvent event
+    PickerReturnRequested -> pure ()
+    PickerQuitRequested -> pure ()
+    PickerRetryRequested _ -> pure ()
+
+handlePickingEvent
+  :: BrickEvent Name AppEvent
+  -> EventM Name State ()
+handlePickingEvent event = case event of
+  MouseDown PlanList V.BScrollUp _ _ ->
     zoom stateListL (L.handleListEvent (V.EvKey V.KUp []))
-    pure Maintain
-  MouseDown PlanList V.BScrollDown _ _ -> do
+  MouseDown PlanList V.BScrollDown _ _ ->
     zoom stateListL (L.handleListEvent (V.EvKey V.KDown []))
-    pure Maintain
-  MouseDown PlanList V.BLeft _ (Location (_, row)) -> do
+  MouseDown PlanList V.BLeft _ (Location (_, row)) ->
     zoom stateListL (modify (L.listMoveTo row))
-    pure Maintain
-  VtyEvent (V.EvKey V.KEsc []) -> pure ReturnToWorkspace
-  VtyEvent (V.EvKey (V.KChar 'q') []) -> pure QuitRequested
-  VtyEvent (V.EvKey (V.KChar 'Q') []) -> pure QuitRequested
+  VtyEvent (V.EvKey V.KEsc []) -> put PickerReturnRequested
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> put PickerQuitRequested
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> put PickerQuitRequested
   VtyEvent (V.EvKey V.KEnter []) -> do
-    State plans <- get
-    pure $ case L.listSelectedElement plans of
-      Nothing -> ReturnToWorkspace
-      Just (_, identified) -> Retry (identifiedPlanId identified)
-  VtyEvent vtyEvent -> do
+    state <- get
+    case state of
+      Picking plans -> case L.listSelectedElement plans of
+        Nothing -> put PickerReturnRequested
+        Just (_, identified) -> put (PickerRetryRequested (identifiedPlanId identified))
+      _ -> pure ()
+  VtyEvent vtyEvent ->
     zoom stateListL (L.handleListEventVi L.handleListEvent vtyEvent)
-    pure Maintain
-  _ -> pure Maintain
+  _ -> pure ()
