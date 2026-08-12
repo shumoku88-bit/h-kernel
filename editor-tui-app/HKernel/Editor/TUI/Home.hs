@@ -22,6 +22,7 @@ import Data.Time.Calendar
   )
 import Data.Time.Calendar.WeekDate (toWeekDate)
 import Data.Time.Format (defaultTimeLocale, formatTime)
+import Graphics.Vty qualified as V
 
 import HKernel.Account (accountName)
 import HKernel.Actual.Journal
@@ -111,9 +112,14 @@ drawCalendar context selectedDay =
     drawCell (Just day) =
       let (_, _, dayOfMonth) = toGregorian day
           marker = maybe ' ' calendarMarkerValue (markerForDay context day)
-          label = T.justifyRight 2 ' ' (T.pack (show dayOfMonth))
-            <> T.singleton marker <> " "
-          cell = clickable (CalendarDay day) (txt label)
+          dayLabel = T.justifyRight 2 ' ' (T.pack (show dayOfMonth))
+          markerLabel = T.singleton marker <> " "
+          dayNumber =
+            if day == contextObservationDay context && day /= selectedDay
+              then modifyDefAttr (`V.withStyle` V.dim) (txt dayLabel)
+              else txt dayLabel
+          cell = clickable (CalendarDay day)
+            (hBox [dayNumber, txt markerLabel])
       in if day == selectedDay
           then withAttr (attrName "homeSelectedDay") cell
           else cell
