@@ -7,7 +7,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Time.Calendar (fromGregorian)
+import Data.Time.Calendar (Day, fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Editor.SourcePublication
@@ -152,7 +152,7 @@ dropIntent = IssueCloseIntent
   , closeDecisionMemo = "no longer needed"
   }
 
-closeDay :: Data.Time.Calendar.Day
+closeDay :: Day
 closeDay = fromGregorian 2026 8 8
 
 testGeneratedIssueIdStartsAtOne :: Bool
