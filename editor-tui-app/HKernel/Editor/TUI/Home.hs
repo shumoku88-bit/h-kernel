@@ -206,7 +206,7 @@ drawDayPane context selectedDay =
               ++ [str " "]
               ++ cycleSection
               ++ projectionNote
-            ))))
+            )))))
   where
     actualValues = actualsOn context selectedDay
     planValues = plansOn context selectedDay
