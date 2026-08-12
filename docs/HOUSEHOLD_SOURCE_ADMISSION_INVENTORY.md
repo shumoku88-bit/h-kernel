@@ -1,13 +1,13 @@
 # Household source admission inventory
 
 ステータス: 現在状態のownership inventory  
-更新日: 2026-08-11
+更新日: 2026-08-12
 
 ## 目的
 
 この文書は、現在の`h-kernel`が一つのcanonical `HouseholdRoot`から実際に読むsourceと、そのadmission ownerを記録する。
 
-migration history、retained compatibility source、writer authorityはここで現在のreader topologyへ混ぜない。shared canonical contractは[`HOUSEHOLD_CANONICAL_TARGET.md`](HOUSEHOLD_CANONICAL_TARGET.md)、source別writer authorityは[`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md)が所有する。
+migration history、retained compatibility source、writer authorityはここで現在のreader topologyへ混ぜない。shared canonical contractは[`HOUSEHOLD_CANONICAL_SOURCE.md`](HOUSEHOLD_CANONICAL_SOURCE.md)、source別writer authorityは[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md)が所有する。
 
 このinventoryは実装へ追従する現在地であり、将来のmodule分割やlayer数を要求するarchitecture templateではない。
 
