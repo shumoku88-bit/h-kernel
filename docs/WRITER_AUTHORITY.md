@@ -8,7 +8,7 @@ Owner: source別writer authority、single-writer law、writer cutover gate
 
 この文書は、canonical Household sourceの**現在のwriter authority law**だけを所有する。
 
-現在のreader topologyと8本のcanonical sourceは[`HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md)が所有する。source formatとengine-neutralなcanonical contractは[`HOUSEHOLD_CANONICAL_TARGET.md`](HOUSEHOLD_CANONICAL_TARGET.md)が所有する。過去のmigration手順、途中のsource配置、完了済みroadmapはGit履歴とmerged PRが所有する。
+現在のreader topologyと8本のcanonical sourceは[`HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md)が所有する。source formatとengine-neutralなcanonical contractは[`HOUSEHOLD_CANONICAL_SOURCE.md`](HOUSEHOLD_CANONICAL_SOURCE.md)が所有する。過去のmigration手順、途中のsource配置、完了済みroadmapはGit履歴とmerged PRが所有する。
 
 同じphysical directoryにあること、readerがsourceをadmitできること、Editorにwrite capabilityがあることはwriter authorityを意味しない。
 
@@ -97,7 +97,7 @@ writer cutoverを行うchangeでは、この文書のcurrent authorityを同じc
 ## 7. Related owners
 
 - [`HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md): current canonical reader topology
-- [`HOUSEHOLD_CANONICAL_TARGET.md`](HOUSEHOLD_CANONICAL_TARGET.md): engine-neutral canonical source contract
+- [`HOUSEHOLD_CANONICAL_SOURCE.md`](HOUSEHOLD_CANONICAL_SOURCE.md): engine-neutral canonical source contract
 - [`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md): `actual.journal` authorityの具体的なactivation / stop / rollback
 - [`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md): Editor capabilityとsafe writer law
 - [`REPOSITORY_POLICY.md`](REPOSITORY_POLICY.md): document lifecycleとauthority changeの作業単位
