@@ -120,3 +120,7 @@ role = "observation"
 [[documents]]
 path = "docs/FUTURE_COMMODITY_VALUE_BOUNDARY_OBSERVATION.md"
 role = "observation"
+
+[[documents]]
+path = "docs/LONG_TERM_IDENTITY_AND_EXTERNAL_EVIDENCE_OBSERVATION.md"
+role = "observation"
