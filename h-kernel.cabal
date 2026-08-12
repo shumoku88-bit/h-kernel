@@ -570,6 +570,7 @@ executable h-kernel-editor-tui
                     , HKernel.Editor.TUI.Maintenance
                     , HKernel.Editor.TUI.Model
                     , HKernel.Editor.TUI.Plan
+                    , HKernel.Editor.TUI.PlanBudgetSyncPicker
                     , HKernel.Editor.TUI.Report
                     , HKernel.Editor.TUI.ReportStyle
     build-depends:    base >= 4.14 && < 5
