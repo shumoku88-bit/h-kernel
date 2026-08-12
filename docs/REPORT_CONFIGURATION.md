@@ -34,23 +34,34 @@ TOML 値と構成パスはアカウンティング計算には含まれません
 ## 発見
 
 
-デフォルトの `all` コマンドの場合、h-kernel は次の順序で設定を検索します。
+Report configurationの探索はHaskell application entrypointが所有する。`tools/hk`はHousehold rootをdeliveryするだけで、`report.toml`の選択を意味付けしない。
+
+通常のJournal-only / standalone Reportでは、h-kernelは次の順序で設定を検索します。
 
 
-1. `HKERNEL_REPORT_CONFIG` によって名付けられたパス;
+1. `HKERNEL_REPORT_CONFIG` によって明示されたパス;
 
-2. 現在の作業ディレクトリ内の `report.toml`;
+2. `HKERNEL_LEDGER_DATA_DIR`または`ledger-data.local`でHousehold rootが設定され、そのrootに`report.toml`が存在する場合、そのcanonical Report config;
 
-3. 設定ファイルはなく、既存のデフォルトのレポート期間が維持されます。
+3. 現在の作業ディレクトリ内の `report.toml`;
+
+4. 設定ファイルはなく、既存のデフォルトのレポート期間とpresentationが維持されます。
 
 
-明示的に構成されたパスは読み取り可能である必要があります。ファイルが見つからない場合や無効な場合でも、サイレントにフォールバックしません。
+明示的に構成されたパスは読み取り可能である必要があります。ファイルが見つからない場合や無効な場合でも、サイレントに次候補へフォールバックしません。Household rootの`report.toml`が存在しないstandalone Reportだけは、従来どおりcwd `report.toml`または設定なしへ進めます。
 
 
-すべての Journal レポート作成コマンドは、検出されたファイルを 1 回読み取ります。単一レポート コマンド (`pl`、`bs` など) に明示的な CLI 日付または範囲が指定されていない場合、`report.toml` から設定されたレポート期間が自動的に適用されます。明示的な CLI `START END` または日付座標は引き続き権限を持ち、構成されたプレゼンテーション設定を使用しながら、構成された期間をオーバーライドします。 `check` および別個の Envelope コマンドは、このレポート設定を読み取りません。
+canonical Household rootから`all` / `ReportBook`を生成する場合は別のread topologyを持つ。`HKernel.Household.Application.loadCanonicalHousehold`が8 canonical sourceを一度admitし、その`HouseholdState`からActual Journal、canonical `ReportConfiguration`、Household Report surfaceを得る。canonical `report.toml`をReport appが先に別readしてからHousehold loaderでもう一度読む形へ戻さない。
+
+`HKERNEL_REPORT_CONFIG`がcanonical rootとは別のpathを明示する場合だけ、そのfileをexternal Report application overrideとして別にadmitする。このoverrideはReport query/presentationを置き換えるが、canonical Household admissionそのものを迂回しないため、rootの`report.toml`を含む8 sourceは引き続きvalidである必要がある。
+
+
+standalone Journal Reportは検出された設定fileを1回読み取る。単一レポート コマンド (`pl`、`bs` など) に明示的な CLI 日付または範囲が指定されていない場合、`report.toml` から設定されたレポート期間が自動的に適用されます。明示的な CLI `START END` または日付座標は引き続き権限を持ち、構成されたプレゼンテーション設定を使用しながら、構成された期間をオーバーライドします。 `check` および別個の Envelope コマンドは、このレポート設定を読み取りません。
 
 
 検出されたファイルは、1 つのアプリケーション構成として検証されます。無効な構文、不明なキー、無効な日付リテラル、または無効なプレゼンテーション値があると、部分的に受け入れられた構成で出力が生成されるのではなく、`all` とスタンドアロンのジャーナル レポート コマンドの両方が失敗します。
+
+canonical `all`のsource failure precedenceは`loadCanonicalHousehold`のfirst-failure orderに従う。Report adapterがActualやReport configだけを先読みして別のfailure orderを作らない。
 
 
 ## ReportBook とスタンドアロンの同等性
@@ -263,17 +274,20 @@ exact TOML syntaxはまだ固定しない。Reportごとにtyped request、typed
 
 ## Canonical dataとの境界
 
-`report.toml`はReport application configであり、Actual、Plan、Budget、Issue、Account declaration、Household policyの正本ではない。
+`report.toml`はReport application configであり、Actual、Plan、Budget、Issue、Account declaration、Household policyの正本ではない。ただしcanonical Household rootでは8 sourceの一つとして`HouseholdState`へadmitされる。application configであることと、canonical observationの外に置くことを同一視しない。
 
 ```text
-canonical household facts/policy
+canonical HouseholdState
+  -> Actual / Plan / Budget / Household facts and policy
+  + admitted report.toml defaults/presentation
+  + optional explicit external Report config override
   -> typed Report request
-  + report.toml defaults/presentation
-  + explicit CLI override
   -> rendered Report
 ```
 
-repository標準profileの配置はdeployment decisionである。legacy manifestがprivate canonical directoryにあることを理由に、`report.toml`をcanonical household factへ格上げしない。legacy Report TSVは、対応するtyped entrypoint、Report preset、parity evidenceが揃った後にretireする。
+canonical `all`ではActualとcanonical Report configを同じ`HouseholdState`から取る。delivery adapterが同じcanonical fileを別時点に再readして、fact observationとpresentation/query observationを分裂させない。
+
+legacy manifestがprivate canonical directoryにあることを理由に、`report.toml`をcanonical household factへ格上げしない。legacy Report TSVは、対応するtyped entrypoint、Report preset、parity evidenceが揃った後にretireする。
 
 ## エラー
 
