@@ -69,6 +69,18 @@ characterizeHouseholdIssue = do
     "節約中"
     (householdIssueDetails issue)
 
+  let noDue = mustRight (mkHouseholdIssue
+        issueId
+        recordedOn
+        Open
+        NoDueDate
+        Nothing
+        "いつか本棚を買い替える"
+        "")
+  assertEqual "explicit no-due remains distinct from unknown timing"
+    NoDueDate
+    (householdIssueDue noDue)
+
   let undetermined = mustRight (mkHouseholdIssue
         issueId
         recordedOn
@@ -80,6 +92,9 @@ characterizeHouseholdIssue = do
   assertEqual "due-undetermined is distinct from a known date"
     DueUndetermined
     (householdIssueDue undetermined)
+  assertEqual "due-undetermined is distinct from explicit no-due"
+    False
+    (householdIssueDue undetermined == householdIssueDue noDue)
   assertEqual "non-monetary issues retain no amount"
     Nothing
     (householdIssueAmount undetermined)
@@ -119,6 +134,18 @@ characterizeCompleteLineRendering = do
     "2026-08-01 | open | due 2026-08-08 | 4810 JPY | Wi-Fi支払いをゆうちょで埋めるか | 節約中"
     (renderHouseholdIssueLine issue)
 
+  let noDue = mustRight (mkHouseholdIssue
+        issueId
+        (fromGregorian 2026 8 2)
+        Open
+        NoDueDate
+        Nothing
+        "本棚を探す"
+        "中古優先")
+  assertEqual "explicit no-due remains visible"
+    "2026-08-02 | open | no due date | no amount | 本棚を探す | 中古優先"
+    (renderHouseholdIssueLine noDue)
+
   let noDateOrAmount = mustRight (mkHouseholdIssue
         issueId
         (fromGregorian 2026 8 2)
@@ -131,8 +158,6 @@ characterizeCompleteLineRendering = do
     "2026-08-02 | resolved | due undetermined | no amount | 契約を続けるか確認する | 確認済み"
     (renderHouseholdIssueLine noDateOrAmount)
 
-
-
 assertLeft :: Show value => String -> Either error value -> IO ()
 assertLeft label result = case result of
   Left _ -> putStrLn ("  [PASS] " ++ label)
@@ -140,4 +165,3 @@ assertLeft label result = case result of
     putStrLn ("  [FAIL] " ++ label)
     putStrLn ("    unexpectedly accepted: " ++ show value)
     exitFailure
-

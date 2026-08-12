@@ -19,7 +19,8 @@ import HKernel.Editor.SourcePublication
   , publishWithAdmission
   )
 import HKernel.Editor.IssueAppend
-  ( IssueAppendIntent(..)
+  ( IssueAppendError(..)
+  , IssueAppendIntent(..)
   , IssueAppendPreview(..)
   , IssueCloseDisposition(..)
   , IssueCloseError(..)
@@ -27,18 +28,22 @@ import HKernel.Editor.IssueAppend
   , IssueClosePreview(..)
   , generateAvailableIssueId
   , prepareIssueAppend
+  , prepareIssueAppendWithDue
   , prepareIssueClose
   )
 import HKernel.Household.Issue.TSV
   ( householdIssuesHeader
+  , legacyHouseholdIssuesHeader
   , parseHouseholdIssues
   )
 import HKernel.HouseholdIssue
   ( HouseholdIssue
+  , IssueDue(..)
   , IssueId
   , IssueStatus(..)
   , householdIssueAmount
   , householdIssueDetails
+  , householdIssueDue
   , householdIssueId
   , householdIssueStatus
   , mkIssueId
@@ -56,13 +61,18 @@ main = do
         [ ("testGeneratedIssueIdStartsAtOne", pure testGeneratedIssueIdStartsAtOne)
         , ("testGeneratedIssueIdSkipsExisting", pure testGeneratedIssueIdSkipsExisting)
         , ("testValidIssueAppend", pure testValidIssueAppend)
+        , ("testExplicitNoDueAppend", pure testExplicitNoDueAppend)
+        , ("testExplicitKnownDueAppend", pure testExplicitKnownDueAppend)
         , ("testOptionalAmountAppend", pure testOptionalAmountAppend)
-        , ("testEmptySourceAddsHeader", pure testEmptySourceAddsHeader)
-        , ("testCommentOnlySourceAddsHeader", pure testCommentOnlySourceAddsHeader)
+        , ("testEmptySourceAddsCurrentHeader", pure testEmptySourceAddsCurrentHeader)
+        , ("testCommentOnlySourceAddsCurrentHeader", pure testCommentOnlySourceAddsCurrentHeader)
+        , ("testLegacyUndeterminedAppendPreservesShape", pure testLegacyUndeterminedAppendPreservesShape)
+        , ("testLegacyExplicitDueRejected", pure testLegacyExplicitDueRejected)
         , ("testOneSidedBlankAmountRejected", pure testOneSidedBlankAmountRejected)
         , ("testResolveIssueByIdentity", pure testResolveIssueByIdentity)
         , ("testDropIssueByIdentity", pure testDropIssueByIdentity)
-        , ("testIssueClosePreservesUntouchedBytes", pure testIssueClosePreservesUntouchedBytes)
+        , ("testIssueClosePreservesUntouchedBytesAndDue", pure testIssueClosePreservesUntouchedBytesAndDue)
+        , ("testLegacyIssueClosePreservesShape", pure testLegacyIssueClosePreservesShape)
         , ("testIssueCloseRejectsUnknownIdentity", pure testIssueCloseRejectsUnknownIdentity)
         , ("testIssueCloseRejectsClosedIssue", pure testIssueCloseRejectsClosedIssue)
         , ("testIssueCloseRejectsBlankMemo", pure testIssueCloseRejectsBlankMemo)
@@ -81,6 +91,12 @@ main = do
 fixtureSource :: Text
 fixtureSource = T.unlines
   [ householdIssuesHeader
+  , "ISSUE-1\topen\t2026-08-01\tundetermined\tmisc\tSome title\t1000\tJPY\tsome details"
+  ]
+
+legacyFixtureSource :: Text
+legacyFixtureSource = T.unlines
+  [ legacyHouseholdIssuesHeader
   , "ISSUE-1\topen\t2026-08-01\tmisc\tSome title\t1000\tJPY\tsome details"
   ]
 
@@ -88,8 +104,13 @@ closeFixtureSource :: Text
 closeFixtureSource =
   "# keep this notebook note\n"
     <> householdIssuesHeader <> "\n"
+    <> "ISSUE-1\topen\t2026-08-01\t2026-08-15\tmisc\tSome title\t1000\tJPY\tsome details\n"
+    <> "ISSUE-2\topen\t2026-08-02\tnone\thome\tOther title\t\t\tother details\n"
+
+legacyCloseFixtureSource :: Text
+legacyCloseFixtureSource =
+  legacyHouseholdIssuesHeader <> "\n"
     <> "ISSUE-1\topen\t2026-08-01\tmisc\tSome title\t1000\tJPY\tsome details\n"
-    <> "ISSUE-2\topen\t2026-08-02\thome\tOther title\t\t\tother details\n"
 
 testIntent :: IssueAppendIntent
 testIntent = IssueAppendIntent
@@ -152,7 +173,31 @@ testValidIssueAppend =
   case prepareIssueAppend fixtureSource testIntent of
     Right preview ->
       candidateBlock preview
-        == "ISSUE-2\topen\t2026-08-04\tgroceries\tBuy milk\t500\tJPY\tneed it for breakfast"
+        == "ISSUE-2\topen\t2026-08-04\tundetermined\tgroceries\tBuy milk\t500\tJPY\tneed it for breakfast"
+      && case findIssueById (mustIssueId "ISSUE-2") (candidateCompleteSource preview) of
+        Just issue -> householdIssueDue issue == DueUndetermined
+        Nothing -> False
+    Left err -> error (show err)
+
+testExplicitNoDueAppend :: Bool
+testExplicitNoDueAppend =
+  case prepareIssueAppendWithDue fixtureSource NoDueDate testIntent of
+    Right preview ->
+      "\tnone\tgroceries\t" `T.isInfixOf` candidateBlock preview
+        && case findIssueById (mustIssueId "ISSUE-2") (candidateCompleteSource preview) of
+          Just issue -> householdIssueDue issue == NoDueDate
+          Nothing -> False
+    Left err -> error (show err)
+
+testExplicitKnownDueAppend :: Bool
+testExplicitKnownDueAppend =
+  let due = DueOn (fromGregorian 2026 8 15)
+  in case prepareIssueAppendWithDue fixtureSource due testIntent of
+    Right preview ->
+      "\t2026-08-15\tgroceries\t" `T.isInfixOf` candidateBlock preview
+        && case findIssueById (mustIssueId "ISSUE-2") (candidateCompleteSource preview) of
+          Just issue -> householdIssueDue issue == due
+          Nothing -> False
     Left err -> error (show err)
 
 testOptionalAmountAppend :: Bool
@@ -161,25 +206,45 @@ testOptionalAmountAppend =
     Left err -> error (show err)
     Right preview ->
       candidateBlock preview
-        == "ISSUE-3\topen\t2026-08-05\thome\tCheck the boiler\t\t\tcost is not known yet"
+        == "ISSUE-3\topen\t2026-08-05\tundetermined\thome\tCheck the boiler\t\t\tcost is not known yet"
       && parsedOptionalIssueMatches preview
 
-testEmptySourceAddsHeader :: Bool
-testEmptySourceAddsHeader =
+testEmptySourceAddsCurrentHeader :: Bool
+testEmptySourceAddsCurrentHeader =
   case prepareIssueAppend "" optionalAmountIntent of
     Left err -> error (show err)
     Right preview ->
       candidateCompleteSource preview
         == householdIssuesHeader <> "\n" <> candidateBlock preview
+      && "\tundetermined\thome\t" `T.isInfixOf` candidateBlock preview
       && parsedOptionalIssueMatches preview
 
-testCommentOnlySourceAddsHeader :: Bool
-testCommentOnlySourceAddsHeader =
+testCommentOnlySourceAddsCurrentHeader :: Bool
+testCommentOnlySourceAddsCurrentHeader =
   case prepareIssueAppend "# retained notebook note\n" optionalAmountIntent of
     Left err -> error (show err)
     Right preview ->
       householdIssuesHeader `T.isInfixOf` candidateCompleteSource preview
       && parsedOptionalIssueMatches preview
+
+testLegacyUndeterminedAppendPreservesShape :: Bool
+testLegacyUndeterminedAppendPreservesShape =
+  case prepareIssueAppend legacyFixtureSource testIntent of
+    Left err -> error (show err)
+    Right preview ->
+      candidateBlock preview
+        == "ISSUE-2\topen\t2026-08-04\tgroceries\tBuy milk\t500\tJPY\tneed it for breakfast"
+      && legacyHouseholdIssuesHeader `T.isPrefixOf` candidateCompleteSource preview
+      && case findIssueById (mustIssueId "ISSUE-2") (candidateCompleteSource preview) of
+        Just issue -> householdIssueDue issue == DueUndetermined
+        Nothing -> False
+
+testLegacyExplicitDueRejected :: Bool
+testLegacyExplicitDueRejected =
+  case prepareIssueAppendWithDue legacyFixtureSource NoDueDate testIntent of
+    Left errors ->
+      LegacyIssueSourceCannotRepresentDue NoDueDate `elem` NonEmpty.toList errors
+    Right _ -> False
 
 testOneSidedBlankAmountRejected :: Bool
 testOneSidedBlankAmountRejected =
@@ -189,7 +254,7 @@ testOneSidedBlankAmountRejected =
   where
     oneSidedBlankSource = T.unlines
       [ householdIssuesHeader
-      , "ISSUE-4\topen\t2026-08-05\thome\tBroken latch\t\tJPY\tinspect first"
+      , "ISSUE-4\topen\t2026-08-05\tnone\thome\tBroken latch\t\tJPY\tinspect first"
       ]
 
 parsedOptionalIssueMatches :: IssueAppendPreview -> Bool
@@ -199,6 +264,7 @@ parsedOptionalIssueMatches preview =
       issue : _ ->
         householdIssueId issue == intentIssueId optionalAmountIntent
           && householdIssueAmount issue == Nothing
+          && householdIssueDue issue == DueUndetermined
       [] -> False
     Left _ -> False
 
@@ -208,13 +274,14 @@ testResolveIssueByIdentity =
     Left err -> error (show err)
     Right preview ->
       closeOriginalRow preview
-        == "ISSUE-1\topen\t2026-08-01\tmisc\tSome title\t1000\tJPY\tsome details"
+        == "ISSUE-1\topen\t2026-08-01\t2026-08-15\tmisc\tSome title\t1000\tJPY\tsome details"
       && closeCandidateRow preview
-        == "ISSUE-1\tresolved\t2026-08-01\tmisc\tSome title\t1000\tJPY\tsome details。Decision: 2026-08-08 fixed by provider"
+        == "ISSUE-1\tresolved\t2026-08-01\t2026-08-15\tmisc\tSome title\t1000\tJPY\tsome details。Decision: 2026-08-08 fixed by provider"
       && case findIssueById (mustIssueId "ISSUE-1")
           (closeCandidateCompleteSource preview) of
         Just issue ->
           householdIssueStatus issue == Resolved
+            && householdIssueDue issue == DueOn (fromGregorian 2026 8 15)
             && householdIssueDetails issue
               == "[misc] some details。Decision: 2026-08-08 fixed by provider"
         Nothing -> False
@@ -225,21 +292,33 @@ testDropIssueByIdentity =
     Left err -> error (show err)
     Right preview ->
       closeCandidateRow preview
-        == "ISSUE-2\tdropped\t2026-08-02\thome\tOther title\t\t\tother details。Decision: 2026-08-08 no longer needed"
+        == "ISSUE-2\tdropped\t2026-08-02\tnone\thome\tOther title\t\t\tother details。Decision: 2026-08-08 no longer needed"
       && case findIssueById (mustIssueId "ISSUE-2")
           (closeCandidateCompleteSource preview) of
-        Just issue -> householdIssueStatus issue == Dropped
+        Just issue ->
+          householdIssueStatus issue == Dropped
+            && householdIssueDue issue == NoDueDate
         Nothing -> False
 
-testIssueClosePreservesUntouchedBytes :: Bool
-testIssueClosePreservesUntouchedBytes =
+testIssueClosePreservesUntouchedBytesAndDue :: Bool
+testIssueClosePreservesUntouchedBytesAndDue =
   case prepareIssueClose closeFixtureSource resolveIntent of
     Left err -> error (show err)
     Right preview ->
       "# keep this notebook note\n" `T.isPrefixOf` closeCandidateCompleteSource preview
-        && "ISSUE-2\topen\t2026-08-02\thome\tOther title\t\t\tother details\n"
+        && "ISSUE-2\topen\t2026-08-02\tnone\thome\tOther title\t\t\tother details\n"
           `T.isInfixOf` closeCandidateCompleteSource preview
+        && "\t2026-08-15\tmisc\t" `T.isInfixOf` closeCandidateRow preview
         && "\n" `T.isSuffixOf` closeCandidateCompleteSource preview
+
+testLegacyIssueClosePreservesShape :: Bool
+testLegacyIssueClosePreservesShape =
+  case prepareIssueClose legacyCloseFixtureSource resolveIntent of
+    Left err -> error (show err)
+    Right preview ->
+      closeCandidateRow preview
+        == "ISSUE-1\tresolved\t2026-08-01\tmisc\tSome title\t1000\tJPY\tsome details。Decision: 2026-08-08 fixed by provider"
+      && length (T.splitOn "\t" (closeCandidateRow preview)) == 8
 
 testIssueCloseRejectsUnknownIdentity :: Bool
 testIssueCloseRejectsUnknownIdentity =
@@ -307,6 +386,7 @@ testEmptyIssueCommit =
       Right [issue] ->
         householdIssueId issue == intentIssueId optionalAmountIntent
           && householdIssueAmount issue == Nothing
+          && householdIssueDue issue == DueUndetermined
       _ -> False)
 
 testIssueCloseCommit :: IO Bool
@@ -332,7 +412,9 @@ testIssueCloseCommit = do
           pure
             (written == closeCandidateCompleteSource preview
               && case findIssueById (mustIssueId "ISSUE-1") written of
-                Just issue -> householdIssueStatus issue == Resolved
+                Just issue ->
+                  householdIssueStatus issue == Resolved
+                    && householdIssueDue issue == DueOn (fromGregorian 2026 8 15)
                 Nothing -> False)
   cleanup path
   pure result

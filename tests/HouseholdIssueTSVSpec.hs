@@ -14,17 +14,18 @@ import System.Exit (exitFailure)
 main :: IO ()
 main = do
   characterizeAcceptedIssues
+  characterizeLegacyCompatibility
   characterizeSourceFailures
 
 characterizeAcceptedIssues :: IO ()
 characterizeAcceptedIssues = do
   let issues = mustRight (parseHouseholdIssues validIssues)
-      firstIssue = exactlyOne
+      knownDueIssue = exactlyOne
         (filter ((== "issue-one") . issueIdText . householdIssueId) issues)
-      secondIssue = exactlyOne
-        (filter ((== "issue-resolved") . issueIdText . householdIssueId) issues)
-      droppedIssue = exactlyOne
-        (filter ((== "issue-dropped") . issueIdText . householdIssueId) issues)
+      noDueIssue = exactlyOne
+        (filter ((== "issue-no-due") . issueIdText . householdIssueId) issues)
+      undeterminedIssue = exactlyOne
+        (filter ((== "issue-undetermined") . issueIdText . householdIssueId) issues)
       issueWithoutAmount = exactlyOne
         (mustRight (parseHouseholdIssues optionalAmountIssue))
       jpy = mustRight (mkCommodity "JPY")
@@ -34,31 +35,48 @@ characterizeAcceptedIssues = do
     (length issues)
   assertEqual "open status remains typed"
     Open
-    (householdIssueStatus firstIssue)
-  assertEqual "recorded date remains exact"
+    (householdIssueStatus knownDueIssue)
+  assertEqual "recorded date remains independent from due"
     (fromGregorian 2026 7 20)
-    (householdIssueRecordedOn firstIssue)
-  assertEqual "retained source does not invent a due date"
+    (householdIssueRecordedOn knownDueIssue)
+  assertEqual "known due is admitted from the due coordinate"
+    (DueOn (fromGregorian 2026 8 15))
+    (householdIssueDue knownDueIssue)
+  assertEqual "explicit no-due remains typed"
+    NoDueDate
+    (householdIssueDue noDueIssue)
+  assertEqual "undetermined due remains typed"
     DueUndetermined
-    (householdIssueDue firstIssue)
+    (householdIssueDue undeterminedIssue)
   assertEqual "amount and Commodity remain exact"
     (Just (mkAmount jpy (quantityFromInteger 200)))
-    (householdIssueAmount firstIssue)
+    (householdIssueAmount knownDueIssue)
   assertEqual "category remains explicit context in details"
     "[planning] decide funding"
-    (householdIssueDetails firstIssue)
-  assertEqual "resolved remains distinct from open"
-    Resolved
-    (householdIssueStatus secondIssue)
-  assertEqual "dropped remains distinct from resolved"
-    Dropped
-    (householdIssueStatus droppedIssue)
+    (householdIssueDetails knownDueIssue)
   assertEqual "blank amount and currency retain no invented Amount"
     Nothing
     (householdIssueAmount issueWithoutAmount)
   assertEqual "blank and comment-only input admits no issues"
     []
     (mustRight (parseHouseholdIssues "\n# no current matters\n"))
+
+characterizeLegacyCompatibility :: IO ()
+characterizeLegacyCompatibility = do
+  let legacyIssues = mustRight (parseHouseholdIssues legacySource)
+      legacyIssue = exactlyOne legacyIssues
+  assertEqual "legacy eight-column header remains admitted during migration"
+    True
+    (householdIssueSourceHasHeader legacySource)
+  assertEqual "legacy source does not claim to own a due column"
+    False
+    (householdIssueSourceUsesDueColumn legacySource)
+  assertEqual "legacy missing due evidence becomes undetermined, not no-due"
+    DueUndetermined
+    (householdIssueDue legacyIssue)
+  assertEqual "current source advertises an explicit due column"
+    True
+    (householdIssueSourceUsesDueColumn validIssues)
 
 characterizeSourceFailures :: IO ()
 characterizeSourceFailures = do
@@ -70,14 +88,22 @@ characterizeSourceFailures = do
     2
     "unknown issue status"
     (parseHouseholdIssues (T.replace "\topen\t" "\tpending\t" oneIssue))
-  assertLeftAt "date retains its physical line coordinate"
+  assertLeftAt "recorded date retains its physical line coordinate"
     2
     "invalid date"
     (parseHouseholdIssues (T.replace "2026-07-20" "2026-02-30" oneIssue))
-  assertLeftAt "row width remains exact"
+  assertLeftAt "invalid explicit due fails closed"
     2
-    "expected eight issue columns"
+    "invalid issue due"
+    (parseHouseholdIssues (T.replace "2026-08-15" "2026-02-30" oneIssue))
+  assertLeftAt "current row width remains exact"
+    2
+    "expected nine issue columns"
     (parseHouseholdIssues (header <> "\nissue-one\topen\n"))
+  assertLeftAt "legacy row width remains exact"
+    2
+    "expected eight legacy issue columns"
+    (parseHouseholdIssues (legacyHeader <> "\nissue-one\topen\n"))
   assertLeftAt "blank amount cannot discard a present currency"
     2
     "amount and currency must both be blank or both be present"
@@ -94,51 +120,58 @@ characterizeSourceFailures = do
 header :: T.Text
 header = householdIssuesHeader
 
+legacyHeader :: T.Text
+legacyHeader = legacyHouseholdIssuesHeader
+
 oneIssue :: T.Text
 oneIssue = T.unlines
   [ header
-  , "issue-one\topen\t2026-07-20\tplanning\twifi\t200\tJPY\tdecide funding"
+  , "issue-one\topen\t2026-07-20\t2026-08-15\tplanning\twifi\t200\tJPY\tdecide funding"
   ]
 
 optionalAmountIssue :: T.Text
 optionalAmountIssue = T.unlines
   [ header
-  , "issue-unknown-cost\topen\t2026-07-22\thome\tboiler\t\t\tinspect first"
+  , "issue-unknown-cost\topen\t2026-07-22\tundetermined\thome\tboiler\t\t\tinspect first"
   ]
 
 amountBlankOnly :: T.Text
 amountBlankOnly = T.unlines
   [ header
-  , "issue-amount-blank\topen\t2026-07-22\thome\tboiler\t\tJPY\tinspect first"
+  , "issue-amount-blank\topen\t2026-07-22\tnone\thome\tboiler\t\tJPY\tinspect first"
   ]
 
 currencyBlankOnly :: T.Text
 currencyBlankOnly = T.unlines
   [ header
-  , "issue-currency-blank\topen\t2026-07-22\thome\tboiler\t200\t\tinspect first"
+  , "issue-currency-blank\topen\t2026-07-22\tnone\thome\tboiler\t200\t\tinspect first"
   ]
 
 validIssues :: T.Text
 validIssues = T.unlines
   [ "# household notebook"
   , header
-  , "issue-one\topen\t2026-07-20\tplanning\twifi\t200\tJPY\tdecide funding"
-  , "issue-resolved\tresolved\t2026-07-01\tsubscription\tcancelled\t0\tJPY\tdone"
-  , "issue-dropped\tdropped\t2026-07-02\thome\tunused option\t\t\tno longer pursued"
+  , "issue-one\topen\t2026-07-20\t2026-08-15\tplanning\twifi\t200\tJPY\tdecide funding"
+  , "issue-no-due\topen\t2026-07-01\tnone\twant\tbookshelf\t\t\tlook for a good one"
+  , "issue-undetermined\tresolved\t2026-07-02\tundetermined\twaiting\trepair schedule\t\t\twaiting for reply"
+  ]
+
+legacySource :: T.Text
+legacySource = T.unlines
+  [ legacyHeader
+  , "legacy-issue\topen\t2026-07-20\tplanning\twifi\t200\tJPY\tdecide funding"
   ]
 
 duplicateIssues :: T.Text
 duplicateIssues = T.unlines
   [ header
-  , "issue-one\topen\t2026-07-20\tplanning\twifi\t200\tJPY\tdecide funding"
-  , "issue-one\tresolved\t2026-07-21\tplanning\twifi\t0\tJPY\tdone"
+  , "issue-one\topen\t2026-07-20\tnone\tplanning\twifi\t200\tJPY\tdecide funding"
+  , "issue-one\tresolved\t2026-07-21\tundetermined\tplanning\twifi\t0\tJPY\tdone"
   ]
 
 exactlyOne :: Show value => [value] -> value
 exactlyOne [value] = value
 exactlyOne values = error ("expected exactly one value, got " ++ show values)
-
-
 
 assertLeftAt
   :: String
@@ -164,4 +197,3 @@ assertLeftAt label expectedLine expectedMessage result = case result of
     matches err =
       householdIssueTSVErrorLine err == expectedLine
         && householdIssueTSVErrorMessage err == expectedMessage
-

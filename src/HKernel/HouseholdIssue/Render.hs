@@ -40,6 +40,7 @@ renderStatus = \case
 renderDue :: IssueDue -> Text
 renderDue = \case
   DueOn day -> "due " <> renderDay day
+  NoDueDate -> "no due date"
   DueUndetermined -> "due undetermined"
 
 renderAmount :: Amount -> Text

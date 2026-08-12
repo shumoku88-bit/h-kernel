@@ -8,7 +8,9 @@
 module HKernel.Household.Issue.TSV
   ( HouseholdIssueTSVError(..)
   , householdIssuesHeader
+  , legacyHouseholdIssuesHeader
   , householdIssueSourceHasHeader
+  , householdIssueSourceUsesDueColumn
   , parseHouseholdIssues
   ) where
 
@@ -35,15 +37,36 @@ parseHouseholdIssues
 parseHouseholdIssues input = case meaningfulLines input of
   [] -> Right []
   (headerLine, header) : rows
-    | header /= householdIssuesHeader ->
-        Left (errorAt headerLine "unexpected issues header" NonEmpty.:| [])
-    | otherwise -> do
-        issues <- mapLeft NonEmpty.singleton (traverse parseRow rows)
+    | header == householdIssuesHeader -> do
+        issues <- mapLeft NonEmpty.singleton (traverse parseDueAwareRow rows)
         ensureUniqueIssues issues
+    | header == legacyHouseholdIssuesHeader -> do
+        issues <- mapLeft NonEmpty.singleton (traverse parseLegacyRow rows)
+        ensureUniqueIssues issues
+    | otherwise ->
+        Left (errorAt headerLine "unexpected issues header" NonEmpty.:| [])
 
--- | The stable physical header for the retained Issue source.
+-- | Current source header. The recorded date and due meaning are deliberately
+-- separate coordinates.
 householdIssuesHeader :: Text
 householdIssuesHeader = T.intercalate "\t"
+  [ "issue_id"
+  , "status"
+  , "date"
+  , "due"
+  , "category"
+  , "title"
+  , "amount"
+  , "currency"
+  , "details"
+  ]
+
+-- | Bounded migration compatibility for the pre-due source shape.
+--
+-- Rows admitted through this header carry no explicit due evidence and are
+-- therefore interpreted as 'DueUndetermined', not 'NoDueDate'.
+legacyHouseholdIssuesHeader :: Text
+legacyHouseholdIssuesHeader = T.intercalate "\t"
   [ "issue_id"
   , "status"
   , "date"
@@ -54,7 +77,7 @@ householdIssuesHeader = T.intercalate "\t"
   , "details"
   ]
 
--- | Whether an admitted source already contains its stable header.
+-- | Whether an admitted source already contains either supported header.
 --
 -- Callers use this only after 'parseHouseholdIssues' succeeds. Blank and
 -- comment-only sources are admitted but still need a header before the first
@@ -62,10 +85,46 @@ householdIssuesHeader = T.intercalate "\t"
 householdIssueSourceHasHeader :: Text -> Bool
 householdIssueSourceHasHeader input = case meaningfulLines input of
   [] -> False
+  (_, header) : _ ->
+    header == householdIssuesHeader || header == legacyHouseholdIssuesHeader
+
+-- | Whether an admitted source uses the current explicit due coordinate.
+householdIssueSourceUsesDueColumn :: Text -> Bool
+householdIssueSourceUsesDueColumn input = case meaningfulLines input of
+  [] -> False
   (_, header) : _ -> header == householdIssuesHeader
 
-parseRow :: (Int, Text) -> Either HouseholdIssueTSVError HouseholdIssue
-parseRow (lineNumber, line) = case T.splitOn "\t" line of
+parseDueAwareRow :: (Int, Text) -> Either HouseholdIssueTSVError HouseholdIssue
+parseDueAwareRow (lineNumber, line) = case T.splitOn "\t" line of
+  [ identifier
+    , statusText
+    , dateText
+    , dueText
+    , category
+    , title
+    , quantityText
+    , currencyText
+    , details
+    ] -> do
+      identifier' <- mapLeft (errorAt lineNumber . tshow)
+        (mkIssueId identifier)
+      status <- parseStatus lineNumber statusText
+      day <- parseDay lineNumber dateText
+      due <- parseDue lineNumber dueText
+      amount <- parseOptionalAmount lineNumber quantityText currencyText
+      mapLeft (errorAt lineNumber . tshow)
+        (mkHouseholdIssue
+          identifier'
+          day
+          status
+          due
+          amount
+          title
+          ("[" <> category <> "] " <> details))
+  _ -> Left (errorAt lineNumber "expected nine issue columns")
+
+parseLegacyRow :: (Int, Text) -> Either HouseholdIssueTSVError HouseholdIssue
+parseLegacyRow (lineNumber, line) = case T.splitOn "\t" line of
   [ identifier
     , statusText
     , dateText
@@ -89,7 +148,13 @@ parseRow (lineNumber, line) = case T.splitOn "\t" line of
           amount
           title
           ("[" <> category <> "] " <> details))
-  _ -> Left (errorAt lineNumber "expected eight issue columns")
+  _ -> Left (errorAt lineNumber "expected eight legacy issue columns")
+
+parseDue :: Int -> Text -> Either HouseholdIssueTSVError IssueDue
+parseDue _ "none" = Right NoDueDate
+parseDue _ "undetermined" = Right DueUndetermined
+parseDue lineNumber input =
+  DueOn <$> parseDayWithMessage lineNumber "invalid issue due" input
 
 parseOptionalAmount
   :: Int
@@ -118,10 +183,13 @@ parseStatus lineNumber _ =
   Left (errorAt lineNumber "unknown issue status")
 
 parseDay :: Int -> Text -> Either HouseholdIssueTSVError Day
-parseDay lineNumber input =
+parseDay lineNumber = parseDayWithMessage lineNumber "invalid date"
+
+parseDayWithMessage :: Int -> Text -> Text -> Either HouseholdIssueTSVError Day
+parseDayWithMessage lineNumber message input =
   case parseTimeM True defaultTimeLocale "%F" (T.unpack input) of
     Just day -> Right day
-    Nothing -> Left (errorAt lineNumber "invalid date")
+    Nothing -> Left (errorAt lineNumber message)
 
 ensureUniqueIssues
   :: [HouseholdIssue]
