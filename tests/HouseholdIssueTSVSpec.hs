@@ -137,6 +137,10 @@ characterizeSourceFailures = do
     2
     "amount and currency must both be blank or both be present"
     (parseHouseholdIssues amountBlankOnly)
+  assertLeftAt "blank currency cannot discard a present amount"
+    2
+    "amount and currency must both be blank or both be present"
+    (parseHouseholdIssues currencyBlankOnly)
   assertLeftAt "IssueId is unique across the admitted collection"
     0
     "duplicate identity"
@@ -167,6 +171,12 @@ amountBlankOnly :: T.Text
 amountBlankOnly = T.unlines
   [ header
   , "issue-amount-blank\topen\t2026-07-22\tnone\tnone\thome\tboiler\t\tJPY\tinspect first"
+  ]
+
+currencyBlankOnly :: T.Text
+currencyBlankOnly = T.unlines
+  [ header
+  , "issue-currency-blank\topen\t2026-07-22\tnone\tnone\thome\tboiler\t200\t\tinspect first"
   ]
 
 validIssues :: T.Text
