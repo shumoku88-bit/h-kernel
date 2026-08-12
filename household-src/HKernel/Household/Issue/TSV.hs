@@ -8,9 +8,11 @@
 module HKernel.Household.Issue.TSV
   ( HouseholdIssueTSVError(..)
   , householdIssuesHeader
+  , dueAwareHouseholdIssuesHeader
   , legacyHouseholdIssuesHeader
   , householdIssueSourceHasHeader
   , householdIssueSourceUsesDueColumn
+  , householdIssueSourceUsesClosedColumn
   , parseHouseholdIssues
   ) where
 
@@ -38,6 +40,9 @@ parseHouseholdIssues input = case meaningfulLines input of
   [] -> Right []
   (headerLine, header) : rows
     | header == householdIssuesHeader -> do
+        issues <- mapLeft NonEmpty.singleton (traverse parseClosedAwareRow rows)
+        ensureUniqueIssues issues
+    | header == dueAwareHouseholdIssuesHeader -> do
         issues <- mapLeft NonEmpty.singleton (traverse parseDueAwareRow rows)
         ensureUniqueIssues issues
     | header == legacyHouseholdIssuesHeader -> do
@@ -46,10 +51,27 @@ parseHouseholdIssues input = case meaningfulLines input of
     | otherwise ->
         Left (errorAt headerLine "unexpected issues header" NonEmpty.:| [])
 
--- | Current source header. The recorded date and due meaning are deliberately
+-- | Current source header. Recorded, due, and closure time are deliberately
 -- separate coordinates.
 householdIssuesHeader :: Text
 householdIssuesHeader = T.intercalate "\t"
+  [ "issue_id"
+  , "status"
+  , "date"
+  , "due"
+  , "closed"
+  , "category"
+  , "title"
+  , "amount"
+  , "currency"
+  , "details"
+  ]
+
+-- | Bounded compatibility for the previous explicit-due source shape.
+-- Closed Issues admitted through this header have status evidence but no
+-- closure-date evidence, so their closure time remains 'ClosedUndetermined'.
+dueAwareHouseholdIssuesHeader :: Text
+dueAwareHouseholdIssuesHeader = T.intercalate "\t"
   [ "issue_id"
   , "status"
   , "date"
@@ -63,8 +85,9 @@ householdIssuesHeader = T.intercalate "\t"
 
 -- | Bounded migration compatibility for the pre-due source shape.
 --
--- Rows admitted through this header carry no explicit due evidence and are
--- therefore interpreted as 'DueUndetermined', not 'NoDueDate'.
+-- Rows admitted through this header carry neither explicit due nor closure-date
+-- evidence. Missing due becomes 'DueUndetermined'; closed status becomes
+-- 'ClosedUndetermined' rather than a guessed date.
 legacyHouseholdIssuesHeader :: Text
 legacyHouseholdIssuesHeader = T.intercalate "\t"
   [ "issue_id"
@@ -77,7 +100,7 @@ legacyHouseholdIssuesHeader = T.intercalate "\t"
   , "details"
   ]
 
--- | Whether an admitted source already contains either supported header.
+-- | Whether an admitted source already contains any supported header.
 --
 -- Callers use this only after 'parseHouseholdIssues' succeeds. Blank and
 -- comment-only sources are admitted but still need a header before the first
@@ -86,13 +109,54 @@ householdIssueSourceHasHeader :: Text -> Bool
 householdIssueSourceHasHeader input = case meaningfulLines input of
   [] -> False
   (_, header) : _ ->
-    header == householdIssuesHeader || header == legacyHouseholdIssuesHeader
+    header == householdIssuesHeader
+      || header == dueAwareHouseholdIssuesHeader
+      || header == legacyHouseholdIssuesHeader
 
--- | Whether an admitted source uses the current explicit due coordinate.
+-- | Whether an admitted source has the explicit due coordinate.
 householdIssueSourceUsesDueColumn :: Text -> Bool
 householdIssueSourceUsesDueColumn input = case meaningfulLines input of
   [] -> False
+  (_, header) : _ ->
+    header == householdIssuesHeader || header == dueAwareHouseholdIssuesHeader
+
+-- | Whether an admitted source has the explicit closure-time coordinate.
+householdIssueSourceUsesClosedColumn :: Text -> Bool
+householdIssueSourceUsesClosedColumn input = case meaningfulLines input of
+  [] -> False
   (_, header) : _ -> header == householdIssuesHeader
+
+parseClosedAwareRow :: (Int, Text) -> Either HouseholdIssueTSVError HouseholdIssue
+parseClosedAwareRow (lineNumber, line) = case T.splitOn "\t" line of
+  [ identifier
+    , statusText
+    , dateText
+    , dueText
+    , closedText
+    , category
+    , title
+    , quantityText
+    , currencyText
+    , details
+    ] -> do
+      identifier' <- mapLeft (errorAt lineNumber . tshow)
+        (mkIssueId identifier)
+      status <- parseStatus lineNumber statusText
+      day <- parseDay lineNumber dateText
+      due <- parseDue lineNumber dueText
+      closed <- parseClosed lineNumber closedText
+      amount <- parseOptionalAmount lineNumber quantityText currencyText
+      mapLeft (errorAt lineNumber . tshow)
+        (mkHouseholdIssueWithClosed
+          identifier'
+          day
+          status
+          due
+          closed
+          amount
+          title
+          ("[" <> category <> "] " <> details))
+  _ -> Left (errorAt lineNumber "expected ten issue columns")
 
 parseDueAwareRow :: (Int, Text) -> Either HouseholdIssueTSVError HouseholdIssue
 parseDueAwareRow (lineNumber, line) = case T.splitOn "\t" line of
@@ -113,15 +177,16 @@ parseDueAwareRow (lineNumber, line) = case T.splitOn "\t" line of
       due <- parseDue lineNumber dueText
       amount <- parseOptionalAmount lineNumber quantityText currencyText
       mapLeft (errorAt lineNumber . tshow)
-        (mkHouseholdIssue
+        (mkHouseholdIssueWithClosed
           identifier'
           day
           status
           due
+          (compatibilityClosed status)
           amount
           title
           ("[" <> category <> "] " <> details))
-  _ -> Left (errorAt lineNumber "expected nine issue columns")
+  _ -> Left (errorAt lineNumber "expected nine due-aware issue columns")
 
 parseLegacyRow :: (Int, Text) -> Either HouseholdIssueTSVError HouseholdIssue
 parseLegacyRow (lineNumber, line) = case T.splitOn "\t" line of
@@ -140,21 +205,34 @@ parseLegacyRow (lineNumber, line) = case T.splitOn "\t" line of
       day <- parseDay lineNumber dateText
       amount <- parseOptionalAmount lineNumber quantityText currencyText
       mapLeft (errorAt lineNumber . tshow)
-        (mkHouseholdIssue
+        (mkHouseholdIssueWithClosed
           identifier'
           day
           status
           DueUndetermined
+          (compatibilityClosed status)
           amount
           title
           ("[" <> category <> "] " <> details))
   _ -> Left (errorAt lineNumber "expected eight legacy issue columns")
+
+compatibilityClosed :: IssueStatus -> IssueClosed
+compatibilityClosed status = case status of
+  Open -> NotClosed
+  Resolved -> ClosedUndetermined
+  Dropped -> ClosedUndetermined
 
 parseDue :: Int -> Text -> Either HouseholdIssueTSVError IssueDue
 parseDue _ "none" = Right NoDueDate
 parseDue _ "undetermined" = Right DueUndetermined
 parseDue lineNumber input =
   DueOn <$> parseDayWithMessage lineNumber "invalid issue due" input
+
+parseClosed :: Int -> Text -> Either HouseholdIssueTSVError IssueClosed
+parseClosed _ "none" = Right NotClosed
+parseClosed _ "undetermined" = Right ClosedUndetermined
+parseClosed lineNumber input =
+  ClosedOn <$> parseDayWithMessage lineNumber "invalid issue closed date" input
 
 parseOptionalAmount
   :: Int
