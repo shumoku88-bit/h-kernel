@@ -59,9 +59,15 @@ data IssueStatus
   | Dropped
   deriving (Eq, Ord, Show)
 
--- | Either one known due date or an explicit statement that it is not yet known.
+-- | Time meaning for one Issue, independent from its category and lifecycle.
+--
+-- 'NoDueDate' explicitly records that the matter has no deadline.
+-- 'DueUndetermined' records that a due date is not yet known. These are not the
+-- same meaning: a Want may have no deadline until a later opportunity creates
+-- one, while another matter may be waiting for its deadline to be determined.
 data IssueDue
   = DueOn Day
+  | NoDueDate
   | DueUndetermined
   deriving (Eq, Ord, Show)
 
