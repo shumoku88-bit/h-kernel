@@ -53,7 +53,7 @@ import HKernel.Budget.Policy
   , envelopeDefinitionExpenseAccounts
   , envelopeDefinitionId
   )
-import HKernel.Editor.ActualAccountAppend
+import HKernel.Editor.AccountAppend
   ( AccountJournalAppendPreview(..)
   , prepareAccountJournalAppend
   )
