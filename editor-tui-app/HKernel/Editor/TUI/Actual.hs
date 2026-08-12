@@ -671,7 +671,11 @@ drawWorkspace context =
     , borderWithLabel (str "Selected transaction")
         (padAll 1 (renderWorkspaceSelection context))
     , txt ("Filter: " <> workspaceFilterText context)
-    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [Enter] Reverse selected   [r] Record   [a] Expense   [i] Income   [m] Multi Actual   [q] Quit"
+    , vBox
+        [ txtWrap "Navigate: [1-7] Sections  [Tab/Left/Right] Focus  [j/k/Arrows] Move"
+        , txtWrap "Record:   [r] Record  [a] Expense  [i] Income  [m] Multi Actual"
+        , txtWrap "Action:   [Enter] Reverse selected  [q] Quit"
+        ]
     ]
 
 handleFlowEvent
