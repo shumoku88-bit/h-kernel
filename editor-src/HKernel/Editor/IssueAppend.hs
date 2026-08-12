@@ -6,6 +6,7 @@ module HKernel.Editor.IssueAppend
   , IssueAppendPreview(..)
   , generateAvailableIssueId
   , prepareIssueAppend
+  , prepareIssueAppendWithDue
   , IssueCloseDisposition(..)
   , IssueCloseIntent(..)
   , IssueCloseError(..)
@@ -55,7 +56,6 @@ data IssueAppendIntent = IssueAppendIntent
   { intentIssueId       :: IssueId
   , intentStatus        :: IssueStatus
   , intentDate          :: Day
-  , intentDue           :: IssueDue
   , intentCategory      :: Text
   , intentTitle         :: Text
   , intentAmount        :: Maybe Amount
@@ -95,17 +95,31 @@ generateAvailableIssueId day existingIds = go (1 :: Int)
           then go (index + 1)
           else mkIssueId candidateText
 
+-- | Compatibility entry point for existing adapters that do not yet collect a
+-- due meaning. Missing adapter input is kept explicit as 'DueUndetermined'.
 prepareIssueAppend
   :: Text
   -> IssueAppendIntent
   -> Either (NonEmpty IssueAppendError) IssueAppendPreview
-prepareIssueAppend existingSource intent = do
+prepareIssueAppend existingSource =
+  prepareIssueAppendWithDue existingSource DueUndetermined
+
+-- | Prepare one Issue append with an explicit three-way due meaning.
+--
+-- A legacy eight-column source can only preserve 'DueUndetermined'. Other due
+-- meanings fail closed instead of being hidden in details/category or discarded.
+prepareIssueAppendWithDue
+  :: Text
+  -> IssueDue
+  -> IssueAppendIntent
+  -> Either (NonEmpty IssueAppendError) IssueAppendPreview
+prepareIssueAppendWithDue existingSource due intent = do
   _ <- first (pure . DomainValidationError) $
     mkHouseholdIssue
       (intentIssueId intent)
       (intentDate intent)
       (intentStatus intent)
-      (intentDue intent)
+      due
       (intentAmount intent)
       (intentTitle intent)
       ("[" <> intentCategory intent <> "] " <> intentDetails intent)
@@ -116,11 +130,11 @@ prepareIssueAppend existingSource intent = do
   let hasHeader = householdIssueSourceHasHeader existingSource
       usesDueColumn = householdIssueSourceUsesDueColumn existingSource
       renderDueColumn = not hasHeader || usesDueColumn
-  if hasHeader && not usesDueColumn && intentDue intent /= DueUndetermined
-    then Left (pure (LegacyIssueSourceCannotRepresentDue (intentDue intent)))
+  if hasHeader && not usesDueColumn && due /= DueUndetermined
+    then Left (pure (LegacyIssueSourceCannotRepresentDue due))
     else Right ()
 
-  let block = renderIntent renderDueColumn intent
+  let block = renderIntent renderDueColumn due intent
       appendBody
         | hasHeader = block
         | otherwise = householdIssuesHeader <> "\n" <> block
@@ -134,8 +148,8 @@ prepareIssueAppend existingSource intent = do
     (parseHouseholdIssues (candidateCompleteSource preview))
   pure preview
 
-renderIntent :: Bool -> IssueAppendIntent -> Text
-renderIntent usesDueColumn intent = T.intercalate "\t" fields
+renderIntent :: Bool -> IssueDue -> IssueAppendIntent -> Text
+renderIntent usesDueColumn due intent = T.intercalate "\t" fields
   where
     commonBeforeDue =
       [ issueIdText (intentIssueId intent)
@@ -151,7 +165,7 @@ renderIntent usesDueColumn intent = T.intercalate "\t" fields
       ]
     fields
       | usesDueColumn =
-          commonBeforeDue ++ [renderDue (intentDue intent)] ++ commonAfterDue
+          commonBeforeDue ++ [renderDue due] ++ commonAfterDue
       | otherwise = commonBeforeDue ++ commonAfterDue
 
 renderStatus :: IssueStatus -> Text
