@@ -62,7 +62,7 @@ path = "docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md"
 role = "architecture"
 
 [[documents]]
-path = "docs/HOUSEHOLD_CANONICAL_TARGET.md"
+path = "docs/HOUSEHOLD_CANONICAL_SOURCE.md"
 role = "architecture"
 
 [[documents]]
