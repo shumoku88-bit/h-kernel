@@ -2,6 +2,12 @@
 module HKernel.Report.Presentation
   ( NegativeStyle(..)
   , PresentationColor(..)
+  , CalendarMarker
+  , CalendarMarkerError(..)
+  , mkCalendarMarker
+  , calendarMarkerValue
+  , CalendarMarkers(..)
+  , defaultCalendarMarkers
   , PresentationConfig(..)
   , defaultPresentationConfig
   , DateColumnCount
@@ -10,6 +16,10 @@ module HKernel.Report.Presentation
   , dateColumnCountValue
   , defaultDateColumnCount
   ) where
+
+import Data.Char (isAscii, isPrint, isSpace)
+import Data.Text (Text)
+import qualified Data.Text as T
 
 -- | Terminal notation for a negative quantity. The domain value remains signed.
 data NegativeStyle
@@ -32,17 +42,62 @@ data PresentationColor
   | WhiteColor
   deriving (Eq, Show)
 
--- | Validated presentation policy shared by ReportBook and standalone reports.
+-- | One fixed-width ASCII marker for the Household calendar matrix.
 --
--- Hierarchy colors, amount tones, and layout coordinates are explicit here.
--- Success/failure status colors and dim/bold emphasis remain renderer semantics
--- rather than being conflated with amount sign or report hierarchy.
+-- Calendar cells reserve exactly one terminal column for this coordinate. The
+-- validated value therefore excludes whitespace, control characters, Unicode,
+-- and multi-character strings without making the core presentation model depend
+-- on Brick or Vty terminal-width logic.
+newtype CalendarMarker = CalendarMarker Char
+  deriving (Eq, Show)
+
+data CalendarMarkerError
+  = CalendarMarkerMustBeSingleAsciiGraphic Text
+  deriving (Eq, Show)
+
+mkCalendarMarker :: Text -> Either CalendarMarkerError CalendarMarker
+mkCalendarMarker value = case T.unpack value of
+  [marker]
+    | isAscii marker && isPrint marker && not (isSpace marker) ->
+        Right (CalendarMarker marker)
+  _ -> Left (CalendarMarkerMustBeSingleAsciiGraphic value)
+
+calendarMarkerValue :: CalendarMarker -> Char
+calendarMarkerValue (CalendarMarker marker) = marker
+
+-- | Presentation-only glyphs for meaning already established by Household data.
+--
+-- Marker priority and the facts that cause a marker to appear are not
+-- configurable here. This type changes only how those fixed semantic roles are
+-- shown inside one calendar cell.
+data CalendarMarkers = CalendarMarkers
+  { calendarActualMarker :: CalendarMarker
+  , calendarPlanMarker :: CalendarMarker
+  , calendarIssueDueMarker :: CalendarMarker
+  , calendarCycleEndMarker :: CalendarMarker
+  } deriving (Eq, Show)
+
+defaultCalendarMarkers :: CalendarMarkers
+defaultCalendarMarkers = CalendarMarkers
+  { calendarActualMarker = CalendarMarker '.'
+  , calendarPlanMarker = CalendarMarker '+'
+  , calendarIssueDueMarker = CalendarMarker '!'
+  , calendarCycleEndMarker = CalendarMarker '|'
+  }
+
+-- | Validated presentation policy shared by reports and Household UI surfaces.
+--
+-- Hierarchy colors, amount tones, calendar markers, and layout coordinates are
+-- explicit here. Success/failure status colors and dim/bold emphasis remain
+-- renderer semantics rather than being conflated with amount sign, report
+-- hierarchy, or Household calendar meaning.
 data PresentationConfig = PresentationConfig
   { presentationNegativeStyle :: NegativeStyle
   , presentationHeadingColor :: PresentationColor
   , presentationSectionColor :: PresentationColor
   , presentationPositiveAmountColor :: PresentationColor
   , presentationNegativeAmountColor :: PresentationColor
+  , presentationCalendarMarkers :: CalendarMarkers
   , presentationDailyFlowDateColumns :: DateColumnCount
   } deriving (Eq, Show)
 
@@ -71,5 +126,6 @@ defaultPresentationConfig = PresentationConfig
   , presentationSectionColor = YellowColor
   , presentationPositiveAmountColor = GreenColor
   , presentationNegativeAmountColor = RedColor
+  , presentationCalendarMarkers = defaultCalendarMarkers
   , presentationDailyFlowDateColumns = defaultDateColumnCount
   }
