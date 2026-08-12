@@ -257,7 +257,7 @@ handleWorkspaceEvent context event = case event of
       case action of
         Maintenance.IssuesActionMaintain -> pure ()
         Maintenance.IssuesActionStartAdd ->
-          put (AppWrapper currentContext (MaintenanceFlow Maintenance.startIssueAdd))
+          put (AppWrapper currentContext (MaintenanceFlow flow))
         Maintenance.IssuesActionStartClose flow ->
           put (AppWrapper currentContext (MaintenanceFlow flow))
     ReportsSection -> do
@@ -313,13 +313,16 @@ handleReportPicker context event = case event of
 
 handlePlanBudgetSyncPicker :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handlePlanBudgetSyncPicker context event = do
-  action <- zoom zoomPlanBudgetSyncPicker (PlanBudgetSyncPicker.handleEvent event)
-  case action of
-    PlanBudgetSyncPicker.Maintain -> pure ()
-    PlanBudgetSyncPicker.ReturnToWorkspace -> put (AppWrapper context Workspace)
-    PlanBudgetSyncPicker.QuitRequested -> halt
-    PlanBudgetSyncPicker.Retry planId ->
-      publishPlanRequest context (Plan.PublishBudgetSync planId)
+  zoom zoomPlanBudgetSyncPicker (PlanBudgetSyncPicker.handleEvent event)
+  AppWrapper _ state <- get
+  case state of
+    PlanBudgetSyncPicker picker -> case PlanBudgetSyncPicker.action picker of
+      PlanBudgetSyncPicker.Maintain -> pure ()
+      PlanBudgetSyncPicker.ReturnToWorkspace -> put (AppWrapper context Workspace)
+      PlanBudgetSyncPicker.QuitRequested -> halt
+      PlanBudgetSyncPicker.Retry planId ->
+        publishPlanRequest context (Plan.PublishBudgetSync planId)
+    _ -> pure ()
 
 handleActualFlow :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleActualFlow context event = do
