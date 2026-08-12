@@ -10,7 +10,7 @@ The core Money kernel (`HKernel.Money`) enforces five fundamental accounting inv
 
 - `Commodity`: validated text identity representing a unit of account.
 - `Quantity`: exact decimal arithmetic (`Scientific`), free from binary floating-point representation errors.
-- `Amount = Commodity × Quantity`: single-Commodity monetary magnitude.
+- `Amount = Commodity × Quantity`: single-Commodity exact magnitude.
 - `Balance = Commodity -> Quantity`: multi-Commodity balance map where different commodities are retained separately and never implicitly offset.
 - `Account default Commodity` and `Household primary Commodity`: interaction and reporting defaults, not domain restrictions on posting validity.
 
@@ -45,7 +45,7 @@ current policy != historical evidence
 
 ## Explicit Non-Goals
 
-This observation explicitly forbids:
+This observation does not authorize these capabilities now:
 
 - a closed Currency ADT or fiat currency package;
 - a generic Commodity registry or security master model;
