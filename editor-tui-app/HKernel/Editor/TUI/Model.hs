@@ -49,6 +49,7 @@ import HKernel.Household.Application
 import HKernel.Household.Report (HouseholdReportSurface)
 import HKernel.Household.Report.Render (HouseholdReportSection)
 import HKernel.HouseholdIssue (HouseholdIssue)
+import HKernel.Editor.HouseholdWorkspace (issuesForWorkspace)
 import HKernel.Ledger (Transaction)
 import HKernel.Plan.Completion (declaredCompletionPlanId)
 import HKernel.Plan.Journal
@@ -186,7 +187,7 @@ makeWorkspaceContext
   -> Day
   -> HouseholdWriteSnapshot
   -> AppContext
-makeWorkspaceContext focusLatest today snapshot =
+makeWorkspaceContext _focusLatest today snapshot =
   AppContext
     { contextHouseholdSnapshot = snapshot
     , contextCurrentSection = ActualSection
@@ -205,22 +206,20 @@ makeWorkspaceContext focusLatest today snapshot =
     state = householdWriteSnapshotState snapshot
     declarations = accountDeclarations (householdStateAccountsRegistry state)
     transactions =
-      map actualTransactionEntryTransaction
-        (actualJournalTransactionEntries (householdStateActualJournal state))
+      reverse
+        (map actualTransactionEntryTransaction
+          (actualJournalTransactionEntries (householdStateActualJournal state)))
     workspaceAccounts = L.list WorkspaceAccountList
       (Vec.fromList (Nothing : map (Just . declaredAccount) declarations)) 1
-    initialWorkspaceList = L.list WorkspaceTransactionList (Vec.fromList transactions) 1
-    workspaceList
-      | focusLatest && not (null transactions) =
-          L.listMoveTo (length transactions - 1) initialWorkspaceList
-      | otherwise = initialWorkspaceList
+    workspaceList = L.list WorkspaceTransactionList (Vec.fromList transactions) 1
     closedPlanIds = map declaredCompletionPlanId
       (actualJournalCompletionDeclarations (householdStateActualJournal state))
     openPlans = filter
       (\identified -> identifiedPlanId identified `notElem` closedPlanIds)
       (planJournalTransactions (householdStatePlanJournal state))
     planList = L.list PlanList (Vec.fromList openPlans) 1
-    issueList = L.list IssueList (Vec.fromList (householdStateIssues state)) 1
+    issueList = L.list IssueList
+      (Vec.fromList (issuesForWorkspace (householdStateIssues state))) 1
     journal = actualJournalValue (householdStateActualJournal state)
     reportConfig = householdStateReportConfig state
     resolvedReportBook = case resolveReportPlan

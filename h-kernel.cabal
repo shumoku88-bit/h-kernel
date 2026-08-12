@@ -108,6 +108,7 @@ library h-kernel-editor
                     , HKernel.Editor.CLI
                     , HKernel.Editor.Interaction.ActualAdd
                     , HKernel.Editor.Interaction.PlanCompleteAdvance
+                    , HKernel.Editor.HouseholdWorkspace
                     , HKernel.Editor.IssueAppend
                     , HKernel.Editor.PlanBudgetSync
                     , HKernel.Editor.PlanLifecycle
@@ -384,6 +385,7 @@ test-suite h-kernel-household-issue-test
     main-is:          HouseholdIssueSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
+                    , h-kernel-editor
                     , text
                     , time
 

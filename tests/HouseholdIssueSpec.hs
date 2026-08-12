@@ -6,6 +6,7 @@ import Test.Support (mustRight, assertEqual)
 import Data.Time.Calendar (fromGregorian)
 import HKernel.HouseholdIssue
 import HKernel.HouseholdIssue.Render
+import HKernel.Editor.HouseholdWorkspace (issuesForWorkspace)
 import HKernel.Money
 import System.Exit (exitFailure)
 
@@ -13,6 +14,7 @@ main :: IO ()
 main = do
   characterizeIssueIdentity
   characterizeHouseholdIssue
+  characterizeWorkspaceOrder
   characterizeCompleteLineRendering
 
 characterizeIssueIdentity :: IO ()
@@ -116,6 +118,40 @@ characterizeHouseholdIssue = do
   assertLeft "details cannot contain a hidden second line"
     (mkHouseholdIssue issueId recordedOn Open DueUndetermined Nothing
       "支払いを確認する" "節約中\n要相談")
+
+characterizeWorkspaceOrder :: IO ()
+characterizeWorkspaceOrder = do
+  let issue status day issueId = mustRight (mkHouseholdIssue
+        (mustRight (mkIssueId issueId))
+        (fromGregorian 2026 8 day)
+        status
+        DueUndetermined
+        Nothing
+        issueId
+        "")
+      sourceIssues =
+        [ issue Resolved 10 "resolved-newest"
+        , issue Open 1 "open-old"
+        , issue Dropped 9 "dropped-new"
+        , issue Open 8 "open-new"
+        , issue Resolved 2 "resolved-old"
+        ]
+  assertEqual "workspace keeps open Issues first and newest-first within status groups"
+    [ "open-new"
+    , "open-old"
+    , "resolved-newest"
+    , "dropped-new"
+    , "resolved-old"
+    ]
+    (map (issueIdText . householdIssueId) (issuesForWorkspace sourceIssues))
+  assertEqual "workspace ordering does not mutate canonical source order"
+    [ "resolved-newest"
+    , "open-old"
+    , "dropped-new"
+    , "open-new"
+    , "resolved-old"
+    ]
+    (map (issueIdText . householdIssueId) sourceIssues)
 
 characterizeCompleteLineRendering :: IO ()
 characterizeCompleteLineRendering = do

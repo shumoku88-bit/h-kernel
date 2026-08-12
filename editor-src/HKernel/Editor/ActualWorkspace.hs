@@ -6,6 +6,7 @@
 -- identity for correction and reversal surfaces.
 module HKernel.Editor.ActualWorkspace
   ( transactionEntriesForAccount
+  , newestTransactionEntriesForAccount
   ) where
 
 import qualified Data.List.NonEmpty as NonEmpty
@@ -30,6 +31,16 @@ transactionEntriesForAccount (Just selectedAccount) =
   filter
     (transactionMatchesAccount selectedAccount
       . actualTransactionEntryTransaction)
+
+-- | Present admitted Actual entries newest-first without changing canonical
+-- source order. Account filtering and selected-entry lookup must both use this
+-- same projection.
+newestTransactionEntriesForAccount
+  :: Maybe Account
+  -> [ActualTransactionEntry]
+  -> [ActualTransactionEntry]
+newestTransactionEntriesForAccount selectedAccount =
+  reverse . transactionEntriesForAccount selectedAccount
 
 transactionMatchesAccount :: Account -> Transaction -> Bool
 transactionMatchesAccount selectedAccount =
