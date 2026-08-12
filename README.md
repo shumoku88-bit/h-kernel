@@ -99,7 +99,7 @@ export HKERNEL_LEDGER_DATA_DIR=/absolute/path/to/private-ledger-data
 
 private source、backup、temporary file、recovery workspace、generated report、local pathをpublic Gitへcommitしません。
 
-writer authorityはsourceごとに明示します。現在の契約は[`docs/SOURCE_DATA_MIGRATION_PLAN.md`](docs/SOURCE_DATA_MIGRATION_PLAN.md)と[`docs/ACTUAL_WRITER_CUTOVER_001.md`](docs/ACTUAL_WRITER_CUTOVER_001.md)を参照してください。
+現在のcanonical reader topologyは[`docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md)、source別writer authorityは[`docs/WRITER_AUTHORITY.md`](docs/WRITER_AUTHORITY.md)を参照してください。`actual.journal`の具体的なcutover契約は[`docs/ACTUAL_WRITER_CUTOVER_001.md`](docs/ACTUAL_WRITER_CUTOVER_001.md)が所有します。
 
 ## 内部で守っていること
 
@@ -116,7 +116,8 @@ writer authorityはsourceごとに明示します。現在の契約は[`docs/SOU
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): component、dependency、effect、domain invariant
 - [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): editor current capabilityとactive roadmap
 - [`docs/REPOSITORY_POLICY.md`](docs/REPOSITORY_POLICY.md): repository operationとdocument lifecycle
-- [`docs/SOURCE_DATA_MIGRATION_PLAN.md`](docs/SOURCE_DATA_MIGRATION_PLAN.md): private source topologyとwriter authority
+- [`docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md): current canonical reader topology
+- [`docs/WRITER_AUTHORITY.md`](docs/WRITER_AUTHORITY.md): source別writer authorityとcutover gate
 - [`docs/REPORT_CONFIGURATION.md`](docs/REPORT_CONFIGURATION.md): report source selection
 - [`docs/REPORT_VERIFICATION.md`](docs/REPORT_VERIFICATION.md): report verification contract
 - [`SECURITY.md`](SECURITY.md): public/private boundary
