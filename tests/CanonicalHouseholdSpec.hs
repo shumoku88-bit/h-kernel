@@ -297,6 +297,7 @@ testIssueWholeHouseholdRollback = do
   preview <- case IssueAppend.prepareIssueAppend existingSource intent of
     Left errs -> die ("Issue append preparation failed: " <> show errs)
     Right value -> pure value
+
   TIO.writeFile reportPath "[reports.trial-balance\n"
   result <- publishWithPathAdmission
     (\_ -> loadCanonicalHousehold root)
