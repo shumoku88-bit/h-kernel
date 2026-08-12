@@ -20,7 +20,7 @@ import HKernel.Account
   , mkAccount
   )
 import HKernel.Application.Config (HouseholdRoot, mkHouseholdRoot)
-import HKernel.Editor.ActualAccountAppend
+import HKernel.Editor.AccountAppend
   ( AccountJournalAppendPreview(..)
   , prepareAccountJournalAppend
   )
