@@ -24,7 +24,7 @@ import HKernel.Editor.ActualAppend
   , classifyActualAddWriteResult
   , prepareActualMultiAddPreviewFromResolvedJournal
   )
-import HKernel.Editor.ActualWriter (WriteError(..))
+import HKernel.Editor.SourcePublication (WriteError(..))
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
   , actualMultiPostingAt

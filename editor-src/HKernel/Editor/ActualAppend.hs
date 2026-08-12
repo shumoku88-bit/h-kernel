@@ -48,7 +48,7 @@ import HKernel.Actual.Journal
   , admitActualJournalFromResolvedJournal
   , parseActualJournal
   )
-import HKernel.Editor.ActualWriter (WriteError(..))
+import HKernel.Editor.SourcePublication (WriteError(..))
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.Editor.TransactionBlock
   ( IntentPosting(..)

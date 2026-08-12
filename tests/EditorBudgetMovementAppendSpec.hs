@@ -23,7 +23,7 @@ import HKernel.Budget.Policy
   , mkBudgetPolicy
   , mkEnvelopeLabel
   )
-import HKernel.Editor.ActualWriter
+import HKernel.Editor.SourcePublication
   ( CandidateSource(..)
   , ExpectedSource(..)
   , WriteError(..)

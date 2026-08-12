@@ -28,7 +28,7 @@ import HKernel.Editor.ActualAccountAppend
   ( accountCandidateBlock
   , prepareAccountJournalAppend
   )
-import HKernel.Editor.ActualWriter
+import HKernel.Editor.SourcePublication
   ( CandidateSource(..)
   , ExpectedSource(..)
   , WriteError(..)

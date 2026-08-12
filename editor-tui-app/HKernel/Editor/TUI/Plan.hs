@@ -33,7 +33,7 @@ import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import HKernel.Account (accountName, mkAccount)
 import HKernel.Actual.Journal (actualJournalValue)
 import HKernel.Application.Config (HouseholdSourcePaths(..))
-import HKernel.Editor.ActualWriter
+import HKernel.Editor.SourcePublication
   ( CandidateSource(..)
   , ExpectedSource(..)
   , WriteIntent(..)

@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module HKernel.Editor.ActualWriter
+module HKernel.Editor.SourcePublication
   ( ExpectedSource(..)
   , CandidateSource(..)
   , WriteIntent(..)
@@ -287,7 +287,7 @@ publishBudgetJournalAppend =
   publishWithPathAdmission admitBudgetJournalPath
 
 -- | Place an already validated Actual transaction block and delegate all file
--- safety behavior to the existing Actual writer.
+-- safety behavior to the source publication owner.
 --
 -- The caller owns confirmation and must supply the exact source bytes used to
 -- produce the preview. This function owns only the bridge from confirmed block

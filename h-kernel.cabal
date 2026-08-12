@@ -103,7 +103,7 @@ library h-kernel-editor
                     , HKernel.Editor.ActualAccountAppend
                     , HKernel.Editor.ActualReverse
                     , HKernel.Editor.ActualWorkspace
-                    , HKernel.Editor.ActualWriter
+                    , HKernel.Editor.SourcePublication
                     , HKernel.Editor.BudgetMovementAppend
                     , HKernel.Editor.CLI
                     , HKernel.Editor.Interaction.ActualAdd
@@ -540,10 +540,10 @@ test-suite repository-audit-test
                     , toml-parser >= 2.0.2 && < 2.1
     hs-source-dirs:   tools/repository-audit
 
-test-suite h-kernel-editor-actual-writer-test
+test-suite h-kernel-editor-source-publication-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
-    main-is:          EditorActualWriterSpec.hs
+    main-is:          EditorSourcePublicationSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , text >= 1.2 && < 2.2
                     , directory >= 1.3 && < 1.4

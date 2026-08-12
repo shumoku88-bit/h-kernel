@@ -17,7 +17,7 @@ import HKernel.Actual.Journal
   ( ActualJournal
   , admitActualJournalFromResolvedJournal
   )
-import HKernel.Editor.ActualWriter
+import HKernel.Editor.SourcePublication
   ( WriterFileSystem(..)
   , defaultWriterFileSystem
   )
