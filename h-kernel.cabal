@@ -567,6 +567,7 @@ executable h-kernel-editor-tui
     import:           common-defaults
     main-is:          Main.hs
     other-modules:    HKernel.Editor.TUI.Actual
+                    , HKernel.Editor.TUI.Home
                     , HKernel.Editor.TUI.Maintenance
                     , HKernel.Editor.TUI.Model
                     , HKernel.Editor.TUI.Plan
