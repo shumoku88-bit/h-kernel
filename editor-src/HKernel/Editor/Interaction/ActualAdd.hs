@@ -24,7 +24,10 @@ module HKernel.Editor.Interaction.ActualAdd
   , setActualMultiPostingAmount
   , multiAccountCandidates
   , filterMultiAccountCandidates
-  , stepMultiAccountCandidate
+  , moveMultiAccountCandidateCursor
+  , resetMultiAccountCandidateCursor
+  , resolveMultiAccountCandidate
+  , commitMultiAccountCandidate
   , accountCandidateAt
   ) where
 
@@ -251,16 +254,54 @@ multiAccountCandidates registry transactions =
 filterMultiAccountCandidates :: Text -> [Account] -> [Account]
 filterMultiAccountCandidates = filterAccountCandidates
 
--- | Step over exactly the candidates visible for the Account field's current
--- query. The query remains the Account text itself; no duplicate search state
--- is introduced.
-stepMultiAccountCandidate :: Int -> Text -> [Account] -> Maybe Account
-stepMultiAccountCandidate offset query =
-  stepAccountCandidate offset query . filterMultiAccountCandidates query
+-- | Move a delivery-local cursor over exactly the currently filtered Account
+-- candidates. The raw Account field remains the query and is never changed by
+-- cursor movement. Unknown cursors enter at the requested end; known cursors
+-- wrap within the filtered set.
+moveMultiAccountCandidateCursor
+  :: Int
+  -> Text
+  -> Maybe Int
+  -> [Account]
+  -> Maybe Int
+moveMultiAccountCandidateCursor offset query current candidates
+  | null filtered = Nothing
+  | otherwise = Just next
+  where
+    filtered = filterMultiAccountCandidates query candidates
+    count = length filtered
+    next = case current of
+      Just index | index >= 0 && index < count -> (index + offset) `mod` count
+      _ | offset < 0 -> count - 1
+        | otherwise -> 0
 
--- | Resolve a transient rendered candidate coordinate safely. Deliveries
--- recompute the current filtered candidate set before calling this helper, so a
--- stale or out-of-range mouse coordinate is a no-op rather than an identity.
+-- | Keep the delivery-local cursor only while the raw query is unchanged.
+-- Typing, deletion, or a posting-row change starts navigation safely from an
+-- unselected candidate set.
+resetMultiAccountCandidateCursor :: Text -> Text -> Maybe Int -> Maybe Int
+resetMultiAccountCandidateCursor previousQuery nextQuery cursor
+  | previousQuery == nextQuery = cursor
+  | otherwise = Nothing
+
+-- | Resolve a transient cursor or mouse coordinate against the same current
+-- filtered set. A stale or out-of-range coordinate is a safe no-op.
+resolveMultiAccountCandidate :: Text -> Int -> [Account] -> Maybe Account
+resolveMultiAccountCandidate query index =
+  accountCandidateAt index . filterMultiAccountCandidates query
+
+-- | Commit one keyboard or mouse candidate coordinate to the addressed posting.
+-- Both delivery paths use this operation after resolving the same filtered set.
+commitMultiAccountCandidate
+  :: Int
+  -> Text
+  -> Int
+  -> [Account]
+  -> ActualMultiAddInput
+  -> Maybe ActualMultiAddInput
+commitMultiAccountCandidate postingIndex query candidateIndex candidates input = do
+  account <- resolveMultiAccountCandidate query candidateIndex candidates
+  pure (setActualMultiPostingAccountText postingIndex (accountName account) input)
+
 accountCandidateAt :: Int -> [Account] -> Maybe Account
 accountCandidateAt index candidates
   | index < 0 = Nothing

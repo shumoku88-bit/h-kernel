@@ -7,7 +7,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Exit (exitFailure, exitSuccess)
 
-import HKernel.Account (AccountType(..), accountName, mkAccount)
+import HKernel.Account (Account, AccountType(..), accountName, mkAccount)
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddInputError(..)
@@ -29,6 +29,7 @@ import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
   , accountCandidateAt
   , actualMultiPostingAt
+  , commitMultiAccountCandidate
   , dailyAccountCandidates
   , filterDailyAccountCandidates
   , filterMultiAccountCandidates
@@ -38,11 +39,13 @@ import HKernel.Editor.Interaction.ActualAdd
   , initialActualMultiAddInputForDay
   , multiAccountCandidates
   , resizeActualMultiPostings
+  , resetMultiAccountCandidateCursor
+  , resolveMultiAccountCandidate
   , selectActualAddAccount
   , setActualMultiPostingAccountText
   , setActualMultiPostingAmount
   , stepAccountCandidate
-  , stepMultiAccountCandidate
+  , moveMultiAccountCandidateCursor
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Journal
@@ -89,7 +92,11 @@ main = do
         , ("multi Account candidates are canonical and recent-first", testMultiAccountCandidates)
         , ("multi Account search is case-insensitive", testMultiAccountSearch)
         , ("empty Record Account query preserves candidate order", testMultiEmptyAccountSearch)
-        , ("Record Account stepping uses the filtered candidates", testRecordFilteredAccountStepping)
+        , ("empty Record query browses without changing query", testRecordEmptyQueryBrowse)
+        , ("partial Record query cycles inside its matches", testRecordFilteredAccountStepping)
+        , ("Record query changes reset the candidate cursor", testRecordQueryReset)
+        , ("Enter resolves highlighted Record candidate", testRecordEnterCommit)
+        , ("mouse and keyboard resolve the same candidates", testRecordMouseKeyboardCandidateLaw)
         , ("mouse candidate resolution is bounds-safe", testAccountCandidateAt)
         , ("successful write result is observable", testWriteSuccess)
         , ("stale write result is observable", testWriteStale)
@@ -606,6 +613,21 @@ testMultiEmptyAccountSearch =
             (journalTransactions journal)
       in filterMultiAccountCandidates "  " candidates == candidates
 
+testRecordEmptyQueryBrowse :: Bool
+testRecordEmptyQueryBrowse =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates = multiAccountCandidates
+            (journalAccountRegistry journal)
+            (journalTransactions journal)
+          first = moveMultiAccountCandidateCursor 1 "" Nothing candidates
+          second = moveMultiAccountCandidateCursor 1 "" first candidates
+      in first == Just 0
+          && second == Just 1
+          && resolveName "" first candidates == Just "expenses:books"
+          && resolveName "" second candidates == Just "liabilities:card"
+
 testRecordFilteredAccountStepping :: Bool
 testRecordFilteredAccountStepping =
   case parseJournal candidateSource of
@@ -614,12 +636,67 @@ testRecordFilteredAccountStepping =
       let candidates = multiAccountCandidates
             (journalAccountRegistry journal)
             (journalTransactions journal)
-          stepped offset query =
-            accountName <$> stepMultiAccountCandidate offset query candidates
-      in stepped 1 "assets:" == Just "assets:cash"
-          && stepped (-1) "assets:" == Just "assets:bank"
-          && stepped 1 "PENSION" == Just "income:pension"
-          && stepped 1 "missing" == Nothing
+          first = moveMultiAccountCandidateCursor 1 "assets:" Nothing candidates
+          second = moveMultiAccountCandidateCursor 1 "assets:" first candidates
+          third = moveMultiAccountCandidateCursor 1 "assets:" second candidates
+          previous = moveMultiAccountCandidateCursor (-1) "assets:" first candidates
+      in map (\cursor -> resolveName "assets:" cursor candidates)
+            [first, second, third, previous]
+          == [ Just "assets:cash"
+             , Just "assets:bank"
+             , Just "assets:cash"
+             , Just "assets:bank"
+             ]
+
+testRecordQueryReset :: Bool
+testRecordQueryReset =
+  resetMultiAccountCandidateCursor "" "" (Just 2) == Just 2
+    && resetMultiAccountCandidateCursor "" "assets:" (Just 2) == Nothing
+    && resetMultiAccountCandidateCursor "assets:" "asset" (Just 1) == Nothing
+
+testRecordEnterCommit :: Bool
+testRecordEnterCommit =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates = multiAccountCandidates
+            (journalAccountRegistry journal)
+            (journalTransactions journal)
+          cursor = moveMultiAccountCandidateCursor 1 "assets:" Nothing candidates
+          input = initialActualMultiAddInputForDay (read "2026-08-08")
+          committed = cursor >>= \index ->
+            commitMultiAccountCandidate 1 "assets:" index candidates input
+      in (multiPostingAccountText . actualMultiPostingAt 1 <$> committed)
+          == Just "assets:cash"
+          && (actualMultiPostingAt 0 <$> committed)
+            == Just (ActualPostingInput "" "")
+
+testRecordMouseKeyboardCandidateLaw :: Bool
+testRecordMouseKeyboardCandidateLaw =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates = multiAccountCandidates
+            (journalAccountRegistry journal)
+            (journalTransactions journal)
+          query = "assets:"
+          cursor = moveMultiAccountCandidateCursor 1 query (Just 0) candidates
+          input = initialActualMultiAddInputForDay (read "2026-08-08")
+          keyboard = cursor >>= \index ->
+            commitMultiAccountCandidate 0 query index candidates input
+          mouse = commitMultiAccountCandidate 0 query 1 candidates input
+          committedName = multiPostingAccountText . actualMultiPostingAt 0
+      in (committedName <$> keyboard) == (committedName <$> mouse)
+          && (committedName <$> mouse) == Just "assets:bank"
+
+resolveName
+  :: T.Text
+  -> Maybe Int
+  -> [Account]
+  -> Maybe T.Text
+resolveName query cursor candidates =
+  accountName <$> (cursor >>= \index ->
+    resolveMultiAccountCandidate query index candidates)
 
 testAccountCandidateAt :: Bool
 testAccountCandidateAt =

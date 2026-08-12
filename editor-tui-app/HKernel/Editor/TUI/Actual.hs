@@ -69,8 +69,8 @@ import HKernel.Editor.ActualWorkspace (transactionEntriesForAccount)
 import HKernel.Editor.SourcePublication (publishActualBlockWithPathAdmission)
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
-  , accountCandidateAt
   , actualMultiPostingAt
+  , commitMultiAccountCandidate
   , dailyAccountCandidates
   , filterMultiAccountCandidates
   , groupAccountCandidates
@@ -79,11 +79,12 @@ import HKernel.Editor.Interaction.ActualAdd
   , initialActualMultiAddInputForDay
   , multiAccountCandidates
   , resizeActualMultiPostings
+  , resetMultiAccountCandidateCursor
   , selectActualAddAccount
   , setActualMultiPostingAccountText
   , setActualMultiPostingAmount
   , stepAccountCandidate
-  , stepMultiAccountCandidate
+  , moveMultiAccountCandidateCursor
   )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
@@ -124,9 +125,10 @@ import HKernel.Plan.Completion
 -- | Brick-local interaction coordinates around the one authoritative Actual
 -- draft. Row selection and unfinished posting-count text are delivery state.
 data MultiFormState = MultiFormState
-  { multiFormInput            :: ActualMultiAddInput
-  , multiFormSelectedPosting  :: Int
-  , multiFormPostingCountText :: Text
+  { multiFormInput                  :: ActualMultiAddInput
+  , multiFormSelectedPosting        :: Int
+  , multiFormPostingCountText       :: Text
+  , multiFormAccountCandidateCursor :: Maybe Int
   } deriving (Eq, Show)
 
 data DailyEntryKind
@@ -232,12 +234,16 @@ multiAccountTextL :: Lens' MultiFormState Text
 multiAccountTextL f state =
   (\value -> state
       { multiFormInput =
-          setActualMultiPostingAccountText selected value input })
-    <$> f (multiPostingAccountText posting)
+          setActualMultiPostingAccountText selected value input
+      , multiFormAccountCandidateCursor = resetMultiAccountCandidateCursor
+          current value (multiFormAccountCandidateCursor state)
+      })
+    <$> f current
   where
     input = multiFormInput state
     selected = multiFormSelectedPosting state
     posting = actualMultiPostingAt selected input
+    current = multiPostingAccountText posting
 
 multiAmountTextL :: Lens' MultiFormState Text
 multiAmountTextL f state =
@@ -291,6 +297,7 @@ initialMultiFormState day = MultiFormState
   , multiFormSelectedPosting = 0
   , multiFormPostingCountText =
       T.pack (show (NonEmpty.length (multiAddPostings input)))
+  , multiFormAccountCandidateCursor = Nothing
   }
   where
     input = initialActualMultiAddInputForDay day
@@ -331,7 +338,9 @@ applyMultiPostingCount state = state
 
 selectMultiPosting :: Int -> MultiFormState -> MultiFormState
 selectMultiPosting requested state = state
-  { multiFormSelectedPosting = clampMultiPostingIndex requested input }
+  { multiFormSelectedPosting = clampMultiPostingIndex requested input
+  , multiFormAccountCandidateCursor = Nothing
+  }
   where
     input = multiFormInput state
 
@@ -509,11 +518,13 @@ renderDailyInlineAccountSelector
 renderDailyInlineAccountSelector context kind form = case dailySelectionTarget form of
   Nothing -> emptyWidget
   Just target ->
-    renderInlineAccountSelector False context label current candidates
+    renderInlineAccountSelector False context label selectedCursor candidates
     where
       input = formState form
       current = dailyAccountText target input
       candidates = dailyCandidates context kind target
+      selectedCursor = findIndex
+        ((== T.strip current) . HKernel.Account.accountName) candidates
       label = case (kind, target) of
         (DailyExpense, SelectToAccount) -> "Expense Accounts"
         (DailyExpense, SelectFromAccount) -> "Payment Accounts"
@@ -527,7 +538,8 @@ renderMultiInlineAccountSelector
 renderMultiInlineAccountSelector context form
   | multiAccountFocused form =
       renderInlineAccountSelector True context "Posting Accounts"
-        current (filterMultiAccountCandidates current (multiCandidates context))
+        (multiFormAccountCandidateCursor state)
+        (filterMultiAccountCandidates current (multiCandidates context))
   | otherwise = emptyWidget
   where
     state = formState form
@@ -539,32 +551,32 @@ renderInlineAccountSelector
   :: Bool
   -> AppContext
   -> String
-  -> Text
+  -> Maybe Int
   -> [HKernel.Account.Account]
   -> Widget Name
-renderInlineAccountSelector mouseEnabled context label current candidates =
+renderInlineAccountSelector mouseEnabled context label cursor candidates =
   borderWithLabel (str label)
     (hLimit 82
       (padAll 1
         (vBox
-          ( map renderCandidate visible
+          ( map renderCandidate visibleCandidates
             ++ [ str " "
                , str "Existing Accounts are grouped by typed meaning; recent use ranks within each group."
                ]
           ))))
   where
     registry = householdStateAccountsRegistry (contextHouseholdState context)
-    visible = candidateWindow 9 current candidates
-    normalizedCurrent = T.strip current
-    renderCandidate account =
-      let selected = HKernel.Account.accountName account == normalizedCurrent
+    indexedCandidates = zip [0 ..] candidates
+    visibleCandidates = candidateWindow 9 cursor indexedCandidates
+    renderCandidate (index, account) =
+      let selected = cursor == Just index
           accountType = HKernel.Account.accountTypeFor account registry
           row = txt
             (accountTypeLabel accountType <> "  " <> HKernel.Account.accountName account)
           highlighted = if selected then withAttr L.listSelectedAttr row else row
-      in case (mouseEnabled, findIndex (== account) candidates) of
-          (True, Just index) -> clickable (MultiAccountCandidate index) highlighted
-          _ -> highlighted
+      in if mouseEnabled
+          then clickable (MultiAccountCandidate index) highlighted
+          else highlighted
 
 accountTypeLabel :: Maybe HKernel.Account.AccountType -> Text
 accountTypeLabel maybeType = case maybeType of
@@ -576,16 +588,11 @@ accountTypeLabel maybeType = case maybeType of
   Just HKernel.Account.Budget -> "Budget     "
   Nothing -> "Unknown    "
 
-candidateWindow
-  :: Int
-  -> Text
-  -> [HKernel.Account.Account]
-  -> [HKernel.Account.Account]
-candidateWindow limit current candidates =
+candidateWindow :: Int -> Maybe Int -> [a] -> [a]
+candidateWindow limit cursor candidates =
   take limit (drop start candidates)
   where
-    selectedIndex = fromMaybe 0
-      (findIndex ((== T.strip current) . HKernel.Account.accountName) candidates)
+    selectedIndex = fromMaybe 0 cursor
     maximumStart = max 0 (length candidates - limit)
     centeredStart = max 0 (selectedIndex - limit `div` 2)
     start = min maximumStart centeredStart
@@ -804,7 +811,7 @@ handleMultiInput context kind form event = case event of
   VtyEvent (V.EvKey V.KDown [])
     | multiAccountFocused form -> moveMultiAccountCandidate context kind 1 form
   VtyEvent (V.EvKey V.KEnter [])
-    | multiAccountFocused form -> acceptMultiAccount kind form
+    | multiAccountFocused form -> acceptMultiAccount context kind form
   VtyEvent (V.EvKey V.KEnter []) -> prepareMultiPreview context kind form
   VtyEvent (V.EvKey V.KUp []) -> moveMultiSelection kind (-1) form
   VtyEvent (V.EvKey V.KDown []) -> moveMultiSelection kind 1 form
@@ -817,15 +824,12 @@ moveMultiAccountCandidate
   -> Form MultiFormState AppEvent Name
   -> EventM Name (State AppEvent) ()
 moveMultiAccountCandidate context kind offset form =
-  case stepMultiAccountCandidate offset current candidates of
-    Nothing -> pure ()
-    Just account ->
-      let updatedInput = setActualMultiPostingAccountText selected
-            (HKernel.Account.accountName account) input
-          updatedState = state { multiFormInput = updatedInput }
-          updatedForm = setFormFocus MultiAccountField
-            (updateFormState updatedState form)
-      in put (MultiInput kind updatedForm)
+  let nextCursor = moveMultiAccountCandidateCursor
+        offset current (multiFormAccountCandidateCursor state) candidates
+      updatedState = state { multiFormAccountCandidateCursor = nextCursor }
+      updatedForm = setFormFocus MultiAccountField
+        (updateFormState updatedState form)
+  in put (MultiInput kind updatedForm)
   where
     state = formState form
     input = multiFormInput state
@@ -840,12 +844,13 @@ selectMultiAccountCandidateAt
   -> Form MultiFormState AppEvent Name
   -> EventM Name (State AppEvent) ()
 selectMultiAccountCandidateAt context kind index form =
-  case accountCandidateAt index visibleCandidates of
+  case commitMultiAccountCandidate selected current index candidates input of
     Nothing -> pure ()
-    Just account ->
-      let updatedInput = setActualMultiPostingAccountText selected
-            (HKernel.Account.accountName account) input
-          updatedState = state { multiFormInput = updatedInput }
+    Just updatedInput ->
+      let updatedState = state
+            { multiFormInput = updatedInput
+            , multiFormAccountCandidateCursor = Nothing
+            }
           updatedForm = setFormFocus MultiAmountField
             (updateFormState updatedState form)
       in put (MultiInput kind updatedForm)
@@ -854,21 +859,31 @@ selectMultiAccountCandidateAt context kind index form =
     input = multiFormInput state
     selected = multiFormSelectedPosting state
     current = multiPostingAccountText (actualMultiPostingAt selected input)
-    visibleCandidates =
-      filterMultiAccountCandidates current (multiCandidates context)
+    candidates = multiCandidates context
 
 acceptMultiAccount
-  :: GeneralEntryKind
+  :: AppContext
+  -> GeneralEntryKind
   -> Form MultiFormState AppEvent Name
   -> EventM Name (State AppEvent) ()
-acceptMultiAccount kind form
-  | T.null (T.strip current) = pure ()
-  | otherwise = put (MultiInput kind (setFormFocus MultiAmountField form))
+acceptMultiAccount context kind form =
+  case multiFormAccountCandidateCursor state >>= commitCandidate of
+    Nothing -> pure ()
+    Just updatedInput ->
+      let updatedState = state
+            { multiFormInput = updatedInput
+            , multiFormAccountCandidateCursor = Nothing
+            }
+      in put (MultiInput kind
+          (setFormFocus MultiAmountField (updateFormState updatedState form)))
   where
     state = formState form
-    current = multiPostingAccountText
-      (actualMultiPostingAt
-        (multiFormSelectedPosting state) (multiFormInput state))
+    input = multiFormInput state
+    selected = multiFormSelectedPosting state
+    current = multiPostingAccountText (actualMultiPostingAt selected input)
+    candidates = multiCandidates context
+    commitCandidate index =
+      commitMultiAccountCandidate selected current index candidates input
 
 moveMultiSelection
   :: GeneralEntryKind
