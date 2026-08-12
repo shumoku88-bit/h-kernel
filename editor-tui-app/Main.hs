@@ -231,6 +231,7 @@ handleWorkspaceEvent context event = case event of
         Actual.OpenDaily -> put (AppWrapper currentContext (ActualFlow (Actual.startDaily (contextEntryDay currentContext))))
         Actual.OpenIncome -> put (AppWrapper currentContext (ActualFlow (Actual.startIncome (contextEntryDay currentContext))))
         Actual.OpenMulti -> put (AppWrapper currentContext (ActualFlow (Actual.startMulti (contextEntryDay currentContext))))
+        Actual.OpenRecord -> put (AppWrapper currentContext (ActualFlow (Actual.startRecord (contextEntryDay currentContext))))
         Actual.OpenReverse -> put (AppWrapper currentContext (ActualFlow (Actual.startSelectedReverse currentContext)))
     PlansSection -> do
       action <- zoom zoomContext (Plan.handleWorkspaceEvent event)

@@ -71,6 +71,7 @@ data Name
   | MultiPostingCountField
   | MultiAccountField
   | MultiAmountField
+  | MultiAccountCandidate Int
   | ReverseDateField
   | ReverseDescriptionField
   | WorkspaceAccountList

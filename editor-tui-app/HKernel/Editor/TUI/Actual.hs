@@ -13,6 +13,7 @@ module HKernel.Editor.TUI.Actual
   , startDaily
   , startIncome
   , startMulti
+  , startRecord
   , startSelectedReverse
   , toggleWorkspaceFocus
   ) where
@@ -69,17 +70,21 @@ import HKernel.Editor.SourcePublication (publishActualBlockWithPathAdmission)
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
   , actualMultiPostingAt
+  , commitMultiAccountCandidate
   , dailyAccountCandidates
+  , filterMultiAccountCandidates
   , groupAccountCandidates
   , incomeAccountCandidates
   , initialActualAddInputForDay
   , initialActualMultiAddInputForDay
   , multiAccountCandidates
   , resizeActualMultiPostings
+  , resetMultiAccountCandidateCursor
   , selectActualAddAccount
   , setActualMultiPostingAccountText
   , setActualMultiPostingAmount
   , stepAccountCandidate
+  , moveMultiAccountCandidateCursor
   )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
@@ -120,9 +125,10 @@ import HKernel.Plan.Completion
 -- | Brick-local interaction coordinates around the one authoritative Actual
 -- draft. Row selection and unfinished posting-count text are delivery state.
 data MultiFormState = MultiFormState
-  { multiFormInput            :: ActualMultiAddInput
-  , multiFormSelectedPosting  :: Int
-  , multiFormPostingCountText :: Text
+  { multiFormInput                  :: ActualMultiAddInput
+  , multiFormSelectedPosting        :: Int
+  , multiFormPostingCountText       :: Text
+  , multiFormAccountCandidateCursor :: Maybe Int
   } deriving (Eq, Show)
 
 data DailyEntryKind
@@ -130,11 +136,16 @@ data DailyEntryKind
   | DailyIncome
   deriving (Eq, Show)
 
+data GeneralEntryKind
+  = RecordEntry
+  | LegacyMultiEntry
+  deriving (Eq, Show)
+
 data State event
   = DailyInput DailyEntryKind (Form ActualAddInput event Name)
   | DailyPreview DailyEntryKind ActualAddPreview (Form ActualAddInput event Name)
-  | MultiInput (Form MultiFormState event Name)
-  | MultiPreview ActualMultiAddPreview (Form MultiFormState event Name)
+  | MultiInput GeneralEntryKind (Form MultiFormState event Name)
+  | MultiPreview GeneralEntryKind ActualMultiAddPreview (Form MultiFormState event Name)
   | ReverseInput ActualTransactionId Transaction (Form ActualReverseInput event Name)
   | ReversePreview ActualTransactionId Transaction ActualReverseInputPreview (Form ActualReverseInput event Name)
   | ReverseUnavailable Text
@@ -158,7 +169,12 @@ startDailyEntry :: DailyEntryKind -> Day -> State event
 startDailyEntry kind day = DailyInput kind (mkDailyForm kind day)
 
 startMulti :: Day -> State event
-startMulti day = MultiInput (mkMultiForm (initialMultiFormState day))
+startMulti day = MultiInput LegacyMultiEntry
+  (mkMultiForm (initialMultiFormState day))
+
+startRecord :: Day -> State event
+startRecord day = MultiInput RecordEntry
+  (mkMultiForm (initialMultiFormState day))
 
 startSelectedReverse :: AppContext -> State event
 startSelectedReverse context = case selectedWorkspaceReverseTarget context of
@@ -218,12 +234,16 @@ multiAccountTextL :: Lens' MultiFormState Text
 multiAccountTextL f state =
   (\value -> state
       { multiFormInput =
-          setActualMultiPostingAccountText selected value input })
-    <$> f (multiPostingAccountText posting)
+          setActualMultiPostingAccountText selected value input
+      , multiFormAccountCandidateCursor = resetMultiAccountCandidateCursor
+          current value (multiFormAccountCandidateCursor state)
+      })
+    <$> f current
   where
     input = multiFormInput state
     selected = multiFormSelectedPosting state
     posting = actualMultiPostingAt selected input
+    current = multiPostingAccountText posting
 
 multiAmountTextL :: Lens' MultiFormState Text
 multiAmountTextL f state =
@@ -277,6 +297,7 @@ initialMultiFormState day = MultiFormState
   , multiFormSelectedPosting = 0
   , multiFormPostingCountText =
       T.pack (show (NonEmpty.length (multiAddPostings input)))
+  , multiFormAccountCandidateCursor = Nothing
   }
   where
     input = initialActualMultiAddInputForDay day
@@ -317,7 +338,9 @@ applyMultiPostingCount state = state
 
 selectMultiPosting :: Int -> MultiFormState -> MultiFormState
 selectMultiPosting requested state = state
-  { multiFormSelectedPosting = clampMultiPostingIndex requested input }
+  { multiFormSelectedPosting = clampMultiPostingIndex requested input
+  , multiFormAccountCandidateCursor = Nothing
+  }
   where
     input = multiFormInput state
 
@@ -355,7 +378,7 @@ zoomDailyForm f (DailyInput kind form) = DailyInput kind <$> f form
 zoomDailyForm _ state = pure state
 
 zoomMultiForm :: Traversal' (State AppEvent) (Form MultiFormState AppEvent Name)
-zoomMultiForm f (MultiInput form) = MultiInput <$> f form
+zoomMultiForm f (MultiInput kind form) = MultiInput kind <$> f form
 zoomMultiForm _ state = pure state
 
 zoomReverseForm :: Traversal' (State AppEvent) (Form ActualReverseInput AppEvent Name)
@@ -383,9 +406,9 @@ drawFlow context state = case state of
     center
       (borderWithLabel (str (dailyPreviewTitle kind))
         (padAll 1 (renderPreview preview <=> str " " <=> str (previewControls preview))))
-  MultiInput form ->
+  MultiInput kind form ->
     center
-      (borderWithLabel (str "Multi-posting Actual")
+      (borderWithLabel (str (generalEntryTitle kind))
         (hLimit 86
           (padAll 1
             (vBox
@@ -402,14 +425,15 @@ drawFlow context state = case state of
               , renderForm form
               , renderMultiInlineAccountSelector context form
               , str " "
+              , str "Validation: press Enter outside the Account field to check admission and balance."
               , multiInputControls form
               ]))))
     where
       multiState = formState form
       input = multiFormInput multiState
-  MultiPreview preview _ ->
+  MultiPreview kind preview _ ->
     center
-      (borderWithLabel (str "Multi-posting Preview")
+      (borderWithLabel (str (generalPreviewTitle kind))
         (hLimit 86
           (padAll 1
             (renderMultiPreview preview <=> str " " <=> str (multiPreviewControls preview)))))
@@ -454,6 +478,16 @@ drawFlow context state = case state of
   PublishRequested _ _ -> emptyWidget
   QuitRequested -> emptyWidget
 
+generalEntryTitle :: GeneralEntryKind -> String
+generalEntryTitle kind = case kind of
+  RecordEntry -> "Record"
+  LegacyMultiEntry -> "Multi-posting Actual"
+
+generalPreviewTitle :: GeneralEntryKind -> String
+generalPreviewTitle kind = case kind of
+  RecordEntry -> "Record Preview"
+  LegacyMultiEntry -> "Multi-posting Preview"
+
 dailyEntryTitle :: DailyEntryKind -> String
 dailyEntryTitle kind = case kind of
   DailyExpense -> "Daily Expense"
@@ -484,11 +518,13 @@ renderDailyInlineAccountSelector
 renderDailyInlineAccountSelector context kind form = case dailySelectionTarget form of
   Nothing -> emptyWidget
   Just target ->
-    renderInlineAccountSelector context label current candidates
+    renderInlineAccountSelector False context label selectedCursor candidates
     where
       input = formState form
       current = dailyAccountText target input
       candidates = dailyCandidates context kind target
+      selectedCursor = findIndex
+        ((== T.strip current) . HKernel.Account.accountName) candidates
       label = case (kind, target) of
         (DailyExpense, SelectToAccount) -> "Expense Accounts"
         (DailyExpense, SelectFromAccount) -> "Payment Accounts"
@@ -501,40 +537,46 @@ renderMultiInlineAccountSelector
   -> Widget Name
 renderMultiInlineAccountSelector context form
   | multiAccountFocused form =
-      renderInlineAccountSelector context "Posting Accounts"
-        (multiPostingAccountText selectedPosting) (multiCandidates context)
+      renderInlineAccountSelector True context "Posting Accounts"
+        (multiFormAccountCandidateCursor state)
+        (filterMultiAccountCandidates current (multiCandidates context))
   | otherwise = emptyWidget
   where
     state = formState form
     selectedPosting = actualMultiPostingAt
       (multiFormSelectedPosting state) (multiFormInput state)
+    current = multiPostingAccountText selectedPosting
 
 renderInlineAccountSelector
-  :: AppContext
+  :: Bool
+  -> AppContext
   -> String
-  -> Text
+  -> Maybe Int
   -> [HKernel.Account.Account]
   -> Widget Name
-renderInlineAccountSelector context label current candidates =
+renderInlineAccountSelector mouseEnabled context label cursor candidates =
   borderWithLabel (str label)
     (hLimit 82
       (padAll 1
         (vBox
-          ( map renderCandidate visible
+          ( map renderCandidate visibleCandidates
             ++ [ str " "
                , str "Existing Accounts are grouped by typed meaning; recent use ranks within each group."
                ]
           ))))
   where
     registry = householdStateAccountsRegistry (contextHouseholdState context)
-    visible = candidateWindow 9 current candidates
-    normalizedCurrent = T.strip current
-    renderCandidate account =
-      let selected = HKernel.Account.accountName account == normalizedCurrent
+    indexedCandidates = zip [0 ..] candidates
+    visibleCandidates = candidateWindow 9 cursor indexedCandidates
+    renderCandidate (index, account) =
+      let selected = cursor == Just index
           accountType = HKernel.Account.accountTypeFor account registry
           row = txt
             (accountTypeLabel accountType <> "  " <> HKernel.Account.accountName account)
-      in if selected then withAttr L.listSelectedAttr row else row
+          highlighted = if selected then withAttr L.listSelectedAttr row else row
+      in if mouseEnabled
+          then clickable (MultiAccountCandidate index) highlighted
+          else highlighted
 
 accountTypeLabel :: Maybe HKernel.Account.AccountType -> Text
 accountTypeLabel maybeType = case maybeType of
@@ -546,16 +588,11 @@ accountTypeLabel maybeType = case maybeType of
   Just HKernel.Account.Budget -> "Budget     "
   Nothing -> "Unknown    "
 
-candidateWindow
-  :: Int
-  -> Text
-  -> [HKernel.Account.Account]
-  -> [HKernel.Account.Account]
-candidateWindow limit current candidates =
+candidateWindow :: Int -> Maybe Int -> [a] -> [a]
+candidateWindow limit cursor candidates =
   take limit (drop start candidates)
   where
-    selectedIndex = fromMaybe 0
-      (findIndex ((== T.strip current) . HKernel.Account.accountName) candidates)
+    selectedIndex = fromMaybe 0 cursor
     maximumStart = max 0 (length candidates - limit)
     centeredStart = max 0 (selectedIndex - limit `div` 2)
     start = min maximumStart centeredStart
@@ -634,7 +671,7 @@ drawWorkspace context =
     , borderWithLabel (str "Selected transaction")
         (padAll 1 (renderWorkspaceSelection context))
     , txt ("Filter: " <> workspaceFilterText context)
-    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [Enter] Reverse selected   [a] Expense   [i] Income   [m] Multi Actual   [q] Quit"
+    , str "[1-7] Sections   [Tab/Left/Right] Focus   [j/k/Arrows] Move   [Enter] Reverse selected   [r] Record   [a] Expense   [i] Income   [m] Multi Actual   [q] Quit"
     ]
 
 handleFlowEvent
@@ -646,8 +683,8 @@ handleFlowEvent context event = do
   case state of
     DailyInput kind form -> handleDailyInput context kind form event
     DailyPreview kind preview form -> handleDailyPreview context kind preview form event
-    MultiInput form -> handleMultiInput context form event
-    MultiPreview preview form -> handleMultiPreview context preview form event
+    MultiInput kind form -> handleMultiInput context kind form event
+    MultiPreview kind preview form -> handleMultiPreview context kind preview form event
     ReverseInput targetId transaction form ->
       handleReverseInput context targetId transaction form event
     ReversePreview targetId transaction preview form ->
@@ -761,37 +798,62 @@ handleDailyPreview context kind preview form event = case event of
 
 handleMultiInput
   :: AppContext
+  -> GeneralEntryKind
   -> Form MultiFormState AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name (State AppEvent) ()
-handleMultiInput context form event = case event of
+handleMultiInput context kind form event = case event of
+  MouseDown (MultiAccountCandidate index) V.BLeft _ _
+    | multiAccountFocused form -> selectMultiAccountCandidateAt context kind index form
   VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
   VtyEvent (V.EvKey V.KUp [])
-    | multiAccountFocused form -> moveMultiAccountCandidate context (-1) form
+    | multiAccountFocused form -> moveMultiAccountCandidate context kind (-1) form
   VtyEvent (V.EvKey V.KDown [])
-    | multiAccountFocused form -> moveMultiAccountCandidate context 1 form
+    | multiAccountFocused form -> moveMultiAccountCandidate context kind 1 form
   VtyEvent (V.EvKey V.KEnter [])
-    | multiAccountFocused form -> acceptMultiAccount form
-  VtyEvent (V.EvKey V.KEnter []) -> prepareMultiPreview context form
-  VtyEvent (V.EvKey V.KUp []) -> moveMultiSelection (-1) form
-  VtyEvent (V.EvKey V.KDown []) -> moveMultiSelection 1 form
+    | multiAccountFocused form -> acceptMultiAccount context kind form
+  VtyEvent (V.EvKey V.KEnter []) -> prepareMultiPreview context kind form
+  VtyEvent (V.EvKey V.KUp []) -> moveMultiSelection kind (-1) form
+  VtyEvent (V.EvKey V.KDown []) -> moveMultiSelection kind 1 form
   _ -> zoom zoomMultiForm (handleFormEvent event)
 
 moveMultiAccountCandidate
   :: AppContext
+  -> GeneralEntryKind
   -> Int
   -> Form MultiFormState AppEvent Name
   -> EventM Name (State AppEvent) ()
-moveMultiAccountCandidate context offset form =
-  case stepAccountCandidate offset current candidates of
+moveMultiAccountCandidate context kind offset form =
+  let nextCursor = moveMultiAccountCandidateCursor
+        offset current (multiFormAccountCandidateCursor state) candidates
+      updatedState = state { multiFormAccountCandidateCursor = nextCursor }
+      updatedForm = setFormFocus MultiAccountField
+        (updateFormState updatedState form)
+  in put (MultiInput kind updatedForm)
+  where
+    state = formState form
+    input = multiFormInput state
+    selected = multiFormSelectedPosting state
+    current = multiPostingAccountText (actualMultiPostingAt selected input)
+    candidates = multiCandidates context
+
+selectMultiAccountCandidateAt
+  :: AppContext
+  -> GeneralEntryKind
+  -> Int
+  -> Form MultiFormState AppEvent Name
+  -> EventM Name (State AppEvent) ()
+selectMultiAccountCandidateAt context kind index form =
+  case commitMultiAccountCandidate selected current index candidates input of
     Nothing -> pure ()
-    Just account ->
-      let updatedInput = setActualMultiPostingAccountText selected
-            (HKernel.Account.accountName account) input
-          updatedState = state { multiFormInput = updatedInput }
-          updatedForm = setFormFocus MultiAccountField
+    Just updatedInput ->
+      let updatedState = state
+            { multiFormInput = updatedInput
+            , multiFormAccountCandidateCursor = Nothing
+            }
+          updatedForm = setFormFocus MultiAmountField
             (updateFormState updatedState form)
-      in put (MultiInput updatedForm)
+      in put (MultiInput kind updatedForm)
   where
     state = formState form
     input = multiFormInput state
@@ -800,47 +862,62 @@ moveMultiAccountCandidate context offset form =
     candidates = multiCandidates context
 
 acceptMultiAccount
-  :: Form MultiFormState AppEvent Name
-  -> EventM Name (State AppEvent) ()
-acceptMultiAccount form
-  | T.null (T.strip current) = pure ()
-  | otherwise = put (MultiInput (setFormFocus MultiAmountField form))
-  where
-    state = formState form
-    current = multiPostingAccountText
-      (actualMultiPostingAt
-        (multiFormSelectedPosting state) (multiFormInput state))
-
-moveMultiSelection
-  :: Int
+  :: AppContext
+  -> GeneralEntryKind
   -> Form MultiFormState AppEvent Name
   -> EventM Name (State AppEvent) ()
-moveMultiSelection offset form =
+acceptMultiAccount context kind form =
+  case multiFormAccountCandidateCursor state >>= commitCandidate of
+    Nothing -> pure ()
+    Just updatedInput ->
+      let updatedState = state
+            { multiFormInput = updatedInput
+            , multiFormAccountCandidateCursor = Nothing
+            }
+      in put (MultiInput kind
+          (setFormFocus MultiAmountField (updateFormState updatedState form)))
+  where
+    state = formState form
+    input = multiFormInput state
+    selected = multiFormSelectedPosting state
+    current = multiPostingAccountText (actualMultiPostingAt selected input)
+    candidates = multiCandidates context
+    commitCandidate index =
+      commitMultiAccountCandidate selected current index candidates input
+
+moveMultiSelection
+  :: GeneralEntryKind
+  -> Int
+  -> Form MultiFormState AppEvent Name
+  -> EventM Name (State AppEvent) ()
+moveMultiSelection kind offset form =
   let applied = applyMultiPostingCount (formState form)
       selected = multiFormSelectedPosting applied + offset
       moved = selectMultiPosting selected applied
-  in put (MultiInput (updateFormState moved form))
+  in put (MultiInput kind (updateFormState moved form))
 
 prepareMultiPreview
   :: AppContext
+  -> GeneralEntryKind
   -> Form MultiFormState AppEvent Name
   -> EventM Name (State AppEvent) ()
-prepareMultiPreview context form = do
+prepareMultiPreview context kind form = do
   let applied = applyMultiPostingCount (formState form)
       updatedForm = updateFormState applied form
       resolvedJournal = actualJournalValue
         (householdStateActualJournal (contextHouseholdState context))
       preview = prepareActualMultiAddPreviewFromResolvedJournal
         resolvedJournal (contextSource context) (multiFormInput applied)
-  put (MultiPreview preview updatedForm)
+  put (MultiPreview kind preview updatedForm)
 
 handleMultiPreview
   :: AppContext
+  -> GeneralEntryKind
   -> ActualMultiAddPreview
   -> Form MultiFormState AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name (State AppEvent) ()
-handleMultiPreview context preview form event = case event of
+handleMultiPreview context kind preview form event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> back
   VtyEvent (V.EvKey (V.KChar 'b') []) -> back
   VtyEvent (V.EvKey (V.KChar 'B') []) -> back
@@ -854,7 +931,7 @@ handleMultiPreview context preview form event = case event of
   _ -> pure ()
   where
     state = formState form
-    back = put (MultiInput form)
+    back = put (MultiInput kind form)
     publish = case preview of
       ActualMultiAddCandidateReady block ->
         let stickyDay = fromMaybe (contextEntryDay context)
@@ -1152,6 +1229,7 @@ data WorkspaceAction
   | OpenDaily
   | OpenIncome
   | OpenMulti
+  | OpenRecord
   | OpenReverse
 
 handleWorkspaceEvent
@@ -1180,6 +1258,8 @@ handleWorkspaceEvent event = case event of
   VtyEvent (V.EvKey (V.KChar 'I') []) -> pure OpenIncome
   VtyEvent (V.EvKey (V.KChar 'm') []) -> pure OpenMulti
   VtyEvent (V.EvKey (V.KChar 'M') []) -> pure OpenMulti
+  VtyEvent (V.EvKey (V.KChar 'r') []) -> pure OpenRecord
+  VtyEvent (V.EvKey (V.KChar 'R') []) -> pure OpenRecord
   VtyEvent (V.EvKey V.KEnter []) -> do
     context <- get
     if contextWorkspaceFocus context == AccountsFocus

@@ -7,7 +7,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Exit (exitFailure, exitSuccess)
 
-import HKernel.Account (AccountType(..), accountName, mkAccount)
+import HKernel.Account (Account, AccountType(..), accountName, mkAccount)
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddInputError(..)
@@ -27,7 +27,9 @@ import HKernel.Editor.ActualAppend
 import HKernel.Editor.SourcePublication (WriteError(..))
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
+  , accountCandidateAt
   , actualMultiPostingAt
+  , commitMultiAccountCandidate
   , dailyAccountCandidates
   , filterDailyAccountCandidates
   , filterMultiAccountCandidates
@@ -37,10 +39,13 @@ import HKernel.Editor.Interaction.ActualAdd
   , initialActualMultiAddInputForDay
   , multiAccountCandidates
   , resizeActualMultiPostings
+  , resetMultiAccountCandidateCursor
+  , resolveMultiAccountCandidate
   , selectActualAddAccount
   , setActualMultiPostingAccountText
   , setActualMultiPostingAmount
   , stepAccountCandidate
+  , moveMultiAccountCandidateCursor
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Journal
@@ -73,17 +78,26 @@ main = do
         , ("empty candidate search preserves recent-first list", testEmptyCandidateSearch)
         , ("from Account selection updates input", testFromSelection)
         , ("daily Account reselection preserves the rest of the draft", testDailyReselectionPreservesDraft)
-        , ("multi input builds signed three-posting intent", testMultiBuild)
-        , ("multi input requires at least three postings", testMultiRequiresThree)
+        , ("general input builds balanced signed two-posting intent", testRecordTwoPostingBuild)
+        , ("existing three-posting input remains valid", testMultiBuild)
+        , ("general input rejects one posting", testRecordRequiresTwo)
         , ("multi input rejects zero posting with row coordinate", testMultiRejectsZero)
+        , ("balanced two-posting input prepares one canonical candidate", testRecordTwoPostingPreview)
         , ("balanced multi input prepares one canonical candidate", testMultiBalancedPreview)
         , ("unbalanced multi input is rejected by transaction admission", testMultiUnbalancedRejected)
-        , ("multi draft starts with three blank posting rows", testMultiInteractionInitial)
-        , ("multi draft resizes posting rows with a minimum of three", testMultiInteractionResize)
+        , ("general draft starts with two blank posting rows", testMultiInteractionInitial)
+        , ("general draft resizes posting rows with a minimum of two", testMultiInteractionResize)
         , ("multi draft updates only the addressed posting", testMultiInteractionSelectedEdit)
         , ("multi draft edits Account text without a picker", testMultiInteractionAccountText)
         , ("multi Account candidates are canonical and recent-first", testMultiAccountCandidates)
         , ("multi Account search is case-insensitive", testMultiAccountSearch)
+        , ("empty Record Account query preserves candidate order", testMultiEmptyAccountSearch)
+        , ("empty Record query browses without changing query", testRecordEmptyQueryBrowse)
+        , ("partial Record query cycles inside its matches", testRecordFilteredAccountStepping)
+        , ("Record query changes reset the candidate cursor", testRecordQueryReset)
+        , ("Enter resolves highlighted Record candidate", testRecordEnterCommit)
+        , ("mouse and keyboard resolve the same candidates", testRecordMouseKeyboardCandidateLaw)
+        , ("mouse candidate resolution is bounds-safe", testAccountCandidateAt)
         , ("successful write result is observable", testWriteSuccess)
         , ("stale write result is observable", testWriteStale)
         , ("restored admission failure is recoverable", testWriteRecovered)
@@ -398,6 +412,22 @@ multiInput = ActualMultiAddInput
                     ]
   }
 
+recordTwoPostingInput :: ActualMultiAddInput
+recordTwoPostingInput = ActualMultiAddInput
+  { multiAddDateText = "2026-08-08"
+  , multiAddDescriptionText = "Groceries"
+  , multiAddPostings =
+      ActualPostingInput "expenses:food" "600 JPY"
+        NonEmpty.:| [ActualPostingInput "assets:cash" "-600"]
+  }
+
+expectedRecordTwoPostingBlock :: T.Text
+expectedRecordTwoPostingBlock = T.unlines
+  [ "2026-08-08 Groceries"
+  , "  expenses:food  600 JPY"
+  , "  assets:cash  -600 JPY"
+  ]
+
 expectedMultiBlock :: T.Text
 expectedMultiBlock = T.unlines
   [ "2026-08-08 Split purchase"
@@ -405,6 +435,26 @@ expectedMultiBlock = T.unlines
   , "  expenses:books  150 JPY"
   , "  assets:cash  -750 JPY"
   ]
+
+testRecordTwoPostingBuild :: Bool
+testRecordTwoPostingBuild =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      case buildActualMultiAddIntentWithRegistry
+          (journalAccountRegistry journal) recordTwoPostingInput of
+        Left _ -> False
+        Right intent ->
+          map renderPosting (NonEmpty.toList (intentPostings intent))
+            == [ ("expenses:food", "600", "JPY")
+               , ("assets:cash", "-600", "JPY")
+               ]
+  where
+    renderPosting posting =
+      ( accountName (intentAccount posting)
+      , renderQuantity (intentQuantity posting)
+      , maybe "" commodityCode (intentCommodity posting)
+      )
 
 testMultiBuild :: Bool
 testMultiBuild =
@@ -427,19 +477,18 @@ testMultiBuild =
       , maybe "" commodityCode (intentCommodity posting)
       )
 
-testMultiRequiresThree :: Bool
-testMultiRequiresThree =
+testRecordRequiresTwo :: Bool
+testRecordRequiresTwo =
   case parseJournal multiSource of
     Left _ -> False
     Right journal ->
       buildActualMultiAddIntentWithRegistry
         (journalAccountRegistry journal)
-        (multiInput
+        (recordTwoPostingInput
           { multiAddPostings =
-              ActualPostingInput "expenses:food" "600"
-                NonEmpty.:| [ActualPostingInput "assets:cash" "-600"]
+              ActualPostingInput "expenses:food" "600" NonEmpty.:| []
           })
-        == Left ActualMultiAddNeedsAtLeastThreePostings
+        == Left ActualMultiAddNeedsAtLeastTwoPostings
 
 testMultiRejectsZero :: Bool
 testMultiRejectsZero =
@@ -456,6 +505,15 @@ testMultiRejectsZero =
                             ]
           })
         == Left (ActualMultiAddZeroQuantity 2)
+
+testRecordTwoPostingPreview :: Bool
+testRecordTwoPostingPreview =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      prepareActualMultiAddPreviewFromResolvedJournal
+        journal multiSource recordTwoPostingInput
+        == ActualMultiAddCandidateReady expectedRecordTwoPostingBlock
 
 testMultiBalancedPreview :: Bool
 testMultiBalancedPreview =
@@ -488,7 +546,7 @@ testMultiInteractionInitial =
   let input = initialActualMultiAddInputForDay (read "2026-08-08")
       rows = NonEmpty.toList (multiAddPostings input)
   in multiAddDateText input == "2026-08-08"
-      && length rows == 3
+      && length rows == 2
       && all (== ActualPostingInput "" "") rows
 
 testMultiInteractionResize :: Bool
@@ -498,7 +556,7 @@ testMultiInteractionResize =
       fiveRows = resizeActualMultiPostings 5 initial
       reduced = resizeActualMultiPostings 1 fiveRows
   in length (NonEmpty.toList (multiAddPostings fiveRows)) == 5
-      && length (NonEmpty.toList (multiAddPostings reduced)) == 3
+      && length (NonEmpty.toList (multiAddPostings reduced)) == 2
       && actualMultiPostingAt 0 reduced == ActualPostingInput "expenses:food" ""
 
 testMultiInteractionSelectedEdit :: Bool
@@ -510,13 +568,12 @@ testMultiInteractionSelectedEdit =
   in actualMultiPostingAt 1 withAmount
       == ActualPostingInput "expenses:books" "150"
       && rows !! 0 == ActualPostingInput "" ""
-      && rows !! 2 == ActualPostingInput "" ""
 
 testMultiInteractionAccountText :: Bool
 testMultiInteractionAccountText =
   let initial = initialActualMultiAddInputForDay (read "2026-08-08")
-      changed = setActualMultiPostingAccountText 2 "assets:cash" initial
-  in actualMultiPostingAt 2 changed == ActualPostingInput "assets:cash" ""
+      changed = setActualMultiPostingAccountText 1 "assets:cash" initial
+  in actualMultiPostingAt 1 changed == ActualPostingInput "assets:cash" ""
 
 testMultiAccountCandidates :: Bool
 testMultiAccountCandidates =
@@ -545,6 +602,115 @@ testMultiAccountSearch =
             (journalTransactions journal)
       in map accountName (filterMultiAccountCandidates "PENSION" candidates)
           == ["income:pension"]
+
+testMultiEmptyAccountSearch :: Bool
+testMultiEmptyAccountSearch =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates = multiAccountCandidates
+            (journalAccountRegistry journal)
+            (journalTransactions journal)
+      in filterMultiAccountCandidates "  " candidates == candidates
+
+testRecordEmptyQueryBrowse :: Bool
+testRecordEmptyQueryBrowse =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates = multiAccountCandidates
+            (journalAccountRegistry journal)
+            (journalTransactions journal)
+          first = moveMultiAccountCandidateCursor 1 "" Nothing candidates
+          second = moveMultiAccountCandidateCursor 1 "" first candidates
+      in first == Just 0
+          && second == Just 1
+          && resolveName "" first candidates == Just "expenses:books"
+          && resolveName "" second candidates == Just "liabilities:card"
+
+testRecordFilteredAccountStepping :: Bool
+testRecordFilteredAccountStepping =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates = multiAccountCandidates
+            (journalAccountRegistry journal)
+            (journalTransactions journal)
+          first = moveMultiAccountCandidateCursor 1 "assets:" Nothing candidates
+          second = moveMultiAccountCandidateCursor 1 "assets:" first candidates
+          third = moveMultiAccountCandidateCursor 1 "assets:" second candidates
+          previous = moveMultiAccountCandidateCursor (-1) "assets:" first candidates
+      in map (\cursor -> resolveName "assets:" cursor candidates)
+            [first, second, third, previous]
+          == [ Just "assets:cash"
+             , Just "assets:bank"
+             , Just "assets:cash"
+             , Just "assets:bank"
+             ]
+
+testRecordQueryReset :: Bool
+testRecordQueryReset =
+  resetMultiAccountCandidateCursor "" "" (Just 2) == Just 2
+    && resetMultiAccountCandidateCursor "" "assets:" (Just 2) == Nothing
+    && resetMultiAccountCandidateCursor "assets:" "asset" (Just 1) == Nothing
+
+testRecordEnterCommit :: Bool
+testRecordEnterCommit =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates = multiAccountCandidates
+            (journalAccountRegistry journal)
+            (journalTransactions journal)
+          cursor = moveMultiAccountCandidateCursor 1 "assets:" Nothing candidates
+          input = initialActualMultiAddInputForDay (read "2026-08-08")
+          committed = cursor >>= \index ->
+            commitMultiAccountCandidate 1 "assets:" index candidates input
+      in (multiPostingAccountText . actualMultiPostingAt 1 <$> committed)
+          == Just "assets:cash"
+          && (actualMultiPostingAt 0 <$> committed)
+            == Just (ActualPostingInput "" "")
+
+testRecordMouseKeyboardCandidateLaw :: Bool
+testRecordMouseKeyboardCandidateLaw =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates = multiAccountCandidates
+            (journalAccountRegistry journal)
+            (journalTransactions journal)
+          query = "assets:"
+          cursor = moveMultiAccountCandidateCursor 1 query (Just 0) candidates
+          input = initialActualMultiAddInputForDay (read "2026-08-08")
+          keyboard = cursor >>= \index ->
+            commitMultiAccountCandidate 0 query index candidates input
+          mouse = commitMultiAccountCandidate 0 query 1 candidates input
+          committedName = multiPostingAccountText . actualMultiPostingAt 0
+      in (committedName <$> keyboard) == (committedName <$> mouse)
+          && (committedName <$> mouse) == Just "assets:bank"
+
+resolveName
+  :: T.Text
+  -> Maybe Int
+  -> [Account]
+  -> Maybe T.Text
+resolveName query cursor candidates =
+  accountName <$> (cursor >>= \index ->
+    resolveMultiAccountCandidate query index candidates)
+
+testAccountCandidateAt :: Bool
+testAccountCandidateAt =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let candidates = filterMultiAccountCandidates "assets:"
+            (multiAccountCandidates
+              (journalAccountRegistry journal)
+              (journalTransactions journal))
+      in (accountName <$> accountCandidateAt 0 candidates) == Just "assets:cash"
+          && (accountName <$> accountCandidateAt 1 candidates) == Just "assets:bank"
+          && accountCandidateAt (-1) candidates == Nothing
+          && accountCandidateAt 2 candidates == Nothing
 
 testWriteSuccess :: Bool
 testWriteSuccess =

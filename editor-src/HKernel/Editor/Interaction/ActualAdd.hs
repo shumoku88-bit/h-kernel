@@ -24,10 +24,16 @@ module HKernel.Editor.Interaction.ActualAdd
   , setActualMultiPostingAmount
   , multiAccountCandidates
   , filterMultiAccountCandidates
+  , moveMultiAccountCandidateCursor
+  , resetMultiAccountCandidateCursor
+  , resolveMultiAccountCandidate
+  , commitMultiAccountCandidate
+  , accountCandidateAt
   ) where
 
 import Data.List (findIndex)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Maybe (listToMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -170,30 +176,29 @@ matchesIncomeRole registry target account =
     (SelectFromAccount, Just Income) -> True
     _ -> False
 
--- Multi-posting daily interaction
+-- General Record interaction
 
--- | Start one delivery-neutral multi-posting draft. Selection and other widget
+-- | Start one delivery-neutral general Record draft. Selection and other widget
 -- state belong to the delivery adapter rather than to the Actual input.
 initialActualMultiAddInputForDay :: Day -> ActualMultiAddInput
 initialActualMultiAddInputForDay day = ActualMultiAddInput
   { multiAddDateText = renderDay day
   , multiAddDescriptionText = ""
   , multiAddPostings =
-      ActualPostingInput "" ""
-        NonEmpty.:| [ActualPostingInput "" "", ActualPostingInput "" ""]
+      ActualPostingInput "" "" NonEmpty.:| [ActualPostingInput "" ""]
   }
 
 -- | Resize the editable posting table while preserving source order and the
--- contents of retained rows. Multi-posting entry always keeps at least three
--- rows because the ordinary two-posting case has its own shorter workflow.
--- A delivery can therefore expose posting count as an ordinary text field
--- instead of requiring function or modified keys for row insertion/removal.
+-- contents of retained rows. General Record entry always keeps the Transaction
+-- domain minimum of two rows. A delivery can therefore expose posting count as
+-- an ordinary text field instead of requiring function or modified keys for
+-- row insertion/removal.
 resizeActualMultiPostings :: Int -> ActualMultiAddInput -> ActualMultiAddInput
 resizeActualMultiPostings requested input =
   input { multiAddPostings = toNonEmpty resized }
   where
     rows = NonEmpty.toList (multiAddPostings input)
-    desired = max 3 requested
+    desired = max 2 requested
     blanks = replicate (max 0 (desired - length rows)) (ActualPostingInput "" "")
     resized = take desired (rows <> blanks)
 
@@ -248,6 +253,59 @@ multiAccountCandidates registry transactions =
 
 filterMultiAccountCandidates :: Text -> [Account] -> [Account]
 filterMultiAccountCandidates = filterAccountCandidates
+
+-- | Move a delivery-local cursor over exactly the currently filtered Account
+-- candidates. The raw Account field remains the query and is never changed by
+-- cursor movement. Unknown cursors enter at the requested end; known cursors
+-- wrap within the filtered set.
+moveMultiAccountCandidateCursor
+  :: Int
+  -> Text
+  -> Maybe Int
+  -> [Account]
+  -> Maybe Int
+moveMultiAccountCandidateCursor offset query current candidates
+  | null filtered = Nothing
+  | otherwise = Just next
+  where
+    filtered = filterMultiAccountCandidates query candidates
+    count = length filtered
+    next = case current of
+      Just index | index >= 0 && index < count -> (index + offset) `mod` count
+      _ | offset < 0 -> count - 1
+        | otherwise -> 0
+
+-- | Keep the delivery-local cursor only while the raw query is unchanged.
+-- Typing, deletion, or a posting-row change starts navigation safely from an
+-- unselected candidate set.
+resetMultiAccountCandidateCursor :: Text -> Text -> Maybe Int -> Maybe Int
+resetMultiAccountCandidateCursor previousQuery nextQuery cursor
+  | previousQuery == nextQuery = cursor
+  | otherwise = Nothing
+
+-- | Resolve a transient cursor or mouse coordinate against the same current
+-- filtered set. A stale or out-of-range coordinate is a safe no-op.
+resolveMultiAccountCandidate :: Text -> Int -> [Account] -> Maybe Account
+resolveMultiAccountCandidate query index =
+  accountCandidateAt index . filterMultiAccountCandidates query
+
+-- | Commit one keyboard or mouse candidate coordinate to the addressed posting.
+-- Both delivery paths use this operation after resolving the same filtered set.
+commitMultiAccountCandidate
+  :: Int
+  -> Text
+  -> Int
+  -> [Account]
+  -> ActualMultiAddInput
+  -> Maybe ActualMultiAddInput
+commitMultiAccountCandidate postingIndex query candidateIndex candidates input = do
+  account <- resolveMultiAccountCandidate query candidateIndex candidates
+  pure (setActualMultiPostingAccountText postingIndex (accountName account) input)
+
+accountCandidateAt :: Int -> [Account] -> Maybe Account
+accountCandidateAt index candidates
+  | index < 0 = Nothing
+  | otherwise = listToMaybe (drop index candidates)
 
 recentFirstCandidates :: [Transaction] -> [Account] -> [Account]
 recentFirstCandidates transactions candidates =
