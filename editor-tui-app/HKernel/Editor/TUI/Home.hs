@@ -84,11 +84,11 @@ draw :: AppContext -> Day -> Widget Name
 draw context selectedDay =
   vBox
     [ hBox
-        [ hLimit 31 (drawCalendar context selectedDay)
-        , padLeft (Pad 1) (hLimit 48 (drawDayPane context selectedDay))
+        [ hLimit 32 (drawCalendar context selectedDay)
+        , padLeft (Pad 1) (hLimit 46 (drawDayPane context selectedDay))
         ]
     , padTop (Pad 1) (drawLegend context)
-    , str "[Arrows] Day   [t] Today   [r] Record selected day   [1-7] Sections   [q] Quit"
+    , str "[Arrows] Day   [t] Today   [r] Record   [1-7] Sections   [q] Quit"
     ]
 
 drawCalendar :: AppContext -> Day -> Widget Name
