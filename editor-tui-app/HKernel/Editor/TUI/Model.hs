@@ -100,6 +100,7 @@ data Name
   | IssueList
   | IssueCategoryField
   | IssueTitleField
+  | IssueDueField
   | IssueAmountField
   | IssueCommodityField
   | IssueDetailsField

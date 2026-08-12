@@ -7,6 +7,10 @@ module HKernel.Editor.IssueAppend
   , generateAvailableIssueId
   , prepareIssueAppend
   , prepareIssueAppendWithDue
+  , IssueDueUpdateIntent(..)
+  , IssueDueUpdateError(..)
+  , IssueDueUpdatePreview(..)
+  , prepareIssueDueUpdate
   , IssueCloseDisposition(..)
   , IssueCloseIntent(..)
   , IssueCloseError(..)
@@ -27,15 +31,15 @@ import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.HouseholdIssue
   ( HouseholdIssue
   , HouseholdIssueError
+  , IssueDue(..)
   , IssueId
   , IssueIdError
   , IssueStatus(..)
-  , IssueDue(..)
   , householdIssueId
   , householdIssueStatus
+  , issueIdText
   , mkHouseholdIssue
   , mkIssueId
-  , issueIdText
   )
 import HKernel.Household.Issue.TSV
   ( HouseholdIssueTSVError
@@ -177,6 +181,97 @@ renderDue :: IssueDue -> Text
 renderDue (DueOn day) = T.pack (formatTime defaultTimeLocale "%F" day)
 renderDue NoDueDate = "none"
 renderDue DueUndetermined = "undetermined"
+
+-- Issue due update
+
+data IssueDueUpdateIntent = IssueDueUpdateIntent
+  { dueUpdateIssueId :: IssueId
+  , dueUpdateValue   :: IssueDue
+  } deriving (Eq, Show)
+
+data IssueDueUpdateError
+  = DueUpdateSourceParseError (NonEmpty HouseholdIssueTSVError)
+  | DueUpdateIssueNotFound IssueId
+  | DueUpdateIssueNotOpen IssueStatus
+  | DueUpdateRequiresDueAwareSource
+  | DueUpdatePhysicalRowMismatch IssueId
+  | DueUpdateCandidateSourceParseError (NonEmpty HouseholdIssueTSVError)
+  deriving (Eq, Show)
+
+data IssueDueUpdatePreview = IssueDueUpdatePreview
+  { dueUpdateOriginalRow             :: Text
+  , dueUpdateCandidateRow            :: Text
+  , dueUpdateCandidateCompleteSource :: Text
+  } deriving (Eq, Show)
+
+-- | Replace only the explicit due coordinate of one open Issue.
+--
+-- Identity resolution is by stable IssueId. The current nine-column source is
+-- required because a legacy source cannot faithfully represent all three due
+-- states. Every other physical field is preserved byte-for-byte.
+prepareIssueDueUpdate
+  :: Text
+  -> IssueDueUpdateIntent
+  -> Either (NonEmpty IssueDueUpdateError) IssueDueUpdatePreview
+prepareIssueDueUpdate existingSource intent = do
+  issues <- first (pure . DueUpdateSourceParseError)
+    (parseHouseholdIssues existingSource)
+  target <- maybe
+    (Left (pure (DueUpdateIssueNotFound (dueUpdateIssueId intent))))
+    Right
+    (findIssue (dueUpdateIssueId intent) issues)
+  case householdIssueStatus target of
+    Open -> Right ()
+    status -> Left (pure (DueUpdateIssueNotOpen status))
+  if householdIssueSourceUsesDueColumn existingSource
+    then Right ()
+    else Left (pure DueUpdateRequiresDueAwareSource)
+  (originalRow, candidateRow, candidateSource) <-
+    replaceIssueDueRow intent existingSource
+  _ <- first (pure . DueUpdateCandidateSourceParseError)
+    (parseHouseholdIssues candidateSource)
+  pure IssueDueUpdatePreview
+    { dueUpdateOriginalRow = originalRow
+    , dueUpdateCandidateRow = candidateRow
+    , dueUpdateCandidateCompleteSource = candidateSource
+    }
+
+replaceIssueDueRow
+  :: IssueDueUpdateIntent
+  -> Text
+  -> Either (NonEmpty IssueDueUpdateError) (Text, Text, Text)
+replaceIssueDueRow intent source =
+  case matches of
+    [(index, oldRow, fields)] ->
+      let newFields = replaceDueField (dueUpdateValue intent) fields
+          newRow = T.intercalate "\t" newFields
+          newLines = replaceAt index newRow sourceLines
+      in Right (oldRow, newRow, T.intercalate "\n" newLines)
+    _ -> Left (pure (DueUpdatePhysicalRowMismatch (dueUpdateIssueId intent)))
+  where
+    sourceLines = T.splitOn "\n" source
+    matches =
+      [ (index, row, fields)
+      | (index, row) <- zip [0 ..] sourceLines
+      , not (ignoredPhysicalLine row)
+      , fields@[identifier, _, _, _, _, _, _, _, _] <- [T.splitOn "\t" row]
+      , identifier == issueIdText (dueUpdateIssueId intent)
+      ]
+
+replaceDueField :: IssueDue -> [Text] -> [Text]
+replaceDueField due fields = case fields of
+  [identifier, status, day, _, category, title, amount, currency, details] ->
+    [ identifier
+    , status
+    , day
+    , renderDue due
+    , category
+    , title
+    , amount
+    , currency
+    , details
+    ]
+  _ -> fields
 
 -- Issue close
 
