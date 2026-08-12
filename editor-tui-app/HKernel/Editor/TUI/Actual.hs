@@ -65,7 +65,7 @@ import HKernel.Editor.ActualReverse
   , prepareActualReverseInputFromResolvedJournal
   , suggestActualReverseEventIdText
   )
-import HKernel.Editor.ActualWorkspace (transactionEntriesForAccount)
+import HKernel.Editor.ActualWorkspace (newestTransactionEntriesForAccount)
 import HKernel.Editor.SourcePublication (publishActualBlockWithPathAdmission)
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
@@ -1046,7 +1046,7 @@ selectedWorkspaceAccount context = case L.listSelectedElement (contextWorkspaceA
 
 filteredWorkspaceEntries :: AppContext -> [ActualTransactionEntry]
 filteredWorkspaceEntries context =
-  transactionEntriesForAccount
+  newestTransactionEntriesForAccount
     (selectedWorkspaceAccount context)
     (actualJournalTransactionEntries
       (householdStateActualJournal (contextHouseholdState context)))

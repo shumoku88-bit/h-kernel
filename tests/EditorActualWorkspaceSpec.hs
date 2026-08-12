@@ -22,7 +22,10 @@ import HKernel.Actual.Journal
   , actualTransactionEntryIdentity
   , parseActualJournal
   )
-import HKernel.Editor.ActualWorkspace (transactionEntriesForAccount)
+import HKernel.Editor.ActualWorkspace
+  ( newestTransactionEntriesForAccount
+  , transactionEntriesForAccount
+  )
 import HKernel.Journal (journalAccountRegistry)
 import HKernel.Plan.Completion (actualTransactionIdText)
 
@@ -57,7 +60,16 @@ main = do
             alignedEntries
             == [Nothing, Just "actual-second"]
         )
-      results = fixtureResults ++ [alignmentResult]
+      newestFirstResult =
+        ( "newest-first projection reverses display without changing source entries"
+        , map (fmap actualTransactionIdText . actualTransactionEntryIdentity)
+            (newestTransactionEntriesForAccount Nothing alignedEntries)
+            == [Just "actual-second", Nothing]
+            && map (fmap actualTransactionIdText . actualTransactionEntryIdentity)
+                alignedEntries
+              == [Nothing, Just "actual-second"]
+        )
+      results = fixtureResults ++ [alignmentResult, newestFirstResult]
 
   mapM_ print results
   if all snd results then exitSuccess else exitFailure
