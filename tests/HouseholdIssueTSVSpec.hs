@@ -14,7 +14,7 @@ import System.Exit (exitFailure)
 main :: IO ()
 main = do
   characterizeAcceptedIssues
-  characterizeLegacyCompatibility
+  characterizeCompatibility
   characterizeSourceFailures
 
 characterizeAcceptedIssues :: IO ()
@@ -24,8 +24,8 @@ characterizeAcceptedIssues = do
         (filter ((== "issue-one") . issueIdText . householdIssueId) issues)
       noDueIssue = exactlyOne
         (filter ((== "issue-no-due") . issueIdText . householdIssueId) issues)
-      undeterminedIssue = exactlyOne
-        (filter ((== "issue-undetermined") . issueIdText . householdIssueId) issues)
+      closedIssue = exactlyOne
+        (filter ((== "issue-closed") . issueIdText . householdIssueId) issues)
       issueWithoutAmount = exactlyOne
         (mustRight (parseHouseholdIssues optionalAmountIssue))
       jpy = mustRight (mkCommodity "JPY")
@@ -33,21 +33,21 @@ characterizeAcceptedIssues = do
   assertEqual "one physical row becomes one typed HouseholdIssue"
     3
     (length issues)
-  assertEqual "open status remains typed"
-    Open
-    (householdIssueStatus knownDueIssue)
-  assertEqual "recorded date remains independent from due"
+  assertEqual "recorded date remains independent from due and closed"
     (fromGregorian 2026 7 20)
     (householdIssueRecordedOn knownDueIssue)
   assertEqual "known due is admitted from the due coordinate"
     (DueOn (fromGregorian 2026 8 15))
     (householdIssueDue knownDueIssue)
+  assertEqual "open Issue has explicit not-closed meaning"
+    NotClosed
+    (householdIssueClosed knownDueIssue)
   assertEqual "explicit no-due remains typed"
     NoDueDate
     (householdIssueDue noDueIssue)
-  assertEqual "undetermined due remains typed"
-    DueUndetermined
-    (householdIssueDue undeterminedIssue)
+  assertEqual "closed date is independent from due"
+    (ClosedOn (fromGregorian 2026 8 8))
+    (householdIssueClosed closedIssue)
   assertEqual "amount and Commodity remain exact"
     (Just (mkAmount jpy (quantityFromInteger 200)))
     (householdIssueAmount knownDueIssue)
@@ -61,22 +61,35 @@ characterizeAcceptedIssues = do
     []
     (mustRight (parseHouseholdIssues "\n# no current matters\n"))
 
-characterizeLegacyCompatibility :: IO ()
-characterizeLegacyCompatibility = do
-  let legacyIssues = mustRight (parseHouseholdIssues legacySource)
-      legacyIssue = exactlyOne legacyIssues
-  assertEqual "legacy eight-column header remains admitted during migration"
+characterizeCompatibility :: IO ()
+characterizeCompatibility = do
+  let dueAwareOpen = exactlyOne (mustRight (parseHouseholdIssues dueAwareOpenSource))
+      dueAwareClosed = exactlyOne (mustRight (parseHouseholdIssues dueAwareClosedSource))
+      legacyClosed = exactlyOne (mustRight (parseHouseholdIssues legacyClosedSource))
+  assertEqual "current source owns both due and closed columns"
     True
-    (householdIssueSourceHasHeader legacySource)
-  assertEqual "legacy source does not claim to own a due column"
-    False
-    (householdIssueSourceUsesDueColumn legacySource)
-  assertEqual "legacy missing due evidence becomes undetermined, not no-due"
+    (householdIssueSourceUsesDueColumn validIssues
+      && householdIssueSourceUsesClosedColumn validIssues)
+  assertEqual "nine-column source retains due but not closed coordinate"
+    True
+    (householdIssueSourceUsesDueColumn dueAwareOpenSource
+      && not (householdIssueSourceUsesClosedColumn dueAwareOpenSource))
+  assertEqual "nine-column open Issue is known not closed"
+    NotClosed
+    (householdIssueClosed dueAwareOpen)
+  assertEqual "nine-column historical closed Issue keeps missing closure evidence"
+    ClosedUndetermined
+    (householdIssueClosed dueAwareClosed)
+  assertEqual "legacy source owns neither due nor closed coordinate"
+    True
+    (not (householdIssueSourceUsesDueColumn legacyClosedSource)
+      && not (householdIssueSourceUsesClosedColumn legacyClosedSource))
+  assertEqual "legacy missing due evidence becomes undetermined"
     DueUndetermined
-    (householdIssueDue legacyIssue)
-  assertEqual "current source advertises an explicit due column"
-    True
-    (householdIssueSourceUsesDueColumn validIssues)
+    (householdIssueDue legacyClosed)
+  assertEqual "legacy historical closed Issue keeps closure undetermined"
+    ClosedUndetermined
+    (householdIssueClosed legacyClosed)
 
 characterizeSourceFailures :: IO ()
 characterizeSourceFailures = do
@@ -96,10 +109,26 @@ characterizeSourceFailures = do
     2
     "invalid issue due"
     (parseHouseholdIssues (T.replace "2026-08-15" "2026-02-30" oneIssue))
+  assertLeftAt "invalid explicit closed date fails closed"
+    2
+    "invalid issue closed date"
+    (parseHouseholdIssues (T.replace "\tnone\tplanning\t" "\t2026-02-30\tplanning\t" oneIssue))
+  assertLeftAtMessageContains "open status cannot carry closure evidence"
+    2
+    "OpenHouseholdIssueHasClosureEvidence"
+    (parseHouseholdIssues (T.replace "\tnone\tplanning\t" "\t2026-08-08\tplanning\t" oneIssue))
+  assertLeftAtMessageContains "closed date cannot precede recorded date"
+    2
+    "HouseholdIssueClosedBeforeRecorded"
+    (parseHouseholdIssues closedBeforeRecorded)
   assertLeftAt "current row width remains exact"
     2
-    "expected nine issue columns"
+    "expected ten issue columns"
     (parseHouseholdIssues (header <> "\nissue-one\topen\n"))
+  assertLeftAt "nine-column row width remains exact"
+    2
+    "expected nine due-aware issue columns"
+    (parseHouseholdIssues (dueAwareHeader <> "\nissue-one\topen\n"))
   assertLeftAt "legacy row width remains exact"
     2
     "expected eight legacy issue columns"
@@ -120,53 +149,74 @@ characterizeSourceFailures = do
 header :: T.Text
 header = householdIssuesHeader
 
+dueAwareHeader :: T.Text
+dueAwareHeader = dueAwareHouseholdIssuesHeader
+
 legacyHeader :: T.Text
 legacyHeader = legacyHouseholdIssuesHeader
 
 oneIssue :: T.Text
 oneIssue = T.unlines
   [ header
-  , "issue-one\topen\t2026-07-20\t2026-08-15\tplanning\twifi\t200\tJPY\tdecide funding"
+  , "issue-one\topen\t2026-07-20\t2026-08-15\tnone\tplanning\twifi\t200\tJPY\tdecide funding"
   ]
 
 optionalAmountIssue :: T.Text
 optionalAmountIssue = T.unlines
   [ header
-  , "issue-unknown-cost\topen\t2026-07-22\tundetermined\thome\tboiler\t\t\tinspect first"
+  , "issue-unknown-cost\topen\t2026-07-22\tundetermined\tnone\thome\tboiler\t\t\tinspect first"
   ]
 
 amountBlankOnly :: T.Text
 amountBlankOnly = T.unlines
   [ header
-  , "issue-amount-blank\topen\t2026-07-22\tnone\thome\tboiler\t\tJPY\tinspect first"
+  , "issue-amount-blank\topen\t2026-07-22\tnone\tnone\thome\tboiler\t\tJPY\tinspect first"
   ]
 
 currencyBlankOnly :: T.Text
 currencyBlankOnly = T.unlines
   [ header
-  , "issue-currency-blank\topen\t2026-07-22\tnone\thome\tboiler\t200\t\tinspect first"
+  , "issue-currency-blank\topen\t2026-07-22\tnone\tnone\thome\tboiler\t200\t\tinspect first"
   ]
 
 validIssues :: T.Text
 validIssues = T.unlines
   [ "# household notebook"
   , header
-  , "issue-one\topen\t2026-07-20\t2026-08-15\tplanning\twifi\t200\tJPY\tdecide funding"
-  , "issue-no-due\topen\t2026-07-01\tnone\twant\tbookshelf\t\t\tlook for a good one"
-  , "issue-undetermined\tresolved\t2026-07-02\tundetermined\twaiting\trepair schedule\t\t\twaiting for reply"
+  , "issue-one\topen\t2026-07-20\t2026-08-15\tnone\tplanning\twifi\t200\tJPY\tdecide funding"
+  , "issue-no-due\topen\t2026-07-01\tnone\tnone\twant\tbookshelf\t\t\tlook for a good one"
+  , "issue-closed\tresolved\t2026-07-02\tundetermined\t2026-08-08\twaiting\trepair schedule\t\t\tprovider replied"
   ]
 
-legacySource :: T.Text
-legacySource = T.unlines
+dueAwareOpenSource :: T.Text
+dueAwareOpenSource = T.unlines
+  [ dueAwareHeader
+  , "due-open\topen\t2026-07-20\t2026-08-15\tplanning\twifi\t200\tJPY\tdecide funding"
+  ]
+
+dueAwareClosedSource :: T.Text
+dueAwareClosedSource = T.unlines
+  [ dueAwareHeader
+  , "due-closed\tresolved\t2026-07-20\tundetermined\tplanning\twifi\t200\tJPY\tdone"
+  ]
+
+legacyClosedSource :: T.Text
+legacyClosedSource = T.unlines
   [ legacyHeader
-  , "legacy-issue\topen\t2026-07-20\tplanning\twifi\t200\tJPY\tdecide funding"
+  , "legacy-closed\tdropped\t2026-07-20\tplanning\twifi\t200\tJPY\tstopped"
+  ]
+
+closedBeforeRecorded :: T.Text
+closedBeforeRecorded = T.unlines
+  [ header
+  , "issue-old\tresolved\t2026-08-10\tnone\t2026-08-09\tplanning\twifi\t200\tJPY\tdone"
   ]
 
 duplicateIssues :: T.Text
 duplicateIssues = T.unlines
   [ header
-  , "issue-one\topen\t2026-07-20\tnone\tplanning\twifi\t200\tJPY\tdecide funding"
-  , "issue-one\tresolved\t2026-07-21\tundetermined\tplanning\twifi\t0\tJPY\tdone"
+  , "issue-one\topen\t2026-07-20\tnone\tnone\tplanning\twifi\t200\tJPY\tdecide funding"
+  , "issue-one\tresolved\t2026-07-21\tundetermined\tundetermined\tplanning\twifi\t0\tJPY\tdone"
   ]
 
 exactlyOne :: Show value => [value] -> value
@@ -183,10 +233,33 @@ assertLeftAt label expectedLine expectedMessage result = case result of
   Left errors
     | any matches (NonEmpty.toList errors) ->
         putStrLn ("  [PASS] " ++ label)
+    | otherwise -> failWith errors
+  Right _ -> do
+    putStrLn ("  [FAIL] " ++ label)
+    putStrLn "    unexpectedly accepted source"
+    exitFailure
+  where
+    matches err =
+      householdIssueTSVErrorLine err == expectedLine
+        && householdIssueTSVErrorMessage err == expectedMessage
+    failWith errors = do
+      putStrLn ("  [FAIL] " ++ label)
+      putStrLn ("    expected line/message: "
+        ++ show expectedLine ++ " / " ++ T.unpack expectedMessage)
+      putStrLn ("    actual errors: " ++ show errors)
+      exitFailure
+
+assertLeftAtMessageContains
+  :: String
+  -> Int
+  -> T.Text
+  -> Either (NonEmpty.NonEmpty HouseholdIssueTSVError) value
+  -> IO ()
+assertLeftAtMessageContains label expectedLine fragment result = case result of
+  Left errors
+    | any matches (NonEmpty.toList errors) -> putStrLn ("  [PASS] " ++ label)
     | otherwise -> do
         putStrLn ("  [FAIL] " ++ label)
-        putStrLn ("    expected line/message: "
-          ++ show expectedLine ++ " / " ++ T.unpack expectedMessage)
         putStrLn ("    actual errors: " ++ show errors)
         exitFailure
   Right _ -> do
@@ -196,4 +269,4 @@ assertLeftAt label expectedLine expectedMessage result = case result of
   where
     matches err =
       householdIssueTSVErrorLine err == expectedLine
-        && householdIssueTSVErrorMessage err == expectedMessage
+        && fragment `T.isInfixOf` householdIssueTSVErrorMessage err

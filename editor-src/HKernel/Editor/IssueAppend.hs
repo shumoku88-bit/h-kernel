@@ -16,6 +16,7 @@ module HKernel.Editor.IssueAppend
   , IssueCloseError(..)
   , IssueClosePreview(..)
   , prepareIssueClose
+  , prepareIssueCloseOn
   ) where
 
 import Data.Bifunctor (first)
@@ -31,19 +32,22 @@ import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
 import HKernel.HouseholdIssue
   ( HouseholdIssue
   , HouseholdIssueError
+  , IssueClosed(..)
   , IssueDue(..)
   , IssueId
   , IssueIdError
   , IssueStatus(..)
   , householdIssueId
+  , householdIssueRecordedOn
   , householdIssueStatus
   , issueIdText
-  , mkHouseholdIssue
+  , mkHouseholdIssueWithClosed
   , mkIssueId
   )
 import HKernel.Household.Issue.TSV
   ( HouseholdIssueTSVError
   , householdIssueSourceHasHeader
+  , householdIssueSourceUsesClosedColumn
   , householdIssueSourceUsesDueColumn
   , householdIssuesHeader
   , parseHouseholdIssues
@@ -110,20 +114,25 @@ prepareIssueAppend existingSource =
 
 -- | Prepare one Issue append with an explicit three-way due meaning.
 --
--- A legacy eight-column source can only preserve 'DueUndetermined'. Other due
--- meanings fail closed instead of being hidden in details/category or discarded.
+-- Existing eight- and nine-column sources retain their admitted physical shape.
+-- A new source starts with the current ten-column header. The closure coordinate
+-- for a newly appended open Issue is explicitly @none@; an already closed status
+-- supplied through this compatibility API retains unknown closure time as
+-- @undetermined@ rather than inventing a date.
 prepareIssueAppendWithDue
   :: Text
   -> IssueDue
   -> IssueAppendIntent
   -> Either (NonEmpty IssueAppendError) IssueAppendPreview
 prepareIssueAppendWithDue existingSource due intent = do
+  let closed = appendClosed (intentStatus intent)
   _ <- first (pure . DomainValidationError) $
-    mkHouseholdIssue
+    mkHouseholdIssueWithClosed
       (intentIssueId intent)
       (intentDate intent)
       (intentStatus intent)
       due
+      closed
       (intentAmount intent)
       (intentTitle intent)
       ("[" <> intentCategory intent <> "] " <> intentDetails intent)
@@ -133,12 +142,17 @@ prepareIssueAppendWithDue existingSource due intent = do
 
   let hasHeader = householdIssueSourceHasHeader existingSource
       usesDueColumn = householdIssueSourceUsesDueColumn existingSource
-      renderDueColumn = not hasHeader || usesDueColumn
-  if hasHeader && not usesDueColumn && due /= DueUndetermined
+      usesClosedColumn = householdIssueSourceUsesClosedColumn existingSource
+      shape
+        | not hasHeader = ClosedAwareShape
+        | usesClosedColumn = ClosedAwareShape
+        | usesDueColumn = DueAwareShape
+        | otherwise = LegacyShape
+  if shape == LegacyShape && due /= DueUndetermined
     then Left (pure (LegacyIssueSourceCannotRepresentDue due))
     else Right ()
 
-  let block = renderIntent renderDueColumn due intent
+  let block = renderIntent shape due closed intent
       appendBody
         | hasHeader = block
         | otherwise = householdIssuesHeader <> "\n" <> block
@@ -152,25 +166,43 @@ prepareIssueAppendWithDue existingSource due intent = do
     (parseHouseholdIssues (candidateCompleteSource preview))
   pure preview
 
-renderIntent :: Bool -> IssueDue -> IssueAppendIntent -> Text
-renderIntent usesDueColumn due intent = T.intercalate "\t" fields
+data IssueSourceShape
+  = LegacyShape
+  | DueAwareShape
+  | ClosedAwareShape
+  deriving (Eq, Show)
+
+appendClosed :: IssueStatus -> IssueClosed
+appendClosed status = case status of
+  Open -> NotClosed
+  Resolved -> ClosedUndetermined
+  Dropped -> ClosedUndetermined
+
+renderIntent
+  :: IssueSourceShape
+  -> IssueDue
+  -> IssueClosed
+  -> IssueAppendIntent
+  -> Text
+renderIntent shape due closed intent = T.intercalate "\t" fields
   where
     commonBeforeDue =
       [ issueIdText (intentIssueId intent)
       , renderStatus (intentStatus intent)
       , T.pack (formatTime defaultTimeLocale "%F" (intentDate intent))
       ]
-    commonAfterDue =
+    commonAfterTime =
       [ intentCategory intent
       , intentTitle intent
       , maybe "" (renderQuantity . amountQuantity) (intentAmount intent)
       , maybe "" (commodityCode . amountCommodity) (intentAmount intent)
       , intentDetails intent
       ]
-    fields
-      | usesDueColumn =
-          commonBeforeDue ++ [renderDue due] ++ commonAfterDue
-      | otherwise = commonBeforeDue ++ commonAfterDue
+    fields = case shape of
+      LegacyShape -> commonBeforeDue ++ commonAfterTime
+      DueAwareShape -> commonBeforeDue ++ [renderDue due] ++ commonAfterTime
+      ClosedAwareShape ->
+        commonBeforeDue ++ [renderDue due, renderClosed closed] ++ commonAfterTime
 
 renderStatus :: IssueStatus -> Text
 renderStatus Open = "open"
@@ -181,6 +213,11 @@ renderDue :: IssueDue -> Text
 renderDue (DueOn day) = T.pack (formatTime defaultTimeLocale "%F" day)
 renderDue NoDueDate = "none"
 renderDue DueUndetermined = "undetermined"
+
+renderClosed :: IssueClosed -> Text
+renderClosed (ClosedOn day) = T.pack (formatTime defaultTimeLocale "%F" day)
+renderClosed NotClosed = "none"
+renderClosed ClosedUndetermined = "undetermined"
 
 -- Issue due update
 
@@ -206,9 +243,8 @@ data IssueDueUpdatePreview = IssueDueUpdatePreview
 
 -- | Replace only the explicit due coordinate of one open Issue.
 --
--- Identity resolution is by stable IssueId. The current nine-column source is
--- required because a legacy source cannot faithfully represent all three due
--- states. Every other physical field is preserved byte-for-byte.
+-- Identity resolution is by stable IssueId. Both nine- and ten-column sources
+-- carry the due coordinate. Every other physical field is preserved byte-for-byte.
 prepareIssueDueUpdate
   :: Text
   -> IssueDueUpdateIntent
@@ -254,22 +290,21 @@ replaceIssueDueRow intent source =
       [ (index, row, fields)
       | (index, row) <- zip [0 ..] sourceLines
       , not (ignoredPhysicalLine row)
-      , fields@[identifier, _, _, _, _, _, _, _, _] <- [T.splitOn "\t" row]
-      , identifier == issueIdText (dueUpdateIssueId intent)
+      , fields <- [T.splitOn "\t" row]
+      , length fields `elem` [9, 10]
+      , not (null fields)
+      , head fields == issueIdText (dueUpdateIssueId intent)
       ]
 
 replaceDueField :: IssueDue -> [Text] -> [Text]
 replaceDueField due fields = case fields of
   [identifier, status, day, _, category, title, amount, currency, details] ->
-    [ identifier
-    , status
-    , day
-    , renderDue due
-    , category
-    , title
-    , amount
-    , currency
-    , details
+    [ identifier, status, day, renderDue due
+    , category, title, amount, currency, details
+    ]
+  [identifier, status, day, _, closed, category, title, amount, currency, details] ->
+    [ identifier, status, day, renderDue due, closed
+    , category, title, amount, currency, details
     ]
   _ -> fields
 
@@ -295,6 +330,9 @@ data IssueCloseError
   | CloseDecisionMemoBlank
   | CloseDecisionMemoHasSurroundingWhitespace
   | CloseDecisionMemoHasControlCharacter
+  | CloseDateRequiredForClosedAwareSource
+  | CloseDateRequiresClosedAwareSource
+  | CloseDateBeforeRecorded Day Day
   | ClosePhysicalRowMismatch IssueId
   | CloseCandidateSourceParseError (NonEmpty HouseholdIssueTSVError)
   deriving (Eq, Show)
@@ -305,11 +343,36 @@ data IssueClosePreview = IssueClosePreview
   , closeCandidateCompleteSource :: Text
   } deriving (Eq, Show)
 
+-- | Compatibility close for eight- and nine-column sources that cannot retain a
+-- closure date. Current ten-column sources fail closed and require
+-- 'prepareIssueCloseOn' instead of silently dropping the new coordinate.
 prepareIssueClose
   :: Text
   -> IssueCloseIntent
   -> Either (NonEmpty IssueCloseError) IssueClosePreview
 prepareIssueClose existingSource intent = do
+  if householdIssueSourceUsesClosedColumn existingSource
+    then Left (pure CloseDateRequiredForClosedAwareSource)
+    else prepareIssueCloseWithMaybeDate existingSource Nothing intent
+
+-- | Close one Issue on an explicit day in the current ten-column source.
+prepareIssueCloseOn
+  :: Text
+  -> Day
+  -> IssueCloseIntent
+  -> Either (NonEmpty IssueCloseError) IssueClosePreview
+prepareIssueCloseOn existingSource closedOn intent = do
+  if householdIssueSourceUsesClosedColumn existingSource
+    then Right ()
+    else Left (pure CloseDateRequiresClosedAwareSource)
+  prepareIssueCloseWithMaybeDate existingSource (Just closedOn) intent
+
+prepareIssueCloseWithMaybeDate
+  :: Text
+  -> Maybe Day
+  -> IssueCloseIntent
+  -> Either (NonEmpty IssueCloseError) IssueClosePreview
+prepareIssueCloseWithMaybeDate existingSource maybeClosedOn intent = do
   issues <- first (pure . CloseSourceParseError)
     (parseHouseholdIssues existingSource)
   target <- maybe
@@ -320,8 +383,14 @@ prepareIssueClose existingSource intent = do
     Open -> Right ()
     status -> Left (pure (CloseIssueNotOpen status))
   validateDecisionMemo (closeDecisionMemo intent)
+  case maybeClosedOn of
+    Just closedOn
+      | closedOn < householdIssueRecordedOn target ->
+          Left (pure (CloseDateBeforeRecorded
+            (householdIssueRecordedOn target) closedOn))
+    _ -> Right ()
   (originalRow, candidateRow, candidateSource) <-
-    replaceIssueRow intent existingSource
+    replaceIssueRow maybeClosedOn intent existingSource
   _ <- first (pure . CloseCandidateSourceParseError)
     (parseHouseholdIssues candidateSource)
   pure IssueClosePreview
@@ -348,13 +417,14 @@ validateDecisionMemo memo
   | otherwise = Right ()
 
 replaceIssueRow
-  :: IssueCloseIntent
+  :: Maybe Day
+  -> IssueCloseIntent
   -> Text
   -> Either (NonEmpty IssueCloseError) (Text, Text, Text)
-replaceIssueRow intent source =
+replaceIssueRow maybeClosedOn intent source =
   case matches of
     [(index, oldRow, fields)] ->
-      let newFields = replaceFields intent fields
+      let newFields = replaceFields maybeClosedOn intent fields
           newRow = T.intercalate "\t" newFields
           newLines = replaceAt index newRow sourceLines
       in Right (oldRow, newRow, T.intercalate "\n" newLines)
@@ -374,6 +444,8 @@ matchingIssueFields targetId row = case T.splitOn "\t" row of
     | identifier == issueIdText targetId -> Just fields
   fields@[identifier, _, _, _, _, _, _, _, _]
     | identifier == issueIdText targetId -> Just fields
+  fields@[identifier, _, _, _, _, _, _, _, _, _]
+    | identifier == issueIdText targetId -> Just fields
   _ -> Nothing
 
 ignoredPhysicalLine :: Text -> Bool
@@ -381,8 +453,8 @@ ignoredPhysicalLine row =
   let stripped = T.strip row
   in T.null stripped || "#" `T.isPrefixOf` stripped
 
-replaceFields :: IssueCloseIntent -> [Text] -> [Text]
-replaceFields intent fields = case fields of
+replaceFields :: Maybe Day -> IssueCloseIntent -> [Text] -> [Text]
+replaceFields maybeClosedOn intent fields = case fields of
   [identifier, _, day, category, title, amount, currency, details] ->
     [ identifier
     , closeStatusText (closeDisposition intent)
@@ -398,6 +470,18 @@ replaceFields intent fields = case fields of
     , closeStatusText (closeDisposition intent)
     , day
     , due
+    , category
+    , title
+    , amount
+    , currency
+    , details <> "。Decision: " <> closeDecisionMemo intent
+    ]
+  [identifier, _, day, due, _, category, title, amount, currency, details] ->
+    [ identifier
+    , closeStatusText (closeDisposition intent)
+    , day
+    , due
+    , maybe "undetermined" (renderClosed . ClosedOn) maybeClosedOn
     , category
     , title
     , amount
