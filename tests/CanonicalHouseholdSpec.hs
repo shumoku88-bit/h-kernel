@@ -24,7 +24,7 @@ import HKernel.Account
   )
 import HKernel.Account.Journal (parseAccountJournal)
 import HKernel.Application.Config (mkHouseholdRoot)
-import HKernel.Editor.ActualAccountAppend
+import HKernel.Editor.AccountAppend
   ( accountCandidateBlock
   , prepareAccountJournalAppend
   )

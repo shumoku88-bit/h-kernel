@@ -20,7 +20,7 @@ import HKernel.Application.Config
   , householdSourcePaths
   , mkHouseholdRoot
   )
-import qualified HKernel.Editor.ActualAccountAppend as ActualAccountAppend
+import qualified HKernel.Editor.AccountAppend as AccountAppend
 import qualified HKernel.Editor.ActualAppend as ActualAppend
 import qualified HKernel.Editor.ActualReverse as ActualReverse
 import HKernel.Editor.SourcePublication
@@ -106,25 +106,25 @@ executeCommand commitMode command = case command of
       Right r -> pure r
     let paths = householdSourcePaths root
     if normalise journalFile == normalise (householdAccountsJournalPath paths)
-      then case ActualAccountAppend.prepareAccountJournalAppend existingSource declaration of
+      then case AccountAppend.prepareAccountJournalAppend existingSource declaration of
         Left errors -> validationFailed errors
         Right preview ->
           executePreview
             (publishWithPathAdmission (\_ -> loadCanonicalHousehold root))
             journalFile
             existingSource
-            (ActualAccountAppend.accountCandidateBlock preview)
-            (ActualAccountAppend.accountCandidateCompleteSource preview)
+            (AccountAppend.accountCandidateBlock preview)
+            (AccountAppend.accountCandidateCompleteSource preview)
             commitMode
-      else case ActualAccountAppend.prepareActualAccountAppend existingSource declaration of
+      else case AccountAppend.prepareActualAccountAppend existingSource declaration of
         Left errors -> validationFailed errors
         Right preview ->
           executePreview
             publishActualAppendFromResolvedJournal
             journalFile
             existingSource
-            (ActualAccountAppend.candidateBlock preview)
-            (ActualAccountAppend.candidateCompleteSource preview)
+            (AccountAppend.candidateBlock preview)
+            (AccountAppend.candidateCompleteSource preview)
             commitMode
 
   BudgetMovementCmd targetFile movement -> do

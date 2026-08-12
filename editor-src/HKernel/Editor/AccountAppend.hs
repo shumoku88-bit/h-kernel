@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module HKernel.Editor.ActualAccountAppend
+module HKernel.Editor.AccountAppend
   ( AccountJournalAppendError(..)
   , AccountJournalAppendPreview(..)
   , prepareAccountJournalAppend

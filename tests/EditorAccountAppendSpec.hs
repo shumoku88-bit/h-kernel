@@ -23,7 +23,7 @@ import HKernel.Actual.Journal
   ( actualJournalValue
   , parseActualJournal
   )
-import HKernel.Editor.ActualAccountAppend
+import HKernel.Editor.AccountAppend
 import HKernel.Journal (journalAccountRegistry)
 import HKernel.Money (Commodity, mkCommodity)
 

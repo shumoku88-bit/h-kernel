@@ -100,7 +100,7 @@ library h-kernel-household
 library h-kernel-editor
     import:           common-defaults
     exposed-modules:  HKernel.Editor.ActualAppend
-                    , HKernel.Editor.ActualAccountAppend
+                    , HKernel.Editor.AccountAppend
                     , HKernel.Editor.ActualReverse
                     , HKernel.Editor.ActualWorkspace
                     , HKernel.Editor.SourcePublication
@@ -591,10 +591,10 @@ executable h-kernel-editor-tui
     hs-source-dirs:   editor-tui-app
     ghc-options:      -threaded
 
-test-suite h-kernel-editor-actual-account-append-test
+test-suite h-kernel-editor-account-append-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
-    main-is:          EditorActualAccountAppendSpec.hs
+    main-is:          EditorAccountAppendSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-editor
