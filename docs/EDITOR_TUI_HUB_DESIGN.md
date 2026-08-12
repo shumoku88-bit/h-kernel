@@ -1,310 +1,425 @@
-# Editor TUI Hub Design Sketch
+# Household TUI Interaction Design
 
 > **Status**: DRAFT / GROWING DESIGN NOTE
-> **Role**: architecture + interaction design
+> **Role**: interaction design
 >
-> この文書は完成仕様ではない。TUI の実装へ飛びつく前に、日常利用の導線、情報優先度、domain vocabulary と presentation の境界を育てるための設計ノートとして扱う。
+> この文書は完成仕様ではない。現在の h-kernel の実装を基準に、日常利用の導線、情報優先度、domain vocabulary と presentation の境界を育てる。
 
-## 現在の実装と課題
+## Purpose
 
-現在の TUI アプリケーションは、既存機能を Haskell/Brick の画面へ接続してきた一方、日常利用の入口としては「機能を知っている人が機能を選ぶ」構造に寄りやすい。
+TUI を feature menu や screen framework から設計しない。
 
-今後 Report、Issue、Plan lifecycle、Account maintenance などを同じ TUI に載せるとき、機能一覧をそのままハブへ並べるだけでは、画面遷移が増え、日常の記帳や確認まで遠くなる。
+Household の日常行動から設計し、domain の厳密さを保ったまま、人間へ不要な分類、暗記、画面遷移を要求しない。
 
-この設計では、architecture の分離だけでなく、人間の行動を必要以上に分割しないことを重視する。
+特に次の二つを重視する。
 
-## Interaction principles
+1. 日常記帳を一つの `Record` interaction として扱う。
+2. Account selection を「検索」と「一覧」の別機能にせず、一つの discoverable chooser として扱う。
 
-### 1. Home はメニューではなく「今日の家計の現在地」
+Home は依然として重要だが、最初の runtime target ではない。まず Record interaction を一貫させる。
 
-起動直後に最初に知りたいのは機能一覧ではなく、今すぐ注意すべきこと、次の cycle までの距離、使える口座残高、最後に何を記帳したかである。
+## Current implementation baseline
 
-Home は application feature tree を見せる場所ではなく、Household の現在状態から作る read-only projection とする。
+この Draft の開始後、実装側はすでに進んでいる。
 
-### 2. Domain は分けるが、人間の行動は不必要に分けない
+- section-local workspace interaction は concrete TUI owner へ戻っている。
+- Multi Actual の duplicate draft ownership は解消済み。
+- `ActualMultiAddInput` が authoritative draft である。
+- selected posting row と unfinished posting-count text は TUI-local delivery state である。
+- Account candidate preparation には recent-first ranking がある。
+- Account candidate filtering には case-insensitive substring search がすでにある。
+- mouse navigation / row selection は既存 TUI の複数 surface で利用できる。
 
-Plan、Issue、Actual、Account は domain 上では別 owner であり続ける。
+したがって、古い generic Hub、module split、navigation framework、shared Form framework を未来の実装目標として復活させない。
 
-一方、Home 上では「今日注意すべきもの」のような人間の関心で横断してよい。たとえば期限の近い Plan と期限の近い Issue は同じ Attention projection に現れてよい。
+Architecture は observed ownership から育てる。diagram の対称性や file size は owner の根拠にならない。
 
-### 3. 記帳入口は一つ
+## Core interaction law
 
-通常記帳、split purchase、multi-posting を起点で別機能にしない。
+> **Domain は分ける。人間の行動は必要以上に分けない。**
 
-ユーザーは最初に取引種別を宣言せず、ひとつの `Record` から入力を始める。単純な二 posting で終わるならそのまま保存でき、必要になったときだけ posting を追加して三つ、四つへ育てられる。
+Plan、Issue、Actual、Account、Budget はそれぞれの semantic owner を保つ。
 
-```text
-Record
+一方、delivery interaction は domain type の列挙を最初の質問にしなくてよい。
 
-  Coffee
-  ¥138
-  SMBC -> Food
-
-  [Enter] Save      [+] Add posting
-```
-
-必要なら同じ interaction のまま:
-
-```text
-Supermarket
-
-  SMBC             -2,450
-  Food              1,800
-  Household           650
-                   -------
-                         0  ✓
-```
-
-UI の都合で「simple transaction」と「multi-posting transaction」という別々の mental model を要求しない。
-
-資金移動も、可能なら同じ Record interaction の入力結果として自然に表現できるかを今後観察する。domain semantics の分類を UI の最初の質問にしない。
-
-### 4. 複雑さは必要になったときだけ見せる
-
-日常の最短操作を優先する。詳細 metadata、追加 posting、補助操作は必要になった段階で現れる progressive disclosure とする。
-
-### 5. 色は意味を助けるために使い、唯一の意味伝達手段にしない
-
-色は decoration ではなく semantic presentation として使う。ただし、種類と緊急度を同じ色軸へ押し込めない。
-
-- Issue kind は種類ごとの semantic colour を持ち得る
-- due soon / overdue は時間状態として別の emphasis を持つ
-- 記号、label、文字列も併用し、色だけを見ないと区別できない UI にしない
-- domain model は `red issue` や `cyan issue` のような presentation vocabulary を知らない
-
-## Home draft
-
-### 常時表示候補
-
-- 次の cycle end までの日数
-- 各種口座の現在残高
-- 最新の記帳 1 件
-- 日常操作への短い shortcut
-
-### 条件付き表示候補
-
-- overdue な Plan
-- due soon な Plan
-- overdue な Issue
-- due soon な Issue
-
-Attention が空なら、空の警告枠を常時表示する必要はない。問題や近日対応がある日だけ上部へ現れる静かな layout を目指す。
-
-### First-screen sketch
+厳密な typed domain と、毎回すべての domain coordinate を人間に入力させることは同義ではない。
 
 ```text
- h-kernel                                      Aug 10
-
- Attention
-  ! Aug 08  Electricity payment       2 days overdue
-  ◇ Aug 12  Internet                  ¥4,800
-  ◆ Aug 13  Decide whether to buy chair
-
- Cycle
-  14 days remaining
-
- Accounts
-  SMBC                                  ¥19,333
-  Yucho                                 ¥82,400
-
- Latest
-  Aug 10  Coffee · ¥138 · SMBC -> Food
-
- [n] Record   [p] Plans   [i] Issues   [r] Reports   [?] Help
+strict domain meaning
+       !=
+human must classify first
 ```
 
-これは固定 wireframe ではない。情報階層と導線を議論するための初稿である。
+## Immediate runtime target: Unified Record
 
-## Attention projection
+現在の `Expense` / `Income` / `Multi Actual` という開始時の分岐を、最終的には一つの `Record` interaction へ畳む。
 
-Attention は Plan や Issue を一つの domain 型へ潰すものではない。
-
-概念的にはそれぞれの typed owner から「今、人間の注意が必要か」を projection し、Home が presentation 上でまとめる。
+概念上の最小形は:
 
 ```text
-Plan ------------------\
-                        -> Attention projection -> Home
-HouseholdIssue --------/
+Record = Day + Description + 2 or more Postings
 ```
 
-Home から対象を選択したら、その対象を所有する本来の画面へ遷移する。
+UI は最初に「支出か」「収入か」「資金移動か」「multi か」を宣言させない。
 
-優先順位の初稿:
+それらは admitted Accounts と postings が表す完成形の違いである。
 
-1. overdue
-2. today
-3. due soon
-4. cycle status
-5. account balances
-6. latest entry
-
-`due soon` を何日前から表示するかはまだ決めない。固定値、config、cycle-aware rule のどれが自然かは実利用を観察して決める。
-
-## Household Issue: due date
-
-Domain にはすでに以下の区別が存在する。
-
-```haskell
-data IssueDue
-  = DueOn Day
-  | DueUndetermined
-```
-
-これは「期限なし / 未定」と「期限あり」の Home interaction にほぼそのまま使える。
-
-ただし current `issues.tsv` admission は各 row を `DueUndetermined` として構築しており、既存 `date` column は issue の recorded-on date として使われている。そのため期限機能を実利用へ接続するには、source schema / parser / writer / TUI のどこで due date を表現するかを別 slice で設計する必要がある。
-
-UI 初稿:
+### Two-posting expense
 
 ```text
-Due date?
-  ( ) none / undetermined
-  ( ) set date   2026-08-13
+Coffee                                      Aug 12
+
+Account                               Amount
+SMBC                                    -138
+Food                                     138
+                                       -----
+                                           0  ✓
 ```
 
-期限が設定された open Issue は Attention の候補になる。期限なし Issue は原則 Home へ常駐させず、Issue screen では常に閲覧できる形がよい。
+### Multi-posting purchase
 
-## Household Issue: kind vocabulary
+同じ interaction のまま必要な row を増やす。
 
-現在の retained `issues.tsv` には `category` column があるが、admission では typed category として保持せず details text へ畳み込んでいる。
+```text
+Supermarket                                 Aug 12
 
-今後は、Household の感覚に近い small vocabulary を typed `IssueKind` として持つ価値があるかを検討する。
+Account                               Amount
+SMBC                                   -2450
+Food                                    1800
+Household                                650
+                                       -----
+                                           0  ✓
+```
+
+### Income
+
+収入も別の form family にする必要はない。
+
+```text
+Lesson payment                              Aug 12
+
+Account                               Amount
+SMBC                                    8000
+Lesson income                           -8000
+                                       -----
+                                           0  ✓
+```
+
+複数 Accounts が一つの economic event に関係するなら、同じ Record に postings を増やせる。
+
+### Transfer
+
+Asset-to-Asset transfer も同じ Record の自然な完成形でよい。
+
+```text
+Move money                                  Aug 12
+
+Account                               Amount
+Yucho                                 -10000
+SMBC                                   10000
+                                      ------
+                                           0  ✓
+```
+
+Transfer convenience を追加する場合も、`Transfer mode` を必須の最初の分岐として復活させない。
+
+## Record identity boundary
+
+> **one Record = one economic event**
+
+複数 posting と複数 transaction は同じではない。
+
+同日に独立した収入や支出が複数あった場合、それらは別々の Record として残す。
+
+```text
+morning lesson payment -> Record A
+other lesson payment   -> Record B
+```
+
+unrelated events を一つの transaction に詰めるために multi-posting を使わない。
+
+連続入力の速さが必要なら、identity を崩すのではなく `Save & next` のような interaction を後で検討する。
+
+## Record table direction
+
+Unified Record は row-local direct manipulation を優先する。
+
+現在の Multi Actual にある「visible posting row を選んだ後、shared Selected Account / Selected Amount field へ移動する」間接性を減らしたい。
+
+概念的には:
+
+```text
+Description: Supermarket
+
+Account                               Amount
+> SMBC                                 -2450
+  Food                                  1800
+  Household                              650
+```
+
+選択中の visible row / cell 自体が編集対象として理解できることを目指す。
+
+Exact keyboard grammar はまだ確定しない。
 
 候補:
 
-- `Want`: 欲しいもの、購入検討
-- `Refund`: 返金・返金確認待ち
-- `PlanDecision`: subscription 等を Plan 化、継続、停止する判断
-- `Funding`: 予定支出に対して予算や資金をどう捻出するか
-- `Waiting`: 回答、入金、処理など外部状態待ち
-- `Review`: 後で調査・確認するもの
-- `Other`: 上記に自然に入らない household matter
+- Up / Down: posting row movement
+- Tab / Left / Right: Account / Amount cell movement
+- Enter: chooser accept / preview depending on focus
+- mouse: visible row / candidate selection
+- visible add/remove-row controls: later UX evaluation
 
-特に `Want` は generic な software issue vocabulary より家計簿らしく、ユーザーが「何系の matter か」を直感的に理解しやすい候補である。
+generic table framework は先に作らない。
 
-ただしこの taxonomy はまだ確定しない。実際の household Issue が増える過程で、種類が自然に収束するかを観察する。
+## Account chooser: search and browse are one interaction
 
-### Kind と urgency を分離する
+Account selection では二種類の利用状況を同時に満たす。
 
-たとえば `Want` が cyan、`Refund` が yellow のような presentation は可能だが、overdue を同じ category colour で表してはいけない。
+1. 名前を覚えている、または一部を覚えているので素早く検索したい。
+2. 名前を忘れているので Account 一覧から発見したい。
 
-```text
-◆ Want      New chair                     Aug 13
-○ Refund    Amazon refund                 Aug 11  !
-◇ Plan      Continue subscription?        Aug 18
-△ Funding   Find ¥8,000 for payment       Aug 15
-```
+この二つを `Search Account` / `Browse Accounts` という別モードにしない。
 
-`!` や強調色は期限状態、左側の symbol / label / category colour は kind を表す。
-
-## Latest entry
-
-Home には Journal history を何件も並べない。
-
-最新 1 件だけ表示し、「最後に何を記録したか」を一目で確認できる checkpoint とする。
+一つの chooser が input text に応じて自然に変わる。
 
 ```text
-Latest
-  Aug 10  Coffee · ¥138 · SMBC -> Food
+empty input
+  -> browse admitted Accounts
+
+text input
+  -> filter the same admitted Accounts immediately
 ```
 
-この行から Enter で transaction details へ掘れる可能性も今後検討する。
+### Empty input
 
-## Account balances
+空欄では Account を発見可能にする。
 
-Home では household にとって主要な口座残高を即座に見られることを優先する。
+```text
+Account
+> _
 
-全 account を常時表示するか、cash/bank 等の selectable subset を表示するかは未決定。account が増えても Home が report 化しないよう、information density を観察して決める。
+Recent
+  SMBC
+  Yucho
+  Food
 
-## Navigation direction
+Assets
+  SMBC
+  Yucho
 
-Home 上の情報は単なる text ではなく、可能なら対象そのものを入口にする。
+Income
+  Pension
+  Lesson income
 
-- Attention の Plan -> Plan detail / completion flow
-- Attention の Issue -> Issue detail
-- account balance -> account activity/report
-- Latest -> latest transaction detail
-- cycle status -> cycle report
+Expenses
+  Food
+  Medical
+  Household
+```
 
-つまり「Reports を開いてから対象を選ぶ」以外にも、見えている household object から直接掘れる navigation を目指す。
+Recent と typed grouping は同じ Account identity の presentation であり、新しい domain owner ではない。
 
-## Existing architectural direction
+### Search-as-you-type
 
-Interaction design と independent に、Brick adapter をひとつの巨大 Main へ集めない方針は維持する。
+入力文字列をそのまま query として使う。
 
-1. **純粋 Interaction 層** (`editor-src/`): UI に依存しない型と純粋 state transition / query
-2. **画面 adapter 層** (`editor-tui-app/TUI/`): Brick rendering / event handling
-3. **配線層** (`editor-tui-app/Main.hs`): global state と dispatch
+```text
+> s
 
-ただし新しい interaction のために generic screen framework や navigation abstraction を先に作らない。実際の Home / Record / Plan / Issue flow から必要な境界を導く。
+SMBC
+Savings
+```
 
-## Candidate screen families
+さらに:
 
-日常 surface は概ね次の family に整理できそうだが、これは menu hierarchy を意味しない。
+```text
+> sm
 
-- **Record**: 日常記帳、multi-posting、transfer を一つの入口から扱う
-- **Plans**: 予定、実績化、次回補充、編集
-- **Reports**: household / account / cycle / budget の read-only view
-- **Issues**: household matter の追加、確認、resolve/drop
-- **Maintain**: Account、Budget、低頻度設定
-- **Inspect / Recover**: diagnostics、admission failure、source inspection
+SMBC
+```
 
-Home にはこの全てを同じ強さで並べない。日常頻度の高い入口だけを前面に出す。
+current interaction layer にある case-insensitive substring filtering をまず利用する。
 
-## Open questions
+最初から generic fuzzy-search engine や scoring framework を作らない。
 
-- `due soon` は何日前からか
-- IssueDue の `DueUndetermined` を UI で「期限なし」と呼ぶか「未定」と呼ぶか
-- Issue kind はどこまで小さく保つか。`Want` は first-class kind にするか
-- source `category` を typed `IssueKind` へ移行するか、互換性をどう扱うか
-- Home に表示する account は全件か selected accounts か
-- cycle status の表現は `14 days remaining` だけで十分か
-- Attention item に amount を出す条件
-- Latest row から編集/取消へ直接行くか、detail を挟むか
-- Record の account selection をどこまで検索・history-aware にするか
-- transfer を Record flow から自然に導出できるか
-- Home の empty state をどこまで静かにするか
+### Keyboard and mouse
 
-## Working rule for this Draft PR
+同じ chooser を:
 
-この PR は設計の器として育てる。
+- text typing
+- Up / Down
+- Enter
+- mouse row click
 
-- conversation で固まった insight を小さく追記する
-- 未決定事項を確定仕様のように書かない
-- interaction と domain semantics を混同しない
-- mockup は実装契約ではなく、情報構造を考える道具として扱う
-- implementation change はこの Draft PR に混ぜず、設計が十分に収束してから coherent implementation PR へ切り出す
-- 可愛らしさは decoration の量ではなく、意味のある記号、余白、semantic colour、静かな状態変化で作る
-- exact arithmetic / identity / provenance / canonical source ownership / writer safety / fail-closed admission / multi-posting meaning を UI convenience のために弱めない
+のどれでも扱えるようにする。
 
-## Historical implementation sketch
+keyboard-complete を保ちつつ mouse-friendly にする。
 
-以下は以前の architecture sketch から残す参考計画。現在の interaction design が固まった後、実コードの状態に合わせて再評価する。
+### Raw text and admission
 
-### Phase 0: TUI モジュール分割（機能変更なし）
+Account field の raw `Text` は未完成入力を正直に保持できる。
 
-- `editor-tui-app/TUI/Types.hs`: `UIState`, `AppContext`, `AppWrapper` 等
-- `editor-tui-app/TUI/Workspace.hs`: Workspace 描画とイベント処理
-- `editor-tui-app/TUI/ActualAdd.hs`: ActualAdd 描画とイベント処理
-- `editor-tui-app/TUI/Common.hs`: 真に共有される UI parts のみ
-- `editor-tui-app/Main.hs`: dispatch を中心とした薄い wiring
+```text
+"s"    -> search / unfinished input
+"sm"   -> search / unfinished input
+"SMBC" -> selected candidate / possible complete Account name
+```
 
-### Phase 1: Home / navigation
+UI selector は canonical Account authority ではない。
 
-旧案の generic Hub をそのまま実装するのではなく、この文書の Home projection と direct navigation を優先して再設計する。
+最終的な意味と failure は downstream typed Account admission が決める。
 
-### Phase 2: Inspect
+```text
+raw text
+  -> visible candidates
+  -> human selection
+  -> existing typed admission
+```
 
-Account / Envelope 等の connection を確認する read-only surface。
+## Candidate ranking
 
-### Phase 3: Report
+Candidate ranking は assistance であって authority ではない。
 
-既存 report projection を TUI から閲覧する。
+利用可能な材料:
 
-### Phase 4: Edit expansion
+- recent Account use
+- typed Account meaning
+- current partial query
+- 将来、具体的な利用証拠があれば role/context
 
-Actual reverse、Account maintenance など低頻度 editor operation を TUI へ接続する。
+ただし UI が transaction meaning を勝手に決めない。
 
-### Phase 5: polish
+たとえば最初の posting が Asset negative だから Expense を上位表示する、という ranking は将来検討できる。しかし candidate ordering が semantic classification を確定してはいけない。
 
-`?` help、key binding discovery、semantic palette、layout refinement。breadcrumb は navigation が実際に深くなった場合のみ導入を判断する。
+## Balancing assistance
+
+Record table には current balance を常に理解可能に表示する価値がある。
+
+```text
+Remaining: 650
+```
+
+最後の blank Amount に balancing remainder を提案する UX も候補になる。
+
+ただし自動確定はしない。Commodity ambiguity や sign meaning がある場合に黙って補完しない。
+
+この機能は Unified Record の最初の必須条件ではない。
+
+## Progressive disclosure
+
+複雑さは必要になったときだけ見せる。
+
+隠してよいもの:
+
+- stable Household defaults
+- primary Commodity when unambiguous
+- rare overrides
+- extra postings until the event needs them
+- optional details
+
+隠してはいけないもの:
+
+- 実際に publish される postings
+- balance
+- meaningful Plan / Budget consequences
+- failure / stale / recovery state
+
+## Primary Commodity
+
+Household primary Commodity は common interaction を短くする default であり、domain restriction ではない。
+
+```text
+Domain
+  many Commodities remain valid
+
+Interaction
+  ordinary primary Commodity may be omitted when unambiguous
+```
+
+selected Account defaults が矛盾する場合は primary Commodity で上書きせず fail closed / explicit choice とする。
+
+## Home direction
+
+Home は feature menu ではなく Household state の projection とする方針を維持する。
+
+候補:
+
+- overdue / due-soon Plan
+- overdue / due-soon Issue
+- cycle status
+- useful Account balances
+- latest entry
+- direct navigation from visible Household objects
+- one short `Record` entry path
+
+ただし Home runtime implementation は Unified Record の後を優先する。
+
+Home が先に `Expense / Income / Multi` の古い三入口を固定してしまわないようにする。
+
+## Historical evidence and current policy
+
+TUI convenience は temporal semantics を壊してはいけない。
+
+> **Current policy guides current/future interpretation and decisions. Historical evidence records what was actually decided or realized at the time.**
+
+現在の TOML policy を変えただけで過去の Household decision が別の意味に見える設計にしない。
+
+Historical evidence、current policy、current analytical projection を区別する。
+
+詳細は `HOUSEHOLD_HISTORY_POLICY_OBSERVATION.md` を参照する。
+
+## Interaction priorities
+
+現在の優先順位:
+
+1. **Unified Record**
+2. **searchable + browseable Account chooser**
+3. **row-local posting editing**
+4. 実使用で Record grammar を検証
+5. `Save & next` / balancing suggestion 等の追加 UX
+6. Home projection / direct navigation
+
+Plan completion は common case の physical action count がすでに低いため、Record より先に keypress 削減の対象にしない。
+
+## Completed observations
+
+以下は以前この Draft で future work として扱っていたが、現在は実装済みまたは ownership cleanup 済みである。
+
+- Multi Actual authoritative draft ownership
+- selected posting cursor の TUI-local ownership
+- section-local workspace event ownership
+- concrete Plan Budget-sync picker ownership
+
+これらを generic abstraction へ再統合しない。
+
+## Still undecided
+
+- exact row / cell focus grammar
+- exact add / remove posting control
+- whether two rows are always initially visible or the second row appears after first meaning is entered
+- balancing remainder suggestion conditions
+- exact recent/context candidate ranking
+- whether filtered results retain AccountType groups or flatten when short
+- `Save & next` grammar
+- transfer conveniences that do not reintroduce a mandatory Transfer mode
+- exact public Household Application operation underlying Record
+- Home due-soon threshold and Account subset
+- Issue lineage / source questions recorded in related observations
+
+## Working rules
+
+- common path stays short
+- exceptional meaning branches only when needed
+- strict domain ownership does not imply interaction ceremony
+- visible objects beat command-vocabulary recall
+- search and browse should compose instead of becoming modes
+- defaults compress interaction, not semantic meaning
+- no generic navigation / Form / picker / fuzzy-search framework without concrete reuse evidence
+- do not split modules for symmetry or size alone
+- preserve exact arithmetic, Commodity separation, identity, provenance, posting order, canonical source ownership, writer safety, fail-closed admission, stale-write rejection, recovery, and historical-evidence meaning
+
+## Scope of PR #160
+
+Documentation only.
+
+Runtime Haskell changes belong in separate implementation PRs based on current `main`.
