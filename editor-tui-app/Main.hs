@@ -14,6 +14,7 @@ import Lens.Micro.Mtl ()
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Data.Time.Calendar (Day, addDays)
 import Data.Time.LocalTime (getZonedTime, localDay, zonedTimeToLocalTime)
 import qualified Data.Vector as Vec
 import System.Directory (doesDirectoryExist)
@@ -25,6 +26,7 @@ import HKernel.Account (accountName)
 import HKernel.Application.Config (mkHouseholdRoot)
 import HKernel.Budget.Policy (budgetPolicyEnvelopeDefinitions)
 import qualified HKernel.Editor.TUI.Actual as Actual
+import qualified HKernel.Editor.TUI.Home as Home
 import qualified HKernel.Editor.TUI.Maintenance as Maintenance
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
@@ -53,9 +55,14 @@ import HKernel.Report.Config
   , reportConfigurationPresentation
   )
 
+data ActualReturn
+  = ActualReturnWorkspace
+  | ActualReturnHome Day
+
 data UIState
-  = Workspace
-  | ActualFlow (Actual.State AppEvent)
+  = Home Day
+  | Workspace
+  | ActualFlow ActualReturn (Actual.State AppEvent)
   | PlanFlow (Plan.State AppEvent)
   | MaintenanceFlow (Maintenance.State AppEvent)
   | ReportPicker (L.List Name ReportChoice)
@@ -65,8 +72,8 @@ data UIState
 data AppWrapper = AppWrapper AppContext UIState
 
 zoomActualFlow :: Traversal' AppWrapper (Actual.State AppEvent)
-zoomActualFlow f (AppWrapper context (ActualFlow state)) =
-  (\updated -> AppWrapper context (ActualFlow updated)) <$> f state
+zoomActualFlow f (AppWrapper context (ActualFlow returnTarget state)) =
+  (\updated -> AppWrapper context (ActualFlow returnTarget updated)) <$> f state
 zoomActualFlow _ wrapper = pure wrapper
 
 zoomPlanFlow :: Traversal' AppWrapper (Plan.State AppEvent)
@@ -94,8 +101,10 @@ zoomContext f (AppWrapper context state) =
   (\updated -> AppWrapper updated state) <$> f context
 
 drawUI :: AppWrapper -> [Widget Name]
+drawUI (AppWrapper context (Home selectedDay)) =
+  [drawHomeShell context selectedDay]
 drawUI (AppWrapper context Workspace) = [drawHouseholdShell context]
-drawUI (AppWrapper context (ActualFlow state)) = [Actual.drawFlow context state]
+drawUI (AppWrapper context (ActualFlow _ state)) = [Actual.drawFlow context state]
 drawUI (AppWrapper _ (PlanFlow state)) = [Plan.drawFlow state]
 drawUI (AppWrapper _ (MaintenanceFlow state)) = [Maintenance.drawFlow state]
 drawUI (AppWrapper _ (ReportPicker choices)) = [Report.drawPicker choices]
@@ -113,19 +122,30 @@ drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
               ]))))
   ]
 
+drawHomeShell :: AppContext -> Day -> Widget Name
+drawHomeShell context selectedDay =
+  vBox [drawNavigationBar Nothing, Home.draw context selectedDay]
+
 drawHouseholdShell :: AppContext -> Widget Name
 drawHouseholdShell context =
-  vBox [drawSectionTabBar (contextCurrentSection context), drawSectionBody context]
+  vBox
+    [ drawNavigationBar (Just (contextCurrentSection context))
+    , drawSectionBody context
+    ]
 
-drawSectionTabBar :: HouseholdSection -> Widget Name
-drawSectionTabBar currentSection =
+drawNavigationBar :: Maybe HouseholdSection -> Widget Name
+drawNavigationBar currentSection =
   borderWithLabel (str "h-kernel Household")
-    (hBox (map renderTab [minBound .. maxBound]))
+    (hBox (homeTab : map renderTab [minBound .. maxBound]))
   where
+    homeTab = clickable HomeTab renderedHome
+    renderedHome = case currentSection of
+      Nothing -> withAttr (attrName "activeTab") (str " [Home] ")
+      Just _ -> str "  Home  "
     renderTab section = clickable (SectionTab section) rendered
       where
         rendered
-          | section == currentSection = withAttr (attrName "activeTab")
+          | Just section == currentSection = withAttr (attrName "activeTab")
               (str (" [" <> sectionNum section <> ": " <> sectionName section <> "] "))
           | otherwise = str ("  " <> sectionNum section <> ": " <> sectionName section <> "  ")
     sectionNum ActualSection = "1"
@@ -188,7 +208,7 @@ drawSettingsView context =
                   <> T.pack (show (reportConfigurationPresentation
                     (householdStateReportConfig state))))
               ])))
-    , str "[wheel] Scroll   [1-7] Switch section   [q] Quit"
+    , str "[wheel] Scroll   [h] Home   [1-7] Switch section   [q] Quit"
     ]
   where
     state = contextHouseholdState context
@@ -197,16 +217,61 @@ appEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 appEvent event = do
   AppWrapper context state <- get
   case state of
+    Home selectedDay -> handleHomeEvent context selectedDay event
     Workspace -> handleWorkspaceEvent context event
-    ActualFlow _ -> handleActualFlow context event
+    ActualFlow returnTarget _ -> handleActualFlow context returnTarget event
     PlanFlow _ -> handlePlanFlow context event
     MaintenanceFlow _ -> handleMaintenanceFlow context event
     ReportPicker _ -> handleReportPicker context event
     PlanBudgetSyncPicker _ -> handlePlanBudgetSyncPicker context event
     ShowWorkspaceReloadFailure -> handleExitOnlyEvent event
 
+handleHomeEvent
+  :: AppContext
+  -> Day
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleHomeEvent context selectedDay event = case event of
+  MouseDown HomeTab V.BLeft _ _ -> pure ()
+  MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
+  MouseDown (CalendarDay day) V.BLeft _ _ -> selectDay day
+  MouseDown HomeDayViewport V.BScrollUp _ _ ->
+    vScrollBy (viewportScroll HomeDayViewport) (-3)
+  MouseDown HomeDayViewport V.BScrollDown _ _ ->
+    vScrollBy (viewportScroll HomeDayViewport) 3
+  VtyEvent (V.EvKey V.KEsc []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
+  VtyEvent (V.EvKey V.KLeft []) -> selectDay (addDays (-1) selectedDay)
+  VtyEvent (V.EvKey V.KRight []) -> selectDay (addDays 1 selectedDay)
+  VtyEvent (V.EvKey V.KUp []) -> selectDay (addDays (-7) selectedDay)
+  VtyEvent (V.EvKey V.KDown []) -> selectDay (addDays 7 selectedDay)
+  VtyEvent (V.EvKey (V.KChar 't') []) -> selectDay (contextObservationDay context)
+  VtyEvent (V.EvKey (V.KChar 'T') []) -> selectDay (contextObservationDay context)
+  VtyEvent (V.EvKey (V.KChar 'r') []) ->
+    put (AppWrapper context
+      (ActualFlow (ActualReturnHome selectedDay) (Actual.startRecord selectedDay)))
+  VtyEvent (V.EvKey (V.KChar 'R') []) ->
+    put (AppWrapper context
+      (ActualFlow (ActualReturnHome selectedDay) (Actual.startRecord selectedDay)))
+  VtyEvent (V.EvKey (V.KChar '1') []) -> switchSection ActualSection
+  VtyEvent (V.EvKey (V.KChar '2') []) -> switchSection PlansSection
+  VtyEvent (V.EvKey (V.KChar '3') []) -> switchSection BudgetSection
+  VtyEvent (V.EvKey (V.KChar '4') []) -> switchSection AccountsSection
+  VtyEvent (V.EvKey (V.KChar '5') []) -> switchSection IssuesSection
+  VtyEvent (V.EvKey (V.KChar '6') []) -> switchSection ReportsSection
+  VtyEvent (V.EvKey (V.KChar '7') []) -> switchSection SettingsSection
+  _ -> pure ()
+  where
+    selectDay day = do
+      put (AppWrapper context (Home day))
+      vScrollToBeginning (viewportScroll HomeDayViewport)
+    switchSection section =
+      put (AppWrapper (context { contextCurrentSection = section }) Workspace)
+
 handleWorkspaceEvent :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleWorkspaceEvent context event = case event of
+  MouseDown HomeTab V.BLeft _ _ -> openHome
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
   MouseDown SettingsViewport V.BScrollUp _ _
     | inSettings -> vScrollBy (viewportScroll SettingsViewport) (-3)
@@ -215,6 +280,8 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey V.KEsc []) -> halt
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
+  VtyEvent (V.EvKey (V.KChar 'h') []) -> openHome
+  VtyEvent (V.EvKey (V.KChar 'H') []) -> openHome
   VtyEvent (V.EvKey (V.KChar '1') []) -> switchSection ActualSection
   VtyEvent (V.EvKey (V.KChar '2') []) -> switchSection PlansSection
   VtyEvent (V.EvKey (V.KChar '3') []) -> switchSection BudgetSection
@@ -228,11 +295,21 @@ handleWorkspaceEvent context event = case event of
       AppWrapper currentContext _ <- get
       case action of
         Actual.MaintainContext -> pure ()
-        Actual.OpenDaily -> put (AppWrapper currentContext (ActualFlow (Actual.startDaily (contextEntryDay currentContext))))
-        Actual.OpenIncome -> put (AppWrapper currentContext (ActualFlow (Actual.startIncome (contextEntryDay currentContext))))
-        Actual.OpenMulti -> put (AppWrapper currentContext (ActualFlow (Actual.startMulti (contextEntryDay currentContext))))
-        Actual.OpenRecord -> put (AppWrapper currentContext (ActualFlow (Actual.startRecord (contextEntryDay currentContext))))
-        Actual.OpenReverse -> put (AppWrapper currentContext (ActualFlow (Actual.startSelectedReverse currentContext)))
+        Actual.OpenDaily -> put (AppWrapper currentContext
+          (ActualFlow ActualReturnWorkspace
+            (Actual.startDaily (contextEntryDay currentContext))))
+        Actual.OpenIncome -> put (AppWrapper currentContext
+          (ActualFlow ActualReturnWorkspace
+            (Actual.startIncome (contextEntryDay currentContext))))
+        Actual.OpenMulti -> put (AppWrapper currentContext
+          (ActualFlow ActualReturnWorkspace
+            (Actual.startMulti (contextEntryDay currentContext))))
+        Actual.OpenRecord -> put (AppWrapper currentContext
+          (ActualFlow ActualReturnWorkspace
+            (Actual.startRecord (contextEntryDay currentContext))))
+        Actual.OpenReverse -> put (AppWrapper currentContext
+          (ActualFlow ActualReturnWorkspace
+            (Actual.startSelectedReverse currentContext)))
     PlansSection -> do
       action <- zoom zoomContext (Plan.handleWorkspaceEvent event)
       AppWrapper currentContext _ <- get
@@ -271,6 +348,7 @@ handleWorkspaceEvent context event = case event of
     SettingsSection -> pure ()
   where
     inSettings = contextCurrentSection context == SettingsSection
+    openHome = put (AppWrapper context (Home (contextObservationDay context)))
     switchSection :: HouseholdSection -> EventM Name AppWrapper ()
     switchSection section =
       put (AppWrapper (context { contextCurrentSection = section }) Workspace)
@@ -327,21 +405,33 @@ handlePlanBudgetSyncPicker context event = do
         publishPlanRequest context (Plan.PublishBudgetSync planId)
     _ -> pure ()
 
-handleActualFlow :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
-handleActualFlow context event = do
+handleActualFlow
+  :: AppContext
+  -> ActualReturn
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleActualFlow context returnTarget event = do
   zoom zoomActualFlow (Actual.handleFlowEvent context event)
   AppWrapper currentContext state <- get
   case state of
-    ActualFlow Actual.ReturnToWorkspace -> put (AppWrapper currentContext Workspace)
-    ActualFlow Actual.QuitRequested -> halt
-    ActualFlow (Actual.PublishRequested stickyDay block) -> do
+    ActualFlow _ Actual.ReturnToWorkspace ->
+      put (returnFromActual currentContext returnTarget)
+    ActualFlow _ Actual.QuitRequested -> halt
+    ActualFlow currentReturn (Actual.PublishRequested stickyDay block) -> do
       result <- suspendAndResume' (Actual.publishCandidate context stickyDay block)
       case result of
-        Actual.Published freshContext -> put (AppWrapper freshContext Workspace)
+        Actual.Published freshContext ->
+          put (returnFromActual freshContext currentReturn)
         Actual.PublicationFailed outcome ->
-          put (AppWrapper context (ActualFlow (Actual.WriteOutcome outcome)))
+          put (AppWrapper context
+            (ActualFlow currentReturn (Actual.WriteOutcome outcome)))
         Actual.ReloadFailed -> put (AppWrapper context ShowWorkspaceReloadFailure)
     _ -> pure ()
+
+returnFromActual :: AppContext -> ActualReturn -> AppWrapper
+returnFromActual context ActualReturnWorkspace = AppWrapper context Workspace
+returnFromActual context (ActualReturnHome selectedDay) =
+  AppWrapper context (Home selectedDay)
 
 handlePlanFlow :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handlePlanFlow context event = do
@@ -397,6 +487,7 @@ app = App
       (attrMap V.defAttr
         [ (L.listSelectedAttr, V.black `on` V.white)
         , (attrName "activeTab", V.black `on` V.cyan)
+        , (attrName "homeSelectedDay", V.withStyle V.defAttr V.reverseVideo)
         , (attrName "error", fg V.red)
         , (attrName "success", fg V.green)
         , (attrName "warning", fg V.yellow)
@@ -424,7 +515,7 @@ main = do
             <> unlines (map show (NonEmpty.toList errs)))
         Right value -> pure value
       let context = makeWorkspaceContext False today snapshot
-          initialState = AppWrapper context Workspace
+          initialState = AppWrapper context (Home today)
           buildVty = do
             vty <- mkVty V.defaultConfig
             V.setMode (V.outputIface vty) V.Mouse True
