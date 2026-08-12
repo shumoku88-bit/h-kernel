@@ -24,10 +24,13 @@ module HKernel.Editor.Interaction.ActualAdd
   , setActualMultiPostingAmount
   , multiAccountCandidates
   , filterMultiAccountCandidates
+  , stepMultiAccountCandidate
+  , accountCandidateAt
   ) where
 
 import Data.List (findIndex)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Maybe (listToMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -170,30 +173,29 @@ matchesIncomeRole registry target account =
     (SelectFromAccount, Just Income) -> True
     _ -> False
 
--- Multi-posting daily interaction
+-- General Record interaction
 
--- | Start one delivery-neutral multi-posting draft. Selection and other widget
+-- | Start one delivery-neutral general Record draft. Selection and other widget
 -- state belong to the delivery adapter rather than to the Actual input.
 initialActualMultiAddInputForDay :: Day -> ActualMultiAddInput
 initialActualMultiAddInputForDay day = ActualMultiAddInput
   { multiAddDateText = renderDay day
   , multiAddDescriptionText = ""
   , multiAddPostings =
-      ActualPostingInput "" ""
-        NonEmpty.:| [ActualPostingInput "" "", ActualPostingInput "" ""]
+      ActualPostingInput "" "" NonEmpty.:| [ActualPostingInput "" ""]
   }
 
 -- | Resize the editable posting table while preserving source order and the
--- contents of retained rows. Multi-posting entry always keeps at least three
--- rows because the ordinary two-posting case has its own shorter workflow.
--- A delivery can therefore expose posting count as an ordinary text field
--- instead of requiring function or modified keys for row insertion/removal.
+-- contents of retained rows. General Record entry always keeps the Transaction
+-- domain minimum of two rows. A delivery can therefore expose posting count as
+-- an ordinary text field instead of requiring function or modified keys for
+-- row insertion/removal.
 resizeActualMultiPostings :: Int -> ActualMultiAddInput -> ActualMultiAddInput
 resizeActualMultiPostings requested input =
   input { multiAddPostings = toNonEmpty resized }
   where
     rows = NonEmpty.toList (multiAddPostings input)
-    desired = max 3 requested
+    desired = max 2 requested
     blanks = replicate (max 0 (desired - length rows)) (ActualPostingInput "" "")
     resized = take desired (rows <> blanks)
 
@@ -248,6 +250,21 @@ multiAccountCandidates registry transactions =
 
 filterMultiAccountCandidates :: Text -> [Account] -> [Account]
 filterMultiAccountCandidates = filterAccountCandidates
+
+-- | Step over exactly the candidates visible for the Account field's current
+-- query. The query remains the Account text itself; no duplicate search state
+-- is introduced.
+stepMultiAccountCandidate :: Int -> Text -> [Account] -> Maybe Account
+stepMultiAccountCandidate offset query =
+  stepAccountCandidate offset query . filterMultiAccountCandidates query
+
+-- | Resolve a transient rendered candidate coordinate safely. Deliveries
+-- recompute the current filtered candidate set before calling this helper, so a
+-- stale or out-of-range mouse coordinate is a no-op rather than an identity.
+accountCandidateAt :: Int -> [Account] -> Maybe Account
+accountCandidateAt index candidates
+  | index < 0 = Nothing
+  | otherwise = listToMaybe (drop index candidates)
 
 recentFirstCandidates :: [Transaction] -> [Account] -> [Account]
 recentFirstCandidates transactions candidates =

@@ -336,10 +336,10 @@ data ActualPostingInput = ActualPostingInput
   , multiPostingAmountText  :: Text
   } deriving (Eq, Show)
 
--- | Delivery-neutral general Actual input. The ordinary two-posting form above
--- remains the shortest daily path; this form exposes the underlying
--- Transaction shape when a purchase, split, transfer, or correction needs more
--- than two postings.
+-- | Delivery-neutral general Actual input. This form exposes the underlying
+-- Transaction shape for any two-or-more-posting record, including purchases,
+-- income, splits, transfers, and corrections. The ordinary form above remains
+-- available as the shortest legacy daily path.
 data ActualMultiAddInput = ActualMultiAddInput
   { multiAddDateText        :: Text
   , multiAddDescriptionText :: Text
@@ -348,7 +348,7 @@ data ActualMultiAddInput = ActualMultiAddInput
 
 data ActualMultiAddInputError
   = ActualMultiAddInvalidDate
-  | ActualMultiAddNeedsAtLeastThreePostings
+  | ActualMultiAddNeedsAtLeastTwoPostings
   | ActualMultiAddInvalidAccount Int
   | ActualMultiAddInvalidAmountShape Int
   | ActualMultiAddInvalidQuantity Int
@@ -376,11 +376,11 @@ buildActualMultiAddIntentWithRegistry registry input = do
   date <- maybe (Left ActualMultiAddInvalidDate) Right
     (parseDayText (multiAddDateText input))
   let rawPostings = NonEmpty.toList (multiAddPostings input)
-  if length rawPostings < 3
-    then Left ActualMultiAddNeedsAtLeastThreePostings
+  if length rawPostings < 2
+    then Left ActualMultiAddNeedsAtLeastTwoPostings
     else do
       parsed <- traverse (parseMultiPosting registry) (zip [1 ..] rawPostings)
-      postings <- maybe (Left ActualMultiAddNeedsAtLeastThreePostings) Right
+      postings <- maybe (Left ActualMultiAddNeedsAtLeastTwoPostings) Right
         (NonEmpty.nonEmpty parsed)
       pure ActualEditIntent
         { intentDate = date
