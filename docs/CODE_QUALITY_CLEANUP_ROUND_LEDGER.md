@@ -3,7 +3,7 @@
 Status: ACTIVE WORK LEDGER
 Started: 2026-08-11
 Original audit basis: `ce225f195546c19dc0bc2b7532c168359d774f53`
-Current implementation baseline: `e9f088b25f8eb2b366d69dddfe8af3f0d19c7de8`
+Current implementation baseline: `a0c08501b956d589d57d2c71264922ea606f0bc0`
 Parent observation: `CODE_QUALITY_CLEANUP_ROUND_AUDIT_2026-08-11.md`
 
 ## Working loop
@@ -16,24 +16,25 @@ ledger + actual remote
   -> independent actual-diff / CI review
   -> ledger update
   -> reviewer merge decision
-  -> next coherent batch
+  -> merged-main requalification
+  -> next observation
 ```
 
 Implementation reports are evidence, not source of truth. Every implementation and review starts by rechecking actual `main`, open PRs, changed files, and CI.
 
 ## Permanent cleanup rules
 
-- Do not optimize for the smallest PR. Prefer one coherent batch with a few logical commits.
+- Do not optimize for the smallest PR. Prefer one coherent batch with a clear owner.
 - Sharing is not a goal by itself.
 - `same shape + same semantic owner + same reason to change` is only a sharing candidate.
-- Observable diagnostics and failure mechanisms count as behavior.
-- Repeated shapes with different owners, diagnostics, signatures, or failure paths may correctly remain local.
-- Prefer deletion or an existing owner over new generic `Common`, `Utils`, `Framework`, `Shared`, Form, navigation, or effect infrastructure.
+- Observable diagnostics, error precedence, and failure mechanisms count as behavior.
+- Prefer deletion or an existing owner over new generic `Common`, `Utils`, `Framework`, `Shared`, Form, navigation, repository, session, or effect infrastructure.
 - Do not split modules by size or symmetry alone.
 - Do not adopt formatter/linter/dead-code/test-framework tooling as repository law without separate evidence.
 - Do not modernize syntax merely because GHC2024 permits it.
 - Preserve exact arithmetic, Commodity separation, identity, provenance, source ownership, writer authority, include-graph meaning, fail-closed admission, stale-write rejection, post-admission/recovery, multi-posting ordering, and current-policy versus historical-evidence separation.
 - Existing CLI/TUI behavior remains stable unless a separate UX change explicitly authorizes a behavior change.
+- Safe publication capability and canonical writer authority are different concepts.
 
 # Batch A: mechanical repository plumbing
 
@@ -41,17 +42,17 @@ Status: **ACCEPTED / MERGED / MAIN REQUALIFIED**
 
 Implementation PR: #206 `cleanup: reduce repository plumbing`
 Original base: `ce225f195546c19dc0bc2b7532c168359d774f53`
-Final PR head: `df80e81917cd64fd5d09f5154205a6d4084c667e`
-Squash merge commit: `fb5c3409677710b007230e9c15516dbbdacf1ccc`
+Final reviewed head: `df80e81917cd64fd5d09f5154205a6d4084c667e`
+Squash merge: `fb5c3409677710b007230e9c15516dbbdacf1ccc`
 
 Accepted result:
 
-- conservative Cabal `common-defaults` / `test-defaults` with component dependencies still explicit;
-- `tested-with` aligned to the actual CI matrix without changing `base` bounds;
-- Editor CLI target-path -> Household-root routing totalized as `Either HouseholdRootError HouseholdRoot`;
-- exact-only neutral `Test.Support` sharing, with differing diagnostics/signatures/failure paths retained locally.
+- conservative Cabal `common-defaults` / `test-defaults`, with component dependencies still explicit;
+- `tested-with` aligned to the real CI matrix without changing `base` bounds;
+- Editor CLI target path -> Household root routing totalized through `Either HouseholdRootError HouseholdRoot`;
+- exact-only neutral `Test.Support` sharing, while meaningful local diagnostic/signature/failure variants remain local.
 
-Batch A established:
+Batch A cleanup law:
 
 ```text
 same type is not enough
@@ -70,33 +71,34 @@ Status: **ACCEPTED / MERGED / MAIN REQUALIFIED**
 Implementation PR: #207 `cleanup(tui): return workspace interactions to section owners`
 Base: `fb5c3409677710b007230e9c15516dbbdacf1ccc`
 Reviewed head: `32c7f33187eed9d5deb24caf9304cb35d8dbce6b`
-Squash merge commit: `31d427b2ec98a96d704206523b46ab5b2d292fbf`
-PR stats: 6 files, +331/-208.
+Squash merge: `31d427b2ec98a96d704206523b46ab5b2d292fbf`
+Final stats: 6 files, +331/-208.
 
 Accepted ownership result:
 
 - `Main` remains application shell and global routing owner;
-- Actual / Plan / Budget / Accounts / Issues / Reports own their section-local Workspace interaction grammar;
-- Maintenance keeps Budget / Accounts / Issues action types concrete rather than forcing one generic router;
-- Settings remains shell-owned because there is no independent owner and symmetry does not justify a module;
+- Actual / Plan / Budget / Accounts / Issues / Reports own section-local Workspace interaction grammar;
+- Maintenance keeps Budget / Accounts / Issues action types concrete instead of forcing one generic router;
+- Settings remains shell-owned because symmetry alone does not justify a module;
 - AppContext list lenses live with `Model`, their natural owner;
+- keyboard/mouse precedence and current interaction semantics remain stable;
 - no generic navigation/Form/effect framework was introduced.
 
-Independent diff review confirmed keyboard/mouse precedence and section behavior remained stable. PR CI #663 and post-merge main CI #664 passed all supported GHC versions; 9.10.3 also passed repository ownership audit and complete report contracts.
+PR CI #663 and post-merge main CI #664 passed all supported GHC versions; 9.10.3 also passed repository ownership audit and complete report contracts.
 
 # Batch C: canonical observation and safe publication ownership
 
-The original Batch C observation identified two different risk classes and intentionally split them:
+Batch C was intentionally split because the two findings had different risk classes:
 
 ```text
 C1 Household.Application
   -> correct owner, hand-threaded orchestration
 
-C2 safe publication under historical ActualWriter name
-  -> cross-domain mechanics already exist, ownership/name may be stale
+C2 historical ActualWriter name
+  -> coherent cross-domain publication owner, stale name
 ```
 
-Do not combine these merely because coordinated publication connects them.
+Do not recombine them merely because coordinated publication connects the domains.
 
 # Batch C1: Household application orchestration
 
@@ -106,48 +108,24 @@ Implementation PR: #208 `cleanup(household): linearize canonical application ass
 Base: `31d427b2ec98a96d704206523b46ab5b2d292fbf`
 Initial reviewed head: `74022c11bb8088cad466405c7b4eb30e1b3a87c4`
 Final reviewed head: `460842561a4c931b43454249daf332dddc10c72f`
-Squash merge commit: `e9f088b25f8eb2b366d69dddfe8af3f0d19c7de8`
-Final PR stats: 3 files, +290/-241.
+Squash merge: `e9f088b25f8eb2b366d69dddfe8af3f0d19c7de8`
+Final stats: 3 files, +290/-241.
 
-## Accepted result
+Accepted result:
 
-`HKernel.Household.Application` remains the canonical composition owner and `HouseholdWriteSnapshot` remains the sealed same-observation boundary.
+- `HKernel.Household.Application` remains the canonical composition owner;
+- `HouseholdWriteSnapshot` remains the sealed same-observation boundary;
+- nested callback orchestration was replaced by one local `ExceptT (NonEmpty HouseholdLoadError) IO` pipeline;
+- source-specific Accounts / Actual / Plan / Budget / TOML / Issues admission remains explicit;
+- filesystem include-graph resolution and pure in-memory source resolution remain intentionally different owners;
+- only genuine post-admission Household semantics are shared: registry agreement, Household policy/account-policy validation, Daily Target / final `HouseholdState` assembly;
+- filesystem and pure direct-canonical paths now have a focused `HouseholdState` parity characterization.
 
-The old nested IO chain:
+## C1 review correction
 
-```text
-loadCanonicalHouseholdWriteSnapshot
-  -> accounts read/parse
-  -> loadActual
-  -> loadPlan
-  -> loadBudget
-  -> loadConfigsAndIssues
-```
+The first implementation moved Household policy/account-policy validation after Report and Issues admission. That changed observable first-failure precedence and was rejected.
 
-was replaced with one local `ExceptT (NonEmpty HouseholdLoadError) IO` orchestration block. `ExceptT` was accepted here because it deletes nested callback plumbing while keeping source-specific stages visible. It was not generalized into an application effect framework.
-
-Source-specific admission remains explicit:
-
-- Accounts: `parseAccountJournal`;
-- Actual / Plan / Budget: exact root Text -> Loader root observation -> named domain admission;
-- Budget / Household / Report TOML: their existing parsers;
-- Issues TSV: its existing parser.
-
-Filesystem include-graph resolution and pure in-memory resolution remain intentionally different owners.
-
-The shared seams are limited to genuinely common Household semantics:
-
-- registry agreement checking;
-- Household policy/account-policy validation;
-- final Daily Target / `HouseholdState` assembly.
-
-The pure and filesystem paths now have a direct synthetic `HouseholdState` parity characterization.
-
-## Review correction
-
-The first implementation moved Household policy/account-policy validation after Report and Issues admission. That changed observable first-failure precedence and was rejected as a cleanup semantic change.
-
-The final accepted head restores the original ordering in both filesystem and pure paths:
+The accepted head restores:
 
 ```text
 budget.toml
@@ -159,103 +137,68 @@ budget.toml
 -> HouseholdState
 ```
 
-A focused characterization now places invalid Household policy evidence and invalid Report syntax together and verifies that the Household policy validation error remains first.
+A focused characterization verifies Household policy failure still wins when Report syntax is invalid at the same time.
 
-This review reinforces the cleanup rule:
+Cleanup law added:
 
-> failure precedence is observable behavior; moving validation across another admission boundary is not merely rearranging code.
+> Failure precedence is observable behavior. Moving validation across another admission boundary is not merely rearranging code.
 
-## Preserved boundaries
+PR CI #668 passed all supported GHC versions. Post-merge main CI #669 initially hit a stale Hackage index-state during GHC 9.10.3 dependency resolution; rerunning that job without any code/dependency change passed Build, Test, repository ownership audit, and complete report contracts. No CI workaround or dependency-bound change was introduced.
 
-- exact root byte ownership for Accounts / Actual / Plan / Budget / Issues;
-- same-observation `HouseholdWriteSnapshot` integrity;
-- source read/admission order and first-failure behavior;
-- Account registry agreement with Actual / Plan / Budget;
-- include-graph behavior;
-- Daily Target typed Plan metadata/reservation behavior;
-- public `HouseholdState`, `HouseholdWriteSnapshot`, `HouseholdLoadError` and public entrypoint semantics;
-- current canonical source topology;
-- no C2 writer/publication changes.
+# Batch C2: source publication owner
 
-PR CI #668 passed GHC 9.10.3 / 9.12.4 / 9.14.1. The GHC 9.10.3 job also passed repository ownership audit and complete report contracts.
+Status: **ACCEPTED / MERGED / MAIN REQUALIFIED**
 
-## Post-merge CI #669 infrastructure observation and requalification
+Implementation PR: #209 `cleanup(editor): rename source publication owner`
+Base: `e9f088b25f8eb2b366d69dddfe8af3f0d19c7de8`
+Reviewed head: `39e4bdcdb15969989a192c9acb25827d5a067fcb`
+Squash merge: `a0c08501b956d589d57d2c71264922ea606f0bc0`
+Final stats: 15 files, +18/-18, one implementation commit.
 
-Main CI #669 targets the accepted merge commit `e9f088b25f8eb2b366d69dddfe8af3f0d19c7de8`.
-
-The first GHC 9.10.3 attempt failed during dependency resolution, before compilation. Its `cabal update` selected Hackage index-state `2025-09-28T23:18:24Z`, under which the available `toml-parser` did not satisfy the repository's existing `>=2.0.2 && <2.1` bound.
-
-The immediately preceding PR #668 GHC 9.10.3 job had used index-state `2026-08-11T16:49:51Z`, resolved `toml-parser-2.0.2.0`, and passed build, tests, ownership audit, and complete report contracts on the exact reviewed source.
-
-The failed GHC 9.10.3 job was re-run without any code or dependency-bound change. The rerun passed Build, Test, repository ownership audit, and complete report contracts. GHC 9.12.4 and 9.14.1 also passed. The transient Hackage/index-state regression did not reproduce.
-
-Therefore C1 is fully requalified on merged main. No CI workaround or dependency-bound change was introduced.
-
-# Batch C2: safe publication owner observation
-
-Status: **OBSERVED / READY FOR IMPLEMENTATION**
-
-Merged-main observation confirms `HKernel.Editor.ActualWriter` is now a misleadingly narrow historical module name.
-
-## Current responsibility
-
-The module owns a real source-neutral publication boundary:
-
-- `ExpectedSource`
-- `CandidateSource`
-- `WriteIntent`
-- `WriteError`
-- `WriterFileSystem`
-- `defaultWriterFileSystem`
-- `publishWithAdmission*`
-- `publishWithPathAdmission*`
-- unique sibling staging;
-- stale checks before staging/rename;
-- atomic publication;
-- post-publication exact candidate verification;
-- admission callback;
-- guarded rollback only while the target still contains this writer's exact candidate;
-- final candidate re-check after admission.
-
-It also exposes named source-specific admission/publication adapters for Actual, Plan, and Budget. That coexistence is not by itself evidence for a split: those adapters define the admission boundary used by the common publication law.
-
-## Cross-domain use
-
-The owner is not Actual-local in production:
-
-- Editor CLI uses generic publication for canonical Account, Budget, and Issue paths as well as Actual/Plan-specific adapters;
-- TUI Actual uses Actual-specific block publication;
-- TUI Plan uses generic publication coordinates plus Plan-specific admission/publication;
-- TUI Maintenance uses generic publication for Budget, Account, and Issue workflows;
-- `PlanCompleteAdvance` imports only `WriterFileSystem` / `defaultWriterFileSystem` from `ActualWriter` for coordinated Plan+Actual publication;
-- `ActualAppend` imports the generic `WriteError` type.
-
-Actual code search on the merged baseline found 15 repository references to `HKernel.Editor.ActualWriter`, fully accounted for as:
-
-```text
-3 editor-src
-1 editor-app
-3 editor-tui-app
-7 tests
-1 h-kernel.cabal
-```
-
-There is no unexplained consumer inside the repository. `EditorActualWriterSpec` covers generic stale/staging/rollback/final-verification laws plus Actual and Plan adapters, so its test owner name has drifted with the production module name.
-
-## Ownership conclusion
-
-The smallest honest correction is a **rename-only owner correction**, not a structural split.
-
-Use:
+## Accepted owner correction
 
 ```text
 HKernel.Editor.ActualWriter
   -> HKernel.Editor.SourcePublication
+
+editor-src/HKernel/Editor/ActualWriter.hs
+  -> editor-src/HKernel/Editor/SourcePublication.hs
+
+EditorActualWriterSpec
+  -> EditorSourcePublicationSpec
+
+h-kernel-editor-actual-writer-test
+  -> h-kernel-editor-source-publication-test
 ```
 
-`SourcePublication` describes the capability actually owned by the module without implying that every source using the capability has transferred canonical writer authority to h-kernel.
+The historical `ActualWriter` name had become narrower than the module's real responsibility. The owner already covered source-neutral publication coordinates and laws:
 
-This distinction is essential:
+- `ExpectedSource` / `CandidateSource`;
+- `WriteIntent` / `WriteError`;
+- `WriterFileSystem` / default filesystem;
+- text/path admission publication;
+- stale detection;
+- unique sibling staging;
+- pre-rename stale fence;
+- atomic publication;
+- post-publication candidate verification;
+- guarded rollback;
+- final candidate re-check.
+
+Actual / Plan / Budget named admission/publication adapters remain in the same module because they are concrete admission choices around that coherent publication law. Their coexistence was not evidence for a split.
+
+Independent diff review confirmed:
+
+- 15 changed files exactly matched the observed repository reference inventory;
+- the source module and test owner were GitHub rename-only changes;
+- the production module changed only its declaration and one owner-description comment;
+- base/head export lists are identical except for module name;
+- no public function/type name or signature changed;
+- stale checks, staging, rollback, admission, final verification, diagnostics, source semantics, writer authority, Household semantics, and TUI/CLI behavior did not change;
+- the old module/test paths are absent from the accepted head;
+- no compatibility re-export was added because repository inspection found no release, tag, or concrete external consumer contract requiring the stale owner name.
+
+The central distinction remains:
 
 ```text
 safe publication capability
@@ -263,53 +206,34 @@ safe publication capability
 canonical writer authority
 ```
 
-Current product/source-authority documents that speak about the canonical Actual writer remain semantically Actual-specific and should not be mechanically renamed merely because a code module changes name. A docs code search found no literal `ActualWriter` module-name references requiring migration.
+Renaming the code owner does not transfer Plan / Budget / Issue canonical writer authority.
 
-## Why split is not currently justified
+## C2 CI observation
 
-Splitting generic mechanics from domain admission adapters would add module boundaries without current evidence of different reasons to change. The adapters are thin named admission choices around the same stale/atomic/post-admission/rollback law. Module size and mixed domain names alone are insufficient evidence.
+The initial PR GHC 9.14.1 job failed before compilation after `cabal update` selected Hackage index-state `2025-09-28T15:38:05Z`, where the solver could not satisfy `microlens-th` against GHC 9.14's installed `template-haskell-2.24`.
 
-Likewise, do not fan out into `ActualWriter`, `PlanWriter`, `BudgetWriter`, `IssueWriter` modules for symmetry.
+The failed job was rerun without code or dependency changes. The rerun passed Build and Test. PR qualification therefore passed GHC 9.10.3 / 9.12.4 / 9.14.1; 9.10.3 also passed repository ownership audit and complete report contracts.
 
-## API/test consequence
+Post-merge main CI #674 on `a0c08501b956d589d57d2c71264922ea606f0bc0` passed all three supported GHC versions. The 9.10.3 qualification job also passed repository ownership audit and complete report contracts.
 
-`HKernel.Editor.ActualWriter` is an exposed module, so the rename is API-visible. Actual repository inspection found no releases and no tags. There is therefore no concrete repository evidence requiring a compatibility re-export of the stale module name.
+C2 cleanup law:
 
-Do not keep `HKernel.Editor.ActualWriter` as a compatibility wrapper unless new concrete consumer evidence appears during implementation recheck. The repository is cleaner if the stale exposed owner disappears.
+> When behavior and responsibility are already coherent but the historical module name has drifted, correct the owner name before inventing new module boundaries.
 
-The coherent rename slice should update:
+# Next: repository-wide re-observation
 
-- `editor-src/HKernel/Editor/ActualWriter.hs` -> `editor-src/HKernel/Editor/SourcePublication.hs`;
-- module declaration only, without renaming the existing public types/functions;
-- all production imports;
-- `h-kernel.cabal` exposed module;
-- `tests/EditorActualWriterSpec.hs` -> `tests/EditorSourcePublicationSpec.hs`;
-- test-suite name -> `h-kernel-editor-source-publication-test`;
-- `main-is` accordingly;
-- comments that describe the common owner as the "Actual writer" when they really mean safe source publication.
+Do not automatically turn another visible smell into Batch D.
 
-Do not rename domain-specific functions/types merely because the module changes owner name. `publishActual*`, Actual/Plan/Budget admission error types, and `WriterFileSystem` remain semantically valid names.
+Re-observe the merged repository from `a0c08501b956d589d57d2c71264922ea606f0bc0` and compare remaining findings against the original audit. In particular:
 
-## C2 explicit non-goals
+- distinguish debt already removed by B / C1 / C2 from still-live debt;
+- do not split large cohesive modules merely because they are large;
+- keep `ActualAccountAppend` compatibility paths unless actual current call sites prove retirement is safe;
+- treat existing Draft observations such as TUI multi-posting duplicate state as evidence to examine, not as an implementation mandate;
+- avoid spending a coherent batch on tiny unrelated import/warning edits unless they combine into a real owner-level cleanup;
+- prefer one next batch only if a concrete owner, behavior boundary, and reason to change are visible after re-observation.
 
-- no safe-writer algorithm rewrite;
-- no generic Writer typeclass/framework;
-- no repository/session abstraction;
-- no domain-specific writer fan-out;
-- no source authority migration;
-- no source format change;
-- no Account-in-Actual retirement;
-- no removal of currently exposed adapters merely because code search finds few callers;
-- no coordinated Plan+Actual writer refactor;
-- no mechanical rewrite of Actual writer-authority documentation;
-- no compatibility re-export without concrete consumer evidence;
-- no unrelated warning/import cleanup.
-
-# Next implementation batch
-
-Implement C2 as one coherent rename-only owner correction from the actual then-current `main`.
-
-Qualification remains:
+Qualification baseline remains:
 
 ```bash
 cabal build all
@@ -319,5 +243,3 @@ cabal run exe:repository-audit
 ./report-verify --fixture
 ./report-verify --corpus
 ```
-
-Push the implementation to a dedicated branch, open one PR, and STOP BEFORE MERGE for independent actual-diff and CI review.
