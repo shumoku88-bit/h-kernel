@@ -2,13 +2,13 @@
 
 ステータス: active Draft
 
-Owner: Household TUIの日常記帳interaction
+Owner: Household TUI interaction / Home direction
 
 更新日: 2026-08-12
 
 ## 目的
 
-この文書は、Household TUIにおける日常記帳のcurrent runtime baselineと、次に実装するinteraction targetを所有する。
+この文書は、Household TUIのcurrent runtime baselineと、実使用から次に観察するinteraction boundaryを所有する。
 
 Editor全体の能力、writer law、delivery ownershipは[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)に従う。canonical source shapeは[`HOUSEHOLD_CANONICAL_SOURCE.md`](HOUSEHOLD_CANONICAL_SOURCE.md)、writer authorityは[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md)が所有する。この文書からsource ownershipやwriter authorityを推測して変更しない。
 
@@ -20,216 +20,260 @@ TUIをfeature menu、generic Hub、screen frameworkから設計しない。House
 
 ## Current runtime baseline
 
-current mainのActual workspaceには、開始時点で次の三つの入口がある。
+### Unified Record
 
-```text
-Expense
-Income
-Multi Actual
-```
-
-ordinary Expense / Incomeは共通のtwo-posting inputを使うが、`DailyEntryKind`で入口とAccount roleを分けている。Multi Actualは別のformとして始まり、最低3 postingを保持する。したがってUnified Recordはまだruntimeに実装されていない。
-
-### 実装済みのownership
-
-Multi Actualのduplicate draft ownershipは解消済みである。
-
-```text
-ActualMultiAddInput
-  -> date、description、全postingを持つauthoritative draft
-
-TUI-local MultiFormState
-  -> selected posting row
-  -> unfinished posting-count text
-```
-
-Brick lensは選択中postingのAccount / Amountを`ActualMultiAddInput`へ直接反映する。古い`ActualMultiAddState`やduplicate form bridgeをfuture workとして復活させない。
-
-Actual、Plan、Reportなどのsection-local interactionもconcrete TUI ownerへ移っている。`Main`を特定行数へ縮めるためのmodule split、三層quota、generic navigation、shared Form / picker frameworkはtargetではない。新しいownerは実在するinteractionまたはeffect boundaryがある場合だけ置く。
-
-### 現在のAccount discovery
-
-current runtimeはAccount fieldへfocusしたとき、admitted Accountsからinline候補を表示する。
-
-- Daily ExpenseはExpense destinationとAsset / Liability payment sourceを分ける。
-- Daily IncomeはAsset destinationとIncome sourceを分ける。
-- Multiは全admitted Accountsを候補にできる。
-- recent Actual useを先にrankする。
-- `AccountType`によるstable groupingを使い、Account名prefixからtypeを推測しない。
-- Up / Downで候補を移動し、Enterで受け入れる。
-- exact Account textの入力もfallbackとして残る。
-
-pure interaction ownerには次が存在する。
-
-```text
-filterDailyAccountCandidates
-filterMultiAccountCandidates
-filterAccountCandidates
-```
-
-前二つは`filterAccountCandidates`を共有し、trimしたqueryによるcase-insensitive substring filterを行う。空queryでは入力順を保持する。
-
-ただしcurrent Brick runtimeは、Account fieldの部分文字列をinline候補へまだ適用していない。候補rowのmouse clickもAccount chooserには未接続である。したがって「入力しながらfilter」と「同じ一覧をmouseで選択」は次のruntime targetであり、実装済みとは扱わない。
-
-## Immediate target: Unified Record
-
-Expense / Income / Transfer / Multiを開始時点の別modeにしない。
-
-interaction上のRecordを次として扱う。
+PR #214でActual workspaceに`Record`入口が追加された。
 
 ```text
 Record = Day + Description + 2 or more Postings
 ```
 
-2 postingsはordinary Recordの最小形である。economic eventが必要とするときだけ、同じinteractionの中で3、4、それ以上へposting rowを増やす。
-
-UIは最初に「支出か」「収入か」「資金移動か」「Multiか」を宣言させない。完成したpostingsとadmitted Account meaningがtransactionを表す。
-
-### 支出
+Recordはblank 2 postingから始まり、同じinteractionのまま3 posting以上へ増やせる。Expense / Income / Transfer / Multiを開始時に宣言する必要はなく、完成したpostingsとadmitted Account meaningがtransactionを表す。
 
 ```text
+支出
 SMBC    -138
 Food     138
-```
 
-### 収入
-
-```text
+収入
 SMBC            8000
 LessonIncome   -8000
-```
 
-### 資金移動
-
-```text
+資金移動
 Yucho  -10000
 SMBC    10000
-```
 
-### 3 postings以上
-
-```text
+split
 SMBC       -2450
 Food        1800
 Household    650
 ```
 
-Transfer向けの補助を後から加えても、mandatoryな`Transfer mode`を開始時の分岐として戻さない。
-
-## Record identity boundary
+旧`Expense` / `Income` / `Multi Actual`入口は実使用比較のため現在も残っている。これらを最終UIとして固定しない。
 
 > **1 Record = 1 economic event**
 
-複数postingは一つのeconomic eventを正確に表すために使う。unrelated eventsのbatchには使わない。
+複数postingは一つのeconomic eventを正確に表すために使う。unrelated eventsのbatchには使わない。連続入力が必要ならtransaction boundaryを壊さず、実使用の証拠を得てから`Save & next`等を検討する。
 
-同じ日に独立した収入や支出が複数あれば、別々のRecordとして残す。
+### Account chooser
 
-```text
-morning lesson payment -> Record A
-other lesson payment   -> Record B
-```
+PR #214でRecordのAccount chooserはSearchとBrowseが一つのinteractionになった。
 
-連続入力を速くする必要がある場合は、transaction boundaryを壊さず、実使用の証拠を得てから`Save & next`のようなinteractionを検討する。
+- 空queryでは全admitted Accountsをbrowseできる。
+- text inputは同じ候補集合をcase-insensitive substring filterする。
+- recent-first assistanceとtyped `AccountType` groupingを保つ。
+- raw Account Textはqueryとして残る。
+- TUI-local candidate cursorだけをUp / Downで動かす。
+- Enterでhighlight候補をcommitする。
+- mouse clickも同じfiltered candidate resolverを使う。
+- query変更とposting row変更でcursorをresetする。
+- stale / out-of-range cursorはno-opになる。
 
-## Row-local posting interaction
+filtering / ranking / cursorはpresentation assistanceであり、Account identityやtransaction semanticsのauthorityではない。最終的なAccount meaning、Commodity、balance、transaction validityは既存domain admissionが決める。
 
-Unified Recordでは、visible posting rowまたはcell自体を編集対象として理解できる形を目指す。
+### Reports surface
 
-```text
-Description: Supermarket
+PR #215でinteractive TUIのReportsから、owner sectionと重複する次のviewを外した。
 
-Account                               Amount
-> SMBC                                 -2450
-  Food                                  1800
-  Household                              650
-```
+- Planned Transactions
+- Open Issues
+- Recent Actual
+- Full Household Report
 
-current Multi formのように、rowを選んだ後でshared `Selected account` / `Selected amount` fieldへ移動し、各rowのたびにunrelated fieldを巡回する間接性を減らす。
+underlying rendererやCLI/export publicationは残っている。
 
-候補grammarは次であるが、実使用前に確定しない。
-
-- Up / Down: posting rowまたはchooser候補の移動
-- Tab / Left / Right: Account / Amount cellの移動
-- Enter: chooser acceptまたはpreview
-- mouse: visible row / candidateの選択
-- add / remove row:同じRecord内のposting数変更
-
-row-local interactionのためにgeneric table frameworkや新しいshared cursor ownerを先に作らない。`ActualMultiAddInput`をauthoritative draftとして保ち、focus、cursor、unfinished inputはdelivery ownerへ置く。
-
-## Account chooser: SearchとBrowseは一つ
-
-Account selectionを`Search Account`と`Browse Accounts`の別modeにしない。一つのchooserが、同じadmitted Account集合をqueryに応じて表示する。
+この変更から、TUIのsurface boundaryを次のように読む。
 
 ```text
-empty input
-  -> admitted Accountsをbrowse
-
-text input
-  -> 同じ一覧を即時filter
+Home      -> 今なにを見る / する必要があるか
+Section   -> Actual / Plan / Issue等のobjectを扱う場所
+Reports   -> object群から導いた分析・集計
 ```
 
-### 空欄
+同じobject listを複数sectionへ複製しない。
 
-空欄では、名前を覚えていなくてもAccountを発見できるようにする。
+### まだ実使用で観察するRecord interaction
 
-- admitted Accountsの一覧
-- recent Accounts
-- `AccountType` grouping
-- Up / Down + Enter
-- mouse row click
+row-local posting edit、add/remove row grammar、balancing remainder suggestion、`Save & next`、transfer convenienceはまだ確定しない。
 
-Recentとgroupingはpresentation assistanceであり、Account identityの新しいownerではない。同じAccountを重複したsemantic valueとして作らず、typed `Account` identityを選択結果として保つ。
+現行Recordを実際に使い、操作上の摩擦が具体化したものだけを直す。generic table / Form / navigation frameworkを先に作らない。
 
-### Search as you type
+## Home direction
 
-通常文字の入力をそのままqueryとして扱い、同じ一覧をcase-insensitive substring filterする。
+Homeはfeature menuではなく、**同じcanonical Household observationから作る現在状態のprojection**とする。
+
+Home自身のcanonical sourceやHome専用Factを作らない。
+
+候補surface:
 
 ```text
-s   -> SMBC、Savings、ほかの一致候補
-sm  -> SMBCを含む、より短い候補集合
-smb -> SMBC
+Household                         Aug 12
+
+Attention
+  ! Aug 10  Refund waiting             Issue
+  ! Aug 12  Electricity                Plan
+    Aug 15  Subscription review        Issue
+
+Cycle
+  18 days remaining
+  Daily capacity    ...
+
+Accounts
+  SMBC              ...
+  Yucho             ...
+
+Latest
+  Aug 12  Supermarket                  Record
+
+[r] Record
 ```
 
-既存の`filterDailyAccountCandidates`、`filterMultiAccountCandidates`、`filterAccountCandidates`を最初のownerとして使う。新しいfuzzy-search engine、score framework、別search stateを作らない。
+### Homeが答える問い
 
-filter後も次を保つ。
+Homeが答えるのは「機能は何があるか」ではなく、次のような問いである。
 
-- admitted Accountだけを候補にする
-- current Daily roleまたはMulti candidate lawを保つ
-- recent-first orderingを壊さない
-- groupingはtyped `AccountType`から作る
-- Up / Down、Enter、mouse clickが同じ候補集合を扱う
+- 期限を過ぎた / 近いものは何か。
+- 今日注意が必要なPlan / Issueは何か。
+- current cycleはどこまで来ているか。
+- 日常判断に必要なAccount stateは何か。
+- 最後に何を記帳したか。
+- 今すぐRecordを始めたいか。
 
-queryが空ならbrowseへ戻る。SearchからBrowseへ移るmode切替commandは設けない。
+### Homeはownerにならない
 
-### Authority boundary
-
-候補filterとrankingはassistanceであり、Account identityやtransaction semanticsのauthorityではない。
+Homeに表示したPlanを選べばPlans sectionのそのPlanへ移動する。IssueならIssues sectionへ、RecordならActual sectionへ移動する。
 
 ```text
-admitted Account candidates
-  -> filter / recent ranking / typed grouping
-  -> human selection
-  -> typed Account identity
-  -> existing Actual candidate admission
+Home attention item
+  -> stable object identity
+  -> owning section
 ```
 
-候補順からExpense、Income、Transferを確定しない。raw textを許す間も、最終的なAccount meaning、Commodity、balance、transaction validityは既存domain admissionが決める。
+Homeでobjectを複製編集しない。direct navigationのためにdescription、日付、金額の近似一致をidentity代わりにしない。
 
-## Defaults and Commodity
+stable identityが存在しないobjectについては、先にidentity semanticsを確認する。navigation都合だけでsource lineやlist indexをdurable identityへ昇格させない。
 
-Household primary Commodityはcommon interactionを短くするdefaultであり、domain restrictionではない。canonical coordinateは`household.toml`からtyped `Commodity`としてadmitされる。
+### Attentionはprojection
+
+`Attention`は新しいcanonical data kindではない。Plan、Issue、cycle等のadmitted stateから、その観察日に注意すべきものを導くprojectionである。
+
+最初から万能`AttentionItem` domainやrule engineを作らない。Home実装時に必要なfiniteなderived viewだけを置く。
+
+## Issueと他データのrelation observation
+
+### Current Issue boundary
+
+現在の`HouseholdIssue`は独立したHousehold matterである。
 
 ```text
-explicit Commodity
-  -> otherwise one unambiguous selected-Account default
-  -> otherwise Household primary Commodity
-  -> otherwise explicit choice / fail closed
+IssueId
+recordedOn
+status       Open / Resolved / Dropped
+due          DueOn Day / DueUndetermined
+amount       optional
+text
+details
 ```
 
-selected Account defaultsが衝突する場合、Household primary Commodityで上書きしない。UIで省略できるのは入力上の反復であり、publishされるAmountのCommodityではない。
+IssueはJournal fact、Plan commitment、Budget movement、diagnosticではなく、それ自体ではbalanceやbudget resultを変えない。この境界を維持する。
 
-current Plan / Budget / Account formsにはadapter-localな`JPY`初期値が残っているため、すべてがHousehold primary Commodityへ接続済みとは扱わない。Commodity wiringはUnified Recordへ無関係なsource migrationやwriter authority変更と混ぜない。
+Issueのamountは「その時点でIssueに記録したamount」であり、後のPlan / Actual / Budget movementの値を複製する場所にしない。
+
+### Relationの基本法則
+
+Issueが後の行動へつながる場合、結果の内容をIssueへコピーせず、必要な関係をidentity / provenanceとして表す。
+
+```text
+Issue
+  -> Plan
+  -> Actual
+
+Issue
+  -> Actual
+
+Issue
+  -> Budget movement
+  -> Plan / Actual
+```
+
+ただし、これを理由にgeneric graph database、universal `RelatedObject`、universal Household Journalを先に作らない。
+
+relationの意味は具体的であるべきで、少なくとも次を区別できる必要がある。
+
+- このIssueからPlanを作った。
+- このActualがIssueに関係する結果だった。
+- このBudget movementがIssueへの資金手当だった。
+- relationが存在してもIssueをResolvedにしたとは限らない。
+
+`Resolved` / `Dropped`はIssue ownerの明示的状態であり、ActualやPlanの存在から自動推論して書き換えない。UIがresolveを提案することは将来検討できる。
+
+### 現在存在するidentity
+
+#### Issue
+
+`IssueId`はstable machine identityとして既に存在する。
+
+#### Plan
+
+`PlanId`はdurable identityであり、後のActual evidenceとdate / memo / amountの推測なしに関係を結ぶために存在する。
+
+したがって`Issue -> Plan`は、relationを初めて具体化する候補として比較的自然である。
+
+#### Actual
+
+Actual側には`ActualTransactionId`があるが、**すべてのActualがdurable identityを持つわけではない**。
+
+- explicit `event-id`を持つActualはdurable identityを持つ。
+- Plan completion relationからrebuildable runtime identityを持つ場合がある。
+- ordinary identity-free Actualも正規に存在する。
+
+したがってIssueからordinary Recordへdurable relationを要求する場合、「現在たまたま同じdate / description / amountだから結ぶ」は不可である。
+
+具体的なIssue-to-Actual workflowを実装する時点で、そのRecordへdurable identityを与える必要があるか、既存Actual metadata ownerへどう接続するかをfinite sliceとして決める。
+
+#### Budget movement
+
+現在の`HouseholdBudgetMovement` valueはdate / memo / from / to / amountを持つが、stable BudgetMovementIdは持たない。native Budget Journalはordered root transaction source evidenceを保持するが、source lineやlist indexをdurable identityとして扱わない。
+
+Issue-to-Budget relationが本当に必要になった時点で、Budget movement側のidentityを追加する必要があるかを観察する。HomeやIssue UIの都合だけで先回りしてIDを追加しない。
+
+### Relation evidenceの保存
+
+関係が長期に積み上がり、後から「当時どう判断して何につながったか」を読む必要がある場合、current TOMLや現在値だけで過去の意味を書き換えない。
+
+relation historyはmutableな表示用projectionではなく、必要ならexplicit durable evidenceとして残す。ただしexact source formatとownerはまだ決定しない。
+
+特に避ける。
+
+- IssueへPlan/Actualのamountやpostingをコピーする。
+- 現在のcategory / policy設定から過去のrelationを再推測する。
+- date / memo / amountの近似一致でrelationを確定する。
+- source line番号をrelation identityにする。
+- すべてのrelationを一つのgeneric event schemaへ押し込む。
+
+## Homeとrelationが交わる場所
+
+Homeはrelationを所有しないが、relationを読むことで「次に何を見るべきか」をより自然に表せる。
+
+例:
+
+```text
+Refund waiting
+  due Aug 14
+  no related Actual yet
+
+Laptop
+  related Plan: Aug 20
+  not completed
+
+Subscription review
+  due tomorrow
+  related prior Actual available
+```
+
+これはIssue / Plan / ActualをHomeへ複製することではない。Homeは各ownerのstateとrelation evidenceから短いattention projectionを作るだけである。
+
+最初のHome実装でrelationが未実装なら、due / status等の既存typed stateだけで始めてよい。Homeを作るためにrelation system完成を前提にしない。
 
 ## Historical evidence and current policy
 
@@ -239,61 +283,59 @@ Interaction convenienceはFact、Policy / Decision、Projectionの境界を変�
 - durable historical evidenceは、その時に起きたことや明示的に決めたことを記録する。
 - current analytical projectionは、現在のpolicyから再計算され得る。
 
-current TOMLを編集しただけでdurable Actual、Plan、Budget decision、identity / provenanceを暗黙に書き換えない。IssueからPlan / Actualへの将来の関係も、amountやpostingをIssueへ複製せず、具体的ownerを確認してidentity / provenanceで結ぶ。
+current TOMLを編集しただけでdurable Actual、Plan、Budget decision、Issue relation、identity / provenanceを暗黙に書き換えない。
 
-このinteraction Draftからgeneric event store、universal Household Journal、configuration versioning frameworkを導入しない。
+## 次の観察順序
 
-## Home direction
+1. **Recordを日常利用し、操作上の摩擦を記録する。**
+2. **Homeの最小projectionを定義する。** まず既存typed stateだけでAttention / Cycle / Accounts / Latest / Record入口を構成できるか観察する。
+3. **Home direct navigationに必要なidentityを列挙する。** 既存identityで足りない箇所を近似一致で埋めない。
+4. **Issue -> Plan relationを最初の具体的relation候補として観察する。** 必要なprovenanceとlifecycleを確認する。
+5. **Issue -> Actual / Budget relationは実use caseが要求してからfinite sliceで設計する。**
+6. row-local edit、`Save & next`、balancing assistance等はRecord実使用から必要性が確認されたものを進める。
 
-Homeはfeature menuではなくHousehold stateのprojectionとする。
-
-候補:
-
-- overdue / due-soon PlanとIssue
-- cycle status
-- useful Account balances
-- latest Record
-- visible Household objectからのdirect navigation
-- 一つの短いRecord入口
-
-Homeは重要だがruntime targetは後である。先にHomeを実装して、現在のExpense / Income / Multi三入口を固定しない。
-
-## 実装順序
-
-1. **Unified Record**
-2. **searchable / browseable Account chooser**
-3. **row-local posting interaction**
-4. **実使用でRecord grammar、focus、候補順、mouse / keyboard経路を検証**
-5. **Home projection / direct navigation**
-
-`Save & next`、balancing remainder suggestion、transfer convenienceは、1〜4の実使用から必要性が確認できた場合に追加する。
+Homeとrelationを同じPRで一気に実装しない。まず観察結果を積み上げ、Home projection自体はrelation systemなしでも成立するようにする。
 
 ## Completedとして扱う項目
 
 次はfuture TODOへ戻さない。
 
-- `ActualMultiAddInput`へのMulti Actual authoritative draft一本化
-- selected posting rowとunfinished posting-count textのTUI-local ownership
+- Unified Recordの2+ posting runtime path (#214)
+- Search / Browse一体のRecord Account chooser (#214)
+- Account raw queryとTUI-local candidate cursorの分離 (#214)
+- keyboard / mouseが同じfiltered Account candidate setを使うこと (#214)
+- `ActualMultiAddInput`へのauthoritative draft一本化
+- selected posting row / unfinished posting-count textのTUI-local ownership
 - Actual / Plan / Report等のsection-local TUI ownership
 - concrete Plan Budget-sync picker ownership
+- TUI Reportsからowner sectionと重複するobject viewsを除外 (#215)
 - generic Hub / 三層quota / file-size基準のmodule splitting planの撤回
 
 completed historyの詳細はGitとmerged PRが所有する。この文書へ旧state、作業日誌、完了済みmigration手順を蓄積しない。
 
 ## 未決定
 
+- Homeのdue-soon threshold
+- Homeへ表示するAccount subsetと選定根拠
+- Attentionのordering
+- Homeでlatest Recordを何件見せるか
+- direct navigationのexact keyboard / mouse grammar
+- Issue relation evidenceのsource owner / source format
+- Issue -> Plan relationのdirection / lifecycle wording
+- ordinary ActualへIssue relationを持たせる場合のdurable identity方針
+- Budget movement relationが必要な場合のidentity方針
+- relationからIssue resolveを提案するUX
 - exact row / cell focus grammar
 - add / remove posting controlのexact grammar
 - balancing remainderを提案できる条件
-- recentとgroupingの表示重複を避けるpresentation
-- filter結果が少ないときにgroup headingを残すか
 - `Save & next`の必要性とgrammar
 - mandatory modeを戻さないtransfer convenience
-- Homeのdue-soon thresholdと表示Account subset
 
 ## Non-goals
 
 - このPRでのHaskell runtime変更
+- Home専用canonical source
+- generic relation graph / event store
 - accounting semanticsの変更
 - source format migration
 - writer authority cutover
