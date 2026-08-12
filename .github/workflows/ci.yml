@@ -36,7 +36,6 @@ jobs:
           sh -n report report-build report-benchmark report-verify report-snapshot report-real-snapshot tools/hk
           python3 -m py_compile tools/report_sections.py tools/verify_report_corpus.py tools/verify_daily_command_hub.py tools/verify_household_report_config_resolution.py
           python3 tools/verify_daily_command_hub.py
-          python3 tools/verify_household_report_config_resolution.py
 
       - name: Build
         run: cabal build all
@@ -56,6 +55,10 @@ jobs:
           chmod 755 .report-bin-ci/h-kernel
           test ! -e ledger-data
           .report-bin-ci/h-kernel all >/dev/null
+          python3 tools/verify_household_report_config_resolution.py \
+            .report-bin-ci/h-kernel \
+            tests/fixtures/report-contract.journal \
+            tests/fixtures/report-entrypoints.toml
           printf 'deliberately invalid local configuration\n' > report.toml
           export HKERNEL_REPORT_CONFIG="$PWD/report.toml"
           HKERNEL_REPORT_BIN_DIR="$PWD/.report-bin-ci" \
