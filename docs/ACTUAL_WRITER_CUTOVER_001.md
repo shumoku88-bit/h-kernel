@@ -3,7 +3,7 @@
 ステータス: 承認済みcurrent contract  
 Owner: `actual.journal` writer authority、daily Actual write operation、rollback boundary  
 承認日: 2026-08-06  
-更新日: 2026-08-07
+更新日: 2026-08-12
 
 ## 1. Current authority
 
@@ -140,7 +140,8 @@ reader compatibilityのためにHaskell writerのidentity contractを弱めな�
 
 ## 9. Related owners
 
-- [`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md): current Editor capability、workspace、next finite slice
-- [`SOURCE_DATA_MIGRATION_PLAN.md`](SOURCE_DATA_MIGRATION_PLAN.md): private source topologyとsource別writer authority
+- [`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md): current Editor capability、workspace、safe writer law
+- [`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md): source別writer authority、single-writer law、cutover gate
+- [`HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md): current canonical reader topology
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): componentとeffect boundary
 - [`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md): reversal identity contract
