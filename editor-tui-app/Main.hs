@@ -257,7 +257,7 @@ handleWorkspaceEvent context event = case event of
       case action of
         Maintenance.IssuesActionMaintain -> pure ()
         Maintenance.IssuesActionStartAdd ->
-          put (AppWrapper currentContext (MaintenanceFlow flow))
+          put (AppWrapper currentContext (MaintenanceFlow Maintenance.startIssueAdd))
         Maintenance.IssuesActionStartClose flow ->
           put (AppWrapper currentContext (MaintenanceFlow flow))
     ReportsSection -> do
