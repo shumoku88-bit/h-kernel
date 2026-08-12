@@ -39,6 +39,7 @@ import HKernel.HouseholdIssue
 import HKernel.Household.Issue.TSV
   ( HouseholdIssueTSVError
   , householdIssueSourceHasHeader
+  , householdIssueSourceUsesDueColumn
   , householdIssuesHeader
   , parseHouseholdIssues
   )
@@ -54,6 +55,7 @@ data IssueAppendIntent = IssueAppendIntent
   { intentIssueId       :: IssueId
   , intentStatus        :: IssueStatus
   , intentDate          :: Day
+  , intentDue           :: IssueDue
   , intentCategory      :: Text
   , intentTitle         :: Text
   , intentAmount        :: Maybe Amount
@@ -64,6 +66,7 @@ data IssueAppendError
   = SourceParseError (NonEmpty HouseholdIssueTSVError)
   | CandidateSourceParseError (NonEmpty HouseholdIssueTSVError)
   | DomainValidationError HouseholdIssueError
+  | LegacyIssueSourceCannotRepresentDue IssueDue
   deriving (Eq, Show)
 
 data IssueAppendPreview = IssueAppendPreview
@@ -102,7 +105,7 @@ prepareIssueAppend existingSource intent = do
       (intentIssueId intent)
       (intentDate intent)
       (intentStatus intent)
-      DueUndetermined
+      (intentDue intent)
       (intentAmount intent)
       (intentTitle intent)
       ("[" <> intentCategory intent <> "] " <> intentDetails intent)
@@ -110,9 +113,16 @@ prepareIssueAppend existingSource intent = do
   _ <- first (pure . SourceParseError)
     (parseHouseholdIssues existingSource)
 
-  let block = renderIntent intent
+  let hasHeader = householdIssueSourceHasHeader existingSource
+      usesDueColumn = householdIssueSourceUsesDueColumn existingSource
+      renderDueColumn = not hasHeader || usesDueColumn
+  if hasHeader && not usesDueColumn && intentDue intent /= DueUndetermined
+    then Left (pure (LegacyIssueSourceCannotRepresentDue (intentDue intent)))
+    else Right ()
+
+  let block = renderIntent renderDueColumn intent
       appendBody
-        | householdIssueSourceHasHeader existingSource = block
+        | hasHeader = block
         | otherwise = householdIssuesHeader <> "\n" <> block
       preview = IssueAppendPreview
         { candidateBlock = block
@@ -124,22 +134,35 @@ prepareIssueAppend existingSource intent = do
     (parseHouseholdIssues (candidateCompleteSource preview))
   pure preview
 
-renderIntent :: IssueAppendIntent -> Text
-renderIntent intent = T.intercalate "\t"
-  [ issueIdText (intentIssueId intent)
-  , renderStatus (intentStatus intent)
-  , T.pack (formatTime defaultTimeLocale "%F" (intentDate intent))
-  , intentCategory intent
-  , intentTitle intent
-  , maybe "" (renderQuantity . amountQuantity) (intentAmount intent)
-  , maybe "" (commodityCode . amountCommodity) (intentAmount intent)
-  , intentDetails intent
-  ]
+renderIntent :: Bool -> IssueAppendIntent -> Text
+renderIntent usesDueColumn intent = T.intercalate "\t" fields
+  where
+    commonBeforeDue =
+      [ issueIdText (intentIssueId intent)
+      , renderStatus (intentStatus intent)
+      , T.pack (formatTime defaultTimeLocale "%F" (intentDate intent))
+      ]
+    commonAfterDue =
+      [ intentCategory intent
+      , intentTitle intent
+      , maybe "" (renderQuantity . amountQuantity) (intentAmount intent)
+      , maybe "" (commodityCode . amountCommodity) (intentAmount intent)
+      , intentDetails intent
+      ]
+    fields
+      | usesDueColumn =
+          commonBeforeDue ++ [renderDue (intentDue intent)] ++ commonAfterDue
+      | otherwise = commonBeforeDue ++ commonAfterDue
 
 renderStatus :: IssueStatus -> Text
 renderStatus Open = "open"
 renderStatus Resolved = "resolved"
 renderStatus Dropped = "dropped"
+
+renderDue :: IssueDue -> Text
+renderDue (DueOn day) = T.pack (formatTime defaultTimeLocale "%F" day)
+renderDue NoDueDate = "none"
+renderDue DueUndetermined = "undetermined"
 
 -- Issue close
 
@@ -240,6 +263,8 @@ matchingIssueFields :: IssueId -> Text -> Maybe [Text]
 matchingIssueFields targetId row = case T.splitOn "\t" row of
   fields@[identifier, _, _, _, _, _, _, _]
     | identifier == issueIdText targetId -> Just fields
+  fields@[identifier, _, _, _, _, _, _, _, _]
+    | identifier == issueIdText targetId -> Just fields
   _ -> Nothing
 
 ignoredPhysicalLine :: Text -> Bool
@@ -253,6 +278,17 @@ replaceFields intent fields = case fields of
     [ identifier
     , closeStatusText (closeDisposition intent)
     , day
+    , category
+    , title
+    , amount
+    , currency
+    , details <> "。Decision: " <> closeDecisionMemo intent
+    ]
+  [identifier, _, day, due, category, title, amount, currency, details] ->
+    [ identifier
+    , closeStatusText (closeDisposition intent)
+    , day
+    , due
     , category
     , title
     , amount
