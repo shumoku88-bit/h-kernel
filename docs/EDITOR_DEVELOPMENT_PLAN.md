@@ -2,7 +2,7 @@
 
 ステータス: active  
 Owner: h-kernel editor / Household application  
-更新日: 2026-08-11
+更新日: 2026-08-13
 
 ## 目的
 
@@ -57,6 +57,66 @@ Recordはordinary transactionとmulti-posting transactionを別世界にしな�
 日常操作では、canonical Account名、PlanId、event-idなどを人間へ暗記させない。workspaceがtyped identityを保持し、表示Textからidentityを再構築しない。
 
 keyboard operationは完全に保ち、mouseは同じvisible objectへの短い入口として使える。click-only mutationは作らない。
+
+## Household Home
+
+Homeはcalendar-firstのHousehold-state projectionであり、feature menu、dashboard、新しいcanonical ownerではない。
+
+現在の基本動作は次である。
+
+```text
+起動
+  -> 今日を含む月間Calendarを見る
+  -> 日を選ぶ
+  -> その日のadmitted factsを見る
+  -> 必要なら選択日からRecordする
+```
+
+Calendarは同じHousehold observationから、少なくとも次を投影する。
+
+- Actualが存在する日
+- open outgoing payment Planの日
+- open Issueのdue date
+- current cycle boundary
+
+selected-day paneは、その日付に対応するActual transaction/postings、payment Plan、Issue due、cycle boundaryの根拠を表示する。過去日は記録確認、未来日は予定や注意点の確認に使う。
+
+`Actual none recorded`は観察された事実であり、記帳漏れという判断ではない。UIは記録がないことから生活上の事実を推測しない。
+
+Calendarのmarkerはpresentationであり、glyphだけを設定できる。markerの意味、優先順位、Household factは設定へ移さない。cell幅はterminal matrixを崩さない固定幅とする。
+
+今日の表示、選択状態、markerは別の意味を持つ。現在地のcueをaccounting semanticsやattention severityと混同しない。
+
+Homeは既にadmitされた`HouseholdState`とHousehold report surfaceを使う。Home専用canonical model、source reload、重複cycle計算、未計測のcacheを追加しない。
+
+HomeとTUI全体の見た目・操作は、しばらく実際に使いながら少しずつ修正する。先に機能一覧やdashboard layoutを固定せず、繰り返し現れる摩擦と見えにくさから変更する。
+
+## Issue relation
+
+`HouseholdIssue`は家計上の検討・問題・判断対象であり、それ自体はActual fact、Plan commitment、Budget movementではない。Issueが後に別のobjectへつながった場合だけ、具体的なprovenance relationを表す。
+
+現在のidentity上の前提:
+
+- Issueはstable `IssueId`を持つ
+- Planはdurable `PlanId`を持つ
+- Actualは`ActualTransactionId`を持てるが、ordinary Actual transactionはidentity-freeでもよい
+- `HouseholdBudgetMovement`には現在stable movement IDがない
+
+最初に観察するrelationは`Issue -> Plan`とする。date、memo、amountの類似からrelationを推測しない。
+
+将来の意味としては、例えば次を区別できるようにしたい。
+
+```text
+Issue -> Plan             予定化した
+Issue -> Actual           実際の支払い・取引で対処した
+Issue -> Budget movement  資金移動で対処した
+```
+
+ただし`Issue -> Actual`と`Issue -> Budget movement`は、対象を長期に一意に指せるidentity lawが成立してから設計する。source line番号やlist indexをdurable identityとして使わない。
+
+relationが追加されたこととIssueが`Resolved` / `Dropped`になることは別である。relationは処理・判断の履歴を示し、lifecycle statusを自動決定しない。
+
+universal relation graphやgeneral event frameworkを先に作らない。最初の実際のworkflowから必要なrelationだけを追加する。
 
 ## Candidate and publication boundary
 
@@ -118,16 +178,33 @@ CLI/TUI owner:
 
 UI都合でbalance law、Account classification、Plan recurrence、identity relation、source admissionを再実装しない。
 
+## CLI application model
+
+TUIはHousehold rootから一つのHousehold observationを扱う一方、CLIにはexplicit source pathやsource-shaped command grammarが残っている。
+
+これは自動的に負債とはみなさない。compatibility、scripting、低水準operation、writer authority上の理由があり得る。
+
+CLIを整理するときは、まずcurrent mainで次を観察する。
+
+- canonical Household operationとして実際に使うcommand
+- compatibility / low-level toolとして残すcommand
+- `tools/hk`がroutingだけを担当しているか
+- Household-root-oriented CLIが実際の操作や保守を簡単にするか
+- source format retirementやwriter authority changeを混ぜていないか
+
+CLIの見た目を揃えるためだけにsource ownershipを変更しない。
+
 ## Current practical priorities
 
 優先順位はHouseholdを実際に使う頻度と不便さで決める。
 
-1. ordinary / multi-posting Recordを一つの自然なflowへ近づける
-2. Plan completion / successor replenishmentを選択中Planから短く完了する
-3. Reportを見たい対象へ迷わず到達できるようにする
-4. Account / Budget / Issue / Plan maintenanceを各workspaceのcontextual operationとして完結させる
-5. repeated typing、canonical-string recall、不要なmodal traversalを減らす
-6. 実測で問題があるruntime pathだけを性能改善する
+1. Calendar-first HomeとTUI全体を実際に使い、繰り返し現れる視認性・操作摩擦を小さく直す
+2. Record / Plan completion / successor replenishment / Budget / Issue maintenanceをvisible objectから短く完了できるようにする
+3. repeated typing、canonical-string recall、不要なmodal traversalを減らす
+4. 最初の具体的な`Issue -> Plan` workflowを観察し、必要なrelation meaningだけを設計する
+5. `Issue -> Actual` / `Issue -> Budget movement`に必要なdurable identityを、実際のworkflowが要求した時点で検討する
+6. Editor CLIのsource-oriented grammarは、current useを再観察して具体的な摩擦がある場合だけ整理する
+7. 実測で問題があるruntime pathだけを性能改善する
 
 新しい機能へ進む前に、current codeとremoteを確認する。この文書の列挙を実装済み状態の代わりに使わない。
 
@@ -136,6 +213,9 @@ UI都合でbalance law、Account classification、Plan recurrence、identity rel
 - generic command framework
 - generic form DSL
 - generic repository/session abstraction
+- generic relation graph / universal event store
+- Home専用canonical modelや先回りcache
+- dashboardを埋めるための情報追加
 - architecture diagramを満たすためのlayer追加
 - future GUI/HTTP/mobileを想像した先回り抽象
 - LOC削減だけを目的にしたrefactor
