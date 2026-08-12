@@ -7,8 +7,8 @@
 1. remoteの最新`main` SHA、open PR、直近commit、関連branchを確認する。
 2. 対象fileと並行作業の変更fileを比較し、実在する重複を避ける。
 3. 対象領域のarchitecture、contract、source ownership文書と実コードを読む。
-4. editorまたはwriter effectへ触れる場合は、[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)でcurrent capability、active roadmap、writer law、cutover gateを確認する。
-5. private household sourceへ触れる場合は、writer authority、公開境界、実データが維持されることを先に確認する。
+4. editorまたはwriter effectへ触れる場合は、[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)でcurrent capabilityとsafe writer law、[`docs/WRITER_AUTHORITY.md`](docs/WRITER_AUTHORITY.md)でsource別authorityとcutover gateを確認する。
+5. private household sourceへ触れる場合は、[`docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md)でcurrent reader topologyを確認し、writer authority、公開境界、実データが維持されることを先に確認する。
 
 ## 判断基準
 
@@ -64,7 +64,8 @@ HKERNEL_LEDGER_DATA_DIR=/absolute/path/to/private-ledger-data ./report all >/dev
 
 - [`docs/REPOSITORY_POLICY.md`](docs/REPOSITORY_POLICY.md): 作業手順と文書寿命
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): component、依存方向、会計不変条件、effect ownership
-- [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): editorのcurrent capability、roadmap、writer law
-- [`docs/SOURCE_DATA_MIGRATION_PLAN.md`](docs/SOURCE_DATA_MIGRATION_PLAN.md): private canonical sourceとwriter authority
+- [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): editorのcurrent capability、roadmap、safe writer law
+- [`docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md): current canonical reader topology
+- [`docs/WRITER_AUTHORITY.md`](docs/WRITER_AUTHORITY.md): source別writer authorityとcutover gate
 - [`docs/INDEX.toml`](docs/INDEX.toml): 稼働中の正規文書一覧
 - [`SECURITY.md`](SECURITY.md): 公開データと秘密情報の境界
