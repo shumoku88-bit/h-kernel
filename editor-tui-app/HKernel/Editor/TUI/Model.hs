@@ -108,6 +108,9 @@ data Name
   | IssueClosedDateField
   | IssueDecisionMemoField
   | ReportPickerList
+  | HomeTab
+  | CalendarDay Day
+  | HomeDayViewport
   | BudgetViewport
   | AccountsViewport
   | IssuesViewport
