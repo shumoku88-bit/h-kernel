@@ -43,6 +43,7 @@ data RawConfig = RawConfig (Maybe RawPresentation) RawReports
 data RawPresentation = RawPresentation
   { rawPresentationHierarchy :: Maybe RawHierarchy
   , rawPresentationAmounts :: Maybe RawAmounts
+  , rawPresentationCalendar :: Maybe RawCalendar
   }
 
 data RawHierarchy = RawHierarchy
@@ -54,6 +55,17 @@ data RawAmounts = RawAmounts
   { rawNegativeStyle :: Text
   , rawPositiveColor :: Maybe Text
   , rawNegativeColor :: Maybe Text
+  }
+
+data RawCalendar = RawCalendar
+  { rawCalendarMarkers :: Maybe RawCalendarMarkers
+  }
+
+data RawCalendarMarkers = RawCalendarMarkers
+  { rawCalendarActualMarker :: Maybe Text
+  , rawCalendarPlanMarker :: Maybe Text
+  , rawCalendarIssueDueMarker :: Maybe Text
+  , rawCalendarCycleEndMarker :: Maybe Text
   }
 
 data RawReports = RawReports
@@ -80,7 +92,8 @@ instance FromValue RawPresentation where
   fromValue = parseTableFromValue
     (RawPresentation
       <$> optKey "hierarchy"
-      <*> optKey "amounts")
+      <*> optKey "amounts"
+      <*> optKey "calendar")
 
 instance FromValue RawHierarchy where
   fromValue = parseTableFromValue
@@ -94,6 +107,18 @@ instance FromValue RawAmounts where
       <$> reqKey "negative-style"
       <*> optKey "positive-color"
       <*> optKey "negative-color")
+
+instance FromValue RawCalendar where
+  fromValue = parseTableFromValue
+    (RawCalendar <$> optKey "markers")
+
+instance FromValue RawCalendarMarkers where
+  fromValue = parseTableFromValue
+    (RawCalendarMarkers
+      <$> optKey "actual"
+      <*> optKey "plan"
+      <*> optKey "issue-due"
+      <*> optKey "cycle-end")
 
 instance FromValue RawReports where
   fromValue = parseTableFromValue
@@ -155,6 +180,16 @@ renderReportConfiguration configuration = T.unlines
   , "negative-color = " <> quoted (renderPresentationColor
       (presentationNegativeAmountColor presentation))
   , ""
+  , "[presentation.calendar.markers]"
+  , "actual = " <> quotedCalendarMarker
+      (calendarActualMarker calendarMarkers)
+  , "plan = " <> quotedCalendarMarker
+      (calendarPlanMarker calendarMarkers)
+  , "issue-due = " <> quotedCalendarMarker
+      (calendarIssueDueMarker calendarMarkers)
+  , "cycle-end = " <> quotedCalendarMarker
+      (calendarCycleEndMarker calendarMarkers)
+  , ""
   , "[reports.trial-balance]"
   , "as-of = " <> quoted (renderAsOf (trialBalanceSpec plan))
   , ""
@@ -186,6 +221,7 @@ renderReportConfiguration configuration = T.unlines
   where
     plan = reportConfigurationPlan configuration
     presentation = reportConfigurationPresentation configuration
+    calendarMarkers = presentationCalendarMarkers presentation
 
 renderNegativeStyle :: NegativeStyle -> Text
 renderNegativeStyle AccountingParentheses = "parentheses"
@@ -227,8 +263,15 @@ renderEndBoundary (ThroughDate day) = renderDay day
 renderDay :: Day -> Text
 renderDay = T.pack . formatTime defaultTimeLocale "%F"
 
+quotedCalendarMarker :: CalendarMarker -> Text
+quotedCalendarMarker = quoted . T.singleton . calendarMarkerValue
+
 quoted :: Text -> Text
-quoted value = "\"" <> value <> "\""
+quoted value = "\"" <> T.concatMap escapeBasicString value <> "\""
+  where
+    escapeBasicString '\\' = "\\\\"
+    escapeBasicString '"' = "\\\""
+    escapeBasicString character = T.singleton character
 
 renderReportConfigErrors :: [Text] -> Text
 renderReportConfigErrors = T.unlines . map ("  " <>)
@@ -253,6 +296,8 @@ rawConfigToConfiguration (RawConfig rawPresentation reports) = case reports of
       "presentation.amounts.negative-color"
       RedColor
       (amounts >>= rawNegativeColor)
+    calendarMarkers <- parseCalendarMarkers
+      (calendar >>= rawCalendarMarkers)
     trialSpec <- parseAsOf "reports.trial-balance.as-of" trial
     balanceSpec <- parseAsOf "reports.balance-sheet.as-of" balance
     profitSpec <- parseRange "reports.profit-and-loss" profit
@@ -274,12 +319,14 @@ rawConfigToConfiguration (RawConfig rawPresentation reports) = case reports of
           , presentationSectionColor = sectionColor
           , presentationPositiveAmountColor = positiveAmountColor
           , presentationNegativeAmountColor = negativeAmountColor
+          , presentationCalendarMarkers = calendarMarkers
           , presentationDailyFlowDateColumns = dateColumns
           }
       }
     where
       hierarchy = rawPresentation >>= rawPresentationHierarchy
       amounts = rawPresentation >>= rawPresentationAmounts
+      calendar = rawPresentation >>= rawPresentationCalendar
 
 parseNegativeStyle :: Maybe RawAmounts -> Either [Text] NegativeStyle
 parseNegativeStyle Nothing = Right AccountingParentheses
@@ -314,6 +361,43 @@ parsePresentationColor path value = case value of
     [ path <> ": expected red, bright-red, green, yellow, blue, magenta, cyan, or white; got ‘"
         <> value <> "’"
     ]
+
+parseCalendarMarkers
+  :: Maybe RawCalendarMarkers
+  -> Either [Text] CalendarMarkers
+parseCalendarMarkers Nothing = Right defaultCalendarMarkers
+parseCalendarMarkers (Just raw) = CalendarMarkers
+  <$> parseOptionalCalendarMarker
+      "presentation.calendar.markers.actual"
+      (calendarActualMarker defaultCalendarMarkers)
+      (rawCalendarActualMarker raw)
+  <*> parseOptionalCalendarMarker
+      "presentation.calendar.markers.plan"
+      (calendarPlanMarker defaultCalendarMarkers)
+      (rawCalendarPlanMarker raw)
+  <*> parseOptionalCalendarMarker
+      "presentation.calendar.markers.issue-due"
+      (calendarIssueDueMarker defaultCalendarMarkers)
+      (rawCalendarIssueDueMarker raw)
+  <*> parseOptionalCalendarMarker
+      "presentation.calendar.markers.cycle-end"
+      (calendarCycleEndMarker defaultCalendarMarkers)
+      (rawCalendarCycleEndMarker raw)
+
+parseOptionalCalendarMarker
+  :: Text
+  -> CalendarMarker
+  -> Maybe Text
+  -> Either [Text] CalendarMarker
+parseOptionalCalendarMarker _ fallback Nothing = Right fallback
+parseOptionalCalendarMarker path _ (Just value) =
+  case mkCalendarMarker value of
+    Right marker -> Right marker
+    Left _ -> Left
+      [ path
+          <> ": expected exactly one printable non-space ASCII character; got ‘"
+          <> value <> "’"
+      ]
 
 parseAsOf :: Text -> RawAsOf -> Either [Text] AsOfSpec
 parseAsOf path (RawAsOf value) =
