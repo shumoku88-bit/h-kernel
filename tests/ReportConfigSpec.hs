@@ -20,6 +20,7 @@ main = do
       reparsed = mustRight (parseReportConfiguration rendered)
       plan = reportConfigurationPlan configuration
       presentation = reportConfigurationPresentation configuration
+      calendarMarkers = presentationCalendarMarkers presentation
       journal = mustRight (parseJournal journalInput)
       latest = fromGregorian 2026 8 1
       resolved = mustRight (resolveReportPlan latest journal plan)
@@ -63,6 +64,18 @@ main = do
   assertEqual "negative amount color is validated and retained"
     MagentaColor
     (presentationNegativeAmountColor presentation)
+  assertEqual "actual calendar marker is validated and retained"
+    ':'
+    (calendarMarkerValue (calendarActualMarker calendarMarkers))
+  assertEqual "plan calendar marker is validated and retained"
+    '^'
+    (calendarMarkerValue (calendarPlanMarker calendarMarkers))
+  assertEqual "issue due calendar marker is validated and retained"
+    '!'
+    (calendarMarkerValue (calendarIssueDueMarker calendarMarkers))
+  assertEqual "cycle end calendar marker is validated and retained"
+    '|'
+    (calendarMarkerValue (calendarCycleEndMarker calendarMarkers))
   assertEqual "daily flow date columns are validated and retained"
     10
     (dateColumnCountValue
@@ -91,10 +104,11 @@ main = do
 
   let hierarchyOnlyConfiguration = mustRight
         (parseReportConfiguration
-          (T.replace amountsTable "" validConfig))
+          (T.replace calendarMarkersTable ""
+            (T.replace amountsTable "" validConfig)))
       hierarchyOnlyPresentation =
         reportConfigurationPresentation hierarchyOnlyConfiguration
-  assertEqual "hierarchy remains configurable without an amounts table"
+  assertEqual "hierarchy remains configurable without other presentation tables"
     (BlueColor, CyanColor)
     ( presentationHeadingColor hierarchyOnlyPresentation
     , presentationSectionColor hierarchyOnlyPresentation
@@ -104,6 +118,30 @@ main = do
     ( presentationNegativeStyle hierarchyOnlyPresentation
     , presentationPositiveAmountColor hierarchyOnlyPresentation
     , presentationNegativeAmountColor hierarchyOnlyPresentation
+    )
+  assertCalendarDefaults "calendar markers default when only hierarchy is configured"
+    (presentationCalendarMarkers hierarchyOnlyPresentation)
+
+  let defaultCalendarConfiguration = mustRight
+        (parseReportConfiguration
+          (T.replace calendarMarkersTable "" validConfig))
+  assertCalendarDefaults "calendar markers default when the calendar table is absent"
+    (presentationCalendarMarkers
+      (reportConfigurationPresentation defaultCalendarConfiguration))
+
+  let partialCalendarConfiguration = mustRight
+        (parseReportConfiguration
+          (T.replace calendarMarkersTable partialCalendarMarkersTable validConfig))
+      partialCalendarMarkers = presentationCalendarMarkers
+        (reportConfigurationPresentation partialCalendarConfiguration)
+  assertEqual "a configured calendar marker overrides only its own role"
+    '?'
+    (calendarMarkerValue (calendarIssueDueMarker partialCalendarMarkers))
+  assertEqual "unconfigured calendar roles retain defaults"
+    ('.', '+', '|')
+    ( calendarMarkerValue (calendarActualMarker partialCalendarMarkers)
+    , calendarMarkerValue (calendarPlanMarker partialCalendarMarkers)
+    , calendarMarkerValue (calendarCycleEndMarker partialCalendarMarkers)
     )
 
   let defaultPresentationConfiguration = mustRight
@@ -126,6 +164,8 @@ main = do
   assertEqual "negative amount color defaults to red"
     RedColor
     (presentationNegativeAmountColor defaultPresentation)
+  assertCalendarDefaults "calendar markers default without presentation config"
+    (presentationCalendarMarkers defaultPresentation)
 
   assertLeft "unknown TOML keys are not silently ignored"
     (parseReportConfiguration
@@ -153,6 +193,18 @@ main = do
     (parseReportConfiguration
       (T.replace "negative-color = \"magenta\""
         "negative-color = \"invalid-color\"" validConfig))
+  assertLeft "empty calendar markers are rejected"
+    (parseReportConfiguration
+      (T.replace "actual = \":\"" "actual = \"\"" validConfig))
+  assertLeft "multi-character calendar markers are rejected"
+    (parseReportConfiguration
+      (T.replace "actual = \":\"" "actual = \"..\"" validConfig))
+  assertLeft "Unicode calendar markers are rejected until terminal width is explicit"
+    (parseReportConfiguration
+      (T.replace "actual = \":\"" "actual = \"●\"" validConfig))
+  assertLeft "whitespace calendar markers are rejected"
+    (parseReportConfiguration
+      (T.replace "actual = \":\"" "actual = \" \"" validConfig))
   assertLeft "non-positive recent counts are rejected"
     (parseReportConfiguration
       (T.replace "count = 7" "count = 0" validConfig))
@@ -177,8 +229,25 @@ amountsTable = T.unlines
   , ""
   ]
 
+calendarMarkersTable :: T.Text
+calendarMarkersTable = T.unlines
+  [ "[presentation.calendar.markers]"
+  , "actual = \":\""
+  , "plan = \"^\""
+  , "issue-due = \"!\""
+  , "cycle-end = \"|\""
+  , ""
+  ]
+
+partialCalendarMarkersTable :: T.Text
+partialCalendarMarkersTable = T.unlines
+  [ "[presentation.calendar.markers]"
+  , "issue-due = \"?\""
+  , ""
+  ]
+
 presentationTable :: T.Text
-presentationTable = hierarchyTable <> amountsTable
+presentationTable = hierarchyTable <> amountsTable <> calendarMarkersTable
 
 validConfig :: T.Text
 validConfig = presentationTable <> T.unlines
@@ -221,7 +290,15 @@ journalInput = T.unlines
   , "    equity:opening"
   ]
 
-
+assertCalendarDefaults :: String -> CalendarMarkers -> IO ()
+assertCalendarDefaults label markers =
+  assertEqual label
+    ('.', '+', '!', '|')
+    ( calendarMarkerValue (calendarActualMarker markers)
+    , calendarMarkerValue (calendarPlanMarker markers)
+    , calendarMarkerValue (calendarIssueDueMarker markers)
+    , calendarMarkerValue (calendarCycleEndMarker markers)
+    )
 
 assertLeft :: Show value => String -> Either error value -> IO ()
 assertLeft label result = case result of
@@ -230,4 +307,3 @@ assertLeft label result = case result of
     putStrLn ("  [FAIL] " ++ label)
     putStrLn ("    unexpectedly decoded: " ++ show value)
     exitFailure
-
