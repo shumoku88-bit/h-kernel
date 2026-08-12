@@ -77,9 +77,6 @@ case "$command" in
     dir=$(get_data_dir || true)
     if [ -n "$dir" ]; then
       export HKERNEL_LEDGER_DATA_DIR="$dir"
-      if [ -z "${HKERNEL_REPORT_CONFIG:-}" ] && [ -f "$dir/report.toml" ]; then
-        export HKERNEL_REPORT_CONFIG="$dir/report.toml"
-      fi
     fi
     exec "$REPORT" "$@"
     ;;
