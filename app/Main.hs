@@ -10,7 +10,11 @@ import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (Day)
 import Data.Time.LocalTime (getZonedTime, localDay, zonedTimeToLocalTime)
 import HKernel.Actual.Journal (actualJournalValue)
-import HKernel.Application.Config (mkHouseholdRoot)
+import HKernel.Application.Config
+  ( HouseholdSourcePaths(..)
+  , householdSourcePaths
+  , mkHouseholdRoot
+  )
 import HKernel.CLI
 import HKernel.Engine (DateRange, rangeEnd)
 import HKernel.Envelope
@@ -20,7 +24,6 @@ import HKernel.Household.Application
   , buildHouseholdReportSurfaceFromHousehold
   , loadCanonicalHousehold
   )
-import HKernel.Household.Report
 import HKernel.Household.Report.Render
   ( renderReportBookWithHouseholdPresentation
   )
@@ -35,7 +38,7 @@ import HKernel.Report.Presentation
 import System.Directory (doesFileExist)
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitFailure)
-import System.FilePath ((</>))
+import System.FilePath ((</>), normalise)
 import System.IO (stderr)
 import System.IO.Error (tryIOError)
 
@@ -79,7 +82,21 @@ resolveJournalInput requestedPath = do
       if exists then pure candidate else findFirst candidates
 
 run :: Day -> FilePath -> Maybe FilePath -> Command -> IO ()
-run today journalPath householdDirectory command = do
+run today journalPath householdDirectory command =
+  case (householdDirectory, command) of
+    (Just directory, RunJournal (RunDefaultReportBook day)) ->
+      runCanonicalDefaultReportBook directory day
+    (Just directory, RunJournal (RunReportBook dateRange)) ->
+      runCanonicalReportBook directory today dateRange
+    _ -> runJournalSourceCommand today journalPath householdDirectory command
+
+runJournalSourceCommand
+  :: Day
+  -> FilePath
+  -> Maybe FilePath
+  -> Command
+  -> IO ()
+runJournalSourceCommand today journalPath householdDirectory command = do
   loadResult <- loadJournal journalPath
   journal <- case loadResult of
     Left err -> dieText (renderLoadError err)
@@ -88,10 +105,10 @@ run today journalPath householdDirectory command = do
     RunJournal Check ->
       TIO.putStr (executeWithPresentation defaultPresentationConfig Check journal)
     RunJournal (RunDefaultReportBook day) -> do
-      configuration <- loadReportConfiguration
-      runDefaultReportBook day journal householdDirectory configuration
+      configuration <- loadReportConfiguration householdDirectory
+      runDefaultJournalReportBook day journal configuration
     RunJournal journalCommand -> do
-      configuration <- loadReportConfiguration
+      configuration <- loadReportConfiguration householdDirectory
       let presentation = maybe defaultPresentationConfig
             reportConfigurationPresentation configuration
       resolvedCommand <- case configuration of
@@ -99,14 +116,75 @@ run today journalPath householdDirectory command = do
         Just configured -> case resolveReportPlan today journal (reportConfigurationPlan configured) of
           Left err -> dieText (renderReportPlanError err)
           Right resolvedPlan -> pure (applyReportPlanResolved resolvedPlan journalCommand)
-      case resolvedCommand of
-        RunReportBook dateRange -> runCombinedReport
-          presentation (rangeEnd dateRange) (reportBook dateRange journal) journal
-          householdDirectory
-        _ -> TIO.putStr
-          (executeWithPresentation presentation resolvedCommand journal)
+      TIO.putStr (executeWithPresentation presentation resolvedCommand journal)
     RunEnvelopeBudget policyPath dateRange ->
       runEnvelopeBudget policyPath dateRange journal
+
+runCanonicalDefaultReportBook :: FilePath -> Day -> IO ()
+runCanonicalDefaultReportBook directory latest = do
+  state <- loadCanonicalReportState directory
+  configuration <- loadCanonicalReportConfiguration state
+  let journal = actualJournalValue (householdStateActualJournal state)
+  resolvedPlan <- case resolveReportPlan
+      latest journal (reportConfigurationPlan configuration) of
+    Left err -> dieText (renderReportPlanError err)
+    Right value -> pure value
+  renderCanonicalReportBook
+    (reportConfigurationPresentation configuration)
+    (resolvedTrialBalanceAsOf resolvedPlan)
+    (reportBookWithPlan resolvedPlan journal)
+    state
+
+runCanonicalReportBook :: FilePath -> Day -> DateRange -> IO ()
+runCanonicalReportBook directory today dateRange = do
+  state <- loadCanonicalReportState directory
+  configuration <- loadCanonicalReportConfiguration state
+  let journal = actualJournalValue (householdStateActualJournal state)
+  _ <- case resolveReportPlan today journal (reportConfigurationPlan configuration) of
+    Left err -> dieText (renderReportPlanError err)
+    Right value -> pure value
+  renderCanonicalReportBook
+    (reportConfigurationPresentation configuration)
+    (rangeEnd dateRange)
+    (reportBook dateRange journal)
+    state
+
+loadCanonicalReportState :: FilePath -> IO HouseholdState
+loadCanonicalReportState directory = do
+  root <- case mkHouseholdRoot directory of
+    Left _ -> dieText "invalid Household root directory"
+    Right value -> pure value
+  result <- loadCanonicalHousehold root
+  case result of
+    Left errors -> dieText
+      ("canonical household loading failed:\n"
+        <> T.unlines (map (("  - " <>) . tshow) (NonEmpty.toList errors)))
+    Right state -> pure state
+
+loadCanonicalReportConfiguration :: HouseholdState -> IO ReportConfiguration
+loadCanonicalReportConfiguration state = do
+  configured <- lookupEnv "HKERNEL_REPORT_CONFIG"
+  case configured of
+    Just path
+      | normalise path /= normalise canonicalPath ->
+          loadReportConfigurationAt path
+    _ -> pure (householdStateReportConfig state)
+  where
+    canonicalPath = householdReportConfigPath (householdStatePaths state)
+
+renderCanonicalReportBook
+  :: PresentationConfig
+  -> Day
+  -> ReportBook
+  -> HouseholdState
+  -> IO ()
+renderCanonicalReportBook presentation observation book state =
+  case buildHouseholdReportSurfaceFromHousehold observation state of
+    Left errors -> dieText
+      ("household report surface calculation failed:\n"
+        <> T.unlines (map (("  - " <>) . tshow) (NonEmpty.toList errors)))
+    Right surface -> TIO.putStr
+      (renderReportBookWithHouseholdPresentation presentation book surface)
 
 applyReportPlanResolved :: ResolvedReportPlan -> JournalCommand -> JournalCommand
 applyReportPlanResolved plan command = case command of
@@ -126,32 +204,31 @@ applyReportPlanResolved plan command = case command of
     RunRecentTransactions DefaultedDate (resolvedRecentTransactionsAsOf plan)
   other -> other
 
-loadReportConfiguration :: IO (Maybe ReportConfiguration)
-loadReportConfiguration = do
-  configPath <- resolveReportConfigPath
-  case configPath of
-    Nothing -> pure Nothing
-    Just path -> do
-      readResult <- tryIOError (TIO.readFile path)
-      configText <- case readResult of
-        Left err -> dieText
-          ("cannot read report configuration ‘" <> T.pack path <> "’: "
-            <> tshow err)
-        Right value -> pure value
-      configuration <- case parseReportConfiguration configText of
-        Left errors -> dieText
-          ("report configuration failed in ‘" <> T.pack path <> "’:\n"
-            <> renderReportConfigErrors errors)
-        Right value -> pure value
-      pure (Just configuration)
+loadReportConfiguration :: Maybe FilePath -> IO (Maybe ReportConfiguration)
+loadReportConfiguration householdDirectory = do
+  configPath <- resolveReportConfigPath householdDirectory
+  traverse loadReportConfigurationAt configPath
 
-runDefaultReportBook
+loadReportConfigurationAt :: FilePath -> IO ReportConfiguration
+loadReportConfigurationAt path = do
+  readResult <- tryIOError (TIO.readFile path)
+  configText <- case readResult of
+    Left err -> dieText
+      ("cannot read report configuration ‘" <> T.pack path <> "’: "
+        <> tshow err)
+    Right value -> pure value
+  case parseReportConfiguration configText of
+    Left errors -> dieText
+      ("report configuration failed in ‘" <> T.pack path <> "’:\n"
+        <> renderReportConfigErrors errors)
+    Right value -> pure value
+
+runDefaultJournalReportBook
   :: Day
   -> Journal
-  -> Maybe FilePath
   -> Maybe ReportConfiguration
   -> IO ()
-runDefaultReportBook latest journal householdDirectory configuration = do
+runDefaultJournalReportBook latest journal configuration = do
   resolvedPlan <- case configuration of
     Nothing -> pure (defaultResolvedReportPlan latest)
     Just configured -> case resolveReportPlan
@@ -160,61 +237,33 @@ runDefaultReportBook latest journal householdDirectory configuration = do
       Right value -> pure value
   let presentation = maybe defaultPresentationConfig
         reportConfigurationPresentation configuration
-  runCombinedReport
-    presentation
-    (resolvedTrialBalanceAsOf resolvedPlan)
-    (reportBookWithPlan resolvedPlan journal)
-    journal
-    householdDirectory
+  TIO.putStr
+    (renderReportBookWithPresentation
+      presentation (reportBookWithPlan resolvedPlan journal))
 
-runCombinedReport
-  :: PresentationConfig
-  -> Day
-  -> ReportBook
-  -> Journal
-  -> Maybe FilePath
-  -> IO ()
-runCombinedReport presentation observation book journal householdDirectory =
-  case householdDirectory of
-    Nothing -> TIO.putStr (renderReportBookWithPresentation presentation book)
-    Just directory -> do
-      household <- loadHouseholdReportSurface directory observation journal
-      TIO.putStr
-        (renderReportBookWithHouseholdPresentation presentation book household)
-
-loadHouseholdReportSurface
-  :: FilePath
-  -> Day
-  -> Journal
-  -> IO HouseholdReportSurface
-loadHouseholdReportSurface directory observation journal = do
-  root <- case mkHouseholdRoot directory of
-    Left _ -> dieText "invalid Household root directory"
-    Right r -> pure r
-  householdResult <- loadCanonicalHousehold root
-  state <- case householdResult of
-    Left errors -> dieText
-      ("canonical household loading failed:\n"
-        <> T.unlines (map (("  - " <>) . tshow) (NonEmpty.toList errors)))
-    Right s -> pure s
-  if actualJournalValue (householdStateActualJournal state) == journal
-    then pure ()
-    else dieText
-      "actual.journal changed between accounting load and completion admission"
-  case buildHouseholdReportSurfaceFromHousehold observation state of
-    Left errors -> dieText
-      ("household report surface calculation failed:\n"
-        <> T.unlines (map (("  - " <>) . tshow) (NonEmpty.toList errors)))
-    Right surface -> pure surface
-
-resolveReportConfigPath :: IO (Maybe FilePath)
-resolveReportConfigPath = do
+resolveReportConfigPath :: Maybe FilePath -> IO (Maybe FilePath)
+resolveReportConfigPath householdDirectory = do
   configured <- lookupEnv "HKERNEL_REPORT_CONFIG"
   case configured of
     Just path -> pure (Just path)
     Nothing -> do
-      exists <- doesFileExist defaultReportConfigPath
-      pure (if exists then Just defaultReportConfigPath else Nothing)
+      householdPath <- case householdDirectory of
+        Nothing -> pure Nothing
+        Just directory -> existingHouseholdReportConfigPath directory
+      case householdPath of
+        Just path -> pure (Just path)
+        Nothing -> do
+          exists <- doesFileExist defaultReportConfigPath
+          pure (if exists then Just defaultReportConfigPath else Nothing)
+
+existingHouseholdReportConfigPath :: FilePath -> IO (Maybe FilePath)
+existingHouseholdReportConfigPath directory =
+  case mkHouseholdRoot directory of
+    Left _ -> pure Nothing
+    Right root -> do
+      let path = householdReportConfigPath (householdSourcePaths root)
+      exists <- doesFileExist path
+      pure (if exists then Just path else Nothing)
 
 defaultReportConfigPath :: FilePath
 defaultReportConfigPath = "report.toml"
