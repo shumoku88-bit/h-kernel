@@ -80,6 +80,7 @@ import HKernel.Editor.IssueAppend
   , IssueDueUpdatePreview(..)
   , generateAvailableIssueId
   , prepareIssueAppendWithDue
+  , prepareIssueClose
   , prepareIssueCloseOn
   , prepareIssueDueUpdate
   )
@@ -101,6 +102,7 @@ import HKernel.Household.Application
   , loadCanonicalHousehold
   )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
+import HKernel.Household.Issue.TSV (householdIssueSourceUsesClosedColumn)
 import HKernel.HouseholdIssue
   ( HouseholdIssue
   , IssueClosed(..)
@@ -435,7 +437,8 @@ drawFlow state = case state of
     (case disposition of ResolveIssue -> "Resolve Issue"; DropIssue -> "Drop Issue")
     form
     [ "Selected: " <> T.unpack (issueIdText (householdIssueId issue))
-    , "Closed: YYYY-MM-DD; blank uses today's entry date."
+    , "Closed: YYYY-MM-DD; blank uses today's entry date on the current schema."
+    , "Older 8/9-column sources may close only with this field blank."
     , "[Tab] Next field   [Enter] Preview   [Esc] Back"
     ]
   IssueClosePreviewState _ _ result _ ->
@@ -684,17 +687,27 @@ prepareSelectedIssueClose
   -> IssueCloseDisposition
   -> IssueCloseInput
   -> Either Text IssueClosePreview
-prepareSelectedIssueClose context issue disposition input = do
-  closedOn <- parseIssueDayInput
-    (contextEntryDay context) "Closed" (issueClosedDateText input)
-  let intent = IssueCloseIntent
-        { closeIssueId = householdIssueId issue
-        , closeDisposition = disposition
-        , closeDecisionMemo = issueDecisionMemoText input
-        }
-  case prepareIssueCloseOn (contextIssuesSource context) closedOn intent of
-    Left errors -> Left ("Issue close rejected: " <> showText (NonEmpty.toList errors))
-    Right preview -> Right preview
+prepareSelectedIssueClose context issue disposition input =
+  if householdIssueSourceUsesClosedColumn source
+    then do
+      closedOn <- parseIssueDayInput
+        (contextEntryDay context) "Closed" rawClosed
+      finish (prepareIssueCloseOn source closedOn intent)
+    else if T.null rawClosed
+      then finish (prepareIssueClose source intent)
+      else Left
+        "Issue close rejected: the current issues.tsv has no closed column; migrate the source before storing a close date."
+  where
+    source = contextIssuesSource context
+    rawClosed = T.strip (issueClosedDateText input)
+    intent = IssueCloseIntent
+      { closeIssueId = householdIssueId issue
+      , closeDisposition = disposition
+      , closeDecisionMemo = issueDecisionMemoText input
+      }
+    finish result = case result of
+      Left errors -> Left ("Issue close rejected: " <> showText (NonEmpty.toList errors))
+      Right preview -> Right preview
 
 parseIssueDayInput :: Day -> Text -> Text -> Either Text Day
 parseIssueDayInput fallback label input
