@@ -12,13 +12,16 @@ module HKernel.HouseholdIssue
   , issueIdText
   , IssueStatus(..)
   , IssueDue(..)
+  , IssueClosed(..)
   , HouseholdIssue
   , HouseholdIssueError(..)
   , mkHouseholdIssue
+  , mkHouseholdIssueWithClosed
   , householdIssueId
   , householdIssueRecordedOn
   , householdIssueStatus
   , householdIssueDue
+  , householdIssueClosed
   , householdIssueAmount
   , householdIssueText
   , householdIssueDetails
@@ -59,10 +62,28 @@ data IssueStatus
   | Dropped
   deriving (Eq, Ord, Show)
 
--- | Either one known due date or an explicit statement that it is not yet known.
+-- | Time meaning for one Issue, independent from its category and lifecycle.
+--
+-- 'NoDueDate' explicitly records that the matter has no deadline.
+-- 'DueUndetermined' records that a due date is not yet known. These are not the
+-- same meaning: a Want may have no deadline until a later opportunity creates
+-- one, while another matter may be waiting for its deadline to be determined.
 data IssueDue
   = DueOn Day
+  | NoDueDate
   | DueUndetermined
+  deriving (Eq, Ord, Show)
+
+-- | Closure-time evidence, independent from the due coordinate.
+--
+-- 'NotClosed' is the positive lifecycle meaning for an open Issue.
+-- 'ClosedUndetermined' preserves historical closed Issues whose older source
+-- shape carried status but no closure date. New close operations on the current
+-- source record 'ClosedOn' explicitly instead of rewriting missing history.
+data IssueClosed
+  = ClosedOn Day
+  | NotClosed
+  | ClosedUndetermined
   deriving (Eq, Ord, Show)
 
 -- | One small household notebook entry.
@@ -75,6 +96,7 @@ data HouseholdIssue = HouseholdIssue
   , householdIssueRecordedOn :: Day
   , householdIssueStatus     :: IssueStatus
   , householdIssueDue        :: IssueDue
+  , householdIssueClosed     :: IssueClosed
   , householdIssueAmount     :: Maybe Amount
   , householdIssueText       :: Text
   , householdIssueDetails    :: Text
@@ -86,8 +108,14 @@ data HouseholdIssueError
   | HouseholdIssueTextContainsControlCharacter Text
   | HouseholdIssueDetailsHasSurroundingWhitespace Text
   | HouseholdIssueDetailsContainsControlCharacter Text
+  | OpenHouseholdIssueHasClosureEvidence IssueClosed
+  | ClosedHouseholdIssueHasNoClosureEvidence IssueStatus
+  | HouseholdIssueClosedBeforeRecorded Day Day
   deriving (Eq, Show)
 
+-- | Compatibility constructor for callers that predate the explicit closure
+-- coordinate. Open Issues are known not closed; already closed Issues retain
+-- missing historical closure evidence as 'ClosedUndetermined'.
 mkHouseholdIssue
   :: IssueId
   -> Day
@@ -97,7 +125,29 @@ mkHouseholdIssue
   -> Text
   -> Text
   -> Either HouseholdIssueError HouseholdIssue
-mkHouseholdIssue issueId recordedOn status due amount text details
+mkHouseholdIssue issueId recordedOn status due amount text details =
+  mkHouseholdIssueWithClosed
+    issueId recordedOn status due compatibilityClosed amount text details
+  where
+    compatibilityClosed = case status of
+      Open -> NotClosed
+      Resolved -> ClosedUndetermined
+      Dropped -> ClosedUndetermined
+
+-- | Construct one Issue with explicit recorded, due, and closure time meaning.
+-- Status and closure evidence must agree, and a known closure date cannot
+-- precede the recorded date.
+mkHouseholdIssueWithClosed
+  :: IssueId
+  -> Day
+  -> IssueStatus
+  -> IssueDue
+  -> IssueClosed
+  -> Maybe Amount
+  -> Text
+  -> Text
+  -> Either HouseholdIssueError HouseholdIssue
+mkHouseholdIssueWithClosed issueId recordedOn status due closed amount text details
   | T.null text = Left EmptyHouseholdIssueText
   | T.strip text /= text =
       Left (HouseholdIssueTextHasSurroundingWhitespace text)
@@ -107,11 +157,19 @@ mkHouseholdIssue issueId recordedOn status due amount text details
       Left (HouseholdIssueDetailsHasSurroundingWhitespace details)
   | T.any isControl details =
       Left (HouseholdIssueDetailsContainsControlCharacter details)
+  | status == Open && closed /= NotClosed =
+      Left (OpenHouseholdIssueHasClosureEvidence closed)
+  | status /= Open && closed == NotClosed =
+      Left (ClosedHouseholdIssueHasNoClosureEvidence status)
+  | ClosedOn closedOn <- closed
+  , closedOn < recordedOn =
+      Left (HouseholdIssueClosedBeforeRecorded recordedOn closedOn)
   | otherwise = Right HouseholdIssue
       { householdIssueId = issueId
       , householdIssueRecordedOn = recordedOn
       , householdIssueStatus = status
       , householdIssueDue = due
+      , householdIssueClosed = closed
       , householdIssueAmount = amount
       , householdIssueText = text
       , householdIssueDetails = details

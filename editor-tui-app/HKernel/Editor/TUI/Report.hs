@@ -71,6 +71,9 @@ drawPicker choices =
               <=> str " "
               <=> str "[wheel/↑/↓ or j/k] Move   [click/Enter] Open   [Esc] Back   [Q] Quit")))))
 
+-- | Reports exposed by the interactive TUI. Object-oriented views such as
+-- Actual history, Plans, and Issues stay in their owning workspace sections;
+-- broader renderers remain available to CLI/export publication paths.
 reportChoices :: [ReportChoice]
 reportChoices =
   [ ReportTrialBalance
@@ -80,11 +83,7 @@ reportChoices =
   , ReportMonthlyAccounts
   , ReportHousehold HouseholdCycleAccounts
   , ReportHousehold HouseholdDailyTarget
-  , ReportHousehold HouseholdPlannedTransactions
-  , ReportHousehold (HouseholdIssues OpenIssuesOnly)
   , ReportHousehold HouseholdEnvelopeBacking
-  , ReportRecentTransactions
-  , ReportCombinedBook
   ]
 
 reportChoiceIndex :: ReportChoice -> Int
@@ -113,10 +112,7 @@ reportSelectionForKey current key = case key of
   'm' -> Just ReportMonthlyAccounts
   'c' -> Just (ReportHousehold HouseholdCycleAccounts)
   'T' -> Just (ReportHousehold HouseholdDailyTarget)
-  'P' -> Just (ReportHousehold HouseholdPlannedTransactions)
   'E' -> Just (ReportHousehold HouseholdEnvelopeBacking)
-  'a' -> Just ReportRecentTransactions
-  'h' -> Just ReportCombinedBook
   'r' -> Just (cycleReport current)
   'R' -> Just (cycleReportBack current)
   _ -> Nothing
@@ -196,7 +192,9 @@ cycleReport choice = go reportChoices
       | otherwise = go (next : rest)
 
 cycleReportBack :: ReportChoice -> ReportChoice
-cycleReportBack choice = go ReportCombinedBook reportChoices
+cycleReportBack choice = case reverse reportChoices of
+  [] -> ReportTrialBalance
+  lastChoice : _ -> go lastChoice reportChoices
   where
     go previous [] = previous
     go previous (current : rest)

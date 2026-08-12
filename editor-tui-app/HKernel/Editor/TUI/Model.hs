@@ -99,11 +99,14 @@ data Name
   | AccountTypeField
   | AccountCommodityField
   | IssueList
+  | IssueRecordedDateField
   | IssueCategoryField
   | IssueTitleField
+  | IssueDueField
   | IssueAmountField
   | IssueCommodityField
   | IssueDetailsField
+  | IssueClosedDateField
   | IssueDecisionMemoField
   | ReportPickerList
   | BudgetViewport

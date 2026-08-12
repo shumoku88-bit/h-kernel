@@ -7,7 +7,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Time.Calendar (fromGregorian)
+import Data.Time.Calendar (Day, fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Editor.SourcePublication
@@ -19,27 +19,41 @@ import HKernel.Editor.SourcePublication
   , publishWithAdmission
   )
 import HKernel.Editor.IssueAppend
-  ( IssueAppendIntent(..)
+  ( IssueAppendError(..)
+  , IssueAppendIntent(..)
   , IssueAppendPreview(..)
   , IssueCloseDisposition(..)
   , IssueCloseError(..)
   , IssueCloseIntent(..)
   , IssueClosePreview(..)
+  , IssueDueUpdateError(..)
+  , IssueDueUpdateIntent(..)
+  , IssueDueUpdatePreview(..)
   , generateAvailableIssueId
   , prepareIssueAppend
+  , prepareIssueAppendWithDue
   , prepareIssueClose
+  , prepareIssueCloseOn
+  , prepareIssueDueUpdate
   )
 import HKernel.Household.Issue.TSV
-  ( householdIssuesHeader
+  ( dueAwareHouseholdIssuesHeader
+  , householdIssuesHeader
+  , legacyHouseholdIssuesHeader
   , parseHouseholdIssues
   )
 import HKernel.HouseholdIssue
   ( HouseholdIssue
+  , IssueClosed(..)
+  , IssueDue(..)
   , IssueId
   , IssueStatus(..)
   , householdIssueAmount
+  , householdIssueClosed
   , householdIssueDetails
+  , householdIssueDue
   , householdIssueId
+  , householdIssueRecordedOn
   , householdIssueStatus
   , mkIssueId
   )
@@ -55,53 +69,76 @@ main = do
   let tests =
         [ ("testGeneratedIssueIdStartsAtOne", pure testGeneratedIssueIdStartsAtOne)
         , ("testGeneratedIssueIdSkipsExisting", pure testGeneratedIssueIdSkipsExisting)
-        , ("testValidIssueAppend", pure testValidIssueAppend)
+        , ("testCurrentAppendWritesNotClosed", pure testCurrentAppendWritesNotClosed)
+        , ("testExplicitNoDueAppend", pure testExplicitNoDueAppend)
+        , ("testExplicitKnownDueAppend", pure testExplicitKnownDueAppend)
         , ("testOptionalAmountAppend", pure testOptionalAmountAppend)
-        , ("testEmptySourceAddsHeader", pure testEmptySourceAddsHeader)
-        , ("testCommentOnlySourceAddsHeader", pure testCommentOnlySourceAddsHeader)
+        , ("testEmptySourceAddsCurrentHeader", pure testEmptySourceAddsCurrentHeader)
+        , ("testCommentOnlySourceAddsCurrentHeader", pure testCommentOnlySourceAddsCurrentHeader)
+        , ("testDueAwareAppendPreservesShape", pure testDueAwareAppendPreservesShape)
+        , ("testLegacyAppendPreservesShape", pure testLegacyAppendPreservesShape)
+        , ("testLegacyExplicitDueRejected", pure testLegacyExplicitDueRejected)
         , ("testOneSidedBlankAmountRejected", pure testOneSidedBlankAmountRejected)
-        , ("testResolveIssueByIdentity", pure testResolveIssueByIdentity)
-        , ("testDropIssueByIdentity", pure testDropIssueByIdentity)
-        , ("testIssueClosePreservesUntouchedBytes", pure testIssueClosePreservesUntouchedBytes)
-        , ("testIssueCloseRejectsUnknownIdentity", pure testIssueCloseRejectsUnknownIdentity)
-        , ("testIssueCloseRejectsClosedIssue", pure testIssueCloseRejectsClosedIssue)
-        , ("testIssueCloseRejectsBlankMemo", pure testIssueCloseRejectsBlankMemo)
-        , ("testIssueCloseRejectsControlMemo", pure testIssueCloseRejectsControlMemo)
-        , ("testIssueCommit", testIssueCommit)
+        , ("testDueUpdateChangesOnlyDue", pure testDueUpdateChangesOnlyDue)
+        , ("testDueUpdateToKnownDate", pure testDueUpdateToKnownDate)
+        , ("testDueUpdateRejectsUnknownIdentity", pure testDueUpdateRejectsUnknownIdentity)
+        , ("testDueUpdateRejectsClosedIssue", pure testDueUpdateRejectsClosedIssue)
+        , ("testDueUpdateRejectsLegacySource", pure testDueUpdateRejectsLegacySource)
+        , ("testCloseRequiresDateForCurrentSource", pure testCloseRequiresDateForCurrentSource)
+        , ("testCloseDateRejectedOnDueAwareSource", pure testCloseDateRejectedOnDueAwareSource)
+        , ("testResolveIssueRecordsClosedDate", pure testResolveIssueRecordsClosedDate)
+        , ("testDropIssueRecordsClosedDate", pure testDropIssueRecordsClosedDate)
+        , ("testClosePreservesUntouchedBytesAndDue", pure testClosePreservesUntouchedBytesAndDue)
+        , ("testCloseRejectsDateBeforeRecorded", pure testCloseRejectsDateBeforeRecorded)
+        , ("testDueAwareClosePreservesHistoricalShape", pure testDueAwareClosePreservesHistoricalShape)
+        , ("testLegacyClosePreservesHistoricalShape", pure testLegacyClosePreservesHistoricalShape)
+        , ("testCloseRejectsUnknownIdentity", pure testCloseRejectsUnknownIdentity)
+        , ("testCloseRejectsClosedIssue", pure testCloseRejectsClosedIssue)
+        , ("testCloseRejectsBlankMemo", pure testCloseRejectsBlankMemo)
+        , ("testCloseRejectsControlMemo", pure testCloseRejectsControlMemo)
+        , ("testIssueAppendCommit", testIssueAppendCommit)
         , ("testEmptyIssueCommit", testEmptyIssueCommit)
+        , ("testIssueDueUpdateCommit", testIssueDueUpdateCommit)
         , ("testIssueCloseCommit", testIssueCloseCommit)
         ]
   results <- sequence [action | (_, action) <- tests]
   let namedResults = zip (map fst tests) results
   mapM_ print namedResults
-  if all snd namedResults
-    then exitSuccess
-    else exitFailure
+  if all snd namedResults then exitSuccess else exitFailure
 
-fixtureSource :: Text
-fixtureSource = T.unlines
-  [ householdIssuesHeader
-  , "ISSUE-1\topen\t2026-08-01\tmisc\tSome title\t1000\tJPY\tsome details"
-  ]
-
-closeFixtureSource :: Text
-closeFixtureSource =
+currentFixtureSource :: Text
+currentFixtureSource =
   "# keep this notebook note\n"
     <> householdIssuesHeader <> "\n"
+    <> "ISSUE-1\topen\t2026-08-01\t2026-08-15\tnone\tmisc\tSome title\t1000\tJPY\tsome details\n"
+    <> "ISSUE-2\topen\t2026-08-02\tnone\tnone\thome\tOther title\t\t\tother details\n"
+
+closedFixtureSource :: Text
+closedFixtureSource =
+  householdIssuesHeader <> "\n"
+    <> "ISSUE-1\tresolved\t2026-08-01\t2026-08-15\t2026-08-08\tmisc\tSome title\t1000\tJPY\tsome details\n"
+
+dueAwareFixtureSource :: Text
+dueAwareFixtureSource =
+  "# keep this notebook note\n"
+    <> dueAwareHouseholdIssuesHeader <> "\n"
+    <> "ISSUE-1\topen\t2026-08-01\t2026-08-15\tmisc\tSome title\t1000\tJPY\tsome details\n"
+    <> "ISSUE-2\topen\t2026-08-02\tnone\thome\tOther title\t\t\tother details\n"
+
+legacyFixtureSource :: Text
+legacyFixtureSource =
+  legacyHouseholdIssuesHeader <> "\n"
     <> "ISSUE-1\topen\t2026-08-01\tmisc\tSome title\t1000\tJPY\tsome details\n"
-    <> "ISSUE-2\topen\t2026-08-02\thome\tOther title\t\t\tother details\n"
 
 testIntent :: IssueAppendIntent
 testIntent = IssueAppendIntent
-  { intentIssueId = mustIssueId "ISSUE-2"
+  { intentIssueId = mustIssueId "ISSUE-3"
   , intentStatus = Open
   , intentDate = fromGregorian 2026 8 4
   , intentCategory = "groceries"
   , intentTitle = "Buy milk"
   , intentAmount = Just
-      (mkAmount
-        (mustCommodity "JPY")
-        (quantityFromInteger 500))
+      (mkAmount (mustCommodity "JPY") (quantityFromInteger 500))
   , intentDetails = "need it for breakfast"
   }
 
@@ -120,15 +157,18 @@ resolveIntent :: IssueCloseIntent
 resolveIntent = IssueCloseIntent
   { closeIssueId = mustIssueId "ISSUE-1"
   , closeDisposition = ResolveIssue
-  , closeDecisionMemo = "2026-08-08 fixed by provider"
+  , closeDecisionMemo = "fixed by provider"
   }
 
 dropIntent :: IssueCloseIntent
 dropIntent = IssueCloseIntent
   { closeIssueId = mustIssueId "ISSUE-2"
   , closeDisposition = DropIssue
-  , closeDecisionMemo = "2026-08-08 no longer needed"
+  , closeDecisionMemo = "no longer needed"
   }
+
+closeDay :: Day
+closeDay = fromGregorian 2026 8 8
 
 testGeneratedIssueIdStartsAtOne :: Bool
 testGeneratedIssueIdStartsAtOne =
@@ -147,39 +187,112 @@ testGeneratedIssueIdSkipsExisting =
     Right identifier -> identifier == mustIssueId "ISS20260811-3"
     Left err -> error (show err)
 
-testValidIssueAppend :: Bool
-testValidIssueAppend =
-  case prepareIssueAppend fixtureSource testIntent of
+testCurrentAppendWritesNotClosed :: Bool
+testCurrentAppendWritesNotClosed =
+  case prepareIssueAppend currentFixtureSource testIntent of
+    Left err -> error (show err)
     Right preview ->
       candidateBlock preview
-        == "ISSUE-2\topen\t2026-08-04\tgroceries\tBuy milk\t500\tJPY\tneed it for breakfast"
+        == "ISSUE-3\topen\t2026-08-04\tundetermined\tnone\tgroceries\tBuy milk\t500\tJPY\tneed it for breakfast"
+      && case findIssueById (mustIssueId "ISSUE-3")
+          (candidateCompleteSource preview) of
+        Just issue ->
+          householdIssueRecordedOn issue == fromGregorian 2026 8 4
+            && householdIssueDue issue == DueUndetermined
+            && householdIssueClosed issue == NotClosed
+        Nothing -> False
+
+testExplicitNoDueAppend :: Bool
+testExplicitNoDueAppend =
+  case prepareIssueAppendWithDue currentFixtureSource NoDueDate testIntent of
     Left err -> error (show err)
+    Right preview ->
+      "\tnone\tnone\tgroceries\t" `T.isInfixOf` candidateBlock preview
+        && case findIssueById (mustIssueId "ISSUE-3")
+            (candidateCompleteSource preview) of
+          Just issue ->
+            householdIssueDue issue == NoDueDate
+              && householdIssueClosed issue == NotClosed
+          Nothing -> False
+
+testExplicitKnownDueAppend :: Bool
+testExplicitKnownDueAppend =
+  let due = DueOn (fromGregorian 2026 8 15)
+  in case prepareIssueAppendWithDue currentFixtureSource due testIntent of
+    Left err -> error (show err)
+    Right preview ->
+      "\t2026-08-15\tnone\tgroceries\t" `T.isInfixOf` candidateBlock preview
+        && case findIssueById (mustIssueId "ISSUE-3")
+            (candidateCompleteSource preview) of
+          Just issue -> householdIssueDue issue == due
+          Nothing -> False
 
 testOptionalAmountAppend :: Bool
 testOptionalAmountAppend =
-  case prepareIssueAppend fixtureSource optionalAmountIntent of
+  case prepareIssueAppend currentFixtureSource optionalAmountIntent of
     Left err -> error (show err)
-    Right preview ->
-      candidateBlock preview
-        == "ISSUE-3\topen\t2026-08-05\thome\tCheck the boiler\t\t\tcost is not known yet"
-      && parsedOptionalIssueMatches preview
+    Right preview -> case findIssueById (mustIssueId "ISSUE-3")
+        (candidateCompleteSource preview) of
+      Just issue ->
+        householdIssueAmount issue == Nothing
+          && householdIssueClosed issue == NotClosed
+      Nothing -> False
 
-testEmptySourceAddsHeader :: Bool
-testEmptySourceAddsHeader =
+testEmptySourceAddsCurrentHeader :: Bool
+testEmptySourceAddsCurrentHeader =
   case prepareIssueAppend "" optionalAmountIntent of
     Left err -> error (show err)
     Right preview ->
       candidateCompleteSource preview
         == householdIssuesHeader <> "\n" <> candidateBlock preview
-      && parsedOptionalIssueMatches preview
+        && length (T.splitOn "\t" (candidateBlock preview)) == 10
+        && "\tundetermined\tnone\thome\t" `T.isInfixOf` candidateBlock preview
+        && parsedOptionalIssueMatches preview
 
-testCommentOnlySourceAddsHeader :: Bool
-testCommentOnlySourceAddsHeader =
+testCommentOnlySourceAddsCurrentHeader :: Bool
+testCommentOnlySourceAddsCurrentHeader =
   case prepareIssueAppend "# retained notebook note\n" optionalAmountIntent of
     Left err -> error (show err)
     Right preview ->
       householdIssuesHeader `T.isInfixOf` candidateCompleteSource preview
-      && parsedOptionalIssueMatches preview
+        && parsedOptionalIssueMatches preview
+
+testDueAwareAppendPreservesShape :: Bool
+testDueAwareAppendPreservesShape =
+  case prepareIssueAppend dueAwareFixtureSource testIntent of
+    Left err -> error (show err)
+    Right preview ->
+      length (T.splitOn "\t" (candidateBlock preview)) == 9
+        && dueAwareHouseholdIssuesHeader `T.isInfixOf` candidateCompleteSource preview
+        && case findIssueById (mustIssueId "ISSUE-3")
+            (candidateCompleteSource preview) of
+          Just issue ->
+            householdIssueDue issue == DueUndetermined
+              && householdIssueClosed issue == NotClosed
+          Nothing -> False
+
+testLegacyAppendPreservesShape :: Bool
+testLegacyAppendPreservesShape =
+  case prepareIssueAppend legacyFixtureSource testIntent of
+    Left err -> error (show err)
+    Right preview ->
+      candidateBlock preview
+        == "ISSUE-3\topen\t2026-08-04\tgroceries\tBuy milk\t500\tJPY\tneed it for breakfast"
+        && length (T.splitOn "\t" (candidateBlock preview)) == 8
+        && legacyHouseholdIssuesHeader `T.isPrefixOf` candidateCompleteSource preview
+        && case findIssueById (mustIssueId "ISSUE-3")
+            (candidateCompleteSource preview) of
+          Just issue ->
+            householdIssueDue issue == DueUndetermined
+              && householdIssueClosed issue == NotClosed
+          Nothing -> False
+
+testLegacyExplicitDueRejected :: Bool
+testLegacyExplicitDueRejected =
+  case prepareIssueAppendWithDue legacyFixtureSource NoDueDate testIntent of
+    Left errors ->
+      LegacyIssueSourceCannotRepresentDue NoDueDate `elem` NonEmpty.toList errors
+    Right _ -> False
 
 testOneSidedBlankAmountRejected :: Bool
 testOneSidedBlankAmountRejected =
@@ -189,7 +302,7 @@ testOneSidedBlankAmountRejected =
   where
     oneSidedBlankSource = T.unlines
       [ householdIssuesHeader
-      , "ISSUE-4\topen\t2026-08-05\thome\tBroken latch\t\tJPY\tinspect first"
+      , "ISSUE-4\topen\t2026-08-05\tnone\tnone\thome\tBroken latch\t\tJPY\tinspect first"
       ]
 
 parsedOptionalIssueMatches :: IssueAppendPreview -> Bool
@@ -199,51 +312,187 @@ parsedOptionalIssueMatches preview =
       issue : _ ->
         householdIssueId issue == intentIssueId optionalAmountIntent
           && householdIssueAmount issue == Nothing
+          && householdIssueDue issue == DueUndetermined
+          && householdIssueClosed issue == NotClosed
       [] -> False
     Left _ -> False
 
-testResolveIssueByIdentity :: Bool
-testResolveIssueByIdentity =
-  case prepareIssueClose closeFixtureSource resolveIntent of
+testDueUpdateChangesOnlyDue :: Bool
+testDueUpdateChangesOnlyDue =
+  let intent = IssueDueUpdateIntent
+        { dueUpdateIssueId = mustIssueId "ISSUE-1"
+        , dueUpdateValue = NoDueDate
+        }
+  in case prepareIssueDueUpdate currentFixtureSource intent of
     Left err -> error (show err)
     Right preview ->
-      closeOriginalRow preview
-        == "ISSUE-1\topen\t2026-08-01\tmisc\tSome title\t1000\tJPY\tsome details"
-      && closeCandidateRow preview
-        == "ISSUE-1\tresolved\t2026-08-01\tmisc\tSome title\t1000\tJPY\tsome details。Decision: 2026-08-08 fixed by provider"
-      && case findIssueById (mustIssueId "ISSUE-1")
-          (closeCandidateCompleteSource preview) of
-        Just issue ->
-          householdIssueStatus issue == Resolved
-            && householdIssueDetails issue
-              == "[misc] some details。Decision: 2026-08-08 fixed by provider"
-        Nothing -> False
+      dueUpdateOriginalRow preview
+        == "ISSUE-1\topen\t2026-08-01\t2026-08-15\tnone\tmisc\tSome title\t1000\tJPY\tsome details"
+        && dueUpdateCandidateRow preview
+          == "ISSUE-1\topen\t2026-08-01\tnone\tnone\tmisc\tSome title\t1000\tJPY\tsome details"
+        && "# keep this notebook note\n" `T.isPrefixOf`
+          dueUpdateCandidateCompleteSource preview
+        && "ISSUE-2\topen\t2026-08-02\tnone\tnone\thome\tOther title\t\t\tother details\n"
+          `T.isInfixOf` dueUpdateCandidateCompleteSource preview
+        && "\n" `T.isSuffixOf` dueUpdateCandidateCompleteSource preview
+        && case findIssueById (mustIssueId "ISSUE-1")
+            (dueUpdateCandidateCompleteSource preview) of
+          Just issue ->
+            householdIssueDue issue == NoDueDate
+              && householdIssueClosed issue == NotClosed
+          Nothing -> False
 
-testDropIssueByIdentity :: Bool
-testDropIssueByIdentity =
-  case prepareIssueClose closeFixtureSource dropIntent of
+testDueUpdateToKnownDate :: Bool
+testDueUpdateToKnownDate =
+  let due = DueOn (fromGregorian 2026 8 20)
+      intent = IssueDueUpdateIntent
+        { dueUpdateIssueId = mustIssueId "ISSUE-2"
+        , dueUpdateValue = due
+        }
+  in case prepareIssueDueUpdate currentFixtureSource intent of
+    Left err -> error (show err)
+    Right preview ->
+      dueUpdateCandidateRow preview
+        == "ISSUE-2\topen\t2026-08-02\t2026-08-20\tnone\thome\tOther title\t\t\tother details"
+        && case findIssueById (mustIssueId "ISSUE-2")
+            (dueUpdateCandidateCompleteSource preview) of
+          Just issue ->
+            householdIssueDue issue == due
+              && householdIssueClosed issue == NotClosed
+          Nothing -> False
+
+testDueUpdateRejectsUnknownIdentity :: Bool
+testDueUpdateRejectsUnknownIdentity =
+  case prepareIssueDueUpdate currentFixtureSource
+      IssueDueUpdateIntent
+        { dueUpdateIssueId = mustIssueId "ISSUE-MISSING"
+        , dueUpdateValue = NoDueDate
+        } of
+    Left errors -> any isNotFound (NonEmpty.toList errors)
+    Right _ -> False
+  where
+    isNotFound (DueUpdateIssueNotFound identifier) =
+      identifier == mustIssueId "ISSUE-MISSING"
+    isNotFound _ = False
+
+testDueUpdateRejectsClosedIssue :: Bool
+testDueUpdateRejectsClosedIssue =
+  case prepareIssueDueUpdate closedFixtureSource
+      IssueDueUpdateIntent
+        { dueUpdateIssueId = mustIssueId "ISSUE-1"
+        , dueUpdateValue = NoDueDate
+        } of
+    Left errors -> DueUpdateIssueNotOpen Resolved `elem` NonEmpty.toList errors
+    Right _ -> False
+
+testDueUpdateRejectsLegacySource :: Bool
+testDueUpdateRejectsLegacySource =
+  case prepareIssueDueUpdate legacyFixtureSource
+      IssueDueUpdateIntent
+        { dueUpdateIssueId = mustIssueId "ISSUE-1"
+        , dueUpdateValue = NoDueDate
+        } of
+    Left errors -> DueUpdateRequiresDueAwareSource `elem` NonEmpty.toList errors
+    Right _ -> False
+
+testCloseRequiresDateForCurrentSource :: Bool
+testCloseRequiresDateForCurrentSource =
+  case prepareIssueClose currentFixtureSource resolveIntent of
+    Left errors ->
+      CloseDateRequiredForClosedAwareSource `elem` NonEmpty.toList errors
+    Right _ -> False
+
+testCloseDateRejectedOnDueAwareSource :: Bool
+testCloseDateRejectedOnDueAwareSource =
+  case prepareIssueCloseOn dueAwareFixtureSource closeDay resolveIntent of
+    Left errors ->
+      CloseDateRequiresClosedAwareSource `elem` NonEmpty.toList errors
+    Right _ -> False
+
+testResolveIssueRecordsClosedDate :: Bool
+testResolveIssueRecordsClosedDate =
+  case prepareIssueCloseOn currentFixtureSource closeDay resolveIntent of
     Left err -> error (show err)
     Right preview ->
       closeCandidateRow preview
-        == "ISSUE-2\tdropped\t2026-08-02\thome\tOther title\t\t\tother details。Decision: 2026-08-08 no longer needed"
-      && case findIssueById (mustIssueId "ISSUE-2")
-          (closeCandidateCompleteSource preview) of
-        Just issue -> householdIssueStatus issue == Dropped
-        Nothing -> False
+        == "ISSUE-1\tresolved\t2026-08-01\t2026-08-15\t2026-08-08\tmisc\tSome title\t1000\tJPY\tsome details。Decision: fixed by provider"
+        && case findIssueById (mustIssueId "ISSUE-1")
+            (closeCandidateCompleteSource preview) of
+          Just issue ->
+            householdIssueStatus issue == Resolved
+              && householdIssueDue issue == DueOn (fromGregorian 2026 8 15)
+              && householdIssueClosed issue == ClosedOn closeDay
+              && householdIssueDetails issue
+                == "[misc] some details。Decision: fixed by provider"
+          Nothing -> False
 
-testIssueClosePreservesUntouchedBytes :: Bool
-testIssueClosePreservesUntouchedBytes =
-  case prepareIssueClose closeFixtureSource resolveIntent of
+testDropIssueRecordsClosedDate :: Bool
+testDropIssueRecordsClosedDate =
+  case prepareIssueCloseOn currentFixtureSource closeDay dropIntent of
+    Left err -> error (show err)
+    Right preview -> case findIssueById (mustIssueId "ISSUE-2")
+        (closeCandidateCompleteSource preview) of
+      Just issue ->
+        householdIssueStatus issue == Dropped
+          && householdIssueDue issue == NoDueDate
+          && householdIssueClosed issue == ClosedOn closeDay
+      Nothing -> False
+
+testClosePreservesUntouchedBytesAndDue :: Bool
+testClosePreservesUntouchedBytesAndDue =
+  case prepareIssueCloseOn currentFixtureSource closeDay resolveIntent of
     Left err -> error (show err)
     Right preview ->
       "# keep this notebook note\n" `T.isPrefixOf` closeCandidateCompleteSource preview
-        && "ISSUE-2\topen\t2026-08-02\thome\tOther title\t\t\tother details\n"
+        && "ISSUE-2\topen\t2026-08-02\tnone\tnone\thome\tOther title\t\t\tother details\n"
           `T.isInfixOf` closeCandidateCompleteSource preview
+        && "\t2026-08-15\t2026-08-08\tmisc\t" `T.isInfixOf` closeCandidateRow preview
         && "\n" `T.isSuffixOf` closeCandidateCompleteSource preview
 
-testIssueCloseRejectsUnknownIdentity :: Bool
-testIssueCloseRejectsUnknownIdentity =
-  case prepareIssueClose closeFixtureSource
+testCloseRejectsDateBeforeRecorded :: Bool
+testCloseRejectsDateBeforeRecorded =
+  case prepareIssueCloseOn currentFixtureSource
+      (fromGregorian 2026 7 31) resolveIntent of
+    Left errors -> any isBeforeRecorded (NonEmpty.toList errors)
+    Right _ -> False
+  where
+    isBeforeRecorded (CloseDateBeforeRecorded recorded closed) =
+      recorded == fromGregorian 2026 8 1
+        && closed == fromGregorian 2026 7 31
+    isBeforeRecorded _ = False
+
+testDueAwareClosePreservesHistoricalShape :: Bool
+testDueAwareClosePreservesHistoricalShape =
+  case prepareIssueClose dueAwareFixtureSource resolveIntent of
+    Left err -> error (show err)
+    Right preview ->
+      length (T.splitOn "\t" (closeCandidateRow preview)) == 9
+        && "# keep this notebook note\n" `T.isPrefixOf`
+          closeCandidateCompleteSource preview
+        && "ISSUE-2\topen\t2026-08-02\tnone\thome\tOther title\t\t\tother details\n"
+          `T.isInfixOf` closeCandidateCompleteSource preview
+        && "\t2026-08-15\tmisc\t" `T.isInfixOf` closeCandidateRow preview
+        && case findIssueById (mustIssueId "ISSUE-1")
+            (closeCandidateCompleteSource preview) of
+          Just issue -> householdIssueClosed issue == ClosedUndetermined
+          Nothing -> False
+
+testLegacyClosePreservesHistoricalShape :: Bool
+testLegacyClosePreservesHistoricalShape =
+  case prepareIssueClose legacyFixtureSource resolveIntent of
+    Left err -> error (show err)
+    Right preview ->
+      length (T.splitOn "\t" (closeCandidateRow preview)) == 8
+        && case findIssueById (mustIssueId "ISSUE-1")
+            (closeCandidateCompleteSource preview) of
+          Just issue ->
+            householdIssueDue issue == DueUndetermined
+              && householdIssueClosed issue == ClosedUndetermined
+          Nothing -> False
+
+testCloseRejectsUnknownIdentity :: Bool
+testCloseRejectsUnknownIdentity =
+  case prepareIssueCloseOn currentFixtureSource closeDay
       resolveIntent { closeIssueId = mustIssueId "ISSUE-MISSING" } of
     Left errors -> any isNotFound (NonEmpty.toList errors)
     Right _ -> False
@@ -252,26 +501,22 @@ testIssueCloseRejectsUnknownIdentity =
       identifier == mustIssueId "ISSUE-MISSING"
     isNotFound _ = False
 
-testIssueCloseRejectsClosedIssue :: Bool
-testIssueCloseRejectsClosedIssue =
-  case prepareIssueClose resolvedFixture resolveIntent of
-    Left errors -> any isAlreadyClosed (NonEmpty.toList errors)
+testCloseRejectsClosedIssue :: Bool
+testCloseRejectsClosedIssue =
+  case prepareIssueCloseOn closedFixtureSource closeDay resolveIntent of
+    Left errors -> CloseIssueNotOpen Resolved `elem` NonEmpty.toList errors
     Right _ -> False
-  where
-    resolvedFixture = T.replace "\topen\t" "\tresolved\t" fixtureSource
-    isAlreadyClosed (CloseIssueNotOpen Resolved) = True
-    isAlreadyClosed _ = False
 
-testIssueCloseRejectsBlankMemo :: Bool
-testIssueCloseRejectsBlankMemo =
-  case prepareIssueClose closeFixtureSource
+testCloseRejectsBlankMemo :: Bool
+testCloseRejectsBlankMemo =
+  case prepareIssueCloseOn currentFixtureSource closeDay
       resolveIntent { closeDecisionMemo = "   " } of
     Left errors -> CloseDecisionMemoBlank `elem` NonEmpty.toList errors
     Right _ -> False
 
-testIssueCloseRejectsControlMemo :: Bool
-testIssueCloseRejectsControlMemo =
-  case prepareIssueClose closeFixtureSource
+testCloseRejectsControlMemo :: Bool
+testCloseRejectsControlMemo =
+  case prepareIssueCloseOn currentFixtureSource closeDay
       resolveIntent { closeDecisionMemo = "bad\tmemo" } of
     Left errors -> CloseDecisionMemoHasControlCharacter `elem` NonEmpty.toList errors
     Right _ -> False
@@ -279,92 +524,99 @@ testIssueCloseRejectsControlMemo =
 findIssueById :: IssueId -> Text -> Maybe HouseholdIssue
 findIssueById identifier source = case parseHouseholdIssues source of
   Left _ -> Nothing
-  Right issues -> findTypedIssue identifier issues
-
-findTypedIssue :: IssueId -> [HouseholdIssue] -> Maybe HouseholdIssue
-findTypedIssue identifier = go
+  Right issues -> go issues
   where
     go [] = Nothing
     go (issue : rest)
       | householdIssueId issue == identifier = Just issue
       | otherwise = go rest
 
-testIssueCommit :: IO Bool
-testIssueCommit =
-  commitAndVerify
-    "tests/fixtures/test_editor_issue_commit.tsv"
-    fixtureSource
-    testIntent
-    (const True)
+testIssueAppendCommit :: IO Bool
+testIssueAppendCommit = do
+  let path = "tests/fixtures/test_editor_issue_commit.tsv"
+  cleanup path
+  TIO.writeFile path currentFixtureSource
+  result <- case prepareIssueAppend currentFixtureSource testIntent of
+    Left err -> print err >> pure False
+    Right preview -> publishAndVerify path currentFixtureSource
+      (candidateCompleteSource preview)
+      (\written -> case findIssueById (mustIssueId "ISSUE-3") written of
+        Just issue -> householdIssueClosed issue == NotClosed
+        Nothing -> False)
+  cleanup path
+  pure result
 
 testEmptyIssueCommit :: IO Bool
-testEmptyIssueCommit =
-  commitAndVerify
-    "tests/fixtures/test_editor_empty_issue_commit.tsv"
-    ""
-    optionalAmountIntent
-    (\written -> case parseHouseholdIssues written of
-      Right [issue] ->
-        householdIssueId issue == intentIssueId optionalAmountIntent
-          && householdIssueAmount issue == Nothing
-      _ -> False)
+testEmptyIssueCommit = do
+  let path = "tests/fixtures/test_editor_empty_issue_commit.tsv"
+  cleanup path
+  TIO.writeFile path ""
+  result <- case prepareIssueAppend "" optionalAmountIntent of
+    Left err -> print err >> pure False
+    Right preview -> publishAndVerify path ""
+      (candidateCompleteSource preview)
+      (\written -> case parseHouseholdIssues written of
+        Right [issue] ->
+          householdIssueId issue == intentIssueId optionalAmountIntent
+            && householdIssueAmount issue == Nothing
+            && householdIssueDue issue == DueUndetermined
+            && householdIssueClosed issue == NotClosed
+        _ -> False)
+  cleanup path
+  pure result
+
+testIssueDueUpdateCommit :: IO Bool
+testIssueDueUpdateCommit = do
+  let path = "tests/fixtures/test_editor_issue_due_update.tsv"
+      intent = IssueDueUpdateIntent
+        { dueUpdateIssueId = mustIssueId "ISSUE-1"
+        , dueUpdateValue = NoDueDate
+        }
+  cleanup path
+  TIO.writeFile path currentFixtureSource
+  result <- case prepareIssueDueUpdate currentFixtureSource intent of
+    Left err -> print err >> pure False
+    Right preview -> publishAndVerify path currentFixtureSource
+      (dueUpdateCandidateCompleteSource preview)
+      (\written -> case findIssueById (mustIssueId "ISSUE-1") written of
+        Just issue ->
+          householdIssueDue issue == NoDueDate
+            && householdIssueClosed issue == NotClosed
+        Nothing -> False)
+  cleanup path
+  pure result
 
 testIssueCloseCommit :: IO Bool
 testIssueCloseCommit = do
   let path = "tests/fixtures/test_editor_issue_close.tsv"
   cleanup path
-  TIO.writeFile path closeFixtureSource
-  result <- case prepareIssueClose closeFixtureSource resolveIntent of
+  TIO.writeFile path currentFixtureSource
+  result <- case prepareIssueCloseOn currentFixtureSource closeDay resolveIntent of
     Left err -> print err >> pure False
-    Right preview -> do
-      writeResult <- publishWithAdmission
-        parseHouseholdIssues
-        WriteIntent
-          { targetFilePath = path
-          , expectedOldBytes = ExpectedSource closeFixtureSource
-          , candidateNewBytes = CandidateSource
-              (closeCandidateCompleteSource preview)
-          }
-      case writeResult of
-        Left err -> print err >> pure False
-        Right () -> do
-          written <- TIO.readFile path
-          pure
-            (written == closeCandidateCompleteSource preview
-              && case findIssueById (mustIssueId "ISSUE-1") written of
-                Just issue -> householdIssueStatus issue == Resolved
-                Nothing -> False)
+    Right preview -> publishAndVerify path currentFixtureSource
+      (closeCandidateCompleteSource preview)
+      (\written -> case findIssueById (mustIssueId "ISSUE-1") written of
+        Just issue ->
+          householdIssueStatus issue == Resolved
+            && householdIssueClosed issue == ClosedOn closeDay
+        Nothing -> False)
   cleanup path
   pure result
 
-commitAndVerify
-  :: FilePath
-  -> Text
-  -> IssueAppendIntent
-  -> (Text -> Bool)
-  -> IO Bool
-commitAndVerify path source intent verify = do
-  cleanup path
-  TIO.writeFile path source
-  result <- case prepareIssueAppend source intent of
+publishAndVerify :: FilePath -> Text -> Text -> (Text -> Bool) -> IO Bool
+publishAndVerify path expected candidate verify = do
+  writeResult <- publishWithAdmission
+    parseHouseholdIssues
+    WriteIntent
+      { targetFilePath = path
+      , expectedOldBytes = ExpectedSource expected
+      , candidateNewBytes = CandidateSource candidate
+      }
+  case writeResult of
     Left err -> print err >> pure False
-    Right preview -> do
-      writeResult <- publishWithAdmission
-        parseHouseholdIssues
-        WriteIntent
-          { targetFilePath = path
-          , expectedOldBytes = ExpectedSource source
-          , candidateNewBytes = CandidateSource (candidateCompleteSource preview)
-          }
-      case writeResult of
-        Left err -> print err >> pure False
-        Right () -> do
-          written <- TIO.readFile path
-          pure
-            (written == candidateCompleteSource preview
-              && verify written)
-  cleanup path
-  pure result
+    Right () -> do
+      written <- TIO.readFile path
+      pure (written == candidate && verify written)
 
 cleanup :: FilePath -> IO ()
 cleanup path = do

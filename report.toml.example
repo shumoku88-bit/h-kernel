@@ -7,6 +7,12 @@ negative-style = "parentheses"
 # positive-color = "green" # red, bright-red, green, yellow, blue, magenta, cyan, white
 # negative-color = "red" # red, bright-red, green, yellow, blue, magenta, cyan, white
 
+[presentation.calendar.markers]
+actual = "."
+plan = "+"
+issue-due = "!"
+cycle-end = "|"
+
 
 [reports.trial-balance]
 as-of = "latest"
