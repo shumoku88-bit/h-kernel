@@ -192,7 +192,7 @@ characterizeIssueRelationSourceContract :: IO ()
 characterizeIssueRelationSourceContract = do
   let relations = mustRightText (parseIssueRelationPrototype relationSource)
       firstRelation = head relations
-      corrected = exactlyOne
+      corrected = exactlyOneRelation
         (mustRightText (parseIssueRelationPrototype correctedRelationSource))
 
   assertEqual "relation source admits one row per historical relation occurrence"
@@ -394,6 +394,10 @@ mustRightText :: Either T.Text value -> value
 mustRightText result = case result of
   Left err -> error (T.unpack err)
   Right value -> value
+
+exactlyOneRelation :: [value] -> value
+exactlyOneRelation [value] = value
+exactlyOneRelation _ = error "expected exactly one Issue relation event"
 
 assertLeftText :: String -> Either T.Text value -> IO ()
 assertLeftText label result = case result of
