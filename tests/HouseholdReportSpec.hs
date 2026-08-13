@@ -154,8 +154,8 @@ main = do
   assertEqual "Actual Expense movement becomes exact consumption"
     (one jpy 100)
     (envelopeActualConsumption foodLine)
-  assertEqual "only current-cycle open mapped Plans become reserve and derived headroom"
-    (one jpy 600)
+  assertEqual "open mapped Plans due before the next income anchor become reserve"
+    (one jpy 550)
     (envelopePostPlanHeadroom foodLine)
   assertEqual "liquid Asset backing is selected by explicit Budget policy"
     (one jpy 1900)
