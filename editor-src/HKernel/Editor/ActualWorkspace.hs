@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Pure projection and selected-entry operations for the Actual transaction
 -- workspace.
 --
