@@ -77,8 +77,8 @@ main = do
           , testPlanCancelAlreadyRetiredRejected)
         , ("closure evidence and observation-day inactivity stay distinct"
           , testPlanClosureEvidenceAndEffectiveDate)
-        , ("completion inactivity follows Actual date"
-          , testPlanCompletionEffectiveDate)
+        , ("completion closure remains timeless across observation days"
+          , testPlanCompletionTimeless)
         , ("edit rejects retirement-declared Plan"
           , testPlanEditRetiredRejected)
         , ("complete rejects retirement-declared Plan"
@@ -273,20 +273,20 @@ testPlanClosureEvidenceAndEffectiveDate =
         && Foldable.elem target inactiveEffective
     _ -> False
 
-testPlanCompletionEffectiveDate :: Bool
-testPlanCompletionEffectiveDate =
+testPlanCompletionTimeless :: Bool
+testPlanCompletionTimeless =
   let planJournal = mustParsePlan planFixture
       actualJournal = mustParseActual actualClosedFixture
       target = exactlyOnePlanId "plan-existing" planJournal
-      before = fromGregorian 2023 1 1
-      effective = fromGregorian 2023 1 2
+      beforeActualDate = fromGregorian 2023 1 1
+      actualDate = fromGregorian 2023 1 2
   in case
-      ( planInactiveIdsAt before planJournal actualJournal
-      , planInactiveIdsAt effective planJournal actualJournal
+      ( planInactiveIdsAt beforeActualDate planJournal actualJournal
+      , planInactiveIdsAt actualDate planJournal actualJournal
       ) of
-    (Right inactiveBefore, Right inactiveEffective) ->
-      not (Foldable.elem target inactiveBefore)
-        && Foldable.elem target inactiveEffective
+    (Right inactiveBefore, Right inactiveAtActual) ->
+      Foldable.elem target inactiveBefore
+        && Foldable.elem target inactiveAtActual
     _ -> False
 
 testPlanEditRetiredRejected :: Bool
