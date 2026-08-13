@@ -2,9 +2,9 @@
 
 module Main (main) where
 
+import qualified Data.Foldable as Foldable
 import Data.List.NonEmpty (NonEmpty((:|)))
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
@@ -268,9 +268,9 @@ testPlanClosureEvidenceAndEffectiveDate =
       , planInactiveIdsAt effective planJournal actualJournal
       ) of
     (Right closed, Right inactiveBefore, Right inactiveEffective) ->
-      target `Set.member` closed
-        && target `Set.notMember` inactiveBefore
-        && target `Set.member` inactiveEffective
+      Foldable.elem target closed
+        && not (Foldable.elem target inactiveBefore)
+        && Foldable.elem target inactiveEffective
     _ -> False
 
 testPlanCompletionEffectiveDate :: Bool
@@ -285,8 +285,8 @@ testPlanCompletionEffectiveDate =
       , planInactiveIdsAt effective planJournal actualJournal
       ) of
     (Right inactiveBefore, Right inactiveEffective) ->
-      target `Set.notMember` inactiveBefore
-        && target `Set.member` inactiveEffective
+      not (Foldable.elem target inactiveBefore)
+        && Foldable.elem target inactiveEffective
     _ -> False
 
 testPlanEditRetiredRejected :: Bool
