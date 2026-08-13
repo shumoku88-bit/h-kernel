@@ -186,8 +186,12 @@ buildHouseholdReportSurfaceFromAdmitted
 buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validatedPolicy admittedPlans budget issues dailyScope = do
   let journal = actualJournalValue actualJournal
       cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
-  (current, previous) <- resolveCycles observation journal cycleAccount
-    (admittedIncomingAnchors admittedPlans)
+      retiredPlanIds = retiredPlanIdsAt observation
+        (admittedPlanRetirements admittedPlans)
+      activeIncomingAnchors = filter
+        (\anchor -> incomingAnchorId anchor `Set.notMember` retiredPlanIds)
+        (admittedIncomingAnchors admittedPlans)
+  (current, previous) <- resolveCycles observation journal cycleAccount activeIncomingAnchors
   currentCycle <- mapLeft
     (NonEmpty.singleton . sourceError "cycle" 0 . tshow)
     (currentCycleAccounts observation current journal)
@@ -208,8 +212,6 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
       consumption = householdBudgetConsumption budgetObservation
       entitlement = householdBudgetEntitlement budgetObservation
       remaining = householdBudgetRemaining budgetObservation
-      retiredPlanIds = retiredPlanIdsAt observation
-        (admittedPlanRetirements admittedPlans)
       openPlanValues = filter
         (\plan -> committedPlanId plan `Set.notMember` retiredPlanIds)
         completionOpenPlanValues
