@@ -33,7 +33,6 @@ import HKernel.Actual.Journal
   )
 import HKernel.Journal
   ( JournalError
-  , JournalTransactionSource
   , journalDocumentTransactionSources
   , journalTransactionSourceHeaderLine
   , parseJournalDocument
@@ -166,14 +165,14 @@ insertMetadataAfterLine lineNumber metadata source
       let sourceLines = T.splitOn "\n" source
           (before, after) = splitAt lineNumber sourceLines
       in if length before == lineNumber
-          then Just (T.intercalate "\n" (before ++ metadata : after))
+          then Just (T.intercalate "\n" (before ++ (metadata : after)))
           else Nothing
 
 replaceAt :: Int -> value -> [value] -> [value]
 replaceAt index replacement values
   | index < 0 = values
   | otherwise = case splitAt index values of
-      (before, _ : after) -> before ++ replacement : after
+      (before, _ : after) -> before ++ (replacement : after)
       _ -> values
 
 transactionMatchesAccount :: Account -> Transaction -> Bool
