@@ -87,17 +87,15 @@ import HKernel.Plan.Completion
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , PlanJournal
+  , admitPlanRetirements
   , classifiedIncomingPlanTransactions
   , classifyPlanJournal
   , identifiedPlanId
   , identifiedPlanTransaction
   , planJournalValue
+  , planLifecycleErrorLine
   , projectCommittedOutgoingPlans
   , projectedCommittedOutgoingPlan
-  )
-import HKernel.Plan.Lifecycle
-  ( admitPlanRetirements
-  , planLifecycleErrorLine
   , retiredPlanIdsAt
   )
 import HKernel.Report.CycleAccounts
