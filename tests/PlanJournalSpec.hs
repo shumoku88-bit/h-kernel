@@ -4,7 +4,9 @@ module Main (main) where
 
 import Test.Support (mustRight, assertEqual)
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Set as Set
 import qualified Data.Text as T
+import Data.Time.Calendar (fromGregorian)
 import HKernel.Journal
   ( journalMetadataKey
   , journalMetadataValue
@@ -13,7 +15,14 @@ import HKernel.Journal
   , parseJournal
   )
 import HKernel.Ledger (transactionPostings)
-import HKernel.Plan (committedPlanId, mkPlanId, planIdText)
+import HKernel.Plan
+  ( committedPlanId
+  , mkPlanId
+  , planIdText
+  , planRetiredOn
+  , planRetirementSuccessor
+  , retiredPlanId
+  )
 import HKernel.Plan.Journal
 import System.Exit (exitFailure)
 
@@ -29,6 +38,14 @@ main = do
   rejectInvalidPlanIdentity
   rejectDuplicatePlanIdentity
   retainAccountingValidation
+  characterizePlanRetirementMetadata
+  rejectPartialSupersessionMetadata
+  rejectConflictingRetirementMetadata
+  rejectUnknownSupersessionTarget
+  rejectSelfSupersession
+  rejectSupersessionCycle
+  rejectDuplicateLifecycleMetadata
+  rejectInvalidLifecycleDate
   classifyIncomingAndOutgoingPlans
   preserveWholeSourceOrderedTransactions
   admitMultipleOutgoingPostingCoordinates
@@ -186,6 +203,108 @@ retainAccountingValidation =
       PlanJournalSyntaxError _ -> True
       _ -> False
 
+characterizePlanRetirementMetadata :: IO ()
+characterizePlanRetirementMetadata = do
+  let source = mustParse lifecyclePlanJournal
+      retirements = mustRight (admitPlanRetirements source)
+
+  assertEqual
+    "Plan lifecycle keeps cancellation and supersession as typed evidence"
+    [ ("plan-old", fromGregorian 2026 8 13, Just "plan-new")
+    , ("plan-cancelled", fromGregorian 2026 8 12, Nothing)
+    ]
+    [ ( planIdText (retiredPlanId retirement)
+      , planRetiredOn retirement
+      , fmap planIdText (planRetirementSuccessor retirement)
+      )
+    | retirement <- retirements
+    ]
+  assertEqual
+    "retirement is observation-time evidence rather than destructive Plan removal"
+    ["plan-cancelled"]
+    (map planIdText (Set.toAscList
+      (retiredPlanIdsAt (fromGregorian 2026 8 12) retirements)))
+  assertEqual
+    "superseded Plan retires on its declared day"
+    ["plan-cancelled", "plan-old"]
+    (map planIdText (Set.toAscList
+      (retiredPlanIdsAt (fromGregorian 2026 8 13) retirements)))
+  assertEqual
+    "retirement admission preserves every original Plan transaction"
+    ["plan-old", "plan-new", "plan-cancelled"]
+    (map (planIdText . identifiedPlanId) (planJournalTransactions source))
+
+rejectPartialSupersessionMetadata :: IO ()
+rejectPartialSupersessionMetadata =
+  assertLeftSatisfies "superseded-on requires superseded-by"
+    (any isMissingSuccessor . NonEmpty.toList)
+    (admitPlanRetirements (mustParse missingSuccessorPlanJournal))
+  where
+    isMissingSuccessor err = case err of
+      SupersededOnMissingSuccessor _ _ -> True
+      _ -> False
+
+rejectConflictingRetirementMetadata :: IO ()
+rejectConflictingRetirementMetadata =
+  assertLeftSatisfies "cancellation cannot coexist with supersession"
+    (any isConflict . NonEmpty.toList)
+    (admitPlanRetirements (mustParse conflictingRetirementPlanJournal))
+  where
+    isConflict err = case err of
+      CancellationConflictsWithSupersession _ _ -> True
+      _ -> False
+
+rejectUnknownSupersessionTarget :: IO ()
+rejectUnknownSupersessionTarget =
+  assertLeftSatisfies "supersession successor must name an admitted Plan"
+    (any isUnknown . NonEmpty.toList)
+    (admitPlanRetirements (mustParse unknownSuccessorPlanJournal))
+  where
+    isUnknown err = case err of
+      UnknownPlanSuccessor old successor ->
+        planIdText old == "plan-old" && planIdText successor == "plan-missing"
+      _ -> False
+
+rejectSelfSupersession :: IO ()
+rejectSelfSupersession =
+  assertLeftSatisfies "a Plan cannot supersede itself"
+    (any isSelf . NonEmpty.toList)
+    (admitPlanRetirements (mustParse selfSupersessionPlanJournal))
+  where
+    isSelf err = case err of
+      InvalidPlanRetirement _ _ -> True
+      _ -> False
+
+rejectSupersessionCycle :: IO ()
+rejectSupersessionCycle =
+  assertLeftSatisfies "supersession graph cannot contain a cycle"
+    (any isCycle . NonEmpty.toList)
+    (admitPlanRetirements (mustParse cyclicSupersessionPlanJournal))
+  where
+    isCycle err = case err of
+      SupersessionCycle _ -> True
+      _ -> False
+
+rejectDuplicateLifecycleMetadata :: IO ()
+rejectDuplicateLifecycleMetadata =
+  assertLeftSatisfies "duplicate lifecycle metadata fails closed"
+    (any isDuplicate . NonEmpty.toList)
+    (admitPlanRetirements (mustParse duplicateLifecyclePlanJournal))
+  where
+    isDuplicate err = case err of
+      DuplicatePlanLifecycleMetadataKey _ "cancelled-on" -> True
+      _ -> False
+
+rejectInvalidLifecycleDate :: IO ()
+rejectInvalidLifecycleDate =
+  assertLeftSatisfies "lifecycle date must be an explicit valid day"
+    (any isInvalidDate . NonEmpty.toList)
+    (admitPlanRetirements (mustParse invalidLifecycleDatePlanJournal))
+  where
+    isInvalidDate err = case err of
+      InvalidPlanLifecycleDate _ "cancelled-on" -> True
+      _ -> False
+
 classifyIncomingAndOutgoingPlans :: IO ()
 classifyIncomingAndOutgoingPlans = do
   let classified = mustClassify supportedPlanJournal
@@ -312,6 +431,108 @@ planJournal = declarations <> T.unlines
   , "    expenses:food   600 JPY"
   , "    expenses:books  400 JPY"
   , "    assets:cash    -1000 JPY"
+  ]
+
+lifecyclePlanJournal :: T.Text
+lifecyclePlanJournal = declarations <> T.unlines
+  [ "2026-08-20 Original commitment"
+  , "    ; plan-id: plan-old"
+  , "    ; superseded-on: 2026-08-13"
+  , "    ; superseded-by: plan-new"
+  , "    expenses:food  500 JPY"
+  , "    assets:cash   -500 JPY"
+  , ""
+  , "2026-08-20 Replacement commitment"
+  , "    ; plan-id: plan-new"
+  , "    expenses:food  300 JPY"
+  , "    assets:cash   -300 JPY"
+  , ""
+  , "2026-08-18 Cancelled commitment"
+  , "    ; plan-id: plan-cancelled"
+  , "    ; cancelled-on: 2026-08-12"
+  , "    expenses:books  200 JPY"
+  , "    assets:cash    -200 JPY"
+  ]
+
+missingSuccessorPlanJournal :: T.Text
+missingSuccessorPlanJournal = declarations <> T.unlines
+  [ "2026-08-20 Original commitment"
+  , "    ; plan-id: plan-old"
+  , "    ; superseded-on: 2026-08-13"
+  , "    expenses:food  500 JPY"
+  , "    assets:cash   -500 JPY"
+  ]
+
+conflictingRetirementPlanJournal :: T.Text
+conflictingRetirementPlanJournal = declarations <> T.unlines
+  [ "2026-08-20 Original commitment"
+  , "    ; plan-id: plan-old"
+  , "    ; cancelled-on: 2026-08-13"
+  , "    ; superseded-on: 2026-08-13"
+  , "    ; superseded-by: plan-new"
+  , "    expenses:food  500 JPY"
+  , "    assets:cash   -500 JPY"
+  , ""
+  , "2026-08-20 Replacement"
+  , "    ; plan-id: plan-new"
+  , "    expenses:food  300 JPY"
+  , "    assets:cash   -300 JPY"
+  ]
+
+unknownSuccessorPlanJournal :: T.Text
+unknownSuccessorPlanJournal = declarations <> T.unlines
+  [ "2026-08-20 Original commitment"
+  , "    ; plan-id: plan-old"
+  , "    ; superseded-on: 2026-08-13"
+  , "    ; superseded-by: plan-missing"
+  , "    expenses:food  500 JPY"
+  , "    assets:cash   -500 JPY"
+  ]
+
+selfSupersessionPlanJournal :: T.Text
+selfSupersessionPlanJournal = declarations <> T.unlines
+  [ "2026-08-20 Original commitment"
+  , "    ; plan-id: plan-old"
+  , "    ; superseded-on: 2026-08-13"
+  , "    ; superseded-by: plan-old"
+  , "    expenses:food  500 JPY"
+  , "    assets:cash   -500 JPY"
+  ]
+
+cyclicSupersessionPlanJournal :: T.Text
+cyclicSupersessionPlanJournal = declarations <> T.unlines
+  [ "2026-08-20 First commitment"
+  , "    ; plan-id: plan-first"
+  , "    ; superseded-on: 2026-08-13"
+  , "    ; superseded-by: plan-second"
+  , "    expenses:food  500 JPY"
+  , "    assets:cash   -500 JPY"
+  , ""
+  , "2026-08-21 Second commitment"
+  , "    ; plan-id: plan-second"
+  , "    ; superseded-on: 2026-08-14"
+  , "    ; superseded-by: plan-first"
+  , "    expenses:food  300 JPY"
+  , "    assets:cash   -300 JPY"
+  ]
+
+duplicateLifecyclePlanJournal :: T.Text
+duplicateLifecyclePlanJournal = declarations <> T.unlines
+  [ "2026-08-20 Commitment"
+  , "    ; plan-id: plan-old"
+  , "    ; cancelled-on: 2026-08-13"
+  , "    ; cancelled-on: 2026-08-14"
+  , "    expenses:food  500 JPY"
+  , "    assets:cash   -500 JPY"
+  ]
+
+invalidLifecycleDatePlanJournal :: T.Text
+invalidLifecycleDatePlanJournal = declarations <> T.unlines
+  [ "2026-08-20 Commitment"
+  , "    ; plan-id: plan-old"
+  , "    ; cancelled-on: 2026-02-30"
+  , "    expenses:food  500 JPY"
+  , "    assets:cash   -500 JPY"
   ]
 
 resolvedPlanRoot :: T.Text
@@ -445,8 +666,6 @@ declarations = T.unlines
   , "    commodity: JPY"
   ]
 
-
-
 assertLeftSatisfies
   :: (Show error, Show value)
   => String
@@ -464,4 +683,3 @@ assertLeftSatisfies label predicate result = case result of
     putStrLn ("  [FAIL] " ++ label)
     putStrLn ("    unexpectedly accepted: " ++ show value)
     exitFailure
-
