@@ -87,13 +87,16 @@ import HKernel.Plan.Completion
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , PlanJournal
+  , admitPlanRetirements
   , classifiedIncomingPlanTransactions
   , classifyPlanJournal
   , identifiedPlanId
   , identifiedPlanTransaction
   , planJournalValue
+  , planLifecycleErrorLine
   , projectCommittedOutgoingPlans
   , projectedCommittedOutgoingPlan
+  , retiredPlanIdsAt
   )
 import HKernel.Report.CycleAccounts
 import HKernel.Household.BudgetObservation
@@ -124,6 +127,7 @@ data IncomingCycleAnchor = IncomingCycleAnchor
 data AdmittedPlans = AdmittedPlans
   { admittedIncomingAnchors :: [IncomingCycleAnchor]
   , admittedOutgoingPlans   :: [CommittedOutgoingPlan]
+  , admittedPlanRetirements :: [PlanRetirement]
   } deriving (Eq, Show)
 
 -- | Display relation of an open outgoing Plan to the resolved current cycle.
@@ -166,8 +170,9 @@ data HouseholdReportSurface = HouseholdReportSurface
   } deriving (Eq, Show)
 
 -- | Calculate the Household report surface from already admitted typed values.
--- Admission adapters may differ, but cycle, Plan completion, Budget observation,
--- backing, and Daily Target calculation have one semantic owner here.
+-- Admission adapters may differ, but cycle, Plan completion, Plan retirement,
+-- Budget observation, backing, and Daily Target calculation have one semantic
+-- owner here.
 buildHouseholdReportSurfaceFromAdmitted
   :: Day
   -> ActualJournal
@@ -181,15 +186,19 @@ buildHouseholdReportSurfaceFromAdmitted
 buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validatedPolicy admittedPlans budget issues dailyScope = do
   let journal = actualJournalValue actualJournal
       cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
-  (current, previous) <- resolveCycles observation journal cycleAccount
-    (admittedIncomingAnchors admittedPlans)
+      retiredPlanIds = retiredPlanIdsAt observation
+        (admittedPlanRetirements admittedPlans)
+      activeIncomingAnchors = filter
+        (\anchor -> incomingAnchorId anchor `Set.notMember` retiredPlanIds)
+        (admittedIncomingAnchors admittedPlans)
+  (current, previous) <- resolveCycles observation journal cycleAccount activeIncomingAnchors
   currentCycle <- mapLeft
     (NonEmpty.singleton . sourceError "cycle" 0 . tshow)
     (currentCycleAccounts observation current journal)
   let outgoingPlans = admittedOutgoingPlans admittedPlans
   outgoingDeclarations <- completionDeclarationsForOutgoingPlans admittedPlans
     (actualJournalCompletionDeclarations actualJournal)
-  openPlanValues <- mapLeft
+  completionOpenPlanValues <- mapLeft
     (fmap (sourceError "actual.journal" 0 . tshow))
     (resolveOpenCommittedOutgoingPlans
       outgoingPlans
@@ -203,6 +212,9 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
       consumption = householdBudgetConsumption budgetObservation
       entitlement = householdBudgetEntitlement budgetObservation
       remaining = householdBudgetRemaining budgetObservation
+      openPlanValues = filter
+        (\plan -> committedPlanId plan `Set.notMember` retiredPlanIds)
+        completionOpenPlanValues
       openPlanIds = Set.fromList (map committedPlanId openPlanValues)
       openPlans = openOutgoingPlans openPlanIds outgoingPlans
       currentOpenPlans = filter
@@ -274,6 +286,10 @@ admitPlanJournal
   :: PlanJournal
   -> Either (NonEmpty HouseholdSourceError) AdmittedPlans
 admitPlanJournal planJournal = do
+  retirements <- mapLeft
+    (fmap (\err -> sourceError "plan.journal"
+      (planLifecycleErrorLine err) (tshow err)))
+    (admitPlanRetirements planJournal)
   classified <- mapLeft
     (fmap (sourceError "plan.journal" 0 . tshow))
     (classifyPlanJournal planJournal)
@@ -287,6 +303,7 @@ admitPlanJournal planJournal = do
   pure AdmittedPlans
     { admittedIncomingAnchors = incoming
     , admittedOutgoingPlans = map projectedCommittedOutgoingPlan projected
+    , admittedPlanRetirements = retirements
     }
   where
     registry = journalAccountRegistry (planJournalValue planJournal)

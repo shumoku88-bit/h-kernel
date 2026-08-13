@@ -10,6 +10,13 @@ module HKernel.Plan
   , PlanIdError(..)
   , mkPlanId
   , planIdText
+  , PlanRetirement
+  , PlanRetirementError(..)
+  , declarePlanCancellation
+  , declarePlanSupersession
+  , retiredPlanId
+  , planRetiredOn
+  , planRetirementSuccessor
   , PositiveAmount
   , PositiveAmountError(..)
   , mkPositiveAmount
@@ -74,6 +81,54 @@ mkPlanId value
   | T.any isControl value = Left (PlanIdContainsControlCharacter value)
   | T.any isSpace value = Left (PlanIdContainsWhitespace value)
   | otherwise = Right (PlanId value)
+
+-- | Historical evidence that one Plan stopped being an active commitment.
+--
+-- Cancellation has no successor. Supersession names the fresh Plan identity
+-- that replaced the old commitment. The old Plan transaction itself remains a
+-- separate historical fact; retirement never rewrites its amount, date, memo,
+-- or postings.
+data PlanRetirement
+  = PlanCancellation PlanId Day
+  | PlanSupersession PlanId Day PlanId
+  deriving (Eq, Show)
+
+data PlanRetirementError
+  = PlanCannotSupersedeItself PlanId
+  deriving (Eq, Show)
+
+-- | Declare that a Plan stopped being pursued without a replacement Plan.
+declarePlanCancellation :: PlanId -> Day -> PlanRetirement
+declarePlanCancellation = PlanCancellation
+
+-- | Declare that a changed household commitment replaced one Plan with another
+-- durable Plan identity.
+--
+-- Cross-Plan existence and supersession-cycle checks require a collection of
+-- admitted Plans and therefore belong to the later journal admission boundary.
+declarePlanSupersession
+  :: PlanId
+  -> Day
+  -> PlanId
+  -> Either PlanRetirementError PlanRetirement
+declarePlanSupersession oldPlan retiredOn successor
+  | oldPlan == successor = Left (PlanCannotSupersedeItself oldPlan)
+  | otherwise = Right (PlanSupersession oldPlan retiredOn successor)
+
+retiredPlanId :: PlanRetirement -> PlanId
+retiredPlanId retirement = case retirement of
+  PlanCancellation planId _ -> planId
+  PlanSupersession planId _ _ -> planId
+
+planRetiredOn :: PlanRetirement -> Day
+planRetiredOn retirement = case retirement of
+  PlanCancellation _ day -> day
+  PlanSupersession _ day _ -> day
+
+planRetirementSuccessor :: PlanRetirement -> Maybe PlanId
+planRetirementSuccessor retirement = case retirement of
+  PlanCancellation _ _ -> Nothing
+  PlanSupersession _ _ successor -> Just successor
 
 -- | Exact single-commodity amount proven to be strictly positive.
 --
