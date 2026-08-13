@@ -6,9 +6,12 @@ import Test.Support (mustRight, assertEqual)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
+import HKernel.Household.Issue.Relation.TSV
 import HKernel.Household.Issue.TSV
 import HKernel.HouseholdIssue
 import HKernel.Money
+import HKernel.Plan (planIdText)
+import HKernel.Plan.Completion (actualTransactionIdText)
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -16,6 +19,7 @@ main = do
   characterizeAcceptedIssues
   characterizeCompatibility
   characterizeSourceFailures
+  characterizeIssueRelations
 
 characterizeAcceptedIssues :: IO ()
 characterizeAcceptedIssues = do
@@ -146,6 +150,85 @@ characterizeSourceFailures = do
     "duplicate identity"
     (parseHouseholdIssues duplicateIssues)
 
+characterizeIssueRelations :: IO ()
+characterizeIssueRelations = do
+  let relations = mustRight (parseIssueRelations relationSource)
+      firstRelation = head relations
+      wrong = exactlyOne (mustRight (parseIssueRelations wrongRelationSource))
+      fixed = exactlyOne (mustRight (parseIssueRelations fixedRelationSource))
+
+  assertEqual "relation owner admits one row per historical occurrence"
+    5
+    (length relations)
+  assertEqual "relation owner retains durable event identity"
+    "rel-001"
+    (issueRelationEventIdText (issueRelationEventId firstRelation))
+  assertEqual "relation owner retains its own recorded date"
+    (fromGregorian 2026 8 13)
+    (issueRelationRecordedOn firstRelation)
+  assertEqual "relation kind determines the typed Plan target"
+    "plan-old"
+    (case issueRelationMeaning firstRelation of
+      IssueConcernsPlan planId -> planIdText planId
+      other -> error ("expected concerns-plan, got " ++ show other))
+  assertEqual "all five relation meanings survive source admission"
+    [ "concerns-plan"
+    , "planning-withdrawn"
+    , "planned-as"
+    , "funded-by"
+    , "realized-as"
+    ]
+    (map relationKind relations)
+  assertEqual "relation render/admit round-trip preserves typed history"
+    relations
+    (mustRight (parseIssueRelations (renderIssueRelations relations)))
+  assertEqual "blank/comment-only relation input invents no history"
+    []
+    (mustRight (parseIssueRelations "\n# no relation history yet\n"))
+  assertEqual "empty relation rendering emits a ready header"
+    (issueRelationHeader <> "\n")
+    (renderIssueRelations [])
+  assertEqual "mistaken-target correction preserves relation event identity"
+    (issueRelationEventId wrong)
+    (issueRelationEventId fixed)
+  assertEqual "mistaken-target correction can replace the typed Actual target"
+    ("actual-wrong", "actual-right")
+    (actualTarget wrong, actualTarget fixed)
+
+  assertRelationLeftAt "relation header is exact"
+    1
+    "unexpected issue relation header"
+    (parseIssueRelations (T.replace "relation_event_id" "id" oneRelationSource))
+  assertRelationLeftAt "relation row width is exact"
+    2
+    "expected six issue relation columns"
+    (parseIssueRelations (issueRelationHeader <> "\nrel-001\t2026-08-13\tissue-001\n"))
+  assertRelationLeftAt "relation recorded_on is strict Gregorian text"
+    3
+    "invalid issue relation recorded-on"
+    (parseIssueRelations invalidRelationDaySource)
+  assertRelationLeftAt "relation vocabulary is closed"
+    2
+    "unknown issue relation kind"
+    (parseIssueRelations (T.replace "concerns-plan" "linked-to" oneRelationSource))
+  assertRelationLeftAt "relation event identity is unique"
+    0
+    "duplicate issue relation event identity"
+    (parseIssueRelations duplicateRelationSource)
+
+relationKind :: IssueRelationEvent -> T.Text
+relationKind relation = case issueRelationMeaning relation of
+  IssueConcernsPlan _ -> "concerns-plan"
+  IssuePlannedAs _ -> "planned-as"
+  IssuePlanningWithdrawn _ -> "planning-withdrawn"
+  IssueRealizedAs _ -> "realized-as"
+  IssueFundedBy _ -> "funded-by"
+
+actualTarget :: IssueRelationEvent -> T.Text
+actualTarget relation = case issueRelationMeaning relation of
+  IssueRealizedAs actualId -> actualTransactionIdText actualId
+  other -> error ("expected realized-as, got " ++ show other)
+
 header :: T.Text
 header = householdIssuesHeader
 
@@ -219,6 +302,49 @@ duplicateIssues = T.unlines
   , "issue-one\tresolved\t2026-07-21\tundetermined\tundetermined\tplanning\twifi\t0\tJPY\tdone"
   ]
 
+relationSource :: T.Text
+relationSource = T.unlines
+  [ "# synthetic relation-source characterization"
+  , issueRelationHeader
+  , "rel-001\t2026-08-13\tissue-001\tconcerns-plan\tplan-old\treview current commitment"
+  , "rel-002\t2026-08-13\tissue-001\tplanning-withdrawn\tplan-old\tdecision changed"
+  , "rel-003\t2026-08-13\tissue-001\tplanned-as\tplan-new\treplacement commitment"
+  , "rel-004\t2026-08-13\tissue-001\tfunded-by\tactual-transfer\tmove funding first"
+  , "rel-005\t2026-08-13\tissue-001\trealized-as\tactual-payment\tpayment occurred"
+  ]
+
+oneRelationSource :: T.Text
+oneRelationSource = T.unlines
+  [ issueRelationHeader
+  , "rel-001\t2026-08-13\tissue-001\tconcerns-plan\tplan-old\treview current commitment"
+  ]
+
+wrongRelationSource :: T.Text
+wrongRelationSource = T.unlines
+  [ issueRelationHeader
+  , "rel-correct\t2026-08-13\tissue-001\trealized-as\tactual-wrong\tmistaken target"
+  ]
+
+fixedRelationSource :: T.Text
+fixedRelationSource = T.unlines
+  [ issueRelationHeader
+  , "rel-correct\t2026-08-13\tissue-001\trealized-as\tactual-right\tcorrected mistaken target"
+  ]
+
+duplicateRelationSource :: T.Text
+duplicateRelationSource = T.unlines
+  [ issueRelationHeader
+  , "rel-dup\t2026-08-13\tissue-001\tconcerns-plan\tplan-old\tfirst"
+  , "rel-dup\t2026-08-14\tissue-001\tplanned-as\tplan-new\tsecond"
+  ]
+
+invalidRelationDaySource :: T.Text
+invalidRelationDaySource = T.unlines
+  [ "# comment preserves source line"
+  , issueRelationHeader
+  , "rel-001\t2026-02-30\tissue-001\tconcerns-plan\tplan-old\tbad day"
+  ]
+
 exactlyOne :: Show value => [value] -> value
 exactlyOne [value] = value
 exactlyOne values = error ("expected exactly one value, got " ++ show values)
@@ -270,3 +396,25 @@ assertLeftAtMessageContains label expectedLine fragment result = case result of
     matches err =
       householdIssueTSVErrorLine err == expectedLine
         && fragment `T.isInfixOf` householdIssueTSVErrorMessage err
+
+assertRelationLeftAt
+  :: String
+  -> Int
+  -> T.Text
+  -> Either (NonEmpty.NonEmpty IssueRelationTSVError) value
+  -> IO ()
+assertRelationLeftAt label expectedLine expectedMessage result = case result of
+  Left errors
+    | any matches (NonEmpty.toList errors) -> putStrLn ("  [PASS] " ++ label)
+    | otherwise -> do
+        putStrLn ("  [FAIL] " ++ label)
+        putStrLn ("    actual errors: " ++ show errors)
+        exitFailure
+  Right _ -> do
+    putStrLn ("  [FAIL] " ++ label)
+    putStrLn "    unexpectedly accepted relation source"
+    exitFailure
+  where
+    matches err =
+      issueRelationTSVErrorLine err == expectedLine
+        && issueRelationTSVErrorMessage err == expectedMessage
