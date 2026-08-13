@@ -10,8 +10,12 @@ import HKernel.Household.Issue.Relation.TSV
 import HKernel.Household.Issue.TSV
 import HKernel.HouseholdIssue
 import HKernel.Money
-import HKernel.Plan (planIdText)
-import HKernel.Plan.Completion (actualTransactionIdText)
+import HKernel.Plan (PlanId, mkPlanId, planIdText)
+import HKernel.Plan.Completion
+  ( ActualTransactionId
+  , actualTransactionIdText
+  , mkActualTransactionId
+  )
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -20,6 +24,7 @@ main = do
   characterizeCompatibility
   characterizeSourceFailures
   characterizeIssueRelations
+  characterizeIssueRelationReferences
 
 characterizeAcceptedIssues :: IO ()
 characterizeAcceptedIssues = do
@@ -216,6 +221,97 @@ characterizeIssueRelations = do
     "duplicate issue relation event identity"
     (parseIssueRelations duplicateRelationSource)
 
+-- Reference integrity is characterized here before it receives a production
+-- Household owner. Inputs are already-admitted identities, never raw roots.
+-- In particular, the Actual collection means source-durable event identities,
+-- not runtime reconstruction or physical source fallback identities.
+characterizeIssueRelationReferences :: IO ()
+characterizeIssueRelationReferences = do
+  let relations = mustRight (parseIssueRelations relationSource)
+      issue = mustRight (mkIssueId "issue-001")
+      missingIssue = mustRight (mkIssueId "issue-missing")
+      oldPlan = mustRight (mkPlanId "plan-old")
+      newPlan = mustRight (mkPlanId "plan-new")
+      missingPlan = mustRight (mkPlanId "plan-missing")
+      transfer = mustRight (mkActualTransactionId "actual-transfer")
+      payment = mustRight (mkActualTransactionId "actual-payment")
+      runtimeActual = mustRight (mkActualTransactionId "plan-completion-plan-old")
+      knownIssues = [issue]
+      knownPlans = [oldPlan, newPlan]
+      durableActuals = [transfer, payment]
+      unknownIssueRelation = exactlyOne
+        (mustRight (parseIssueRelations
+          (T.replace "issue-001" "issue-missing" oneRelationSource)))
+      unknownPlanRelation = exactlyOne
+        (mustRight (parseIssueRelations
+          (T.replace "plan-old" "plan-missing" oneRelationSource)))
+      runtimeActualRelation = exactlyOne
+        (mustRight (parseIssueRelations runtimeActualRelationSource))
+      withdrawnRelation = exactlyOne
+        (filter ((== "planning-withdrawn") . relationKind) relations)
+      historicalPlanRelation = head relations
+
+  assertEqual "reference admission accepts known Issue/Plan/durable Actual identities"
+    (Right relations)
+    (admitIssueRelationReferences knownIssues knownPlans durableActuals relations)
+  assertEqual "reference admission rejects an unknown Issue identity"
+    (Left (NonEmpty.fromList
+      [UnknownIssueRelationIssue (issueRelationEventId unknownIssueRelation) missingIssue]))
+    (admitIssueRelationReferences knownIssues knownPlans durableActuals [unknownIssueRelation])
+  assertEqual "reference admission rejects an unknown Plan identity"
+    (Left (NonEmpty.fromList
+      [UnknownIssueRelationPlanTarget (issueRelationEventId unknownPlanRelation) missingPlan]))
+    (admitIssueRelationReferences knownIssues knownPlans durableActuals [unknownPlanRelation])
+  assertEqual "reference admission rejects a non-durable Actual runtime identity"
+    (Left (NonEmpty.fromList
+      [UnknownIssueRelationActualTarget (issueRelationEventId runtimeActualRelation) runtimeActual]))
+    (admitIssueRelationReferences knownIssues knownPlans durableActuals [runtimeActualRelation])
+  assertEqual "historical Plan identity remains referable without an active-Plan filter"
+    (Right [historicalPlanRelation])
+    (admitIssueRelationReferences knownIssues knownPlans durableActuals [historicalPlanRelation])
+  assertEqual "planning-withdrawn requires Plan existence but no retirement state"
+    (Right [withdrawnRelation])
+    (admitIssueRelationReferences knownIssues knownPlans durableActuals [withdrawnRelation])
+
+data IssueRelationReferenceError
+  = UnknownIssueRelationIssue IssueRelationEventId IssueId
+  | UnknownIssueRelationPlanTarget IssueRelationEventId PlanId
+  | UnknownIssueRelationActualTarget IssueRelationEventId ActualTransactionId
+  deriving (Eq, Show)
+
+admitIssueRelationReferences
+  :: [IssueId]
+  -> [PlanId]
+  -> [ActualTransactionId]
+  -> [IssueRelationEvent]
+  -> Either (NonEmpty.NonEmpty IssueRelationReferenceError) [IssueRelationEvent]
+admitIssueRelationReferences knownIssues knownPlans durableActuals relations =
+  case NonEmpty.nonEmpty (concatMap referenceErrors relations) of
+    Nothing -> Right relations
+    Just errors -> Left errors
+  where
+    referenceErrors relation = issueErrors relation ++ targetErrors relation
+    issueErrors relation =
+      [ UnknownIssueRelationIssue
+          (issueRelationEventId relation)
+          (issueRelationIssueId relation)
+      | issueRelationIssueId relation `notElem` knownIssues
+      ]
+    targetErrors relation = case issueRelationMeaning relation of
+      IssueConcernsPlan planId -> planErrors relation planId
+      IssuePlannedAs planId -> planErrors relation planId
+      IssuePlanningWithdrawn planId -> planErrors relation planId
+      IssueRealizedAs actualId -> actualErrors relation actualId
+      IssueFundedBy actualId -> actualErrors relation actualId
+    planErrors relation planId =
+      [ UnknownIssueRelationPlanTarget (issueRelationEventId relation) planId
+      | planId `notElem` knownPlans
+      ]
+    actualErrors relation actualId =
+      [ UnknownIssueRelationActualTarget (issueRelationEventId relation) actualId
+      | actualId `notElem` durableActuals
+      ]
+
 relationKind :: IssueRelationEvent -> T.Text
 relationKind relation = case issueRelationMeaning relation of
   IssueConcernsPlan _ -> "concerns-plan"
@@ -317,6 +413,12 @@ oneRelationSource :: T.Text
 oneRelationSource = T.unlines
   [ issueRelationHeader
   , "rel-001\t2026-08-13\tissue-001\tconcerns-plan\tplan-old\treview current commitment"
+  ]
+
+runtimeActualRelationSource :: T.Text
+runtimeActualRelationSource = T.unlines
+  [ issueRelationHeader
+  , "rel-runtime\t2026-08-13\tissue-001\trealized-as\tplan-completion-plan-old\truntime identity is not durable source evidence"
   ]
 
 wrongRelationSource :: T.Text
