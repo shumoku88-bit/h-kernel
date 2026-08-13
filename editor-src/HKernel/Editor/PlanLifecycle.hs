@@ -44,7 +44,6 @@ import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError
   , actualJournalCompletionDeclarations
-  , actualJournalValue
   , admitActualJournalFromResolvedJournal
   , parseActualJournal
   )
@@ -274,9 +273,9 @@ data PlanCancelPreview = PlanCancelPreview
   } deriving (Eq, Show)
 
 data PlanSupersedeIntent = PlanSupersedeIntent
-  { supersedePlanId      :: Text
-  , supersedeOn          :: Day
-  , supersedeReplacement :: PlanAddIntent
+  { supersedePlanId       :: Text
+  , supersedeOn           :: Day
+  , supersedeReplacement  :: PlanAddIntent
   } deriving (Eq, Show)
 
 data PlanSupersedePreview = PlanSupersedePreview
@@ -413,6 +412,7 @@ preparePlanCancelFromJournals planJ planSource actualJ intent = do
     Nothing
     (planJournalTransactions planJ)
     (planJournalTransactions candidateJournal)
+    candidateRetirements
 
   pure PlanCancelPreview
     { cancelOriginalBlock = retirementOriginalBlock sourceEdit
@@ -462,6 +462,7 @@ preparePlanSupersedeFromJournals planJ planSource actualJ intent = do
     (Just successorId)
     (planJournalTransactions planJ)
     (planJournalTransactions candidateJournal)
+    candidateRetirements
 
   let candidateIds = map identifiedPlanId (planJournalTransactions candidateJournal)
       originalIds = map identifiedPlanId (planJournalTransactions planJ)
@@ -508,8 +509,8 @@ prepareRetirementTarget planJ actualJ rawPlanId = do
   pure (pId, target, retirements)
 
 data RetirementSourceEdit = RetirementSourceEdit
-  { retirementOriginalBlock  :: Text
-  , retirementEditedBlock    :: Text
+  { retirementOriginalBlock   :: Text
+  , retirementEditedBlock     :: Text
   , retirementCandidateSource :: Text
   }
 
@@ -579,8 +580,9 @@ validateRetirementCandidate
   -> Maybe PlanId
   -> [IdentifiedPlanTransaction]
   -> [IdentifiedPlanTransaction]
+  -> [PlanRetirement]
   -> Either (NonEmpty PlanRetirementWriteError) ()
-validateRetirementCandidate pId target existingRetirements retiredOn successor originalPlans candidatePlans = do
+validateRetirementCandidate pId target existingRetirements retiredOn successor originalPlans candidatePlans candidateRetirements = do
   let originalIds = map identifiedPlanId originalPlans
       candidatePrefix = take (length originalPlans) candidatePlans
       candidateTarget = filter ((== pId) . identifiedPlanId) candidatePlans
@@ -592,18 +594,11 @@ validateRetirementCandidate pId target existingRetirements retiredOn successor o
         _ -> False
     then Right ()
     else Left (pure (RetireCandidateSemanticMismatch pId))
-  candidateRetirements <- first (pure . RetireCandidateLifecycleError)
-    (admitPlanRetirementsFromCandidate candidatePlans)
   if all (`elem` candidateRetirements) existingRetirements
       && length candidateRetirements == length existingRetirements + 1
       && retirementEvidencePresent pId retiredOn successor candidateRetirements
     then Right ()
     else Left (pure (RetireCandidateSemanticMismatch pId))
-  where
-    -- This placeholder is replaced by the already-admitted candidate lifecycle
-    -- in each caller; keeping candidate Plan values here only protects accounting
-    -- semantic identity.
-    admitPlanRetirementsFromCandidate _ = Right []
 
 retirementEvidencePresent
   :: PlanId
