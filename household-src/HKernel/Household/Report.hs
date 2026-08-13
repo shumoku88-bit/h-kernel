@@ -119,17 +119,12 @@ import HKernel.Household.BudgetObservation
   , householdBudgetRemaining
   )
 
--- | A source-local admission failure. Private source text is deliberately not
--- retained, so CLI diagnostics cannot accidentally echo a complete row.
 data HouseholdSourceError = HouseholdSourceError
   { householdSourceName    :: Text
   , householdSourceLine    :: Int
   , householdSourceMessage :: Text
   } deriving (Eq, Show)
 
--- | A future income movement used only as evidence for cycle resolution.
---
--- It is deliberately not represented by 'CommittedOutgoingPlan'.
 data IncomingCycleAnchor = IncomingCycleAnchor
   { incomingAnchorId     :: PlanId
   , incomingAnchorDate   :: Day
@@ -142,9 +137,6 @@ data AdmittedPlans = AdmittedPlans
   , admittedPlanRetirements :: [PlanRetirement]
   } deriving (Eq, Show)
 
--- | Display relation of an open outgoing Plan to the resolved current cycle.
--- This is intentionally presentation-facing classification; Budget, Backing,
--- and Daily Target remain bounded by the current cycle independently.
 data PlannedTransactionHorizon
   = BeforeCurrentCycle
   | InCurrentCycle
@@ -156,12 +148,6 @@ data ClassifiedPlannedTransaction = ClassifiedPlannedTransaction
   , classifiedPlanValue   :: CommittedOutgoingPlan
   } deriving (Eq, Show)
 
--- | Availability of the daily current-vs-previous cycle comparison.
---
--- The Household surface uses the old BQN daily-use meaning: compare the current
--- cycle with the previous cycle at the same elapsed day count. If the previous
--- cycle cannot supply that aligned observation, only this comparison is marked
--- unavailable; the rest of the admitted Household surface remains usable.
 data HouseholdCycleComparison
   = HouseholdCycleComparisonAvailable CycleComparison
   | HouseholdCycleComparisonUnavailable HouseholdCycleComparisonUnavailable
@@ -181,10 +167,6 @@ data HouseholdReportSurface = HouseholdReportSurface
   , householdDailyTarget          :: DailyTarget
   } deriving (Eq, Show)
 
--- | Calculate the Household report surface from already admitted typed values.
--- Admission adapters may differ, but cycle, Plan completion, Plan retirement,
--- Budget observation, backing, and Daily Target calculation have one semantic
--- owner here.
 buildHouseholdReportSurfaceFromAdmitted
   :: Day
   -> ActualJournal
@@ -229,8 +211,8 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
         completionOpenPlanValues
       openPlanIds = Set.fromList (map committedPlanId openPlanValues)
       openPlans = openOutgoingPlans openPlanIds outgoingPlans
-      currentOpenPlans = filter
-        (periodContains current . committedPlanDate)
+      fundingHorizonOpenPlans = filter
+        ((< periodEndExclusive current) . committedPlanDate)
         openPlans
       backingPlans =
         [ HouseholdBackingPlan
@@ -238,13 +220,13 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
             , householdBackingPlanDestination = committedPlanDestination plan
             , householdBackingPlanAmount = committedPlanAmount plan
             }
-        | plan <- currentOpenPlans
+        | plan <- fundingHorizonOpenPlans
         ]
       backing = deriveHouseholdBacking
         observation current journal admittedPolicy
         budget entitlement consumption remaining backingPlans
       target = deriveDailyTarget observation current journal
-        dailyScope currentOpenPlans
+        dailyScope fundingHorizonOpenPlans
       comparison = alignedHouseholdCycleComparison
         observation current previous journal currentCycle
   pure HouseholdReportSurface
@@ -256,9 +238,6 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
     , householdDailyTarget = target
     }
 
--- | Compare the previous cycle at the same elapsed day count as the current
--- observation. An unavailable aligned baseline is retained as typed evidence
--- instead of clipping the window or failing unrelated Household reports.
 alignedHouseholdCycleComparison
   :: Day
   -> Period
@@ -278,8 +257,6 @@ alignedHouseholdCycleComparison observation current previous journal currentCycl
     baselineObservation = addDays elapsedDays (periodStart previous)
     elapsedDays = diffDays observation (periodStart current)
 
--- | Classify already admitted open outgoing Plans without changing which Plans
--- participate in current-cycle accounting calculations.
 classifyPlannedTransactions
   :: Period
   -> [CommittedOutgoingPlan]
