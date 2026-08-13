@@ -1,4 +1,9 @@
 -- | Stable household policy layered on top of the general Budget policy.
+--
+-- 'BudgetPolicy' owns spendable envelopes, Expense assignment, pacing, and
+-- backing pools. This module adds only household coordinates: the income-anchor
+-- cycle, allocation Budget Accounts, publication order, extra Plan
+-- destinations, and the unassigned Budget Account scope.
 module HKernel.Household.Policy
   ( HouseholdCyclePolicy
   , incomeAnchorCyclePolicy
@@ -11,13 +16,11 @@ module HKernel.Household.Policy
   , HouseholdPolicy
   , HouseholdPolicyError(..)
   , mkHouseholdPolicy
-  , mkHouseholdPolicyWithExpenseManagement
   , householdPolicyCycle
   , householdBudgetPolicy
   , householdEnvelopeOrder
   , householdAllocationEnvelopes
   , householdUnassignedBudgetAccounts
-  , householdUnmanagedExpenseAccounts
   , householdEnvelopeForPlanDestination
   , householdEnvelopeForExecutionPlanDestination
   , AccountValidatedHouseholdPolicy
@@ -55,6 +58,8 @@ import HKernel.Budget.Policy
   , validateBudgetPolicyAccounts
   )
 
+-- | The household cycle is bounded by observed and planned movements from one
+-- explicitly named Income Account.
 newtype HouseholdCyclePolicy = IncomeAnchorCyclePolicy
   { householdCycleIncomeAccount :: Account
   } deriving (Eq, Show)
@@ -62,6 +67,8 @@ newtype HouseholdCyclePolicy = IncomeAnchorCyclePolicy
 incomeAnchorCyclePolicy :: Account -> HouseholdCyclePolicy
 incomeAnchorCyclePolicy = IncomeAnchorCyclePolicy
 
+-- | Household-only coordinates for one envelope already defined by
+-- 'BudgetPolicy'. Source order becomes deterministic publication order.
 data HouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
   { householdEnvelopeCoordinateId            :: EnvelopeId
   , householdEnvelopeAllocationAccount       :: Account
@@ -75,6 +82,8 @@ defineHouseholdEnvelopeCoordinates
   -> HouseholdEnvelopeCoordinates
 defineHouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
 
+-- | Structural conflicts in the household layer. General Budget conflicts are
+-- admitted earlier by 'HKernel.Budget.Config'.
 data HouseholdPolicyError
   = DuplicateHouseholdEnvelopeCoordinates EnvelopeId
   | HouseholdCoordinatesReferenceUnknownEnvelope EnvelopeId
@@ -86,6 +95,8 @@ data HouseholdPolicyError
   | AllocationAccountAlsoUnassigned Account EnvelopeId
   deriving (Eq, Show)
 
+-- | Canonical household policy. The constructor stays hidden so every lookup
+-- map and publication order is derived from one admitted coordinate sequence.
 data HouseholdPolicy = HouseholdPolicy
   { householdPolicyCycle                :: HouseholdCyclePolicy
   , householdBudgetPolicy               :: BudgetPolicy
@@ -94,12 +105,10 @@ data HouseholdPolicy = HouseholdPolicy
   , householdPlanDestinationEnvelopes   :: Map Account EnvelopeId
   , householdAdditionalPlanDestinations :: Map Account EnvelopeId
   , householdUnassignedBudgetAccounts   :: Set Account
-  , householdUnmanagedExpenseAccounts   :: Set Account
   } deriving (Eq, Show)
 
--- | Existing callers have no explicitly unmanaged Expense Accounts.
--- Unassigned Expense Accounts remain valid and become attention evidence only
--- when the policy meets an AccountRegistry.
+-- | Combine general Budget meaning with household-only coordinates while
+-- retaining every independently observable structural conflict.
 mkHouseholdPolicy
   :: HouseholdCyclePolicy
   -> BudgetPolicy
@@ -107,20 +116,6 @@ mkHouseholdPolicy
   -> [Account]
   -> Either (NonEmpty HouseholdPolicyError) HouseholdPolicy
 mkHouseholdPolicy cyclePolicy budgetPolicy coordinates unassignedAccounts =
-  mkHouseholdPolicyWithExpenseManagement
-    cyclePolicy budgetPolicy coordinates unassignedAccounts []
-
--- | Add an explicit negative decision for Expense Accounts intentionally left
--- outside envelope management. Syntax/admission for this list is owned by a
--- later configuration migration; this constructor is the domain boundary.
-mkHouseholdPolicyWithExpenseManagement
-  :: HouseholdCyclePolicy
-  -> BudgetPolicy
-  -> [HouseholdEnvelopeCoordinates]
-  -> [Account]
-  -> [Account]
-  -> Either (NonEmpty HouseholdPolicyError) HouseholdPolicy
-mkHouseholdPolicyWithExpenseManagement cyclePolicy budgetPolicy coordinates unassignedAccounts unmanagedExpenseAccounts =
   case NonEmpty.nonEmpty errors of
     Just nonEmptyErrors -> Left nonEmptyErrors
     Nothing -> Right HouseholdPolicy
@@ -129,9 +124,9 @@ mkHouseholdPolicyWithExpenseManagement cyclePolicy budgetPolicy coordinates unas
       , householdEnvelopeOrder = map householdEnvelopeCoordinateId coordinates
       , householdAllocationEnvelopes = coordinateValues allocationObservation
       , householdPlanDestinationEnvelopes = coordinateValues planObservation
-      , householdAdditionalPlanDestinations = additionalPlanAssignments
+      , householdAdditionalPlanDestinations =
+          coordinateValues additionalPlanObservation
       , householdUnassignedBudgetAccounts = Set.fromList unassignedAccounts
-      , householdUnmanagedExpenseAccounts = Set.fromList unmanagedExpenseAccounts
       }
   where
     budgetEnvelopeDefinitions = budgetPolicyEnvelopeDefinitions budgetPolicy
@@ -163,7 +158,6 @@ mkHouseholdPolicyWithExpenseManagement cyclePolicy budgetPolicy coordinates unas
         )
       | coordinate <- canonicalCoordinates
       ]
-    allocationAssignments = coordinateValues allocationObservation
     allocationErrors =
       [ DuplicateAllocationAccount account firstEnvelope repeatedEnvelope
       | (account, firstEnvelope, repeatedEnvelope) <-
@@ -176,13 +170,17 @@ mkHouseholdPolicyWithExpenseManagement cyclePolicy budgetPolicy coordinates unas
       , account <- householdEnvelopePlanDestinationAccounts coordinate
       ]
     additionalPlanObservation = observeAssignments additionalPlanCoordinates
-    additionalPlanAssignments = coordinateValues additionalPlanObservation
     expensePlanCoordinates =
       [ (account, envelopeDefinitionId definition)
       | definition <- budgetEnvelopeDefinitions
       , account <- envelopeDefinitionExpenseAccounts definition
       ]
-    allocationPlanCoordinates = Map.toAscList allocationAssignments
+    allocationPlanCoordinates =
+      [ ( householdEnvelopeAllocationAccount coordinate
+        , householdEnvelopeCoordinateId coordinate
+        )
+      | coordinate <- canonicalCoordinates
+      ]
     planObservation = observeAssignments
       ( expensePlanCoordinates
           ++ allocationPlanCoordinates
@@ -208,10 +206,10 @@ mkHouseholdPolicyWithExpenseManagement cyclePolicy budgetPolicy coordinates unas
       ]
     overlapErrors =
       [ AllocationAccountAlsoUnassigned account envelope
-      | (account, envelope) <- Map.toAscList allocationAssignments
+      | (account, envelope) <- Map.toAscList
+          (coordinateValues allocationObservation)
       , Set.member account (Set.fromList unassignedAccounts)
       ]
-
     errors =
       duplicateCoordinateErrors
         ++ unknownCoordinateErrors
@@ -231,8 +229,9 @@ householdEnvelopeForPlanDestination
 householdEnvelopeForPlanDestination account =
   Map.lookup account . householdPlanDestinationEnvelopes
 
--- | Narrow writer relation. Only explicit household plan destinations may
--- authorize Plan-completion Budget reflection.
+-- | Narrow writer permission for Plan completion Budget reflection. Only
+-- explicit Household Plan destination coordinates participate, so ordinary
+-- Actual consumption cannot also authorize the same Budget movement.
 householdEnvelopeForExecutionPlanDestination
   :: Account
   -> HouseholdPolicy
@@ -240,12 +239,12 @@ householdEnvelopeForExecutionPlanDestination
 householdEnvelopeForExecutionPlanDestination account =
   Map.lookup account . householdAdditionalPlanDestinations
 
--- | A structurally valid Household policy qualified against one AccountRegistry.
--- Expense Accounts with no current management decision remain visible as an
--- attention projection rather than making the Household invalid.
+-- | A household policy whose every Account reference has been checked against
+-- one canonical AccountRegistry. Expense Accounts with no current management
+-- route remain valid and are retained as attention evidence.
 data AccountValidatedHouseholdPolicy = AccountValidatedHouseholdPolicy
-  { accountValidatedHouseholdPolicy                  :: HouseholdPolicy
-  , accountValidatedHouseholdBudgetPolicy            :: AccountValidatedBudgetPolicy
+  { accountValidatedHouseholdPolicy :: HouseholdPolicy
+  , accountValidatedHouseholdBudgetPolicy :: AccountValidatedBudgetPolicy
   , accountValidatedHouseholdUnassignedExpenseAccounts :: Set Account
   } deriving (Eq, Show)
 
@@ -258,18 +257,14 @@ data HouseholdPolicyAccountError
   | HouseholdUnassignedAccountUndeclared Account
   | HouseholdUnassignedAccountNotBudget Account AccountType
   | HouseholdPlanDestinationUndeclared EnvelopeId Account
-  | HouseholdUnmanagedExpenseUndeclared Account
-  | HouseholdUnmanagedAccountNotExpense Account AccountType
   | HouseholdExpenseManagementAmbiguous Account
   deriving (Eq, Show)
 
--- | Qualify every Account coordinate against one AccountRegistry.
+-- | Validate every household Account coordinate together, then return typed
+-- evidence that later calculations can require instead of raw policy.
 --
--- Expense management is intentionally asymmetric:
---
--- * zero decisions is valid and retained as unassigned attention evidence,
--- * one decision is valid,
--- * two or more decisions are ambiguous and fail closed.
+-- Expense management is asymmetric by design: zero routes is valid attention
+-- evidence, one route is valid, and two routes fail closed.
 validateHouseholdPolicyAccounts
   :: AccountRegistry
   -> HouseholdPolicy
@@ -281,7 +276,8 @@ validateHouseholdPolicyAccounts registry policy =
       Right validated -> Right AccountValidatedHouseholdPolicy
         { accountValidatedHouseholdPolicy = policy
         , accountValidatedHouseholdBudgetPolicy = validated
-        , accountValidatedHouseholdUnassignedExpenseAccounts = unassignedExpenseAccounts
+        , accountValidatedHouseholdUnassignedExpenseAccounts =
+            unassignedExpenseAccounts
         }
       Left impossible -> Left (fmap HouseholdBudgetPolicyAccountError impossible)
   where
@@ -299,8 +295,6 @@ validateHouseholdPolicyAccounts registry policy =
           (Set.toAscList (householdUnassignedBudgetAccounts policy))
         ++ concatMap validateAdditionalPlanDestination
           (Map.toAscList (householdAdditionalPlanDestinations policy))
-        ++ concatMap validateUnmanagedExpense
-          (Set.toAscList (householdUnmanagedExpenseAccounts policy))
         ++ expenseManagementErrors
 
     cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
@@ -321,7 +315,9 @@ validateHouseholdPolicyAccounts registry policy =
           | declaredAccountType declaration == Budget -> []
           | otherwise ->
               [ HouseholdAllocationAccountNotBudget
-                  envelope account (declaredAccountType declaration)
+                  envelope
+                  account
+                  (declaredAccountType declaration)
               ]
 
     validateUnassigned account =
@@ -331,23 +327,14 @@ validateHouseholdPolicyAccounts registry policy =
           | declaredAccountType declaration == Budget -> []
           | otherwise ->
               [ HouseholdUnassignedAccountNotBudget
-                  account (declaredAccountType declaration)
+                  account
+                  (declaredAccountType declaration)
               ]
 
     validateAdditionalPlanDestination (account, envelope) =
       case lookupAccountDeclaration account registry of
         Nothing -> [HouseholdPlanDestinationUndeclared envelope account]
         Just _ -> []
-
-    validateUnmanagedExpense account =
-      case lookupAccountDeclaration account registry of
-        Nothing -> [HouseholdUnmanagedExpenseUndeclared account]
-        Just declaration
-          | declaredAccountType declaration == Expense -> []
-          | otherwise ->
-              [ HouseholdUnmanagedAccountNotExpense
-                  account (declaredAccountType declaration)
-              ]
 
     consumptionManagedExpenses = Set.fromList
       [ account
@@ -356,32 +343,32 @@ validateHouseholdPolicyAccounts registry policy =
       ]
     executionManagedExpenses = Map.keysSet
       (householdAdditionalPlanDestinations policy)
-    explicitlyUnmanagedExpenses = householdUnmanagedExpenseAccounts policy
     declaredExpenses =
       [ declaredAccount declaration
       | declaration <- accountDeclarations registry
       , declaredAccountType declaration == Expense
       ]
-    decisionCount account = length
+    routeCount account = length
       [ ()
       | present <-
           [ Set.member account consumptionManagedExpenses
           , Set.member account executionManagedExpenses
-          , Set.member account explicitlyUnmanagedExpenses
           ]
       , present
       ]
     unassignedExpenseAccounts = Set.fromList
       [ account
       | account <- declaredExpenses
-      , decisionCount account == 0
+      , routeCount account == 0
       ]
     expenseManagementErrors =
       [ HouseholdExpenseManagementAmbiguous account
       | account <- declaredExpenses
-      , decisionCount account > 1
+      , routeCount account > 1
       ]
 
+-- | A source-ordered coordinate observation. The first occurrence is canonical
+-- and every later occurrence remains visible in encounter order.
 data CoordinateObservation key value = CoordinateObservation
   { coordinateValues    :: Map key value
   , coordinateConflicts :: [(key, value, value)]
@@ -405,6 +392,9 @@ observeCoordinates = foldl' observe emptyObservation
               ++ [(key, firstValue, value)]
           }
 
+-- | Observe semantic ownership rather than source duplication. Repeating the
+-- same owner is idempotent; only one coordinate assigned to two different
+-- owners is a conflict.
 observeAssignments
   :: (Ord key, Eq value)
   => [(key, value)]
