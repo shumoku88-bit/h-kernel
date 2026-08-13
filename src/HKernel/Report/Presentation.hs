@@ -8,6 +8,7 @@ module HKernel.Report.Presentation
   , calendarMarkerValue
   , CalendarMarkers(..)
   , defaultCalendarMarkers
+  , selectCalendarMarker
   , PresentationConfig(..)
   , defaultPresentationConfig
   , DateColumnCount
@@ -65,25 +66,44 @@ mkCalendarMarker value = case T.unpack value of
 calendarMarkerValue :: CalendarMarker -> Char
 calendarMarkerValue (CalendarMarker marker) = marker
 
--- | Presentation-only glyphs for meaning already established by Household data.
+-- | Presentation-only glyphs for independent calendar attention facts.
 --
--- Marker priority and the facts that cause a marker to appear are not
--- configurable here. This type changes only how those fixed semantic roles are
--- shown inside one calendar cell.
+-- Actual existence is deliberately not a marker role. It remains observable in
+-- the selected-day detail. Plan due, Issue due, and cycle end remain independent
+-- facts; when more than one is true, the multiple marker preserves that overlap
+-- instead of hiding facts behind a priority rule.
 data CalendarMarkers = CalendarMarkers
-  { calendarActualMarker :: CalendarMarker
-  , calendarPlanMarker :: CalendarMarker
+  { calendarPlanDueMarker :: CalendarMarker
   , calendarIssueDueMarker :: CalendarMarker
   , calendarCycleEndMarker :: CalendarMarker
+  , calendarMultipleMarker :: CalendarMarker
   } deriving (Eq, Show)
 
 defaultCalendarMarkers :: CalendarMarkers
 defaultCalendarMarkers = CalendarMarkers
-  { calendarActualMarker = CalendarMarker '.'
-  , calendarPlanMarker = CalendarMarker '+'
+  { calendarPlanDueMarker = CalendarMarker '$'
   , calendarIssueDueMarker = CalendarMarker '!'
   , calendarCycleEndMarker = CalendarMarker '|'
+  , calendarMultipleMarker = CalendarMarker '+'
   }
+
+-- | Choose presentation for three already-established, independent day facts.
+--
+-- The arguments are Plan due, Issue due, and cycle end respectively. No fact is
+-- semantically preferred over another; any overlap is represented explicitly.
+selectCalendarMarker
+  :: CalendarMarkers
+  -> Bool
+  -> Bool
+  -> Bool
+  -> Maybe CalendarMarker
+selectCalendarMarker markers planDue issueDue cycleEnd =
+  case (planDue, issueDue, cycleEnd) of
+    (False, False, False) -> Nothing
+    (True,  False, False) -> Just (calendarPlanDueMarker markers)
+    (False, True,  False) -> Just (calendarIssueDueMarker markers)
+    (False, False, True)  -> Just (calendarCycleEndMarker markers)
+    _ -> Just (calendarMultipleMarker markers)
 
 -- | Validated presentation policy shared by reports and Household UI surfaces.
 --
