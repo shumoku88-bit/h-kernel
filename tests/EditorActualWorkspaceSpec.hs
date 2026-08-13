@@ -20,14 +20,24 @@ import HKernel.Actual.Journal
   , actualJournalTransactionEntries
   , actualJournalValue
   , actualTransactionEntryIdentity
+  , actualTransactionEntrySource
   , parseActualJournal
   )
 import HKernel.Editor.ActualWorkspace
-  ( newestTransactionEntriesForAccount
+  ( ActualIdentityPromotionError(..)
+  , identityPromotionCandidateCompleteSource
+  , newestTransactionEntriesForAccount
+  , prepareActualIdentityPromotion
   , transactionEntriesForAccount
   )
-import HKernel.Journal (journalAccountRegistry)
-import HKernel.Plan.Completion (actualTransactionIdText)
+import HKernel.Journal
+  ( journalAccountRegistry
+  , journalTransactionSourceHeaderLine
+  )
+import HKernel.Plan.Completion
+  ( actualTransactionIdText
+  , mkActualTransactionId
+  )
 
 main :: IO ()
 main = do
@@ -54,22 +64,97 @@ main = do
 
   let alignedJournal = mustRight (parseActualJournal duplicateShapeSource)
       alignedEntries = actualJournalTransactionEntries alignedJournal
+      newestEntries = newestTransactionEntriesForAccount Nothing alignedEntries
       alignmentResult =
         ( "source-position identity survives duplicate Transaction values"
         , map (fmap actualTransactionIdText . actualTransactionEntryIdentity)
             alignedEntries
             == [Nothing, Just "actual-second"]
         )
+      sourceEvidenceResult =
+        ( "Actual entries retain parser-owned source evidence from the same observation"
+        , map
+            (journalTransactionSourceHeaderLine . actualTransactionEntrySource)
+            alignedEntries
+            == [9, 13]
+        )
       newestFirstResult =
         ( "newest-first projection reverses display without changing source entries"
         , map (fmap actualTransactionIdText . actualTransactionEntryIdentity)
-            (newestTransactionEntriesForAccount Nothing alignedEntries)
+            newestEntries
             == [Just "actual-second", Nothing]
+            && map
+                (journalTransactionSourceHeaderLine . actualTransactionEntrySource)
+                newestEntries
+              == [13, 9]
             && map (fmap actualTransactionIdText . actualTransactionEntryIdentity)
                 alignedEntries
               == [Nothing, Just "actual-second"]
+            && map
+                (journalTransactionSourceHeaderLine . actualTransactionEntrySource)
+                alignedEntries
+              == [9, 13]
         )
-      results = fixtureResults ++ [alignmentResult, newestFirstResult]
+      promotedId = mustRight (mkActualTransactionId "actual-first")
+      displayedIdentityFree = last newestEntries
+      promotionPreview = mustRight
+        (prepareActualIdentityPromotion
+          alignedJournal
+          duplicateShapeSource
+          displayedIdentityFree
+          promotedId)
+      promotedSource = identityPromotionCandidateCompleteSource promotionPreview
+      promotedJournal = mustRight (parseActualJournal promotedSource)
+      promotionResult =
+        ( "identity promotion targets selected source evidence without changing accounting meaning"
+        , actualJournalValue promotedJournal == actualJournalValue alignedJournal
+            && map (fmap actualTransactionIdText . actualTransactionEntryIdentity)
+                (actualJournalTransactionEntries promotedJournal)
+              == [Just "actual-first", Just "actual-second"]
+            && "2026-08-08 Same transaction\n  ; event-id: actual-first\n  assets:cash"
+                `T.isInfixOf` promotedSource
+        )
+      staleSourceResult =
+        ( "identity promotion rejects source text from a different observation"
+        , case prepareActualIdentityPromotion
+            alignedJournal
+            ("\n" <> duplicateShapeSource)
+            displayedIdentityFree
+            promotedId of
+            Left ActualIdentityPromotionSourceObservationMismatch -> True
+            _ -> False
+        )
+      alreadyIdentifiedResult =
+        ( "identity promotion rejects an already identified selected Actual"
+        , case prepareActualIdentityPromotion
+            alignedJournal
+            duplicateShapeSource
+            (head newestEntries)
+            promotedId of
+            Left (ActualIdentityPromotionAlreadyIdentified existingId) ->
+              actualTransactionIdText existingId == "actual-second"
+            _ -> False
+        )
+      duplicateIdentityResult =
+        ( "identity promotion rejects collision with an existing durable Actual identity"
+        , case prepareActualIdentityPromotion
+            alignedJournal
+            duplicateShapeSource
+            displayedIdentityFree
+            (mustRight (mkActualTransactionId "actual-second")) of
+            Left (ActualIdentityPromotionIdAlreadyExists existingId) ->
+              actualTransactionIdText existingId == "actual-second"
+            _ -> False
+        )
+      results = fixtureResults ++
+        [ alignmentResult
+        , sourceEvidenceResult
+        , newestFirstResult
+        , promotionResult
+        , staleSourceResult
+        , alreadyIdentifiedResult
+        , duplicateIdentityResult
+        ]
 
   mapM_ print results
   if all snd results then exitSuccess else exitFailure
