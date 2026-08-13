@@ -25,6 +25,19 @@ module HKernel.HouseholdIssue
   , householdIssueAmount
   , householdIssueText
   , householdIssueDetails
+  , IssueRelationEventId
+  , IssueRelationEventIdError(..)
+  , mkIssueRelationEventId
+  , issueRelationEventIdText
+  , IssueRelation(..)
+  , IssueRelationEvent
+  , IssueRelationEventError(..)
+  , mkIssueRelationEvent
+  , issueRelationEventId
+  , issueRelationRecordedOn
+  , issueRelationIssueId
+  , issueRelationMeaning
+  , issueRelationDetails
   ) where
 
 import Data.Char (isControl, isSpace)
@@ -32,6 +45,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 import HKernel.Money (Amount)
+import HKernel.Plan (PlanId)
+import HKernel.Plan.Completion (ActualTransactionId)
 
 -- | Stable machine identity used to update or resolve one issue safely.
 newtype IssueId = IssueId { issueIdText :: Text }
@@ -173,4 +188,87 @@ mkHouseholdIssueWithClosed issueId recordedOn status due closed amount text deta
       , householdIssueAmount = amount
       , householdIssueText = text
       , householdIssueDetails = details
+      }
+
+-- | Durable identity for one historical Issue relation occurrence.
+--
+-- A relation event is its own evidence rather than mutable state on either the
+-- Issue or the target. This lets later projections reconstruct a sequence such
+-- as planned-as -> planning-withdrawn -> planned-as without deleting the earlier
+-- household decision.
+newtype IssueRelationEventId = IssueRelationEventId
+  { issueRelationEventIdText :: Text
+  } deriving (Eq, Ord, Show)
+
+data IssueRelationEventIdError
+  = EmptyIssueRelationEventId
+  | IssueRelationEventIdHasSurroundingWhitespace Text
+  | IssueRelationEventIdContainsControlCharacter Text
+  | IssueRelationEventIdContainsWhitespace Text
+  deriving (Eq, Show)
+
+mkIssueRelationEventId
+  :: Text
+  -> Either IssueRelationEventIdError IssueRelationEventId
+mkIssueRelationEventId value
+  | T.null value = Left EmptyIssueRelationEventId
+  | T.strip value /= value =
+      Left (IssueRelationEventIdHasSurroundingWhitespace value)
+  | T.any isControl value =
+      Left (IssueRelationEventIdContainsControlCharacter value)
+  | T.any isSpace value =
+      Left (IssueRelationEventIdContainsWhitespace value)
+  | otherwise = Right (IssueRelationEventId value)
+
+-- | Narrow, typed meanings currently observed between one Issue and durable
+-- Plan or Actual identities.
+--
+-- This deliberately does not model a universal graph. Plan and Actual targets
+-- remain different constructors because "the Issue became this transaction"
+-- and "this transfer funded the Issue" are different household facts even when
+-- both targets are Actual transactions.
+data IssueRelation
+  = IssueConcernsPlan PlanId
+  | IssuePlannedAs PlanId
+  | IssuePlanningWithdrawn PlanId
+  | IssueRealizedAs ActualTransactionId
+  | IssueFundedBy ActualTransactionId
+  deriving (Eq, Show)
+
+-- | One append-only historical relation fact.
+--
+-- Recording a relation never changes Issue lifecycle by itself. In particular,
+-- an Issue can remain Open after being planned and can be Resolved independently
+-- from whether a relation target later changes lifecycle.
+data IssueRelationEvent = IssueRelationEvent
+  { issueRelationEventId    :: IssueRelationEventId
+  , issueRelationRecordedOn :: Day
+  , issueRelationIssueId    :: IssueId
+  , issueRelationMeaning    :: IssueRelation
+  , issueRelationDetails    :: Text
+  } deriving (Eq, Show)
+
+data IssueRelationEventError
+  = IssueRelationDetailsHasSurroundingWhitespace
+  | IssueRelationDetailsContainsControlCharacter
+  deriving (Eq, Show)
+
+mkIssueRelationEvent
+  :: IssueRelationEventId
+  -> Day
+  -> IssueId
+  -> IssueRelation
+  -> Text
+  -> Either IssueRelationEventError IssueRelationEvent
+mkIssueRelationEvent eventId recordedOn issueId relation details
+  | T.strip details /= details =
+      Left IssueRelationDetailsHasSurroundingWhitespace
+  | T.any isControl details =
+      Left IssueRelationDetailsContainsControlCharacter
+  | otherwise = Right IssueRelationEvent
+      { issueRelationEventId = eventId
+      , issueRelationRecordedOn = recordedOn
+      , issueRelationIssueId = issueId
+      , issueRelationMeaning = relation
+      , issueRelationDetails = details
       }
