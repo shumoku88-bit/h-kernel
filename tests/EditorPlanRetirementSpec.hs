@@ -3,21 +3,37 @@
 module Main (main) where
 
 import Data.List.NonEmpty (NonEmpty((:|)))
+import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (Account, mkAccount)
+import HKernel.Actual.Journal
+  ( ActualJournal
+  , parseActualJournal
+  )
+import HKernel.Editor.PlanCompleteAdvance
+  ( PlanCompleteAdvanceError(..)
+  , PlanCompleteAdvanceIntent(..)
+  , preparePlanCompleteAdvance
+  )
 import HKernel.Editor.PlanLifecycle
   ( PlanAddIntent(..)
   , PlanCancelIntent(..)
+  , PlanEditError(..)
+  , PlanEditIntent(..)
   , PlanRetirementWriteError(..)
   , PlanSupersedeIntent(..)
   , cancelCandidateCompleteSource
   , cancelRetiredBlock
+  , planClosedIds
+  , planInactiveIdsAt
   , preparePlanCancel
   , preparePlanCancelFromResolvedJournals
+  , preparePlanEdit
   , preparePlanSupersede
   , preparePlanSupersedeFromResolvedJournals
   , supersedeCandidateCompleteSource
@@ -42,6 +58,7 @@ import HKernel.Plan
   )
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
+  , PlanJournal
   , admitPlanRetirements
   , identifiedPlanId
   , identifiedPlanTransaction
@@ -58,6 +75,14 @@ main = do
           , testPlanCancelCompletedRejected)
         , ("cancel rejects already retired Plan"
           , testPlanCancelAlreadyRetiredRejected)
+        , ("closure evidence and observation-day inactivity stay distinct"
+          , testPlanClosureEvidenceAndEffectiveDate)
+        , ("completion inactivity follows Actual date"
+          , testPlanCompletionEffectiveDate)
+        , ("edit rejects retirement-declared Plan"
+          , testPlanEditRetiredRejected)
+        , ("complete rejects retirement-declared Plan"
+          , testPlanCompleteRetiredRejected)
         , ("supersede preserves old Plan and appends fresh replacement"
           , testPlanSupersedePreservesOldAndAppendsReplacement)
         , ("supersede reuses Plan Add collision handling"
@@ -230,6 +255,72 @@ testPlanCancelAlreadyRetiredRejected =
     Left (RetirePlanAlreadyRetired _ :| []) -> True
     _ -> False
 
+testPlanClosureEvidenceAndEffectiveDate :: Bool
+testPlanClosureEvidenceAndEffectiveDate =
+  let planJournal = mustParsePlan retiredPlanFixture
+      actualJournal = mustParseActual actualFixture
+      target = exactlyOnePlanId "plan-existing" planJournal
+      before = fromGregorian 2023 1 1
+      effective = fromGregorian 2023 1 2
+  in case
+      ( planClosedIds planJournal actualJournal
+      , planInactiveIdsAt before planJournal actualJournal
+      , planInactiveIdsAt effective planJournal actualJournal
+      ) of
+    (Right closed, Right inactiveBefore, Right inactiveEffective) ->
+      target `Set.member` closed
+        && target `Set.notMember` inactiveBefore
+        && target `Set.member` inactiveEffective
+    _ -> False
+
+testPlanCompletionEffectiveDate :: Bool
+testPlanCompletionEffectiveDate =
+  let planJournal = mustParsePlan planFixture
+      actualJournal = mustParseActual actualClosedFixture
+      target = exactlyOnePlanId "plan-existing" planJournal
+      before = fromGregorian 2023 1 1
+      effective = fromGregorian 2023 1 2
+  in case
+      ( planInactiveIdsAt before planJournal actualJournal
+      , planInactiveIdsAt effective planJournal actualJournal
+      ) of
+    (Right inactiveBefore, Right inactiveEffective) ->
+      target `Set.notMember` inactiveBefore
+        && target `Set.member` inactiveEffective
+    _ -> False
+
+testPlanEditRetiredRejected :: Bool
+testPlanEditRetiredRejected =
+  case preparePlanEdit retiredPlanFixture actualFixture PlanEditIntent
+      { editPlanId = "plan-existing"
+      , editDate = Just (fromGregorian 2023 1 11)
+      , editAmount = Nothing
+      } of
+    Left (EditPlanAlreadyClosed _ :| []) -> True
+    _ -> False
+
+testPlanCompleteRetiredRejected :: Bool
+testPlanCompleteRetiredRejected =
+  let planJournal = mustParsePlan retiredPlanFixture
+      actualJournal = mustParseActual actualFixture
+      target = exactlyOnePlanId "plan-existing" planJournal
+      result = preparePlanCompleteAdvance
+        planJournal
+        actualJournal
+        retiredPlanFixture
+        actualFixture
+        PlanCompleteAdvanceIntent
+          { completeAdvancePlanId = target
+          , completeAdvanceActualDate = fromGregorian 2023 1 10
+          , completeAdvanceActualAmount = Nothing
+          , completeAdvanceSuccessorDate = Nothing
+          , completeAdvanceSuccessorAmount = Nothing
+          }
+  in case result of
+    Left errors -> CompleteAdvancePlanAlreadyClosed target
+      `elem` NonEmpty.toList errors
+    Right _ -> False
+
 testPlanSupersedePreservesOldAndAppendsReplacement :: Bool
 testPlanSupersedePreservesOldAndAppendsReplacement =
   case preparePlanSupersede planFixture actualFixture supersedeIntent of
@@ -314,9 +405,22 @@ resolvedActualJournal = mustParseJournal actualFixture
 mustParseJournal :: Text -> Journal
 mustParseJournal = either (error . show) id . parseJournal
 
+mustParsePlan :: Text -> PlanJournal
 mustParsePlan text = either (error . show) id (parsePlanJournal text)
 
+mustParseActual :: Text -> ActualJournal
+mustParseActual text = either (error . show) id (parseActualJournal text)
+
+mustRetirements :: PlanJournal -> [PlanRetirement]
 mustRetirements journal = either (error . show) id (admitPlanRetirements journal)
+
+exactlyOnePlanId rawPlanId journal =
+  case [ identifiedPlanId identified
+       | identified <- planJournalTransactions journal
+       , planIdText (identifiedPlanId identified) == rawPlanId
+       ] of
+    [planId] -> planId
+    values -> error ("expected one PlanId, got " ++ show (length values))
 
 exactlyOneTransaction rawPlanId journal =
   case [ identifiedPlanTransaction identified
