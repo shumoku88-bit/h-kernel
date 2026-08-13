@@ -31,6 +31,12 @@ main = do
   assertEqual "canonical report TOML is idempotent after re-admission"
     rendered
     (renderReportConfiguration reparsed)
+  assertEqual "canonical rendering uses the shared direct calendar table"
+    True
+    ("[presentation.calendar]\n" `T.isInfixOf` rendered)
+  assertEqual "canonical rendering retires the nested calendar markers table"
+    False
+    ("[presentation.calendar.markers]\n" `T.isInfixOf` rendered)
   assertEqual "trial balance resolves latest once"
     latest
     (resolvedTrialBalanceAsOf resolved)
@@ -64,22 +70,24 @@ main = do
   assertEqual "negative amount color is validated and retained"
     MagentaColor
     (presentationNegativeAmountColor presentation)
-  assertEqual "actual calendar marker is validated and retained"
-    ':'
-    (calendarMarkerValue (calendarActualMarker calendarMarkers))
-  assertEqual "plan calendar marker is validated and retained"
+  assertEqual "plan due calendar marker is validated and retained"
     '^'
-    (calendarMarkerValue (calendarPlanMarker calendarMarkers))
+    (calendarMarkerValue (calendarPlanDueMarker calendarMarkers))
   assertEqual "issue due calendar marker is validated and retained"
     '!'
     (calendarMarkerValue (calendarIssueDueMarker calendarMarkers))
   assertEqual "cycle end calendar marker is validated and retained"
     '|'
     (calendarMarkerValue (calendarCycleEndMarker calendarMarkers))
+  assertEqual "multiple calendar marker is validated and retained"
+    ':'
+    (calendarMarkerValue (calendarMultipleMarker calendarMarkers))
   assertEqual "daily flow date columns are validated and retained"
     10
     (dateColumnCountValue
       (presentationDailyFlowDateColumns presentation))
+
+  characterizeCalendarSelection calendarMarkers
 
   let defaultColumnsConfiguration = mustRight
         (parseReportConfiguration
@@ -138,11 +146,31 @@ main = do
     '?'
     (calendarMarkerValue (calendarIssueDueMarker partialCalendarMarkers))
   assertEqual "unconfigured calendar roles retain defaults"
-    ('.', '+', '|')
-    ( calendarMarkerValue (calendarActualMarker partialCalendarMarkers)
-    , calendarMarkerValue (calendarPlanMarker partialCalendarMarkers)
+    ('$', '|', '+')
+    ( calendarMarkerValue (calendarPlanDueMarker partialCalendarMarkers)
     , calendarMarkerValue (calendarCycleEndMarker partialCalendarMarkers)
+    , calendarMarkerValue (calendarMultipleMarker partialCalendarMarkers)
     )
+
+  let legacyConfiguration = mustRight
+        (parseReportConfiguration
+          (T.replace calendarMarkersTable legacyCalendarMarkersTable validConfig))
+      legacyMarkers = presentationCalendarMarkers
+        (reportConfigurationPresentation legacyConfiguration)
+      legacyRendered = renderReportConfiguration legacyConfiguration
+  assertEqual "legacy nested calendar markers remain readable during migration"
+    ('^', '!', '|', '+')
+    ( calendarMarkerValue (calendarPlanDueMarker legacyMarkers)
+    , calendarMarkerValue (calendarIssueDueMarker legacyMarkers)
+    , calendarMarkerValue (calendarCycleEndMarker legacyMarkers)
+    , calendarMarkerValue (calendarMultipleMarker legacyMarkers)
+    )
+  assertEqual "legacy input is canonically rendered into the shared direct shape"
+    True
+    ("multiple-marker = \"+\"" `T.isInfixOf` legacyRendered)
+  assertLeft "legacy and direct calendar shapes cannot be mixed"
+    (parseReportConfiguration
+      (T.replace calendarMarkersTable mixedCalendarMarkersTable validConfig))
 
   let defaultPresentationConfiguration = mustRight
         (parseReportConfiguration
@@ -195,22 +223,52 @@ main = do
         "negative-color = \"invalid-color\"" validConfig))
   assertLeft "empty calendar markers are rejected"
     (parseReportConfiguration
-      (T.replace "actual = \":\"" "actual = \"\"" validConfig))
+      (T.replace "multiple-marker = \":\"" "multiple-marker = \"\"" validConfig))
   assertLeft "multi-character calendar markers are rejected"
     (parseReportConfiguration
-      (T.replace "actual = \":\"" "actual = \"..\"" validConfig))
+      (T.replace "multiple-marker = \":\"" "multiple-marker = \"..\"" validConfig))
   assertLeft "Unicode calendar markers are rejected until terminal width is explicit"
     (parseReportConfiguration
-      (T.replace "actual = \":\"" "actual = \"●\"" validConfig))
+      (T.replace "multiple-marker = \":\"" "multiple-marker = \"●\"" validConfig))
   assertLeft "whitespace calendar markers are rejected"
     (parseReportConfiguration
-      (T.replace "actual = \":\"" "actual = \" \"" validConfig))
+      (T.replace "multiple-marker = \":\"" "multiple-marker = \" \"" validConfig))
+  assertLeft "retired Actual glyph remains validated in legacy input"
+    (parseReportConfiguration
+      (T.replace calendarMarkersTable invalidLegacyActualTable validConfig))
   assertLeft "non-positive recent counts are rejected"
     (parseReportConfiguration
       (T.replace "count = 7" "count = 0" validConfig))
   assertLeft "non-positive daily flow date columns are rejected"
     (parseReportConfiguration
       (T.replace "max-date-columns = 10" "max-date-columns = 0" validConfig))
+
+characterizeCalendarSelection :: CalendarMarkers -> IO ()
+characterizeCalendarSelection markers = do
+  let selected planDue issueDue cycleEnd =
+        fmap calendarMarkerValue
+          (selectCalendarMarker markers planDue issueDue cycleEnd)
+  assertEqual "a day with no attention facts has no marker"
+    Nothing
+    (selected False False False)
+  assertEqual "Plan due alone keeps its marker"
+    (Just '^')
+    (selected True False False)
+  assertEqual "Issue due alone keeps its marker"
+    (Just '!')
+    (selected False True False)
+  assertEqual "cycle end alone keeps its marker"
+    (Just '|')
+    (selected False False True)
+  assertEqual "two independent facts use the multiple marker"
+    [Just ':', Just ':', Just ':']
+    [ selected True True False
+    , selected True False True
+    , selected False True True
+    ]
+  assertEqual "three independent facts also use the multiple marker"
+    (Just ':')
+    (selected True True True)
 
 hierarchyTable :: T.Text
 hierarchyTable = T.unlines
@@ -231,18 +289,51 @@ amountsTable = T.unlines
 
 calendarMarkersTable :: T.Text
 calendarMarkersTable = T.unlines
+  [ "[presentation.calendar]"
+  , "cycle-end-marker = \"|\""
+  , "plan-due-marker = \"^\""
+  , "issue-due-marker = \"!\""
+  , "multiple-marker = \":\""
+  , ""
+  ]
+
+partialCalendarMarkersTable :: T.Text
+partialCalendarMarkersTable = T.unlines
+  [ "[presentation.calendar]"
+  , "issue-due-marker = \"?\""
+  , ""
+  ]
+
+legacyCalendarMarkersTable :: T.Text
+legacyCalendarMarkersTable = T.unlines
   [ "[presentation.calendar.markers]"
-  , "actual = \":\""
+  , "actual = \".\""
   , "plan = \"^\""
   , "issue-due = \"!\""
   , "cycle-end = \"|\""
   , ""
   ]
 
-partialCalendarMarkersTable :: T.Text
-partialCalendarMarkersTable = T.unlines
+mixedCalendarMarkersTable :: T.Text
+mixedCalendarMarkersTable = T.unlines
+  [ "[presentation.calendar]"
+  , "plan-due-marker = \"^\""
+  , ""
+  , "[presentation.calendar.markers]"
+  , "actual = \".\""
+  , "plan = \"^\""
+  , "issue-due = \"!\""
+  , "cycle-end = \"|\""
+  , ""
+  ]
+
+invalidLegacyActualTable :: T.Text
+invalidLegacyActualTable = T.unlines
   [ "[presentation.calendar.markers]"
-  , "issue-due = \"?\""
+  , "actual = \"●\""
+  , "plan = \"^\""
+  , "issue-due = \"!\""
+  , "cycle-end = \"|\""
   , ""
   ]
 
@@ -293,11 +384,11 @@ journalInput = T.unlines
 assertCalendarDefaults :: String -> CalendarMarkers -> IO ()
 assertCalendarDefaults label markers =
   assertEqual label
-    ('.', '+', '!', '|')
-    ( calendarMarkerValue (calendarActualMarker markers)
-    , calendarMarkerValue (calendarPlanMarker markers)
+    ('$', '!', '|', '+')
+    ( calendarMarkerValue (calendarPlanDueMarker markers)
     , calendarMarkerValue (calendarIssueDueMarker markers)
     , calendarMarkerValue (calendarCycleEndMarker markers)
+    , calendarMarkerValue (calendarMultipleMarker markers)
     )
 
 assertLeft :: Show value => String -> Either error value -> IO ()
