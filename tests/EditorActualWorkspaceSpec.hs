@@ -20,13 +20,17 @@ import HKernel.Actual.Journal
   , actualJournalTransactionEntries
   , actualJournalValue
   , actualTransactionEntryIdentity
+  , actualTransactionEntrySource
   , parseActualJournal
   )
 import HKernel.Editor.ActualWorkspace
   ( newestTransactionEntriesForAccount
   , transactionEntriesForAccount
   )
-import HKernel.Journal (journalAccountRegistry)
+import HKernel.Journal
+  ( journalAccountRegistry
+  , journalTransactionSourceHeaderLine
+  )
 import HKernel.Plan.Completion (actualTransactionIdText)
 
 main :: IO ()
@@ -60,16 +64,31 @@ main = do
             alignedEntries
             == [Nothing, Just "actual-second"]
         )
+      sourceEvidenceResult =
+        ( "Actual entries retain parser-owned source evidence from the same observation"
+        , map
+            (journalTransactionSourceHeaderLine . actualTransactionEntrySource)
+            alignedEntries
+            == [9, 13]
+        )
       newestFirstResult =
         ( "newest-first projection reverses display without changing source entries"
         , map (fmap actualTransactionIdText . actualTransactionEntryIdentity)
             (newestTransactionEntriesForAccount Nothing alignedEntries)
             == [Just "actual-second", Nothing]
+            && map
+                (journalTransactionSourceHeaderLine . actualTransactionEntrySource)
+                (newestTransactionEntriesForAccount Nothing alignedEntries)
+              == [13, 9]
             && map (fmap actualTransactionIdText . actualTransactionEntryIdentity)
                 alignedEntries
               == [Nothing, Just "actual-second"]
+            && map
+                (journalTransactionSourceHeaderLine . actualTransactionEntrySource)
+                alignedEntries
+              == [9, 13]
         )
-      results = fixtureResults ++ [alignmentResult, newestFirstResult]
+      results = fixtureResults ++ [alignmentResult, sourceEvidenceResult, newestFirstResult]
 
   mapM_ print results
   if all snd results then exitSuccess else exitFailure
