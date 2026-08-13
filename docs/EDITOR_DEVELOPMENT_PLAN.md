@@ -72,18 +72,19 @@ Homeはcalendar-firstのHousehold-state projectionであり、feature menu、das
   -> 必要なら選択日からRecordする
 ```
 
-Calendarは同じHousehold observationから、少なくとも次を投影する。
+Calendarの一文字markerは、同じHousehold observationから得た次の3つのattention factだけを表す。
 
-- Actualが存在する日
-- open outgoing payment Planの日
+- open outgoing payment Planのdue date
 - open Issueのdue date
-- current cycle boundary
+- current cycleのend day (`end-exclusive - 1 day`)
 
-selected-day paneは、その日付に対応するActual transaction/postings、payment Plan、Issue due、cycle boundaryの根拠を表示する。過去日は記録確認、未来日は予定や注意点の確認に使う。
+これらは独立した事実であり、優先順位で一つを勝たせない。1つだけ成立する日はその意味のmarkerを表示し、2つ以上が同日に成立する場合は`multiple-marker`を表示する。
+
+Actualの存在はmarker帯域を消費しない。selected-day paneで、その日付に対応するActual transaction/postings、payment Plan、Issue due、cycle end dayの根拠を表示する。過去日は記録確認、未来日は予定や注意点の確認に使う。
 
 `Actual none recorded`は観察された事実であり、記帳漏れという判断ではない。UIは記録がないことから生活上の事実を推測しない。
 
-Calendarのmarkerはpresentationであり、glyphだけを設定できる。markerの意味、優先順位、Household factは設定へ移さない。cell幅はterminal matrixを崩さない固定幅とする。
+Calendarのmarkerはpresentationであり、glyphだけを設定できる。markerを生じさせるHousehold factや、複数factが重なったという意味を設定へ移さない。cell幅はterminal matrixを崩さない固定幅とする。
 
 今日の表示、選択状態、markerは別の意味を持つ。現在地のcueをaccounting semanticsやattention severityと混同しない。
 
