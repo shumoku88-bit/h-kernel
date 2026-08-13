@@ -77,6 +77,8 @@ data ActualIdentityPromotionError
   | ActualIdentityPromotionTargetAmbiguous Int
   | ActualIdentityPromotionAlreadyIdentified ActualTransactionId
   | ActualIdentityPromotionIdAlreadyExists ActualTransactionId
+  | ActualIdentityPromotionSourceSyntaxError (NonEmpty.NonEmpty JournalError)
+  | ActualIdentityPromotionSourceObservationMismatch
   | ActualIdentityPromotionSourceCoordinateInvalid Int
   | ActualIdentityPromotionCandidateSyntaxError (NonEmpty.NonEmpty JournalError)
   | ActualIdentityPromotionCandidateAdmissionError (NonEmpty.NonEmpty ActualJournalError)
@@ -95,10 +97,12 @@ data ActualIdentityPromotionPreview = ActualIdentityPromotionPreview
 --
 -- The selected entry must come from the supplied admitted Actual observation.
 -- Matching uses its retained parser-owned source evidence rather than date,
--- description, amount, Account shape, or Transaction equality. The candidate is
--- re-admitted against the same resolved Journal and rejected unless every
--- accounting Transaction remains unchanged and only the selected identity is
--- promoted.
+-- description, amount, Account shape, or Transaction equality. Before editing,
+-- the supplied root Text must reproduce the exact parser-owned transaction
+-- evidence retained by that observation, so a stale or independently changed
+-- source fails closed. The candidate is then re-admitted against the same
+-- resolved Journal and rejected unless every accounting Transaction remains
+-- unchanged and only the selected identity is promoted.
 prepareActualIdentityPromotion
   :: ActualJournal
   -> Text
@@ -106,6 +110,13 @@ prepareActualIdentityPromotion
   -> ActualTransactionId
   -> Either ActualIdentityPromotionError ActualIdentityPromotionPreview
 prepareActualIdentityPromotion journal source selected requestedId = do
+  sourceDocument <- first ActualIdentityPromotionSourceSyntaxError
+    (parseJournalDocument source)
+  let observedSources = journalDocumentTransactionSources sourceDocument
+      retainedSources = map actualTransactionEntrySource entries
+  if observedSources == retainedSources
+    then Right ()
+    else Left ActualIdentityPromotionSourceObservationMismatch
   targetIndex <- uniqueSelectedIndex
   case actualTransactionEntryIdentity selected of
     Just existingId -> Left (ActualIdentityPromotionAlreadyIdentified existingId)
