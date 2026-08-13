@@ -16,6 +16,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Time.Calendar
   ( Day
+  , addDays
   , fromGregorian
   , gregorianMonthLength
   , toGregorian
@@ -78,6 +79,7 @@ import HKernel.Report.Presentation
   , CalendarMarkers(..)
   , calendarMarkerValue
   , presentationCalendarMarkers
+  , selectCalendarMarker
   )
 
 -- | Draw a fixed-width month matrix beside the selected day's admitted facts.
@@ -130,15 +132,15 @@ chunksOf width values =
   let (chunk, rest) = splitAt width values
   in chunk : chunksOf width rest
 
--- | Exactly one marker is chosen so every calendar cell stays four columns.
--- Priority is semantic and intentionally not configurable.
+-- | Calendar attention facts stay independent. A single fact gets its own
+-- marker; overlaps get the configured multiple marker instead of a priority
+-- winner. Actual existence remains visible in the selected-day pane.
 markerForDay :: AppContext -> Day -> Maybe CalendarMarker
-markerForDay context day
-  | hasOpenIssueDue context day = Just (calendarIssueDueMarker markers)
-  | isCycleBoundary context day = Just (calendarCycleEndMarker markers)
-  | hasOpenPaymentPlan context day = Just (calendarPlanMarker markers)
-  | hasActual context day = Just (calendarActualMarker markers)
-  | otherwise = Nothing
+markerForDay context day =
+  selectCalendarMarker markers
+    (hasOpenPaymentPlan context day)
+    (hasOpenIssueDue context day)
+    (isCycleEnd context day)
   where
     markers = configuredMarkers context
 
@@ -149,17 +151,14 @@ configuredMarkers =
     . householdStateReportConfig
     . contextHouseholdState
 
-hasActual :: AppContext -> Day -> Bool
-hasActual context day = not (null (actualsOn context day))
-
 hasOpenPaymentPlan :: AppContext -> Day -> Bool
 hasOpenPaymentPlan context day = not (null (plansOn context day))
 
 hasOpenIssueDue :: AppContext -> Day -> Bool
 hasOpenIssueDue context day = not (null (issuesDueOn context day))
 
-isCycleBoundary :: AppContext -> Day -> Bool
-isCycleBoundary context day = cycleBoundary context == Just day
+isCycleEnd :: AppContext -> Day -> Bool
+isCycleEnd context day = cycleEndDay context == Just day
 
 actualsOn :: AppContext -> Day -> [Transaction]
 actualsOn context day =
@@ -185,12 +184,13 @@ issuesDueOn context day =
   , householdIssueDue issue == DueOn day
   ]
 
-cycleBoundary :: AppContext -> Maybe Day
-cycleBoundary context = do
+cycleEndDay :: AppContext -> Maybe Day
+cycleEndDay context = do
   surface <- householdSurface context
   pure
-    (periodEndExclusive
-      (currentCycleAccountsPeriod (householdCurrentCycleAccounts surface)))
+    (addDays (-1)
+      (periodEndExclusive
+        (currentCycleAccountsPeriod (householdCurrentCycleAccounts surface))))
 
 householdSurface :: AppContext -> Maybe HouseholdReportSurface
 householdSurface context = case contextHouseholdReportSurface context of
@@ -228,8 +228,8 @@ drawDayPane context selectedDay =
       values -> map renderIssue values
     cycleSection =
       [ str "Cycle"
-      , if cycleBoundary context == Just selectedDay
-          then str "  boundary"
+      , if cycleEndDay context == Just selectedDay
+          then str "  end day"
           else str "  none"
       ]
     projectionNote = case contextHouseholdReportSurface context of
@@ -268,10 +268,10 @@ renderAmount amount =
 drawLegend :: AppContext -> Widget Name
 drawLegend context =
   txt
-    ( markerText (calendarActualMarker markers) <> " Actual   "
-      <> markerText (calendarPlanMarker markers) <> " Plan   "
+    ( markerText (calendarPlanDueMarker markers) <> " Plan due   "
       <> markerText (calendarIssueDueMarker markers) <> " Issue due   "
-      <> markerText (calendarCycleEndMarker markers) <> " Cycle boundary"
+      <> markerText (calendarCycleEndMarker markers) <> " Cycle end   "
+      <> markerText (calendarMultipleMarker markers) <> " Multiple"
     )
   where
     markers = configuredMarkers context
