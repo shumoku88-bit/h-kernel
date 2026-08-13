@@ -30,13 +30,16 @@ module HKernel.Household.Report
   , buildHouseholdReportSurfaceFromAdmitted
   ) where
 
+import Data.Either (partitionEithers)
 import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, addDays, diffDays)
+import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import HKernel.Account
 import HKernel.Actual.Journal
   ( ActualJournal
@@ -69,7 +72,15 @@ import HKernel.Household.Policy
   , householdPolicyCycle
   )
 import HKernel.HouseholdIssue
-import HKernel.Journal (Journal, journalAccountRegistry)
+import HKernel.Journal
+  ( Journal
+  , JournalMetadata
+  , journalAccountRegistry
+  , journalMetadataKey
+  , journalMetadataLine
+  , journalMetadataValue
+  , journalTransactionSourceMetadata
+  )
 import HKernel.Ledger
   ( postingAccount
   , postingAmount
@@ -91,6 +102,8 @@ import HKernel.Plan.Journal
   , classifyPlanJournal
   , identifiedPlanId
   , identifiedPlanTransaction
+  , planJournalTransactionSourceFor
+  , planJournalTransactions
   , planJournalValue
   , projectCommittedOutgoingPlans
   , projectedCommittedOutgoingPlan
@@ -124,6 +137,7 @@ data IncomingCycleAnchor = IncomingCycleAnchor
 data AdmittedPlans = AdmittedPlans
   { admittedIncomingAnchors :: [IncomingCycleAnchor]
   , admittedOutgoingPlans   :: [CommittedOutgoingPlan]
+  , admittedPlanRetirements :: [PlanRetirement]
   } deriving (Eq, Show)
 
 -- | Display relation of an open outgoing Plan to the resolved current cycle.
@@ -166,8 +180,9 @@ data HouseholdReportSurface = HouseholdReportSurface
   } deriving (Eq, Show)
 
 -- | Calculate the Household report surface from already admitted typed values.
--- Admission adapters may differ, but cycle, Plan completion, Budget observation,
--- backing, and Daily Target calculation have one semantic owner here.
+-- Admission adapters may differ, but cycle, Plan completion, Plan retirement,
+-- Budget observation, backing, and Daily Target calculation have one semantic
+-- owner here.
 buildHouseholdReportSurfaceFromAdmitted
   :: Day
   -> ActualJournal
@@ -189,7 +204,7 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
   let outgoingPlans = admittedOutgoingPlans admittedPlans
   outgoingDeclarations <- completionDeclarationsForOutgoingPlans admittedPlans
     (actualJournalCompletionDeclarations actualJournal)
-  openPlanValues <- mapLeft
+  completionOpenPlanValues <- mapLeft
     (fmap (sourceError "actual.journal" 0 . tshow))
     (resolveOpenCommittedOutgoingPlans
       outgoingPlans
@@ -203,6 +218,14 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
       consumption = householdBudgetConsumption budgetObservation
       entitlement = householdBudgetEntitlement budgetObservation
       remaining = householdBudgetRemaining budgetObservation
+      retiredPlanIds = Set.fromList
+        [ retiredPlanId retirement
+        | retirement <- admittedPlanRetirements admittedPlans
+        , planRetiredOn retirement <= observation
+        ]
+      openPlanValues = filter
+        (\plan -> committedPlanId plan `Set.notMember` retiredPlanIds)
+        completionOpenPlanValues
       openPlanIds = Set.fromList (map committedPlanId openPlanValues)
       openPlans = openOutgoingPlans openPlanIds outgoingPlans
       currentOpenPlans = filter
@@ -274,6 +297,7 @@ admitPlanJournal
   :: PlanJournal
   -> Either (NonEmpty HouseholdSourceError) AdmittedPlans
 admitPlanJournal planJournal = do
+  retirements <- admitPlanRetirements planJournal
   classified <- mapLeft
     (fmap (sourceError "plan.journal" 0 . tshow))
     (classifyPlanJournal planJournal)
@@ -287,12 +311,156 @@ admitPlanJournal planJournal = do
   pure AdmittedPlans
     { admittedIncomingAnchors = incoming
     , admittedOutgoingPlans = map projectedCommittedOutgoingPlan projected
+    , admittedPlanRetirements = retirements
     }
   where
     registry = journalAccountRegistry (planJournalValue planJournal)
 
 admittedOutgoingPlanValues :: AdmittedPlans -> [CommittedOutgoingPlan]
 admittedOutgoingPlanValues = admittedOutgoingPlans
+
+-- | Interpret the narrow Plan-owned lifecycle metadata retained by PlanJournal.
+--
+-- The accounting Transaction remains untouched. This adapter only promotes
+-- already parser-owned metadata into typed cancellation/supersession evidence
+-- and then validates references across the complete admitted Plan set.
+admitPlanRetirements
+  :: PlanJournal
+  -> Either (NonEmpty HouseholdSourceError) [PlanRetirement]
+admitPlanRetirements planJournal =
+  case NonEmpty.nonEmpty allErrors of
+    Just errors -> Left errors
+    Nothing -> Right retirements
+  where
+    identifiedPlans = planJournalTransactions planJournal
+    knownPlanIds = Set.fromList (map identifiedPlanId identifiedPlans)
+    (localFailures, localValues) = partitionEithers
+      (map (retirementForPlan planJournal) identifiedPlans)
+    localErrors = concatMap NonEmpty.toList localFailures
+    retirements = [retirement | Just retirement <- localValues]
+    unknownTargetErrors =
+      [ sourceError "plan.journal" 0
+          ("supersession refers to unknown successor PlanId "
+            <> planIdText successor)
+      | retirement <- retirements
+      , Just successor <- [planRetirementSuccessor retirement]
+      , successor `Set.notMember` knownPlanIds
+      ]
+    successorByPlan = Map.fromList
+      [ (retiredPlanId retirement, successor)
+      | retirement <- retirements
+      , Just successor <- [planRetirementSuccessor retirement]
+      , successor `Set.member` knownPlanIds
+      ]
+    cycleErrors =
+      [ sourceError "plan.journal" 0
+          ("supersession cycle reaches PlanId " <> planIdText start)
+      | start <- Map.keys successorByPlan
+      , supersessionCycleFrom successorByPlan start
+      ]
+    allErrors = localErrors ++ unknownTargetErrors ++ cycleErrors
+
+retirementForPlan
+  :: PlanJournal
+  -> IdentifiedPlanTransaction
+  -> Either (NonEmpty HouseholdSourceError) (Maybe PlanRetirement)
+retirementForPlan planJournal identified = do
+  source <- maybe
+    (Left (sourceError "plan.journal" 0
+      ("missing source evidence for PlanId " <> planIdText planId)
+      NonEmpty.:| []))
+    Right
+    (planJournalTransactionSourceFor planId planJournal)
+  let metadata = journalTransactionSourceMetadata source
+      (cancelErrors, maybeCancelledOn) = singleMetadata "cancelled-on" metadata
+      (supersededOnErrors, maybeSupersededOn) =
+        singleMetadata "superseded-on" metadata
+      (supersededByErrors, maybeSupersededBy) =
+        singleMetadata "superseded-by" metadata
+      duplicateErrors =
+        cancelErrors ++ supersededOnErrors ++ supersededByErrors
+  case NonEmpty.nonEmpty duplicateErrors of
+    Just errors -> Left errors
+    Nothing -> buildRetirement planId maybeCancelledOn maybeSupersededOn maybeSupersededBy
+  where
+    planId = identifiedPlanId identified
+
+buildRetirement
+  :: PlanId
+  -> Maybe JournalMetadata
+  -> Maybe JournalMetadata
+  -> Maybe JournalMetadata
+  -> Either (NonEmpty HouseholdSourceError) (Maybe PlanRetirement)
+buildRetirement planId maybeCancelled maybeSupersededOn maybeSupersededBy =
+  case (maybeCancelled, maybeSupersededOn, maybeSupersededBy) of
+    (Nothing, Nothing, Nothing) -> Right Nothing
+    (Just cancelledEntry, Nothing, Nothing) -> do
+      cancelledOn <- parseLifecycleDay "cancelled-on" cancelledEntry
+      Right (Just (declarePlanCancellation planId cancelledOn))
+    (Nothing, Just supersededOnEntry, Just supersededByEntry) -> do
+      supersededOn <- parseLifecycleDay "superseded-on" supersededOnEntry
+      successor <- mapLeft
+        (\err -> sourceError "plan.journal"
+          (journalMetadataLine supersededByEntry)
+          ("invalid superseded-by PlanId: " <> tshow err)
+          NonEmpty.:| [])
+        (mkPlanId (journalMetadataValue supersededByEntry))
+      retirement <- mapLeft
+        (\err -> sourceError "plan.journal"
+          (journalMetadataLine supersededByEntry)
+          (tshow err)
+          NonEmpty.:| [])
+        (declarePlanSupersession planId supersededOn successor)
+      Right (Just retirement)
+    (Just entry, _, _) -> Left
+      (sourceError "plan.journal" (journalMetadataLine entry)
+        "cancelled-on cannot coexist with supersession metadata"
+        NonEmpty.:| [])
+    (Nothing, Just entry, Nothing) -> Left
+      (sourceError "plan.journal" (journalMetadataLine entry)
+        "superseded-on requires superseded-by"
+        NonEmpty.:| [])
+    (Nothing, Nothing, Just entry) -> Left
+      (sourceError "plan.journal" (journalMetadataLine entry)
+        "superseded-by requires superseded-on"
+        NonEmpty.:| [])
+
+singleMetadata
+  :: Text
+  -> [JournalMetadata]
+  -> ([HouseholdSourceError], Maybe JournalMetadata)
+singleMetadata key metadata = case filter ((== key) . journalMetadataKey) metadata of
+  [] -> ([], Nothing)
+  [entry] -> ([], Just entry)
+  firstEntry : duplicates ->
+    ( [ sourceError "plan.journal" (journalMetadataLine entry)
+          ("duplicate Plan lifecycle metadata key " <> key)
+      | entry <- duplicates
+      ]
+    , Just firstEntry
+    )
+
+parseLifecycleDay
+  :: Text
+  -> JournalMetadata
+  -> Either (NonEmpty HouseholdSourceError) Day
+parseLifecycleDay key entry =
+  maybe
+    (Left (sourceError "plan.journal" (journalMetadataLine entry)
+      ("invalid " <> key <> " date")
+      NonEmpty.:| []))
+    Right
+    (parseTimeM True defaultTimeLocale "%Y-%m-%d"
+      (T.unpack (journalMetadataValue entry)))
+
+supersessionCycleFrom :: Map.Map PlanId PlanId -> PlanId -> Bool
+supersessionCycleFrom successorByPlan start = go (Set.singleton start) start
+  where
+    go seen current = case Map.lookup current successorByPlan of
+      Nothing -> False
+      Just successor
+        | successor `Set.member` seen -> True
+        | otherwise -> go (Set.insert successor seen) successor
 
 projectIncomingCycleAnchor
   :: AccountRegistry
