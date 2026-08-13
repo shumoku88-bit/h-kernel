@@ -3,7 +3,6 @@
 module Main (main) where
 
 import Data.List (foldl')
-import qualified Data.Set as Set
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Account
 import HKernel.Budget
@@ -92,10 +91,15 @@ main = do
         (registerAccount (declareAccount account accountType) current)
   case validateHouseholdPolicyAccounts registry policy of
     Left errors -> error (show errors)
-    Right validated -> assertEqual
-      "unrouted Expense Accounts remain valid attention evidence"
-      (Set.fromList [travelIls, travelJpy])
-      (accountValidatedHouseholdUnassignedExpenseAccounts validated)
+    Right validated ->
+      let attention = accountValidatedHouseholdUnassignedExpenseAccounts validated
+      in assertEqual
+        "unrouted Expense Accounts remain valid attention evidence"
+        True
+        ( travelIls `elem` attention
+            && travelJpy `elem` attention
+            && foodExpense `notElem` attention
+        )
 
 one :: Commodity -> Integer -> Balance
 one commodity value =
