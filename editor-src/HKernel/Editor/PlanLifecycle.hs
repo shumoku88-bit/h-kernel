@@ -8,6 +8,18 @@ module HKernel.Editor.PlanLifecycle
   , preparePlanAddFromResolvedActualJournal
   , preparePlanAddFromResolvedJournals
 
+  , PlanCancelIntent(..)
+  , PlanCancelPreview(..)
+  , PlanSupersedeIntent(..)
+  , PlanSupersedePreview(..)
+  , PlanRetirementWriteError(..)
+  , preparePlanCancel
+  , preparePlanCancelFromResolvedActualJournal
+  , preparePlanCancelFromResolvedJournals
+  , preparePlanSupersede
+  , preparePlanSupersedeFromResolvedActualJournal
+  , preparePlanSupersedeFromResolvedJournals
+
   , PositivePlanEditAmount
   , PlanEditAmountError(..)
   , mkPositivePlanEditAmount
@@ -49,13 +61,17 @@ import HKernel.Editor.TransactionBlock
   )
 import HKernel.Journal
   ( Journal
+  , JournalMetadata
   , JournalPostingSource
   , appendJournalTransaction
   , journalAccountRegistry
+  , journalMetadataKey
+  , journalMetadataLine
   , journalPostingSourceLine
   , journalPostingSourceQuantityColumns
   , journalTransactionSourceHeaderLine
   , journalTransactionSourceLastLine
+  , journalTransactionSourceMetadata
   , journalTransactionSourcePostings
   , replaceJournalTransactionAt
   )
@@ -84,15 +100,21 @@ import HKernel.Money
 import HKernel.Plan
   ( PlanId
   , PlanIdError
+  , PlanRetirement
   , mkPlanId
   , planIdText
+  , planRetiredOn
+  , planRetirementSuccessor
+  , retiredPlanId
   )
 import HKernel.Plan.Completion (declaredCompletionPlanId)
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , PlanJournal
   , PlanJournalError
+  , PlanLifecycleError
   , admitPlanJournalFromResolvedJournal
+  , admitPlanRetirements
   , identifiedPlanId
   , identifiedPlanTransaction
   , parsePlanJournal
@@ -125,6 +147,12 @@ data PlanAddError
   | AddInvalidId PlanIdError
   | AddGeneratedIdError PlanIdError
   deriving (Eq, Show)
+
+data PreparedPlanAdd = PreparedPlanAdd
+  { preparedPlanAddId          :: PlanId
+  , preparedPlanAddTransaction :: Transaction
+  , preparedPlanAddPreview     :: PlanAddPreview
+  }
 
 preparePlanAdd
   :: Text
@@ -171,7 +199,17 @@ preparePlanAddFromJournals
   -> ActualJournal
   -> PlanAddIntent
   -> Either (NonEmpty PlanAddError) PlanAddPreview
-preparePlanAddFromJournals planJ planSource actualJ intent = do
+preparePlanAddFromJournals planJ planSource actualJ intent =
+  preparedPlanAddPreview <$> preparePlanAddCandidateFromJournals
+    planJ planSource actualJ intent
+
+preparePlanAddCandidateFromJournals
+  :: PlanJournal
+  -> Text
+  -> ActualJournal
+  -> PlanAddIntent
+  -> Either (NonEmpty PlanAddError) PreparedPlanAdd
+preparePlanAddCandidateFromJournals planJ planSource actualJ intent = do
   let existingPlanIds = map identifiedPlanId (planJournalTransactions planJ)
                         ++ map declaredCompletionPlanId (actualJournalCompletionDeclarations actualJ)
 
@@ -202,9 +240,10 @@ preparePlanAddFromJournals planJ planSource actualJ intent = do
       blockIntent)
 
   let block = preparedTransactionBlock prepared
+      transaction = preparedTransaction prepared
       candidateSource = appendSourceBlock planSource (SourceBlock block)
       candidateResolvedPlan = appendJournalTransaction
-        (preparedTransaction prepared)
+        transaction
         (planJournalValue planJ)
       preview = PlanAddPreview
         { addCandidateBlock = block
@@ -214,7 +253,365 @@ preparePlanAddFromJournals planJ planSource actualJ intent = do
   _ <- first (pure . AddCandidateParseError)
     (admitPlanJournalFromResolvedJournal candidateResolvedPlan candidateSource)
 
-  pure preview
+  pure PreparedPlanAdd
+    { preparedPlanAddId = newPlanId
+    , preparedPlanAddTransaction = transaction
+    , preparedPlanAddPreview = preview
+    }
+
+-- Plan cancellation / supersession
+
+data PlanCancelIntent = PlanCancelIntent
+  { cancelPlanId :: Text
+  , cancelOn     :: Day
+  } deriving (Eq, Show)
+
+data PlanCancelPreview = PlanCancelPreview
+  { cancelOriginalBlock           :: Text
+  , cancelRetiredBlock            :: Text
+  , cancelCandidateCompleteSource :: Text
+  } deriving (Eq, Show)
+
+data PlanSupersedeIntent = PlanSupersedeIntent
+  { supersedePlanId       :: Text
+  , supersedeOn           :: Day
+  , supersedeReplacement  :: PlanAddIntent
+  } deriving (Eq, Show)
+
+data PlanSupersedePreview = PlanSupersedePreview
+  { supersedeOriginalBlock           :: Text
+  , supersedeRetiredBlock            :: Text
+  , supersedeReplacementBlock        :: Text
+  , supersedeReplacementPlanId       :: PlanId
+  , supersedeCandidateCompleteSource :: Text
+  } deriving (Eq, Show)
+
+data PlanRetirementWriteError
+  = RetirePlanJournalSyntaxError (NonEmpty PlanJournalError)
+  | RetireActualJournalSyntaxError (NonEmpty ActualJournalError)
+  | RetireLifecycleAdmissionError (NonEmpty PlanLifecycleError)
+  | RetireReplacementAddError PlanAddError
+  | RetireInvalidId PlanIdError
+  | RetirePlanNotFound PlanId
+  | RetirePlanAlreadyCompleted PlanId
+  | RetirePlanAlreadyRetired PlanId
+  | RetireSourceEvidenceMissing PlanId
+  | RetireSourcePlanIdMetadataMissing PlanId
+  | RetireSourcePlanIdMetadataAmbiguous PlanId Int
+  | RetireSourceCoordinateInvalid PlanId
+  | RetireCandidateParseError (NonEmpty PlanJournalError)
+  | RetireCandidateLifecycleError (NonEmpty PlanLifecycleError)
+  | RetireCandidateSemanticMismatch PlanId
+  deriving (Eq, Show)
+
+preparePlanCancel
+  :: Text
+  -> Text
+  -> PlanCancelIntent
+  -> Either (NonEmpty PlanRetirementWriteError) PlanCancelPreview
+preparePlanCancel planSource actualSource intent = do
+  planJ <- first (pure . RetirePlanJournalSyntaxError)
+    (parsePlanJournal planSource)
+  actualJ <- first (pure . RetireActualJournalSyntaxError)
+    (parseActualJournal actualSource)
+  preparePlanCancelFromJournals planJ planSource actualJ intent
+
+preparePlanCancelFromResolvedActualJournal
+  :: Journal
+  -> Text
+  -> Text
+  -> PlanCancelIntent
+  -> Either (NonEmpty PlanRetirementWriteError) PlanCancelPreview
+preparePlanCancelFromResolvedActualJournal resolvedActual planSource actualSource intent = do
+  planJ <- first (pure . RetirePlanJournalSyntaxError)
+    (parsePlanJournal planSource)
+  actualJ <- first (pure . RetireActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanCancelFromJournals planJ planSource actualJ intent
+
+preparePlanCancelFromResolvedJournals
+  :: Journal
+  -> Journal
+  -> Text
+  -> Text
+  -> PlanCancelIntent
+  -> Either (NonEmpty PlanRetirementWriteError) PlanCancelPreview
+preparePlanCancelFromResolvedJournals resolvedPlan resolvedActual planSource actualSource intent = do
+  planJ <- first (pure . RetirePlanJournalSyntaxError)
+    (admitPlanJournalFromResolvedJournal resolvedPlan planSource)
+  actualJ <- first (pure . RetireActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanCancelFromJournals planJ planSource actualJ intent
+
+preparePlanSupersede
+  :: Text
+  -> Text
+  -> PlanSupersedeIntent
+  -> Either (NonEmpty PlanRetirementWriteError) PlanSupersedePreview
+preparePlanSupersede planSource actualSource intent = do
+  planJ <- first (pure . RetirePlanJournalSyntaxError)
+    (parsePlanJournal planSource)
+  actualJ <- first (pure . RetireActualJournalSyntaxError)
+    (parseActualJournal actualSource)
+  preparePlanSupersedeFromJournals planJ planSource actualJ intent
+
+preparePlanSupersedeFromResolvedActualJournal
+  :: Journal
+  -> Text
+  -> Text
+  -> PlanSupersedeIntent
+  -> Either (NonEmpty PlanRetirementWriteError) PlanSupersedePreview
+preparePlanSupersedeFromResolvedActualJournal resolvedActual planSource actualSource intent = do
+  planJ <- first (pure . RetirePlanJournalSyntaxError)
+    (parsePlanJournal planSource)
+  actualJ <- first (pure . RetireActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanSupersedeFromJournals planJ planSource actualJ intent
+
+preparePlanSupersedeFromResolvedJournals
+  :: Journal
+  -> Journal
+  -> Text
+  -> Text
+  -> PlanSupersedeIntent
+  -> Either (NonEmpty PlanRetirementWriteError) PlanSupersedePreview
+preparePlanSupersedeFromResolvedJournals resolvedPlan resolvedActual planSource actualSource intent = do
+  planJ <- first (pure . RetirePlanJournalSyntaxError)
+    (admitPlanJournalFromResolvedJournal resolvedPlan planSource)
+  actualJ <- first (pure . RetireActualJournalSyntaxError)
+    (admitActualJournalFromResolvedJournal resolvedActual actualSource)
+  preparePlanSupersedeFromJournals planJ planSource actualJ intent
+
+preparePlanCancelFromJournals
+  :: PlanJournal
+  -> Text
+  -> ActualJournal
+  -> PlanCancelIntent
+  -> Either (NonEmpty PlanRetirementWriteError) PlanCancelPreview
+preparePlanCancelFromJournals planJ planSource actualJ intent = do
+  (pId, target, existingRetirements) <-
+    prepareRetirementTarget planJ actualJ (cancelPlanId intent)
+  sourceEdit <- first pure
+    (insertPlanLifecycleMetadata
+      planJ
+      pId
+      planSource
+      [("cancelled-on", renderDay (cancelOn intent))])
+  candidateJournal <- first (pure . RetireCandidateParseError)
+    (admitPlanJournalFromResolvedJournal
+      (planJournalValue planJ)
+      (retirementCandidateSource sourceEdit))
+  candidateRetirements <- first (pure . RetireCandidateLifecycleError)
+    (admitPlanRetirements candidateJournal)
+
+  validateRetirementCandidate
+    pId
+    target
+    existingRetirements
+    (cancelOn intent)
+    Nothing
+    (planJournalTransactions planJ)
+    (planJournalTransactions candidateJournal)
+    candidateRetirements
+
+  pure PlanCancelPreview
+    { cancelOriginalBlock = retirementOriginalBlock sourceEdit
+    , cancelRetiredBlock = retirementEditedBlock sourceEdit
+    , cancelCandidateCompleteSource = retirementCandidateSource sourceEdit
+    }
+
+preparePlanSupersedeFromJournals
+  :: PlanJournal
+  -> Text
+  -> ActualJournal
+  -> PlanSupersedeIntent
+  -> Either (NonEmpty PlanRetirementWriteError) PlanSupersedePreview
+preparePlanSupersedeFromJournals planJ planSource actualJ intent = do
+  (pId, target, existingRetirements) <-
+    prepareRetirementTarget planJ actualJ (supersedePlanId intent)
+  preparedAdd <- first (fmap RetireReplacementAddError)
+    (preparePlanAddCandidateFromJournals
+      planJ planSource actualJ (supersedeReplacement intent))
+  let successorId = preparedPlanAddId preparedAdd
+      successorTransaction = preparedPlanAddTransaction preparedAdd
+      addPreview = preparedPlanAddPreview preparedAdd
+  sourceEdit <- first pure
+    (insertPlanLifecycleMetadata
+      planJ
+      pId
+      planSource
+      [ ("superseded-on", renderDay (supersedeOn intent))
+      , ("superseded-by", planIdText successorId)
+      ])
+  let candidateSource = appendSourceBlock
+        (retirementCandidateSource sourceEdit)
+        (SourceBlock (addCandidateBlock addPreview))
+      candidateResolvedPlan = appendJournalTransaction
+        successorTransaction
+        (planJournalValue planJ)
+  candidateJournal <- first (pure . RetireCandidateParseError)
+    (admitPlanJournalFromResolvedJournal candidateResolvedPlan candidateSource)
+  candidateRetirements <- first (pure . RetireCandidateLifecycleError)
+    (admitPlanRetirements candidateJournal)
+
+  validateRetirementCandidate
+    pId
+    target
+    existingRetirements
+    (supersedeOn intent)
+    (Just successorId)
+    (planJournalTransactions planJ)
+    (planJournalTransactions candidateJournal)
+    candidateRetirements
+
+  let candidateIds = map identifiedPlanId (planJournalTransactions candidateJournal)
+      originalIds = map identifiedPlanId (planJournalTransactions planJ)
+      candidateTransactions =
+        map identifiedPlanTransaction (planJournalTransactions candidateJournal)
+      originalTransactions =
+        map identifiedPlanTransaction (planJournalTransactions planJ)
+  if candidateIds == originalIds ++ [successorId]
+      && candidateTransactions == originalTransactions ++ [successorTransaction]
+      && retirementEvidencePresent
+          pId (supersedeOn intent) (Just successorId) candidateRetirements
+    then Right PlanSupersedePreview
+      { supersedeOriginalBlock = retirementOriginalBlock sourceEdit
+      , supersedeRetiredBlock = retirementEditedBlock sourceEdit
+      , supersedeReplacementBlock = addCandidateBlock addPreview
+      , supersedeReplacementPlanId = successorId
+      , supersedeCandidateCompleteSource = candidateSource
+      }
+    else Left (pure (RetireCandidateSemanticMismatch pId))
+
+prepareRetirementTarget
+  :: PlanJournal
+  -> ActualJournal
+  -> Text
+  -> Either
+      (NonEmpty PlanRetirementWriteError)
+      (PlanId, IdentifiedPlanTransaction, [PlanRetirement])
+prepareRetirementTarget planJ actualJ rawPlanId = do
+  pId <- first (pure . RetireInvalidId) (mkPlanId rawPlanId)
+  target <- case filter ((== pId) . identifiedPlanId)
+      (planJournalTransactions planJ) of
+    [] -> Left (pure (RetirePlanNotFound pId))
+    [value] -> Right value
+    _ -> Left (pure (RetireCandidateSemanticMismatch pId))
+  retirements <- first (pure . RetireLifecycleAdmissionError)
+    (admitPlanRetirements planJ)
+  if any ((== pId) . retiredPlanId) retirements
+    then Left (pure (RetirePlanAlreadyRetired pId))
+    else Right ()
+  if pId `elem` map declaredCompletionPlanId
+      (actualJournalCompletionDeclarations actualJ)
+    then Left (pure (RetirePlanAlreadyCompleted pId))
+    else Right ()
+  pure (pId, target, retirements)
+
+data RetirementSourceEdit = RetirementSourceEdit
+  { retirementOriginalBlock   :: Text
+  , retirementEditedBlock     :: Text
+  , retirementCandidateSource :: Text
+  }
+
+insertPlanLifecycleMetadata
+  :: PlanJournal
+  -> PlanId
+  -> Text
+  -> [(Text, Text)]
+  -> Either PlanRetirementWriteError RetirementSourceEdit
+insertPlanLifecycleMetadata planJ pId source additions = do
+  sourceEvidence <- maybe
+    (Left (RetireSourceEvidenceMissing pId))
+    Right
+    (planJournalTransactionSourceFor pId planJ)
+  planIdMetadata <- case filter ((== "plan-id") . journalMetadataKey)
+      (journalTransactionSourceMetadata sourceEvidence) of
+    [] -> Left (RetireSourcePlanIdMetadataMissing pId)
+    [entry] -> Right entry
+    entries -> Left (RetireSourcePlanIdMetadataAmbiguous pId (length entries))
+
+  let sourceLines = T.splitOn "\n" source
+      headerLine = journalTransactionSourceHeaderLine sourceEvidence
+      lastLine = journalTransactionSourceLastLine sourceEvidence
+      start = headerLine - 1
+      endExclusive = lastLine
+      blockLength = endExclusive - start
+      planIdLine = journalMetadataLine planIdMetadata
+      insertIndex = planIdLine - headerLine + 1
+
+  if start < 0
+      || endExclusive <= start
+      || endExclusive > length sourceLines
+      || planIdLine < headerLine
+      || planIdLine > lastLine
+      || insertIndex <= 0
+      || insertIndex > blockLength
+    then Left (RetireSourceCoordinateInvalid pId)
+    else Right ()
+
+  let blockLines = take blockLength (drop start sourceLines)
+      metadataSourceLine = sourceLines !! (planIdLine - 1)
+      indentation = T.takeWhile (\c -> c == ' ' || c == '\t') metadataSourceLine
+      renderedAdditions =
+        [ indentation <> "; " <> key <> ": " <> value
+        | (key, value) <- additions
+        ]
+      editedBlockLines =
+        take insertIndex blockLines
+          ++ renderedAdditions
+          ++ drop insertIndex blockLines
+      candidateLines =
+        take start sourceLines
+          ++ editedBlockLines
+          ++ drop endExclusive sourceLines
+
+  pure RetirementSourceEdit
+    { retirementOriginalBlock = T.intercalate "\n" blockLines
+    , retirementEditedBlock = T.intercalate "\n" editedBlockLines
+    , retirementCandidateSource = T.intercalate "\n" candidateLines
+    }
+
+validateRetirementCandidate
+  :: PlanId
+  -> IdentifiedPlanTransaction
+  -> [PlanRetirement]
+  -> Day
+  -> Maybe PlanId
+  -> [IdentifiedPlanTransaction]
+  -> [IdentifiedPlanTransaction]
+  -> [PlanRetirement]
+  -> Either (NonEmpty PlanRetirementWriteError) ()
+validateRetirementCandidate pId target existingRetirements retiredOn successor originalPlans candidatePlans candidateRetirements = do
+  let originalIds = map identifiedPlanId originalPlans
+      candidatePrefix = take (length originalPlans) candidatePlans
+      candidateTarget = filter ((== pId) . identifiedPlanId) candidatePlans
+  if map identifiedPlanId candidatePrefix == originalIds
+      && map identifiedPlanTransaction candidatePrefix
+        == map identifiedPlanTransaction originalPlans
+      && case candidateTarget of
+        [value] -> identifiedPlanTransaction value == identifiedPlanTransaction target
+        _ -> False
+    then Right ()
+    else Left (pure (RetireCandidateSemanticMismatch pId))
+  if all (`elem` candidateRetirements) existingRetirements
+      && length candidateRetirements == length existingRetirements + 1
+      && retirementEvidencePresent pId retiredOn successor candidateRetirements
+    then Right ()
+    else Left (pure (RetireCandidateSemanticMismatch pId))
+
+retirementEvidencePresent
+  :: PlanId
+  -> Day
+  -> Maybe PlanId
+  -> [PlanRetirement]
+  -> Bool
+retirementEvidencePresent pId retiredOn successor retirements =
+  case filter ((== pId) . retiredPlanId) retirements of
+    [retirement] ->
+      planRetiredOn retirement == retiredOn
+        && planRetirementSuccessor retirement == successor
+    _ -> False
 
 -- Plan Edit
 
