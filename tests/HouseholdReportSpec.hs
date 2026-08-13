@@ -77,6 +77,74 @@ main = do
   assertEqual "Plan horizon classification keeps before current and after current visible"
     [BeforeCurrentCycle, InCurrentCycle, InCurrentCycle, AfterCurrentCycle]
     (map classifiedPlanHorizon classifiedPlans)
+
+  let cancelledOutgoingPlanSource = T.replace
+        "    ; plan-id: plan-wifi\n"
+        (T.unlines
+          [ "    ; plan-id: plan-wifi"
+          , "    ; cancelled-on: 2026-07-30"
+          ])
+        planJournalText
+      beforeCancellation = mustRightText
+        (buildSurfaceAt
+          (fromGregorian 2026 7 29)
+          actualJournal cancelledOutgoingPlanSource householdTOML issuesTSV)
+      afterCancellation = mustRightText
+        (buildSurfaceAt
+          observation
+          actualJournal cancelledOutgoingPlanSource householdTOML issuesTSV)
+  assertEqual "Plan cancellation does not retire the commitment before its effective day"
+    True
+    ("plan-wifi" `elem`
+      map (planIdText . committedPlanId)
+        (householdPlannedTransactions beforeCancellation))
+  assertEqual "Plan cancellation removes the commitment on and after its effective day"
+    False
+    ("plan-wifi" `elem`
+      map (planIdText . committedPlanId)
+        (householdPlannedTransactions afterCancellation))
+
+  let supersededOutgoingPlanSource =
+        T.replace
+          "    ; plan-id: plan-wifi\n"
+          (T.unlines
+            [ "    ; plan-id: plan-wifi"
+            , "    ; superseded-on: 2026-07-30"
+            , "    ; superseded-by: plan-wifi-replacement"
+            ])
+          planJournalText
+        <> T.unlines
+          [ ""
+          , "2026-08-08 replacement service"
+          , "    ; plan-id: plan-wifi-replacement"
+          , "    expenses:food   150 JPY"
+          , "    assets:cash    -150 JPY"
+          ]
+      supersededSurface = mustRightText
+        (buildSurfaceAt
+          observation
+          actualJournal supersededOutgoingPlanSource householdTOML issuesTSV)
+      supersededOpenIds = map (planIdText . committedPlanId)
+        (householdPlannedTransactions supersededSurface)
+  assertEqual "supersession preserves the replacement while retiring the old Plan"
+    (False, True)
+    ( "plan-wifi" `elem` supersededOpenIds
+    , "plan-wifi-replacement" `elem` supersededOpenIds
+    )
+
+  let cancelledIncomeAnchorSource = T.replace
+        "    ; plan-id: plan-pension\n"
+        (T.unlines
+          [ "    ; plan-id: plan-pension"
+          , "    ; cancelled-on: 2026-07-30"
+          ])
+        planJournalText
+  assertLeftContaining
+    "cancelled incoming Plan is not reused as a future cycle anchor"
+    "income-anchor cycle requires two observed Actual anchors and one future Plan anchor"
+    (buildSurfaceAt
+      observation actualJournal cancelledIncomeAnchorSource householdTOML issuesTSV)
+
   assertEqual "issue category evidence remains visible without affecting balances"
     "[planning] decide funding"
     (householdIssueDetails issue)
@@ -451,8 +519,6 @@ exactlyOne :: Show value => [value] -> value
 exactlyOne [value] = value
 exactlyOne values = error ("expected exactly one value, got " ++ show values)
 
-
-
 mustRightText :: Either Text value -> value
 mustRightText (Right value) = value
 mustRightText (Left err) = error ("invalid test fixture: " ++ T.unpack err)
@@ -470,8 +536,6 @@ assertLeftContaining label expected result = case result of
     putStrLn ("  [FAIL] " ++ label)
     putStrLn "    unexpectedly accepted source"
     exitFailure
-
-
 
 failWith :: Show value => String -> value -> IO a
 failWith label actual = do
