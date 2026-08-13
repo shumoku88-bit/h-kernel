@@ -13,6 +13,8 @@ module HKernel.Editor.PlanLifecycle
   , PlanSupersedeIntent(..)
   , PlanSupersedePreview(..)
   , PlanRetirementWriteError(..)
+  , planClosedIds
+  , planInactiveIdsAt
   , preparePlanCancel
   , preparePlanCancelFromResolvedActualJournal
   , preparePlanCancelFromResolvedJournals
@@ -35,6 +37,7 @@ module HKernel.Editor.PlanLifecycle
 import Data.Bifunctor (first)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -44,6 +47,7 @@ import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError
   , actualJournalCompletionDeclarations
+  , actualJournalIdentifiedTransactions
   , admitActualJournalFromResolvedJournal
   , parseActualJournal
   )
@@ -107,7 +111,12 @@ import HKernel.Plan
   , planRetirementSuccessor
   , retiredPlanId
   )
-import HKernel.Plan.Completion (declaredCompletionPlanId)
+import HKernel.Plan.Completion
+  ( declaredCompletionActualId
+  , declaredCompletionPlanId
+  , identifiedActualId
+  , identifiedActualTransaction
+  )
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , PlanJournal
@@ -121,6 +130,7 @@ import HKernel.Plan.Journal
   , planJournalTransactionSourceFor
   , planJournalTransactions
   , planJournalValue
+  , retiredPlanIdsAt
   )
 
 -- Plan Add
@@ -303,6 +313,46 @@ data PlanRetirementWriteError
   | RetireCandidateLifecycleError (NonEmpty PlanLifecycleError)
   | RetireCandidateSemanticMismatch PlanId
   deriving (Eq, Show)
+
+-- | Plans that already carry durable closure evidence and therefore must not
+-- receive another lifecycle-changing mutation. Completion and retirement are
+-- different kinds of evidence, but both close the selected Plan to further
+-- Edit / Complete / retirement operations.
+planClosedIds
+  :: PlanJournal
+  -> ActualJournal
+  -> Either (NonEmpty PlanLifecycleError) (Set.Set PlanId)
+planClosedIds planJ actualJ = do
+  retirements <- admitPlanRetirements planJ
+  let completed = Set.fromList
+        (map declaredCompletionPlanId
+          (actualJournalCompletionDeclarations actualJ))
+      retired = Set.fromList (map retiredPlanId retirements)
+  pure (Set.union completed retired)
+
+-- | Plans inactive at one observation day. Retirement dates remain temporal:
+-- future retirement evidence keeps the Plan visible before its effective day.
+-- Completion is likewise compared with the date of the Actual carrying the
+-- admitted completion declaration instead of being projected backward in time.
+planInactiveIdsAt
+  :: Day
+  -> PlanJournal
+  -> ActualJournal
+  -> Either (NonEmpty PlanLifecycleError) (Set.Set PlanId)
+planInactiveIdsAt observation planJ actualJ = do
+  retirements <- admitPlanRetirements planJ
+  let completed = Set.fromList
+        [ declaredCompletionPlanId declaration
+        | declaration <- actualJournalCompletionDeclarations actualJ
+        , any (completionOccurredBy declaration)
+            (actualJournalIdentifiedTransactions actualJ)
+        ]
+      retired = retiredPlanIdsAt observation retirements
+  pure (Set.union completed retired)
+  where
+    completionOccurredBy declaration actual =
+      identifiedActualId actual == declaredCompletionActualId declaration
+        && transactionDate (identifiedActualTransaction actual) <= observation
 
 preparePlanCancel
   :: Text
@@ -645,6 +695,7 @@ data PlanEditPreview = PlanEditPreview
 data PlanEditError
   = EditPlanJournalSyntaxError (NonEmpty PlanJournalError)
   | EditActualJournalSyntaxError (NonEmpty ActualJournalError)
+  | EditPlanLifecycleError (NonEmpty PlanLifecycleError)
   | EditCandidateParseError (NonEmpty PlanJournalError)
   | EditCandidateTransactionError TransactionError
   | EditInvalidId PlanIdError
@@ -715,8 +766,9 @@ preparePlanEditFromJournals planJ planSource actualJ intent = do
     [value] -> Right value
     values -> Left (pure (EditSourcePlanIdCoordinateAmbiguous pId (length values)))
 
-  if pId `elem` map declaredCompletionPlanId
-      (actualJournalCompletionDeclarations actualJ)
+  closedIds <- first (pure . EditPlanLifecycleError)
+    (planClosedIds planJ actualJ)
+  if pId `Set.member` closedIds
     then Left (pure (EditPlanAlreadyClosed pId))
     else Right ()
 
