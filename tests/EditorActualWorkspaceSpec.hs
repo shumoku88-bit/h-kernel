@@ -114,6 +114,16 @@ main = do
             && "2026-08-08 Same transaction\n  ; event-id: actual-first\n  assets:cash"
                 `T.isInfixOf` promotedSource
         )
+      staleSourceResult =
+        ( "identity promotion rejects source text from a different observation"
+        , case prepareActualIdentityPromotion
+            alignedJournal
+            ("\n" <> duplicateShapeSource)
+            displayedIdentityFree
+            promotedId of
+            Left ActualIdentityPromotionSourceObservationMismatch -> True
+            _ -> False
+        )
       alreadyIdentifiedResult =
         ( "identity promotion rejects an already identified selected Actual"
         , case prepareActualIdentityPromotion
@@ -141,6 +151,7 @@ main = do
         , sourceEvidenceResult
         , newestFirstResult
         , promotionResult
+        , staleSourceResult
         , alreadyIdentifiedResult
         , duplicateIdentityResult
         ]
