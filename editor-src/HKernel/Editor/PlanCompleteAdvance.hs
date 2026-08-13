@@ -34,6 +34,7 @@ import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, addGregorianMonthsClip)
@@ -49,6 +50,7 @@ import HKernel.Editor.ActualAppend
   , ActualEditIntent(..)
   , prepareActualAppendFromResolvedJournal
   )
+import HKernel.Editor.PlanLifecycle (planClosedIds)
 import HKernel.Editor.SourcePublication
   ( WriterFileSystem(..)
   , defaultWriterFileSystem
@@ -101,6 +103,7 @@ import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , PlanJournal
   , PlanJournalError
+  , PlanLifecycleError
   , admitPlanJournalFromResolvedJournal
   , identifiedPlanId
   , identifiedPlanTransaction
@@ -169,6 +172,7 @@ data PlanCompleteAdvancePreview = PlanCompleteAdvancePreview
 data PlanCompleteAdvanceError
   = CompleteAdvancePlanNotFound PlanId
   | CompleteAdvancePlanAlreadyClosed PlanId
+  | CompleteAdvancePlanLifecycleError (NonEmpty PlanLifecycleError)
   | CompleteAdvanceMetadataMissing PlanId
   | CompleteAdvanceDuplicateMetadata Text
   | CompleteAdvanceInvalidRecurrence Text
@@ -217,7 +221,7 @@ assessPlanAdvanceSafety
   -> Either (NonEmpty PlanCompleteAdvanceError) PlanAdvanceSafety
 assessPlanAdvanceSafety planJournal actualJournal targetId = do
   identified <- findPlan planJournal targetId
-  ensureOpen actualJournal targetId
+  ensureOpen planJournal actualJournal targetId
   metadata <- sourceMetadataFor planJournal targetId
   related <- relatedActivePlans
     planJournal
@@ -239,7 +243,7 @@ preparePlanCompleteAdvance
 preparePlanCompleteAdvance planJournal actualJournal planSource actualSource intent = do
   identified <- findPlan planJournal targetId
   let transaction = identifiedPlanTransaction identified
-  ensureOpen actualJournal targetId
+  ensureOpen planJournal actualJournal targetId
   validateSuccessorAmountChoice intent
   actualPostings <- replaceBinaryMagnitude
     CompleteAdvanceAmountOverrideRequiresBinaryPlan
@@ -350,12 +354,17 @@ findPlan planJournal targetId =
     identified : _ -> Right identified
     [] -> Left (pure (CompleteAdvancePlanNotFound targetId))
 
-ensureOpen :: ActualJournal -> PlanId -> Either (NonEmpty PlanCompleteAdvanceError) ()
-ensureOpen actualJournal targetId
-  | targetId `elem` map declaredCompletionPlanId
-      (actualJournalCompletionDeclarations actualJournal) =
-      Left (pure (CompleteAdvancePlanAlreadyClosed targetId))
-  | otherwise = Right ()
+ensureOpen
+  :: PlanJournal
+  -> ActualJournal
+  -> PlanId
+  -> Either (NonEmpty PlanCompleteAdvanceError) ()
+ensureOpen planJournal actualJournal targetId = do
+  closedIds <- first (pure . CompleteAdvancePlanLifecycleError)
+    (planClosedIds planJournal actualJournal)
+  if targetId `Set.member` closedIds
+    then Left (pure (CompleteAdvancePlanAlreadyClosed targetId))
+    else Right ()
 
 validateSuccessorAmountChoice
   :: PlanCompleteAdvanceIntent
@@ -393,17 +402,16 @@ relatedActivePlans
   -> PlanRelation
   -> Either (NonEmpty PlanCompleteAdvanceError) [IdentifiedPlanTransaction]
 relatedActivePlans planJournal actualJournal targetId relation = do
-  candidates <- traverse relatedCandidate activeCandidates
+  closedIds <- first (pure . CompleteAdvancePlanLifecycleError)
+    (planClosedIds planJournal actualJournal)
+  candidates <- traverse relatedCandidate
+    [ candidate
+    | candidate <- planJournalTransactions planJournal
+    , identifiedPlanId candidate /= targetId
+    , identifiedPlanId candidate `Set.notMember` closedIds
+    ]
   pure (catMaybes candidates)
   where
-    completedIds = map declaredCompletionPlanId
-      (actualJournalCompletionDeclarations actualJournal)
-    activeCandidates =
-      [ candidate
-      | candidate <- planJournalTransactions planJournal
-      , identifiedPlanId candidate /= targetId
-      , identifiedPlanId candidate `notElem` completedIds
-      ]
     relatedCandidate candidate = do
       isRelated <- candidateMatchesRelation planJournal relation candidate
       pure (if isRelated then Just candidate else Nothing)

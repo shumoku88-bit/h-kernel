@@ -38,7 +38,6 @@ import HKernel.Editor.SourcePublication
   , ExpectedSource(..)
   , WriteIntent(..)
   , admitPlanJournalRootSource
-  , publishPlanJournalFromResolvedJournal
   , publishWithPathAdmission
   )
 import HKernel.Editor.Interaction.PlanCompleteAdvance
@@ -686,17 +685,20 @@ syncCompletedPlanBudget context planId =
 publishPlanRoot :: AppContext -> Text -> IO PublishResult
 publishPlanRoot context candidate = do
   let state = contextHouseholdState context
+      root = householdStateRoot state
       planPath = householdPlanJournalPath (householdStatePaths state)
   preAdmission <- admitPlanJournalRootSource planPath candidate
   case preAdmission of
     Left errors -> pure
       (PublicationFailed ("Plan candidate path admission failed: " <> showText (NonEmpty.toList errors)))
     Right _ -> do
-      writeResult <- publishPlanJournalFromResolvedJournal WriteIntent
-        { targetFilePath = planPath
-        , expectedOldBytes = ExpectedSource (contextPlanSource context)
-        , candidateNewBytes = CandidateSource candidate
-        }
+      writeResult <- publishWithPathAdmission
+        (\_ -> loadCanonicalHousehold root)
+        WriteIntent
+          { targetFilePath = planPath
+          , expectedOldBytes = ExpectedSource (contextPlanSource context)
+          , candidateNewBytes = CandidateSource candidate
+          }
       case writeResult of
         Left err -> pure (PublicationFailed (showText err))
         Right () -> reloadPlans context

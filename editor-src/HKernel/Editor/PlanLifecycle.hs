@@ -13,6 +13,8 @@ module HKernel.Editor.PlanLifecycle
   , PlanSupersedeIntent(..)
   , PlanSupersedePreview(..)
   , PlanRetirementWriteError(..)
+  , planClosedIds
+  , planInactiveIdsAt
   , preparePlanCancel
   , preparePlanCancelFromResolvedActualJournal
   , preparePlanCancelFromResolvedJournals
@@ -35,6 +37,7 @@ module HKernel.Editor.PlanLifecycle
 import Data.Bifunctor (first)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -121,6 +124,7 @@ import HKernel.Plan.Journal
   , planJournalTransactionSourceFor
   , planJournalTransactions
   , planJournalValue
+  , retiredPlanIdsAt
   )
 
 -- Plan Add
@@ -303,6 +307,39 @@ data PlanRetirementWriteError
   | RetireCandidateLifecycleError (NonEmpty PlanLifecycleError)
   | RetireCandidateSemanticMismatch PlanId
   deriving (Eq, Show)
+
+-- | Plans that already carry durable closure evidence and therefore must not
+-- receive another lifecycle-changing mutation. Completion and retirement are
+-- different kinds of evidence, but both close the selected Plan to further
+-- Edit / Complete / retirement operations.
+planClosedIds
+  :: PlanJournal
+  -> ActualJournal
+  -> Either (NonEmpty PlanLifecycleError) (Set.Set PlanId)
+planClosedIds planJ actualJ = do
+  retirements <- admitPlanRetirements planJ
+  let completed = Set.fromList
+        (map declaredCompletionPlanId
+          (actualJournalCompletionDeclarations actualJ))
+      retired = Set.fromList (map retiredPlanId retirements)
+  pure (Set.union completed retired)
+
+-- | Plans inactive at one observation day. Completion follows the existing
+-- completion contract and is timeless once valid evidence is admitted. Only
+-- retirement is effective-dated: future retirement keeps a Plan visible until
+-- the declared retirement day.
+planInactiveIdsAt
+  :: Day
+  -> PlanJournal
+  -> ActualJournal
+  -> Either (NonEmpty PlanLifecycleError) (Set.Set PlanId)
+planInactiveIdsAt observation planJ actualJ = do
+  retirements <- admitPlanRetirements planJ
+  let completed = Set.fromList
+        (map declaredCompletionPlanId
+          (actualJournalCompletionDeclarations actualJ))
+      retired = retiredPlanIdsAt observation retirements
+  pure (Set.union completed retired)
 
 preparePlanCancel
   :: Text
@@ -645,6 +682,7 @@ data PlanEditPreview = PlanEditPreview
 data PlanEditError
   = EditPlanJournalSyntaxError (NonEmpty PlanJournalError)
   | EditActualJournalSyntaxError (NonEmpty ActualJournalError)
+  | EditPlanLifecycleError (NonEmpty PlanLifecycleError)
   | EditCandidateParseError (NonEmpty PlanJournalError)
   | EditCandidateTransactionError TransactionError
   | EditInvalidId PlanIdError
@@ -715,8 +753,9 @@ preparePlanEditFromJournals planJ planSource actualJ intent = do
     [value] -> Right value
     values -> Left (pure (EditSourcePlanIdCoordinateAmbiguous pId (length values)))
 
-  if pId `elem` map declaredCompletionPlanId
-      (actualJournalCompletionDeclarations actualJ)
+  closedIds <- first (pure . EditPlanLifecycleError)
+    (planClosedIds planJ actualJ)
+  if pId `Set.member` closedIds
     then Left (pure (EditPlanAlreadyClosed pId))
     else Right ()
 

@@ -23,6 +23,7 @@ module HKernel.Editor.TUI.Model
 import qualified Brick.Widgets.List as L
 import Data.List.NonEmpty (NonEmpty)
 import Lens.Micro (Lens')
+import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time.Calendar (Day)
 import qualified Data.Vector as Vec
@@ -33,12 +34,12 @@ import HKernel.Account
   , declaredAccount
   )
 import HKernel.Actual.Journal
-  ( actualJournalCompletionDeclarations
-  , actualJournalTransactionEntries
+  ( actualJournalTransactionEntries
   , actualJournalValue
   , actualTransactionEntryTransaction
   )
 import HKernel.Application.Config (HouseholdSourcePaths(..))
+import HKernel.Editor.PlanLifecycle (planInactiveIdsAt)
 import HKernel.Household.Application
   ( HouseholdLoadError
   , HouseholdState(..)
@@ -51,7 +52,6 @@ import HKernel.Household.Report.Render (HouseholdReportSection)
 import HKernel.HouseholdIssue (HouseholdIssue)
 import HKernel.Editor.HouseholdWorkspace (issuesForWorkspace)
 import HKernel.Ledger (Transaction)
-import HKernel.Plan.Completion (declaredCompletionPlanId)
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , identifiedPlanId
@@ -215,11 +215,18 @@ makeWorkspaceContext _focusLatest today snapshot =
     workspaceAccounts = L.list WorkspaceAccountList
       (Vec.fromList (Nothing : map (Just . declaredAccount) declarations)) 1
     workspaceList = L.list WorkspaceTransactionList (Vec.fromList transactions) 1
-    closedPlanIds = map declaredCompletionPlanId
-      (actualJournalCompletionDeclarations (householdStateActualJournal state))
+    planJournal = householdStatePlanJournal state
+    actualJournal = householdStateActualJournal state
+    allPlans = planJournalTransactions planJournal
+    inactivePlanIds = case planInactiveIdsAt today planJournal actualJournal of
+      Right ids -> ids
+      -- HouseholdWriteSnapshot admission has already proved Plan lifecycle
+      -- validity. If that invariant is ever broken, expose no mutation target
+      -- rather than silently treating lifecycle-invalid Plans as open.
+      Left _ -> Set.fromList (map identifiedPlanId allPlans)
     openPlans = filter
-      (\identified -> identifiedPlanId identified `notElem` closedPlanIds)
-      (planJournalTransactions (householdStatePlanJournal state))
+      (\identified -> identifiedPlanId identified `Set.notMember` inactivePlanIds)
+      allPlans
     planList = L.list PlanList (Vec.fromList openPlans) 1
     issueList = L.list IssueList
       (Vec.fromList (issuesForWorkspace (householdStateIssues state))) 1
