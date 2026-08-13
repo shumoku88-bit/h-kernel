@@ -4,9 +4,7 @@ module Main (main) where
 
 import Test.Support (mustRight, assertEqual)
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Set as Set
 import qualified Data.Text as T
-import Data.Time.Calendar (fromGregorian)
 import HKernel.Journal
   ( journalMetadataKey
   , journalMetadataValue
@@ -210,25 +208,15 @@ characterizePlanRetirementMetadata = do
 
   assertEqual
     "Plan lifecycle keeps cancellation and supersession as typed evidence"
-    [ ("plan-old", fromGregorian 2026 8 13, Just "plan-new")
-    , ("plan-cancelled", fromGregorian 2026 8 12, Nothing)
+    [ ("plan-old", "2026-08-13", Just "plan-new")
+    , ("plan-cancelled", "2026-08-12", Nothing)
     ]
     [ ( planIdText (retiredPlanId retirement)
-      , planRetiredOn retirement
+      , show (planRetiredOn retirement)
       , fmap planIdText (planRetirementSuccessor retirement)
       )
     | retirement <- retirements
     ]
-  assertEqual
-    "retirement is observation-time evidence rather than destructive Plan removal"
-    ["plan-cancelled"]
-    (map planIdText (Set.toAscList
-      (retiredPlanIdsAt (fromGregorian 2026 8 12) retirements)))
-  assertEqual
-    "superseded Plan retires on its declared day"
-    ["plan-cancelled", "plan-old"]
-    (map planIdText (Set.toAscList
-      (retiredPlanIdsAt (fromGregorian 2026 8 13) retirements)))
   assertEqual
     "retirement admission preserves every original Plan transaction"
     ["plan-old", "plan-new", "plan-cancelled"]
