@@ -13,6 +13,7 @@ module HKernel.Report.Config
   , renderReportConfigErrors
   ) where
 
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -57,15 +58,21 @@ data RawAmounts = RawAmounts
   , rawNegativeColor :: Maybe Text
   }
 
+-- | Canonical calendar presentation shape. The nested @markers@ table is read
+-- only as a short migration bridge for already-published Household sources.
 data RawCalendar = RawCalendar
-  { rawCalendarMarkers :: Maybe RawCalendarMarkers
+  { rawCalendarCycleEndMarker :: Maybe Text
+  , rawCalendarPlanDueMarker :: Maybe Text
+  , rawCalendarIssueDueMarker :: Maybe Text
+  , rawCalendarMultipleMarker :: Maybe Text
+  , rawCalendarLegacyMarkers :: Maybe RawLegacyCalendarMarkers
   }
 
-data RawCalendarMarkers = RawCalendarMarkers
-  { rawCalendarActualMarker :: Maybe Text
-  , rawCalendarPlanMarker :: Maybe Text
-  , rawCalendarIssueDueMarker :: Maybe Text
-  , rawCalendarCycleEndMarker :: Maybe Text
+data RawLegacyCalendarMarkers = RawLegacyCalendarMarkers
+  { rawLegacyCalendarActualMarker :: Maybe Text
+  , rawLegacyCalendarPlanMarker :: Maybe Text
+  , rawLegacyCalendarIssueDueMarker :: Maybe Text
+  , rawLegacyCalendarCycleEndMarker :: Maybe Text
   }
 
 data RawReports = RawReports
@@ -110,11 +117,16 @@ instance FromValue RawAmounts where
 
 instance FromValue RawCalendar where
   fromValue = parseTableFromValue
-    (RawCalendar <$> optKey "markers")
+    (RawCalendar
+      <$> optKey "cycle-end-marker"
+      <*> optKey "plan-due-marker"
+      <*> optKey "issue-due-marker"
+      <*> optKey "multiple-marker"
+      <*> optKey "markers")
 
-instance FromValue RawCalendarMarkers where
+instance FromValue RawLegacyCalendarMarkers where
   fromValue = parseTableFromValue
-    (RawCalendarMarkers
+    (RawLegacyCalendarMarkers
       <$> optKey "actual"
       <*> optKey "plan"
       <*> optKey "issue-due"
@@ -180,15 +192,15 @@ renderReportConfiguration configuration = T.unlines
   , "negative-color = " <> quoted (renderPresentationColor
       (presentationNegativeAmountColor presentation))
   , ""
-  , "[presentation.calendar.markers]"
-  , "actual = " <> quotedCalendarMarker
-      (calendarActualMarker calendarMarkers)
-  , "plan = " <> quotedCalendarMarker
-      (calendarPlanMarker calendarMarkers)
-  , "issue-due = " <> quotedCalendarMarker
-      (calendarIssueDueMarker calendarMarkers)
-  , "cycle-end = " <> quotedCalendarMarker
+  , "[presentation.calendar]"
+  , "cycle-end-marker = " <> quotedCalendarMarker
       (calendarCycleEndMarker calendarMarkers)
+  , "plan-due-marker = " <> quotedCalendarMarker
+      (calendarPlanDueMarker calendarMarkers)
+  , "issue-due-marker = " <> quotedCalendarMarker
+      (calendarIssueDueMarker calendarMarkers)
+  , "multiple-marker = " <> quotedCalendarMarker
+      (calendarMultipleMarker calendarMarkers)
   , ""
   , "[reports.trial-balance]"
   , "as-of = " <> quoted (renderAsOf (trialBalanceSpec plan))
@@ -296,8 +308,7 @@ rawConfigToConfiguration (RawConfig rawPresentation reports) = case reports of
       "presentation.amounts.negative-color"
       RedColor
       (amounts >>= rawNegativeColor)
-    calendarMarkers <- parseCalendarMarkers
-      (calendar >>= rawCalendarMarkers)
+    calendarMarkers <- parseCalendarMarkers calendar
     trialSpec <- parseAsOf "reports.trial-balance.as-of" trial
     balanceSpec <- parseAsOf "reports.balance-sheet.as-of" balance
     profitSpec <- parseRange "reports.profit-and-loss" profit
@@ -362,27 +373,69 @@ parsePresentationColor path value = case value of
         <> value <> "’"
     ]
 
-parseCalendarMarkers
-  :: Maybe RawCalendarMarkers
-  -> Either [Text] CalendarMarkers
+parseCalendarMarkers :: Maybe RawCalendar -> Either [Text] CalendarMarkers
 parseCalendarMarkers Nothing = Right defaultCalendarMarkers
-parseCalendarMarkers (Just raw) = CalendarMarkers
+parseCalendarMarkers (Just raw) =
+  case rawCalendarLegacyMarkers raw of
+    Just legacy
+      | hasDirectCalendarMarker raw -> Left
+          [ "presentation.calendar: legacy markers table cannot be combined with direct calendar marker keys" ]
+      | otherwise -> parseLegacyCalendarMarkers legacy
+    Nothing -> parseCanonicalCalendarMarkers raw
+
+hasDirectCalendarMarker :: RawCalendar -> Bool
+hasDirectCalendarMarker raw = any isJust
+  [ rawCalendarCycleEndMarker raw
+  , rawCalendarPlanDueMarker raw
+  , rawCalendarIssueDueMarker raw
+  , rawCalendarMultipleMarker raw
+  ]
+
+parseCanonicalCalendarMarkers :: RawCalendar -> Either [Text] CalendarMarkers
+parseCanonicalCalendarMarkers raw = CalendarMarkers
   <$> parseOptionalCalendarMarker
-      "presentation.calendar.markers.actual"
-      (calendarActualMarker defaultCalendarMarkers)
-      (rawCalendarActualMarker raw)
+      "presentation.calendar.plan-due-marker"
+      (calendarPlanDueMarker defaultCalendarMarkers)
+      (rawCalendarPlanDueMarker raw)
   <*> parseOptionalCalendarMarker
-      "presentation.calendar.markers.plan"
-      (calendarPlanMarker defaultCalendarMarkers)
-      (rawCalendarPlanMarker raw)
-  <*> parseOptionalCalendarMarker
-      "presentation.calendar.markers.issue-due"
+      "presentation.calendar.issue-due-marker"
       (calendarIssueDueMarker defaultCalendarMarkers)
       (rawCalendarIssueDueMarker raw)
   <*> parseOptionalCalendarMarker
-      "presentation.calendar.markers.cycle-end"
+      "presentation.calendar.cycle-end-marker"
       (calendarCycleEndMarker defaultCalendarMarkers)
       (rawCalendarCycleEndMarker raw)
+  <*> parseOptionalCalendarMarker
+      "presentation.calendar.multiple-marker"
+      (calendarMultipleMarker defaultCalendarMarkers)
+      (rawCalendarMultipleMarker raw)
+
+-- | Current private Household data may still contain the old nested shape while
+-- h-kernel and bqn-ledger converge. It remains readable, but canonical rendering
+-- always publishes the direct shared shape above. The retired Actual glyph is
+-- validated so legacy input does not silently become less strict.
+parseLegacyCalendarMarkers
+  :: RawLegacyCalendarMarkers
+  -> Either [Text] CalendarMarkers
+parseLegacyCalendarMarkers raw = do
+  _ <- parseOptionalCalendarMarker
+    "presentation.calendar.markers.actual"
+    (calendarMultipleMarker defaultCalendarMarkers)
+    (rawLegacyCalendarActualMarker raw)
+  CalendarMarkers
+    <$> parseOptionalCalendarMarker
+        "presentation.calendar.markers.plan"
+        (calendarPlanDueMarker defaultCalendarMarkers)
+        (rawLegacyCalendarPlanMarker raw)
+    <*> parseOptionalCalendarMarker
+        "presentation.calendar.markers.issue-due"
+        (calendarIssueDueMarker defaultCalendarMarkers)
+        (rawLegacyCalendarIssueDueMarker raw)
+    <*> parseOptionalCalendarMarker
+        "presentation.calendar.markers.cycle-end"
+        (calendarCycleEndMarker defaultCalendarMarkers)
+        (rawLegacyCalendarCycleEndMarker raw)
+    <*> pure (calendarMultipleMarker defaultCalendarMarkers)
 
 parseOptionalCalendarMarker
   :: Text
