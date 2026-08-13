@@ -2,8 +2,14 @@
 
 module Main (main) where
 
+import Data.List (foldl')
+import qualified Data.Set as Set
 import Data.Time.Calendar (fromGregorian)
+import HKernel.Account
+import HKernel.Budget
+import HKernel.Budget.Policy
 import HKernel.Household.Backing
+import HKernel.Household.Policy
 import HKernel.Money
 import HKernel.Period
 import System.Exit (exitFailure)
@@ -59,6 +65,37 @@ main = do
     "post-Plan headroom remains distinct from ledger remaining"
     (one jpy 90 <> one usd (-5))
     (envelopePostPlanHeadroom food)
+
+  let envelope = mustRight (mkEnvelopeId "food")
+      pool = mustRight (mkBackingPoolId "operating")
+      cash = mustRight (mkAccount "assets:cash")
+      pension = mustRight (mkAccount "income:pension")
+      allocation = mustRight (mkAccount "budget:food")
+      unassigned = mustRight (mkAccount "budget:unassigned")
+      foodExpense = mustRight (mkAccount "expenses:food")
+      travelJpy = mustRight (mkAccount "expenses:travel-jpy")
+      travelIls = mustRight (mkAccount "expenses:travel-ils")
+      budgetPolicy = mustRight (mkBudgetPolicy
+        [defineEnvelope envelope (mustRight (mkEnvelopeLabel "Food")) Daily pool [foodExpense]]
+        [defineBackingPool pool [cash]])
+      policy = mustRight (mkHouseholdPolicy
+        (incomeAnchorCyclePolicy pension)
+        budgetPolicy
+        [defineHouseholdEnvelopeCoordinates envelope allocation []]
+        [unassigned])
+      registry = foldl' register emptyAccountRegistry
+        [ (cash, Asset), (pension, Income), (allocation, Budget)
+        , (unassigned, Budget), (foodExpense, Expense)
+        , (travelJpy, Expense), (travelIls, Expense)
+        ]
+      register current (account, accountType) = mustRight
+        (registerAccount (declareAccount account accountType) current)
+  case validateHouseholdPolicyAccounts registry policy of
+    Left errors -> error (show errors)
+    Right validated -> assertEqual
+      "unrouted Expense Accounts remain valid attention evidence"
+      (Set.fromList [travelIls, travelJpy])
+      (accountValidatedHouseholdUnassignedExpenseAccounts validated)
 
 one :: Commodity -> Integer -> Balance
 one commodity value =
