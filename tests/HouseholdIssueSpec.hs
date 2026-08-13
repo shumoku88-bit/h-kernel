@@ -8,12 +8,15 @@ import HKernel.HouseholdIssue
 import HKernel.HouseholdIssue.Render
 import HKernel.Editor.HouseholdWorkspace (issuesForWorkspace)
 import HKernel.Money
+import HKernel.Plan (mkPlanId)
+import HKernel.Plan.Completion (mkActualTransactionId)
 import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
   characterizeIssueIdentity
   characterizeHouseholdIssue
+  characterizeIssueRelations
   characterizeWorkspaceOrder
   characterizeCompleteLineRendering
 
@@ -118,6 +121,62 @@ characterizeHouseholdIssue = do
   assertLeft "details cannot contain a hidden second line"
     (mkHouseholdIssue issueId recordedOn Open DueUndetermined Nothing
       "支払いを確認する" "節約中\n要相談")
+
+characterizeIssueRelations :: IO ()
+characterizeIssueRelations = do
+  let issueId = mustRight (mkIssueId "issue-2026-001")
+      eventId = mustRight (mkIssueRelationEventId "issue-rel-2026-001")
+      day = fromGregorian 2026 8 6
+      oldPlanId = mustRight (mkPlanId "plan-old")
+      newPlanId = mustRight (mkPlanId "plan-new")
+      actualId = mustRight (mkActualTransactionId "actual-transfer-001")
+      concerns = mustRight (mkIssueRelationEvent
+        eventId day issueId (IssueConcernsPlan oldPlanId) "reviewing current commitment")
+      planned = mustRight (mkIssueRelationEvent
+        (mustRight (mkIssueRelationEventId "issue-rel-2026-002"))
+        day issueId (IssuePlannedAs newPlanId) "replacement commitment")
+      withdrawn = mustRight (mkIssueRelationEvent
+        (mustRight (mkIssueRelationEventId "issue-rel-2026-003"))
+        day issueId (IssuePlanningWithdrawn oldPlanId) "intent changed")
+      funded = mustRight (mkIssueRelationEvent
+        (mustRight (mkIssueRelationEventId "issue-rel-2026-004"))
+        day issueId (IssueFundedBy actualId) "asset transfer")
+      realized = mustRight (mkIssueRelationEvent
+        (mustRight (mkIssueRelationEventId "issue-rel-2026-005"))
+        day issueId (IssueRealizedAs actualId) "actual purchase")
+
+  assertEqual "relation event retains its durable identity"
+    eventId
+    (issueRelationEventId concerns)
+  assertEqual "relation history retains its own recorded date"
+    day
+    (issueRelationRecordedOn concerns)
+  assertEqual "relation remains anchored to the Issue identity"
+    issueId
+    (issueRelationIssueId concerns)
+  assertEqual "an Issue can concern an existing Plan without claiming it created it"
+    (IssueConcernsPlan oldPlanId)
+    (issueRelationMeaning concerns)
+  assertEqual "planned-as and planning-withdrawn are distinct historical facts"
+    False
+    (issueRelationMeaning planned == issueRelationMeaning withdrawn)
+  assertEqual "funding an Issue and realizing it as Actual remain distinct meanings"
+    False
+    (issueRelationMeaning funded == issueRelationMeaning realized)
+  assertEqual "relation details retain short household context"
+    "asset transfer"
+    (issueRelationDetails funded)
+
+  assertLeft "relation event identity cannot be blank"
+    (mkIssueRelationEventId "")
+  assertLeft "relation event identity cannot contain whitespace"
+    (mkIssueRelationEventId "issue relation")
+  assertLeft "relation details reject surrounding whitespace"
+    (mkIssueRelationEvent eventId day issueId (IssuePlannedAs newPlanId)
+      " replacement commitment")
+  assertLeft "relation details reject hidden control characters"
+    (mkIssueRelationEvent eventId day issueId (IssuePlannedAs newPlanId)
+      "replacement\tcommitment")
 
 characterizeWorkspaceOrder :: IO ()
 characterizeWorkspaceOrder = do
