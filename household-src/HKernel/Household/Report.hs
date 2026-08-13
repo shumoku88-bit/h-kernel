@@ -1,5 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Pure Household report composition from already admitted typed values.
+--
+-- Source admission, writer authority, and delivery effects remain outside this
+-- module. It composes stable Household, Plan, Budget, Actual, and Report owners
+-- without reparsing physical compatibility sources.
 module HKernel.Household.Report
   ( HouseholdSourceError(..)
   , HouseholdCycleComparison(..)
@@ -45,8 +50,28 @@ import HKernel.Actual.Journal
   , actualJournalIdentifiedTransactions
   , actualJournalValue
   )
-import HKernel.Engine (LedgerEntry(..), journalEntries)
+import HKernel.Engine
+  ( LedgerEntry(..)
+  , journalEntries
+  )
 import HKernel.Household.Backing
+  ( HouseholdBackingPlan(..)
+  , EnvelopeBackingLine(..)
+  , envelopeLedgerRemaining
+  , envelopePostPlanHeadroom
+  , BackingPoolBacking(..)
+  , backingPoolAvailableFunding
+  , backingPoolGrossSurplus
+  , backingPoolAvailableSurplus
+  , EnvelopeBacking(..)
+  , envelopeFundingBalance
+  , envelopeSignedTotal
+  , envelopeBackingRequired
+  , envelopeBackingSurplus
+  , envelopeAvailableBackingSurplus
+  , envelopeReconciliationDelta
+  , deriveHouseholdBacking
+  )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement)
 import HKernel.Household.DailyTarget
 import HKernel.Household.Policy
@@ -94,12 +119,17 @@ import HKernel.Household.BudgetObservation
   , householdBudgetRemaining
   )
 
+-- | A source-local admission failure. Private source text is deliberately not
+-- retained, so CLI diagnostics cannot accidentally echo a complete row.
 data HouseholdSourceError = HouseholdSourceError
   { householdSourceName    :: Text
   , householdSourceLine    :: Int
   , householdSourceMessage :: Text
   } deriving (Eq, Show)
 
+-- | A future income movement used only as evidence for cycle resolution.
+--
+-- It is deliberately not represented by 'CommittedOutgoingPlan'.
 data IncomingCycleAnchor = IncomingCycleAnchor
   { incomingAnchorId     :: PlanId
   , incomingAnchorDate   :: Day
@@ -112,6 +142,9 @@ data AdmittedPlans = AdmittedPlans
   , admittedPlanRetirements :: [PlanRetirement]
   } deriving (Eq, Show)
 
+-- | Display relation of an open outgoing Plan to the resolved current cycle.
+-- This is intentionally presentation-facing classification; Budget, Backing,
+-- and Daily Target remain bounded by the current cycle independently.
 data PlannedTransactionHorizon
   = BeforeCurrentCycle
   | InCurrentCycle
@@ -123,6 +156,12 @@ data ClassifiedPlannedTransaction = ClassifiedPlannedTransaction
   , classifiedPlanValue   :: CommittedOutgoingPlan
   } deriving (Eq, Show)
 
+-- | Availability of the daily current-vs-previous cycle comparison.
+--
+-- The Household surface uses the old BQN daily-use meaning: compare the current
+-- cycle with the previous cycle at the same elapsed day count. If the previous
+-- cycle cannot supply that aligned observation, only this comparison is marked
+-- unavailable; the rest of the admitted Household surface remains usable.
 data HouseholdCycleComparison
   = HouseholdCycleComparisonAvailable CycleComparison
   | HouseholdCycleComparisonUnavailable HouseholdCycleComparisonUnavailable
@@ -142,6 +181,10 @@ data HouseholdReportSurface = HouseholdReportSurface
   , householdDailyTarget          :: DailyTarget
   } deriving (Eq, Show)
 
+-- | Calculate the Household report surface from already admitted typed values.
+-- Admission adapters may differ, but cycle, Plan completion, Plan retirement,
+-- Budget observation, backing, and Daily Target calculation have one semantic
+-- owner here.
 buildHouseholdReportSurfaceFromAdmitted
   :: Day
   -> ActualJournal
@@ -169,7 +212,8 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
     (actualJournalCompletionDeclarations actualJournal)
   completionOpenPlanValues <- mapLeft
     (fmap (sourceError "actual.journal" 0 . tshow))
-    (resolveOpenCommittedOutgoingPlans outgoingPlans
+    (resolveOpenCommittedOutgoingPlans
+      outgoingPlans
       (actualJournalIdentifiedTransactions actualJournal)
       outgoingDeclarations)
   budgetObservation <- mapLeft
@@ -185,7 +229,9 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
         completionOpenPlanValues
       openPlanIds = Set.fromList (map committedPlanId openPlanValues)
       openPlans = openOutgoingPlans openPlanIds outgoingPlans
-      currentOpenPlans = filter (periodContains current . committedPlanDate) openPlans
+      currentOpenPlans = filter
+        (periodContains current . committedPlanDate)
+        openPlans
       backingPlans =
         [ HouseholdBackingPlan
             { householdBackingPlanSource = committedPlanSource plan
@@ -194,11 +240,13 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
             }
         | plan <- currentOpenPlans
         ]
-      backing = deriveHouseholdBacking observation current journal admittedPolicy
+      backing = deriveHouseholdBacking
+        observation current journal admittedPolicy
         budget entitlement consumption remaining backingPlans
-      target = deriveDailyTarget observation current journal dailyScope currentOpenPlans
-      comparison = alignedHouseholdCycleComparison observation current previous
-        journal currentCycle
+      target = deriveDailyTarget observation current journal
+        dailyScope currentOpenPlans
+      comparison = alignedHouseholdCycleComparison
+        observation current previous journal currentCycle
   pure HouseholdReportSurface
     { householdCurrentCycleAccounts = currentCycle
     , householdCycleComparison = comparison
@@ -208,8 +256,15 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
     , householdDailyTarget = target
     }
 
+-- | Compare the previous cycle at the same elapsed day count as the current
+-- observation. An unavailable aligned baseline is retained as typed evidence
+-- instead of clipping the window or failing unrelated Household reports.
 alignedHouseholdCycleComparison
-  :: Day -> Period -> Period -> Journal -> CurrentCycleAccounts
+  :: Day
+  -> Period
+  -> Period
+  -> Journal
+  -> CurrentCycleAccounts
   -> HouseholdCycleComparison
 alignedHouseholdCycleComparison observation current previous journal currentCycle =
   case currentCycleAccounts baselineObservation previous journal of
@@ -223,8 +278,12 @@ alignedHouseholdCycleComparison observation current previous journal currentCycl
     baselineObservation = addDays elapsedDays (periodStart previous)
     elapsedDays = diffDays observation (periodStart current)
 
+-- | Classify already admitted open outgoing Plans without changing which Plans
+-- participate in current-cycle accounting calculations.
 classifyPlannedTransactions
-  :: Period -> [CommittedOutgoingPlan] -> [ClassifiedPlannedTransaction]
+  :: Period
+  -> [CommittedOutgoingPlan]
+  -> [ClassifiedPlannedTransaction]
 classifyPlannedTransactions current = map classifyOne
   where
     classifyOne plan = ClassifiedPlannedTransaction
@@ -237,16 +296,19 @@ classifyPlannedTransactions current = map classifyOne
       | otherwise = AfterCurrentCycle
 
 admitPlanJournal
-  :: PlanJournal -> Either (NonEmpty HouseholdSourceError) AdmittedPlans
+  :: PlanJournal
+  -> Either (NonEmpty HouseholdSourceError) AdmittedPlans
 admitPlanJournal planJournal = do
   retirements <- mapLeft
-    (fmap (\err -> sourceError "plan.journal" (planLifecycleErrorLine err) (tshow err)))
+    (fmap (\err -> sourceError "plan.journal"
+      (planLifecycleErrorLine err) (tshow err)))
     (admitPlanRetirements planJournal)
   classified <- mapLeft
     (fmap (sourceError "plan.journal" 0 . tshow))
     (classifyPlanJournal planJournal)
   incoming <- mapLeft NonEmpty.singleton
-    (traverse (projectIncomingCycleAnchor registry)
+    (traverse
+      (projectIncomingCycleAnchor registry)
       (classifiedIncomingPlanTransactions classified))
   projected <- mapLeft
     (fmap (sourceError "plan.journal" 0 . tshow))
@@ -263,7 +325,8 @@ admittedOutgoingPlanValues :: AdmittedPlans -> [CommittedOutgoingPlan]
 admittedOutgoingPlanValues = admittedOutgoingPlans
 
 projectIncomingCycleAnchor
-  :: AccountRegistry -> IdentifiedPlanTransaction
+  :: AccountRegistry
+  -> IdentifiedPlanTransaction
   -> Either HouseholdSourceError IncomingCycleAnchor
 projectIncomingCycleAnchor registry identified =
   case Set.toAscList incomeSources of
@@ -284,17 +347,22 @@ projectIncomingCycleAnchor registry identified =
       ]
 
 committedPlanSource :: CommittedOutgoingPlan -> Account
-committedPlanSource plan = declaredAccount (declaredPaymentSource direction)
+committedPlanSource plan =
+  declaredAccount (declaredPaymentSource direction)
   where
-    direction = declaredOutgoingPaymentDirection (committedPlanDirection plan)
+    direction =
+      declaredOutgoingPaymentDirection (committedPlanDirection plan)
 
 committedPlanDestination :: CommittedOutgoingPlan -> Account
-committedPlanDestination plan = declaredAccount (declaredPaymentDestination direction)
+committedPlanDestination plan =
+  declaredAccount (declaredPaymentDestination direction)
   where
-    direction = declaredOutgoingPaymentDirection (committedPlanDirection plan)
+    direction =
+      declaredOutgoingPaymentDirection (committedPlanDirection plan)
 
 completionDeclarationsForOutgoingPlans
-  :: AdmittedPlans -> [PlanCompletionDeclaration]
+  :: AdmittedPlans
+  -> [PlanCompletionDeclaration]
   -> Either (NonEmpty HouseholdSourceError) [PlanCompletionDeclaration]
 completionDeclarationsForOutgoingPlans plans declarations =
   case NonEmpty.nonEmpty unknownErrors of
@@ -305,8 +373,10 @@ completionDeclarationsForOutgoingPlans plans declarations =
       , Set.member (declaredCompletionPlanId declaration) outgoingPlanIds
       ]
   where
-    incomingPlanIds = Set.fromList (map incomingAnchorId (admittedIncomingAnchors plans))
-    outgoingPlanIds = Set.fromList (map committedPlanId (admittedOutgoingPlans plans))
+    incomingPlanIds = Set.fromList
+      (map incomingAnchorId (admittedIncomingAnchors plans))
+    outgoingPlanIds = Set.fromList
+      (map committedPlanId (admittedOutgoingPlans plans))
     knownPlanIds = Set.union incomingPlanIds outgoingPlanIds
     unknownErrors =
       [ sourceError "actual.journal" 0
@@ -320,7 +390,10 @@ sourceError :: Text -> Int -> Text -> HouseholdSourceError
 sourceError = HouseholdSourceError
 
 resolveCycles
-  :: Day -> Journal -> Account -> [IncomingCycleAnchor]
+  :: Day
+  -> Journal
+  -> Account
+  -> [IncomingCycleAnchor]
   -> Either (NonEmpty HouseholdSourceError) (Period, Period)
 resolveCycles observation journal incomeAccount anchors =
   case (reverse actualAnchors, plannedAnchors) of
@@ -350,7 +423,9 @@ resolveCycles observation journal incomeAccount anchors =
       (mkPeriod start end)
 
 openOutgoingPlans
-  :: Set.Set PlanId -> [CommittedOutgoingPlan] -> [CommittedOutgoingPlan]
+  :: Set.Set PlanId
+  -> [CommittedOutgoingPlan]
+  -> [CommittedOutgoingPlan]
 openOutgoingPlans openPlanIds =
   sortOn committedPlanDate
     . filter (\plan -> Set.member (committedPlanId plan) openPlanIds)
