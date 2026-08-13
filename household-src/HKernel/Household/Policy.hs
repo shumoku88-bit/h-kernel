@@ -23,6 +23,7 @@ module HKernel.Household.Policy
   , AccountValidatedHouseholdPolicy
   , accountValidatedHouseholdPolicy
   , accountValidatedHouseholdBudgetPolicy
+  , accountValidatedHouseholdUnassignedExpenseAccounts
   , HouseholdPolicyAccountError(..)
   , validateHouseholdPolicyAccounts
   ) where
@@ -97,7 +98,8 @@ data HouseholdPolicy = HouseholdPolicy
   } deriving (Eq, Show)
 
 -- | Existing callers have no explicitly unmanaged Expense Accounts.
--- Completeness is checked only when the policy meets an AccountRegistry.
+-- Unassigned Expense Accounts remain valid and become attention evidence only
+-- when the policy meets an AccountRegistry.
 mkHouseholdPolicy
   :: HouseholdCyclePolicy
   -> BudgetPolicy
@@ -238,9 +240,13 @@ householdEnvelopeForExecutionPlanDestination
 householdEnvelopeForExecutionPlanDestination account =
   Map.lookup account . householdAdditionalPlanDestinations
 
+-- | A structurally valid Household policy qualified against one AccountRegistry.
+-- Expense Accounts with no current management decision remain visible as an
+-- attention projection rather than making the Household invalid.
 data AccountValidatedHouseholdPolicy = AccountValidatedHouseholdPolicy
-  { accountValidatedHouseholdPolicy       :: HouseholdPolicy
-  , accountValidatedHouseholdBudgetPolicy :: AccountValidatedBudgetPolicy
+  { accountValidatedHouseholdPolicy                  :: HouseholdPolicy
+  , accountValidatedHouseholdBudgetPolicy            :: AccountValidatedBudgetPolicy
+  , accountValidatedHouseholdUnassignedExpenseAccounts :: Set Account
   } deriving (Eq, Show)
 
 data HouseholdPolicyAccountError
@@ -254,12 +260,16 @@ data HouseholdPolicyAccountError
   | HouseholdPlanDestinationUndeclared EnvelopeId Account
   | HouseholdUnmanagedExpenseUndeclared Account
   | HouseholdUnmanagedAccountNotExpense Account AccountType
-  | HouseholdExpenseManagementMissing Account
   | HouseholdExpenseManagementAmbiguous Account
   deriving (Eq, Show)
 
--- | Every declared Expense must have exactly one management decision:
--- ordinary Actual consumption, explicit Plan execution, or explicit unmanaged.
+-- | Qualify every Account coordinate against one AccountRegistry.
+--
+-- Expense management is intentionally asymmetric:
+--
+-- * zero decisions is valid and retained as unassigned attention evidence,
+-- * one decision is valid,
+-- * two or more decisions are ambiguous and fail closed.
 validateHouseholdPolicyAccounts
   :: AccountRegistry
   -> HouseholdPolicy
@@ -271,6 +281,7 @@ validateHouseholdPolicyAccounts registry policy =
       Right validated -> Right AccountValidatedHouseholdPolicy
         { accountValidatedHouseholdPolicy = policy
         , accountValidatedHouseholdBudgetPolicy = validated
+        , accountValidatedHouseholdUnassignedExpenseAccounts = unassignedExpenseAccounts
         }
       Left impossible -> Left (fmap HouseholdBudgetPolicyAccountError impossible)
   where
@@ -360,11 +371,16 @@ validateHouseholdPolicyAccounts registry policy =
           ]
       , present
       ]
-    expenseManagementErrors = concatMap classifyExpense declaredExpenses
-    classifyExpense account = case decisionCount account of
-      0 -> [HouseholdExpenseManagementMissing account]
-      1 -> []
-      _ -> [HouseholdExpenseManagementAmbiguous account]
+    unassignedExpenseAccounts = Set.fromList
+      [ account
+      | account <- declaredExpenses
+      , decisionCount account == 0
+      ]
+    expenseManagementErrors =
+      [ HouseholdExpenseManagementAmbiguous account
+      | account <- declaredExpenses
+      , decisionCount account > 1
+      ]
 
 data CoordinateObservation key value = CoordinateObservation
   { coordinateValues    :: Map key value
