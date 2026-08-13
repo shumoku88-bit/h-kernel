@@ -47,7 +47,6 @@ import HKernel.Actual.Journal
   ( ActualJournal
   , ActualJournalError
   , actualJournalCompletionDeclarations
-  , actualJournalIdentifiedTransactions
   , admitActualJournalFromResolvedJournal
   , parseActualJournal
   )
@@ -111,12 +110,7 @@ import HKernel.Plan
   , planRetirementSuccessor
   , retiredPlanId
   )
-import HKernel.Plan.Completion
-  ( declaredCompletionActualId
-  , declaredCompletionPlanId
-  , identifiedActualId
-  , identifiedActualTransaction
-  )
+import HKernel.Plan.Completion (declaredCompletionPlanId)
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , PlanJournal
@@ -330,10 +324,10 @@ planClosedIds planJ actualJ = do
       retired = Set.fromList (map retiredPlanId retirements)
   pure (Set.union completed retired)
 
--- | Plans inactive at one observation day. Retirement dates remain temporal:
--- future retirement evidence keeps the Plan visible before its effective day.
--- Completion is likewise compared with the date of the Actual carrying the
--- admitted completion declaration instead of being projected backward in time.
+-- | Plans inactive at one observation day. Completion follows the existing
+-- completion contract and is timeless once valid evidence is admitted. Only
+-- retirement is effective-dated: future retirement keeps a Plan visible until
+-- the declared retirement day.
 planInactiveIdsAt
   :: Day
   -> PlanJournal
@@ -342,17 +336,10 @@ planInactiveIdsAt
 planInactiveIdsAt observation planJ actualJ = do
   retirements <- admitPlanRetirements planJ
   let completed = Set.fromList
-        [ declaredCompletionPlanId declaration
-        | declaration <- actualJournalCompletionDeclarations actualJ
-        , any (completionOccurredBy declaration)
-            (actualJournalIdentifiedTransactions actualJ)
-        ]
+        (map declaredCompletionPlanId
+          (actualJournalCompletionDeclarations actualJ))
       retired = retiredPlanIdsAt observation retirements
   pure (Set.union completed retired)
-  where
-    completionOccurredBy declaration actual =
-      identifiedActualId actual == declaredCompletionActualId declaration
-        && transactionDate (identifiedActualTransaction actual) <= observation
 
 preparePlanCancel
   :: Text
