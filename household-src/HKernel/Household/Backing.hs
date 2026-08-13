@@ -44,7 +44,8 @@ import HKernel.Budget.Entitlement
   , envelopeEntitlementEnvelope
   )
 import HKernel.Budget.Policy
-  ( backingPoolDefinitionAssetAccounts
+  ( BackingPoolId
+  , backingPoolDefinitionAssetAccounts
   , backingPoolDefinitionId
   , budgetPolicyBackingPoolDefinitions
   , budgetPolicyBackingPoolForAsset
@@ -59,7 +60,6 @@ import HKernel.Budget.Remaining
   , envelopeRemainingEnvelope
   )
 import HKernel.Engine (accountBalance, accountBalancesThrough)
-import HKernel.Household.Backing.Pool
 import HKernel.Household.BudgetMovement
 import HKernel.Household.Policy
   ( HouseholdPolicy
@@ -98,6 +98,33 @@ envelopePostPlanHeadroom :: EnvelopeBackingLine -> Balance
 envelopePostPlanHeadroom line =
   envelopeLedgerRemaining line
     `subtractBalance` envelopeOpenPlanReserve line
+
+-- | One BackingPool coordinate at one Household observation.
+-- Gross values describe recorded facts; available values additionally apply
+-- still-open commitments. A normal envelope payment reduces both sides while a
+-- fixed payment outside the spendable Envelope set reduces only funding.
+data BackingPoolBacking = BackingPoolBacking
+  { backingPoolBackingId                 :: BackingPoolId
+  , backingPoolFundingBalance            :: Balance
+  , backingPoolOpenPlanCommitment        :: Balance
+  , backingPoolGrossEnvelopeRequired     :: Balance
+  , backingPoolAvailableEnvelopeRequired :: Balance
+  } deriving (Eq, Show)
+
+backingPoolAvailableFunding :: BackingPoolBacking -> Balance
+backingPoolAvailableFunding pool =
+  backingPoolFundingBalance pool
+    `subtractBalance` backingPoolOpenPlanCommitment pool
+
+backingPoolGrossSurplus :: BackingPoolBacking -> Balance
+backingPoolGrossSurplus pool =
+  backingPoolFundingBalance pool
+    `subtractBalance` backingPoolGrossEnvelopeRequired pool
+
+backingPoolAvailableSurplus :: BackingPoolBacking -> Balance
+backingPoolAvailableSurplus pool =
+  backingPoolAvailableFunding pool
+    `subtractBalance` backingPoolAvailableEnvelopeRequired pool
 
 -- | Pool coordinates are preserved before Household summaries are produced.
 -- Explicit Budget-ledger unassigned remains a Household-level reconciliation
