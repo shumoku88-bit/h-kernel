@@ -19,7 +19,7 @@ module HKernel.Budget.Policy
   , defineEnvelope
   , envelopeDefinitionId
   , envelopeDefinitionLabel
-  , envelopeDefinitionPacing
+  , envelopeDefinitionMode
   , envelopeDefinitionBackingPool
   , envelopeDefinitionExpenseAccounts
   , BackingPoolDefinition
@@ -56,7 +56,8 @@ import HKernel.Account
   , declaredAccountType
   , lookupAccountDeclaration
   )
-import HKernel.Budget (EnvelopeId, Pacing)
+import HKernel.Budget (EnvelopeId)
+import HKernel.Envelope.Mode (EnvelopeMode)
 
 -- | Stable machine identity for one group of Asset accounts that backs one or
 -- more spendable envelopes.
@@ -104,7 +105,7 @@ mkEnvelopeLabel value
 data EnvelopeDefinition = EnvelopeDefinition
   { envelopeDefinitionId              :: EnvelopeId
   , envelopeDefinitionLabel           :: EnvelopeLabel
-  , envelopeDefinitionPacing          :: Pacing
+  , envelopeDefinitionMode            :: EnvelopeMode
   , envelopeDefinitionBackingPool     :: BackingPoolId
   , envelopeDefinitionExpenseAccounts :: [Account]
   } deriving (Eq, Show)
@@ -112,7 +113,7 @@ data EnvelopeDefinition = EnvelopeDefinition
 defineEnvelope
   :: EnvelopeId
   -> EnvelopeLabel
-  -> Pacing
+  -> EnvelopeMode
   -> BackingPoolId
   -> [Account]
   -> EnvelopeDefinition
