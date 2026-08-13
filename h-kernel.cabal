@@ -40,6 +40,7 @@ library
                     , HKernel.CLI
                     , HKernel.Engine
                     , HKernel.Envelope
+                    , HKernel.Envelope.Mode
                     , HKernel.Envelope.Render
                     , HKernel.HouseholdIssue
                     , HKernel.HouseholdIssue.Render
