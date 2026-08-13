@@ -11,8 +11,10 @@ module HKernel.Editor.TUI.Plan
   , handleWorkspaceEvent
   , publishCandidate
   , startAdd
+  , startSelectedCancel
   , startSelectedCompletion
   , startSelectedEdit
+  , startSelectedReplace
   ) where
 
 import Brick
@@ -63,11 +65,17 @@ import HKernel.Editor.PlanCompleteAdvance
 import HKernel.Editor.PlanLifecycle
   ( PlanAddIntent(..)
   , PlanAddPreview(..)
+  , PlanCancelIntent(..)
+  , PlanCancelPreview(..)
   , PlanEditIntent(..)
   , PlanEditPreview(..)
+  , PlanSupersedeIntent(..)
+  , PlanSupersedePreview(..)
   , mkPositivePlanEditAmount
   , preparePlanAddFromResolvedJournals
+  , preparePlanCancelFromResolvedJournals
   , preparePlanEditFromResolvedJournals
+  , preparePlanSupersedeFromResolvedJournals
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Editor.TUI.Model
@@ -140,6 +148,9 @@ data State event
   | AddPreview (PreviewResult PlanAddPreview) (Form PlanAddInput event Name)
   | EditInput IdentifiedPlanTransaction (Form PlanEditInput event Name)
   | EditPreview IdentifiedPlanTransaction (PreviewResult PlanEditPreview) (Form PlanEditInput event Name)
+  | CancelPreview Day IdentifiedPlanTransaction (PreviewResult PlanCancelPreview)
+  | ReplaceInput Day IdentifiedPlanTransaction (Form PlanAddInput event Name)
+  | ReplacePreview Day IdentifiedPlanTransaction (PreviewResult PlanSupersedePreview) (Form PlanAddInput event Name)
   | BudgetSyncWarning PlanId Text
   | WriteOutcome Text
   | ReturnToWorkspace
@@ -150,6 +161,8 @@ data PublishRequest
   = PublishCompleteAdvance PlanId PlanCompleteAdvancePreview
   | PublishAdd PlanAddPreview
   | PublishEdit PlanEditPreview
+  | PublishCancel PlanCancelPreview
+  | PublishSupersede PlanSupersedePreview
   | PublishBudgetSync PlanId
 
 data PublishResult
@@ -176,6 +189,21 @@ startSelectedEdit :: AppContext -> Maybe (State event)
 startSelectedEdit context = do
   (_, identified) <- L.listSelectedElement (contextPlanList context)
   pure (EditInput identified (mkPlanEditForm identified))
+
+startSelectedCancel :: AppContext -> Maybe (State event)
+startSelectedCancel context = do
+  (_, identified) <- L.listSelectedElement (contextPlanList context)
+  let retiredOn = contextObservationDay context
+  pure (CancelPreview retiredOn identified
+    (either PreviewRejected PreviewReady (prepareCancel context retiredOn identified)))
+
+startSelectedReplace :: AppContext -> Maybe (State event)
+startSelectedReplace context = do
+  (_, identified) <- L.listSelectedElement (contextPlanList context)
+  pure (ReplaceInput
+    (contextObservationDay context)
+    identified
+    (mkPlanReplaceForm identified))
 
 planActualDateTextL :: Lens' PlanCompleteAdvanceInput Text
 planActualDateTextL f input =
@@ -249,8 +277,17 @@ mkPlanCompleteForm today proposal =
       (form (initialPlanCompleteAdvanceInput today proposal))
 
 mkPlanAddForm :: Day -> Form PlanAddInput event Name
-mkPlanAddForm day =
-  setFormFocus PlanAddDescriptionField
+mkPlanAddForm day = mkPlanAddFormFrom
+  PlanAddDescriptionField
+  (PlanAddInput (T.pack (show day)) "" "" "" "" "JPY")
+
+mkPlanReplaceForm :: IdentifiedPlanTransaction -> Form PlanAddInput event Name
+mkPlanReplaceForm identified =
+  mkPlanAddFormFrom PlanAddAmountField (replacementInputFor identified)
+
+mkPlanAddFormFrom :: Name -> PlanAddInput -> Form PlanAddInput event Name
+mkPlanAddFormFrom focus input =
+  setFormFocus focus
     (newForm
       [ labelField "Plan date:"
           @@= editTextField planAddDateTextL PlanAddDateField (Just 1)
@@ -265,7 +302,35 @@ mkPlanAddForm day =
       , labelField "Commodity:"
           @@= editTextField planAddCommodityTextL PlanAddCommodityField (Just 1)
       ]
-      (PlanAddInput (T.pack (show day)) "" "" "" "" "JPY"))
+      input)
+
+replacementInputFor :: IdentifiedPlanTransaction -> PlanAddInput
+replacementInputFor identified =
+  case (negativePostings, positivePostings) of
+    ([fromPosting], [toPosting])
+      | amountCommodity (postingAmount fromPosting)
+          == amountCommodity (postingAmount toPosting) ->
+          PlanAddInput
+            originalDate
+            originalDescription
+            (accountName (postingAccount fromPosting))
+            (accountName (postingAccount toPosting))
+            (renderQuantity (amountQuantity (postingAmount toPosting)))
+            (commodityCode (amountCommodity (postingAmount toPosting)))
+    _ -> PlanAddInput originalDate originalDescription "" "" "" fallbackCommodity
+  where
+    transaction = identifiedPlanTransaction identified
+    postings = NonEmpty.toList (transactionPostings transaction)
+    negativePostings = filter
+      ((< 0) . quantityToRational . amountQuantity . postingAmount)
+      postings
+    positivePostings = filter
+      ((> 0) . quantityToRational . amountQuantity . postingAmount)
+      postings
+    originalDate = T.pack (show (transactionDate transaction))
+    originalDescription = transactionDescription transaction
+    fallbackCommodity = commodityCode
+      (amountCommodity (postingAmount (NonEmpty.head (transactionPostings transaction))))
 
 mkPlanEditForm :: IdentifiedPlanTransaction -> Form PlanEditInput event Name
 mkPlanEditForm identified =
@@ -292,6 +357,11 @@ zoomAddForm _ state = pure state
 zoomEditForm :: Traversal' (State AppEvent) (Form PlanEditInput AppEvent Name)
 zoomEditForm f (EditInput identified form) = EditInput identified <$> f form
 zoomEditForm _ state = pure state
+
+zoomReplaceForm :: Traversal' (State AppEvent) (Form PlanAddInput AppEvent Name)
+zoomReplaceForm f (ReplaceInput retiredOn identified form) =
+  ReplaceInput retiredOn identified <$> f form
+zoomReplaceForm _ state = pure state
 
 drawFlow :: State AppEvent -> Widget Name
 drawFlow state = case state of
@@ -359,6 +429,32 @@ drawFlow state = case state of
     simplePreview "Edit Plan Preview"
       (renderPreviewResult renderEditPreview result)
       (simplePreviewControls result)
+  CancelPreview retiredOn _ result ->
+    simplePreview "Cancel Selected Plan"
+      ( txt ("Retire on: " <> T.pack (show retiredOn))
+        <=> str " "
+        <=> renderPreviewResult renderCancelPreview result)
+      (simplePreviewControls result)
+  ReplaceInput retiredOn identified form ->
+    center
+      (borderWithLabel (str "Replace Selected Plan")
+        (hLimit 82
+          (padAll 1
+            ( renderIdentifiedPlan identified
+              <=> str " "
+              <=> txt ("Retire old Plan on: " <> T.pack (show retiredOn))
+              <=> str "Replacement Plan gets a fresh PlanId."
+              <=> str " "
+              <=> renderForm form
+              <=> str " "
+              <=> str "Simple two-posting Plans are prefilled from the selected Plan."
+              <=> str "[Tab] Next field | [Esc] Plans | [Enter] Preview"))))
+  ReplacePreview retiredOn _ result _ ->
+    simplePreview "Replace Plan Preview"
+      ( txt ("Retire old Plan on: " <> T.pack (show retiredOn))
+        <=> str " "
+        <=> renderPreviewResult renderSupersedePreview result)
+      (simplePreviewControls result)
   BudgetSyncWarning planId message ->
     center
       (borderWithLabel (str "Plan Completed / Budget Sync Pending")
@@ -393,7 +489,8 @@ drawWorkspace context =
           (L.renderList renderPlanItem True (contextPlanList context)))
     , borderWithLabel (str "Selected Plan")
         (padAll 1 (renderSelectedPlan context))
-    , str "[j/k/Arrows] Move   [Enter/C] Complete & Advance   [A] Add   [E] Edit   [1-7] Sections   [q] Quit"
+    , str "[j/k/Arrows] Move   [Enter/C] Complete & Advance   [A] Add   [E] Edit"
+    , str "[X] Cancel   [R] Replace   [1-7] Sections   [q] Quit"
     ]
 
 handleFlowEvent
@@ -411,6 +508,16 @@ handleFlowEvent context event = do
     EditInput identified form -> handleEditInput context identified form event
     EditPreview identified result form ->
       handleSimplePreview (EditInput identified form) PublishEdit result event
+    CancelPreview _ _ result ->
+      handleSimplePreview ReturnToWorkspace PublishCancel result event
+    ReplaceInput retiredOn identified form ->
+      handleReplaceInput context retiredOn identified form event
+    ReplacePreview retiredOn identified result form ->
+      handleSimplePreview
+        (ReplaceInput retiredOn identified form)
+        PublishSupersede
+        result
+        event
     BudgetSyncWarning planId _ -> case event of
       VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
       VtyEvent (V.EvKey (V.KChar 'r') []) -> put (PublishRequested (PublishBudgetSync planId))
@@ -527,6 +634,22 @@ handleEditInput context identified form event = case event of
     Right preview -> put (EditPreview identified (PreviewReady preview) form)
   _ -> zoom zoomEditForm (handleFormEvent event)
 
+handleReplaceInput
+  :: AppContext
+  -> Day
+  -> IdentifiedPlanTransaction
+  -> Form PlanAddInput AppEvent Name
+  -> BrickEvent Name AppEvent
+  -> EventM Name (State AppEvent) ()
+handleReplaceInput context retiredOn identified form event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
+  VtyEvent (V.EvKey V.KEnter []) -> case prepareReplace context retiredOn identified (formState form) of
+    Left message -> put
+      (ReplacePreview retiredOn identified (PreviewRejected message) form)
+    Right preview -> put
+      (ReplacePreview retiredOn identified (PreviewReady preview) form)
+  _ -> zoom zoomReplaceForm (handleFormEvent event)
+
 handleSimplePreview
   :: State AppEvent
   -> (preview -> PublishRequest)
@@ -544,24 +667,8 @@ handleSimplePreview back toRequest result event = case event of
 
 prepareAdd :: AppContext -> PlanAddInput -> Either Text PlanAddPreview
 prepareAdd context input = do
-  date <- parseDay (planAddDateText input)
-  let description = T.strip (planAddDescriptionText input)
-  if T.null description then Left "Plan description cannot be blank." else Right ()
-  fromAccount <- either (Left . showText) Right (mkAccount (T.strip (planAddFromText input)))
-  toAccount <- either (Left . showText) Right (mkAccount (T.strip (planAddToText input)))
-  quantity <- either (Left . showText) Right (parseQuantity (T.strip (planAddAmountText input)))
-  if quantityToRational quantity > 0 then Right () else Left "Plan amount must be positive."
-  commodity <- either (Left . showText) Right (mkCommodity (T.strip (planAddCommodityText input)))
-  let intent = PlanAddIntent
-        { addDate = date
-        , addDescription = description
-        , addPostings =
-            IntentPosting fromAccount (negateQuantity quantity) (Just commodity)
-              :| [IntentPosting toAccount quantity (Just commodity)]
-        , addRequestedId = Nothing
-        , addSeries = Nothing
-        }
-      state = contextHouseholdState context
+  intent <- parsePlanAddIntent input
+  let state = contextHouseholdState context
   case preparePlanAddFromResolvedJournals
       (planJournalValue (householdStatePlanJournal state))
       (actualJournalValue (householdStateActualJournal state))
@@ -570,6 +677,26 @@ prepareAdd context input = do
       intent of
     Left errors -> Left ("Plan add rejected: " <> showText (NonEmpty.toList errors))
     Right preview -> Right preview
+
+parsePlanAddIntent :: PlanAddInput -> Either Text PlanAddIntent
+parsePlanAddIntent input = do
+  date <- parseDay (planAddDateText input)
+  let description = T.strip (planAddDescriptionText input)
+  if T.null description then Left "Plan description cannot be blank." else Right ()
+  fromAccount <- either (Left . showText) Right (mkAccount (T.strip (planAddFromText input)))
+  toAccount <- either (Left . showText) Right (mkAccount (T.strip (planAddToText input)))
+  quantity <- either (Left . showText) Right (parseQuantity (T.strip (planAddAmountText input)))
+  if quantityToRational quantity > 0 then Right () else Left "Plan amount must be positive."
+  commodity <- either (Left . showText) Right (mkCommodity (T.strip (planAddCommodityText input)))
+  pure PlanAddIntent
+    { addDate = date
+    , addDescription = description
+    , addPostings =
+        IntentPosting fromAccount (negateQuantity quantity) (Just commodity)
+          :| [IntentPosting toAccount quantity (Just commodity)]
+    , addRequestedId = Nothing
+    , addSeries = Nothing
+    }
 
 prepareEdit
   :: AppContext
@@ -599,6 +726,49 @@ prepareEdit context identified input = do
     Left errors -> Left ("Plan edit rejected: " <> showText (NonEmpty.toList errors))
     Right preview -> Right preview
 
+prepareCancel
+  :: AppContext
+  -> Day
+  -> IdentifiedPlanTransaction
+  -> Either Text PlanCancelPreview
+prepareCancel context retiredOn identified =
+  case preparePlanCancelFromResolvedJournals
+      (planJournalValue (householdStatePlanJournal state))
+      (actualJournalValue (householdStateActualJournal state))
+      (contextPlanSource context)
+      (contextSource context)
+      PlanCancelIntent
+        { cancelPlanId = planIdText (identifiedPlanId identified)
+        , cancelOn = retiredOn
+        } of
+    Left errors -> Left ("Plan cancellation rejected: " <> showText (NonEmpty.toList errors))
+    Right preview -> Right preview
+  where
+    state = contextHouseholdState context
+
+prepareReplace
+  :: AppContext
+  -> Day
+  -> IdentifiedPlanTransaction
+  -> PlanAddInput
+  -> Either Text PlanSupersedePreview
+prepareReplace context retiredOn identified replacementInput = do
+  replacement <- parsePlanAddIntent replacementInput
+  case preparePlanSupersedeFromResolvedJournals
+      (planJournalValue (householdStatePlanJournal state))
+      (actualJournalValue (householdStateActualJournal state))
+      (contextPlanSource context)
+      (contextSource context)
+      PlanSupersedeIntent
+        { supersedePlanId = planIdText (identifiedPlanId identified)
+        , supersedeOn = retiredOn
+        , supersedeReplacement = replacement
+        } of
+    Left errors -> Left ("Plan replacement rejected: " <> showText (NonEmpty.toList errors))
+    Right preview -> Right preview
+  where
+    state = contextHouseholdState context
+
 parseDay :: Text -> Either Text Day
 parseDay text = case parseTimeM True defaultTimeLocale "%Y-%m-%d" (T.unpack (T.strip text)) of
   Nothing -> Left "Date must be YYYY-MM-DD."
@@ -609,6 +779,8 @@ publishCandidate context request = case request of
   PublishCompleteAdvance planId preview -> publishCompleteAdvance context planId preview
   PublishAdd preview -> publishPlanRoot context (addCandidateCompleteSource preview)
   PublishEdit preview -> publishPlanRoot context (editCandidateCompleteSource preview)
+  PublishCancel preview -> publishPlanRoot context (cancelCandidateCompleteSource preview)
+  PublishSupersede preview -> publishPlanRoot context (supersedeCandidateCompleteSource preview)
   PublishBudgetSync planId -> reloadAndSyncCompletedPlanBudget context planId
 
 publishCompleteAdvance
@@ -786,6 +958,21 @@ renderEditPreview preview =
   str "Before" <=> txt (editOriginalBlock preview)
     <=> str " " <=> str "After" <=> txt (editCandidateBlock preview)
 
+renderCancelPreview :: PlanCancelPreview -> Widget Name
+renderCancelPreview preview =
+  str "Before" <=> txt (cancelOriginalBlock preview)
+    <=> str " " <=> str "After" <=> txt (cancelRetiredBlock preview)
+
+renderSupersedePreview :: PlanSupersedePreview -> Widget Name
+renderSupersedePreview preview =
+  vBox
+    [ str "Retired Plan"
+    , txt (supersedeRetiredBlock preview)
+    , str " "
+    , str "Replacement Plan"
+    , txt (supersedeReplacementBlock preview)
+    ]
+
 renderCompletePreview :: PlanCompleteAdvancePreview -> Widget Name
 renderCompletePreview preview =
   vBox
@@ -841,6 +1028,10 @@ handleWorkspaceEvent event = case event of
   VtyEvent (V.EvKey (V.KChar 'A') []) -> openAdd
   VtyEvent (V.EvKey (V.KChar 'e') []) -> openSelectedEdit
   VtyEvent (V.EvKey (V.KChar 'E') []) -> openSelectedEdit
+  VtyEvent (V.EvKey (V.KChar 'x') []) -> openSelectedCancel
+  VtyEvent (V.EvKey (V.KChar 'X') []) -> openSelectedCancel
+  VtyEvent (V.EvKey (V.KChar 'r') []) -> openSelectedReplace
+  VtyEvent (V.EvKey (V.KChar 'R') []) -> openSelectedReplace
   VtyEvent (V.EvKey (V.KChar 'b') []) -> pure OpenBudgetSyncPicker
   VtyEvent (V.EvKey (V.KChar 'B') []) -> pure OpenBudgetSyncPicker
   VtyEvent (V.EvKey V.KEnter []) -> openSelectedCompletion
@@ -857,6 +1048,16 @@ handleWorkspaceEvent event = case event of
     openSelectedEdit = do
       context <- get
       case startSelectedEdit context of
+        Nothing -> pure MaintainContext
+        Just flow -> pure (StartFlow flow)
+    openSelectedCancel = do
+      context <- get
+      case startSelectedCancel context of
+        Nothing -> pure MaintainContext
+        Just flow -> pure (StartFlow flow)
+    openSelectedReplace = do
+      context <- get
+      case startSelectedReplace context of
         Nothing -> pure MaintainContext
         Just flow -> pure (StartFlow flow)
     openSelectedCompletion = do
