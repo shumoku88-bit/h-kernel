@@ -24,6 +24,7 @@ module HKernel.Actual.Journal
   , ActualTransactionEntry
   , actualTransactionEntryTransaction
   , actualTransactionEntryIdentity
+  , actualTransactionEntrySource
   , actualJournalIdentifiedTransactions
   , actualJournalCompletionDeclarations
   , actualJournalReversalDeclarations
@@ -78,15 +79,27 @@ import HKernel.Plan.Completion
   )
 
 -- | One Actual transaction in root-source order together with the identity that
--- Actual metadata admission assigned to that exact source position, when any.
+-- Actual metadata admission assigned to that exact source position, when any,
+-- and the parser-owned source evidence from the same observation.
 --
--- Keeping the association here avoids reconstructing identity later from date,
--- description, amount, or Transaction equality. Ordinary identity-free Actual
--- facts remain present with 'Nothing'.
+-- Keeping these associations here avoids reconstructing identity or source
+-- coordinates later from date, description, amount, or Transaction equality.
+-- Ordinary identity-free Actual facts remain present with 'Nothing'.
 data ActualTransactionEntry = ActualTransactionEntry
   { actualTransactionEntryTransaction :: Transaction
   , actualTransactionEntryIdentity    :: Maybe ActualTransactionId
-  } deriving (Eq, Show)
+  , actualTransactionEntrySource      :: JournalTransactionSource
+  } deriving (Show)
+
+-- Physical source coordinates are provenance rather than Actual semantic
+-- equality. The retained source evidence exists so a writer can safely target
+-- the selected admitted block without making line numbers part of identity.
+instance Eq ActualTransactionEntry where
+  left == right =
+    actualTransactionEntryTransaction left
+      == actualTransactionEntryTransaction right
+      && actualTransactionEntryIdentity left
+        == actualTransactionEntryIdentity right
 
 -- | One validated Journal plus the explicit Actual metadata projections.
 data ActualJournal = ActualJournal
@@ -204,12 +217,13 @@ admitActualJournalFromSources journal metadataBlocks
       , transaction /= journalTransactionSourceTransaction source
       ]
     admissions = zipWith admitTransactionMetadata transactions metadataBlocks
-    transactionEntries = zipWith toTransactionEntry transactions admissions
-    toTransactionEntry transaction admission = ActualTransactionEntry
+    transactionEntries = zipWith3 toTransactionEntry transactions metadataBlocks admissions
+    toTransactionEntry transaction source admission = ActualTransactionEntry
       { actualTransactionEntryTransaction = transaction
       , actualTransactionEntryIdentity =
           identifiedActualId . locatedIdentifiedValue
             <$> admissionIdentified admission
+      , actualTransactionEntrySource = source
       }
     locatedIdentified = mapMaybe admissionIdentified admissions
     identifiedTransactions =
