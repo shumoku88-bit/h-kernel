@@ -4,14 +4,21 @@
 -- 'BudgetPolicy'.
 --
 -- General envelope, pacing, Expense assignment, and backing-pool syntax belongs
--- to 'HKernel.Budget.Config'. This module parses only household-specific
--- coordinates and combines both values immediately into typed configuration.
+-- to 'HKernel.Budget.Config'. This module parses household-specific current
+-- policy plus historical Envelope coordinates that share the canonical
+-- household.toml physical source. Historical identity/routing remains distinct
+-- from current policy so the latest TOML configuration cannot silently become
+-- retrospective truth.
 module HKernel.Household.Config
   ( HouseholdConfiguration
   , householdConfigurationPolicy
   , householdConfigurationPrimaryCommodity
   , householdConfigurationDailyTargetAssets
   , householdConfigurationAccountPolicy
+  , householdConfigurationEnvelopeHistory
+  , HouseholdEnvelopeHistory(..)
+  , HouseholdEnvelopeHistoryReferenceError(..)
+  , admitHouseholdEnvelopeHistoryReferences
   , parseHouseholdConfiguration
   , parseHouseholdPolicy
   , renderHouseholdPolicyErrors
@@ -19,24 +26,48 @@ module HKernel.Household.Config
 
 import Data.Either (partitionEithers)
 import Data.List (foldl')
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Calendar (Day)
+import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import HKernel.Account
   ( Account
   , AccountError(..)
+  , AccountRegistry
   , accountName
   , mkAccount
   )
 import HKernel.Backing.Identity (backingPoolIdText)
 import HKernel.Backing.Policy (BackingPolicyError(..))
 import HKernel.Budget
-  ( EnvelopeIdError(..)
+  ( EnvelopeId
+  , EnvelopeIdError(..)
   , envelopeIdText
   , mkEnvelopeId
   )
-import HKernel.Budget.Policy (BudgetPolicy)
+import HKernel.Budget.Policy
+  ( BudgetPolicy
+  , budgetPolicyEnvelopeDefinitions
+  , envelopeDefinitionId
+  )
+import HKernel.Envelope.ExpenseRouting
+  ( ExpenseRoute(..)
+  , ExpenseRoutingDecision(..)
+  , ExpenseRoutingHistory
+  , ExpenseRoutingHistoryError(..)
+  , ExpenseRoutingReferenceError
+  , admitExpenseRoutingReferences
+  , mkExpenseRoutingHistory
+  )
+import HKernel.Envelope.Identity
+  ( EnvelopeRegistry
+  , EnvelopeRegistryError(..)
+  , envelopeRegistryContains
+  , mkEnvelopeRegistry
+  )
 import HKernel.Household.AccountProfile
   ( HouseholdAccountPolicy
   , HouseholdAccountPolicyError(..)
@@ -73,7 +104,21 @@ data HouseholdConfiguration = HouseholdConfiguration
   , householdConfigurationPrimaryCommodity  :: Maybe Commodity
   , householdConfigurationDailyTargetAssets :: [DailyTargetAssetSelection]
   , householdConfigurationAccountPolicy     :: Maybe HouseholdAccountPolicy
+  , householdConfigurationEnvelopeHistory   :: Maybe HouseholdEnvelopeHistory
   } deriving (Eq, Show)
+
+-- | Stable identity plus effective-dated Expense routing history carried in the
+-- canonical Household source. Presence remains optional during migration so the
+-- new evidence can be qualified before production routing makes it mandatory.
+data HouseholdEnvelopeHistory = HouseholdEnvelopeHistory
+  { householdEnvelopeRegistry      :: EnvelopeRegistry
+  , householdExpenseRoutingHistory :: ExpenseRoutingHistory
+  } deriving (Eq, Show)
+
+data HouseholdEnvelopeHistoryReferenceError
+  = CurrentPolicyEnvelopeMissingFromRegistry EnvelopeId
+  | HouseholdExpenseRoutingReferenceError ExpenseRoutingReferenceError
+  deriving (Eq, Show)
 
 data RawHouseholdPolicy = RawHouseholdPolicy
   RawCycle
@@ -81,6 +126,7 @@ data RawHouseholdPolicy = RawHouseholdPolicy
   (Maybe RawMoney)
   (Maybe RawDailyTarget)
   (Maybe RawAccountPolicy)
+  (Maybe RawEnvelopeHistory)
 
 data RawCycle = RawCycle Text Text
 
@@ -119,6 +165,17 @@ data RawBudgetGroupPolicy = RawBudgetGroupPolicy [Text] [Text] [Text]
 
 data RawExpensePolicy = RawExpensePolicy [Text] [Text]
 
+data RawEnvelopeHistory = RawEnvelopeHistory
+  [Text]
+  [RawExpenseRoutingDecision]
+
+data RawExpenseRoutingDecision = RawExpenseRoutingDecision
+  Text
+  Text
+  Text
+  (Maybe Text)
+  Text
+
 instance FromValue RawHouseholdPolicy where
   fromValue = parseTableFromValue
     (RawHouseholdPolicy
@@ -126,7 +183,8 @@ instance FromValue RawHouseholdPolicy where
       <*> reqKey "budget"
       <*> optKey "money"
       <*> optKey "daily-target"
-      <*> optKey "account-policy")
+      <*> optKey "account-policy"
+      <*> optKey "envelope-history")
 
 instance FromValue RawCycle where
   fromValue = parseTableFromValue
@@ -210,6 +268,21 @@ instance FromValue RawExpensePolicy where
       <$> reqKey "fixed"
       <*> reqKey "variable")
 
+instance FromValue RawEnvelopeHistory where
+  fromValue = parseTableFromValue
+    (RawEnvelopeHistory
+      <$> reqKey "identities"
+      <*> reqKey "expense-routing")
+
+instance FromValue RawExpenseRoutingDecision where
+  fromValue = parseTableFromValue
+    (RawExpenseRoutingDecision
+      <$> reqKey "effective-from"
+      <*> reqKey "expense-account"
+      <*> reqKey "route"
+      <*> optKey "target"
+      <*> reqKey "note")
+
 parseHouseholdConfiguration
   :: BudgetPolicy
   -> Text
@@ -236,16 +309,18 @@ rawToHouseholdConfiguration
   -> RawHouseholdPolicy
   -> Either [Text] HouseholdConfiguration
 rawToHouseholdConfiguration budgetPolicy
-    (RawHouseholdPolicy rawCycle rawHouseholdBudget rawMoney rawDailyTarget rawAccountPolicy) = do
+    (RawHouseholdPolicy rawCycle rawHouseholdBudget rawMoney rawDailyTarget rawAccountPolicy rawEnvelopeHistory) = do
   policy <- rawToHouseholdPolicy budgetPolicy rawCycle rawHouseholdBudget
   primaryCommodity <- traverse parseRawMoney rawMoney
   dailyTargetAssets <- parseRawDailyTarget rawDailyTarget
   accountPolicy <- traverse parseRawAccountPolicy rawAccountPolicy
+  envelopeHistory <- traverse parseRawEnvelopeHistory rawEnvelopeHistory
   Right HouseholdConfiguration
     { householdConfigurationPolicy = policy
     , householdConfigurationPrimaryCommodity = primaryCommodity
     , householdConfigurationDailyTargetAssets = dailyTargetAssets
     , householdConfigurationAccountPolicy = accountPolicy
+    , householdConfigurationEnvelopeHistory = envelopeHistory
     }
 
 parseRawMoney :: RawMoney -> Either [Text] Commodity
@@ -372,6 +447,119 @@ parseRawAccountPolicy
       , dailyErrors, flexErrors, reserveErrors
       , fixedErrors, variableErrors
       ]
+
+parseRawEnvelopeHistory
+  :: RawEnvelopeHistory
+  -> Either [Text] HouseholdEnvelopeHistory
+parseRawEnvelopeHistory (RawEnvelopeHistory rawIdentities rawDecisions) = do
+  identities <- collectParsed
+    (zipWith parseEnvelopeHistoryIdentity [0 :: Int ..] rawIdentities)
+  decisions <- collectParsed
+    (zipWith parseExpenseRoutingDecision [0 :: Int ..] rawDecisions)
+  registry <- case mkEnvelopeRegistry identities of
+    Right value -> Right value
+    Left errors -> Left
+      (map renderEnvelopeRegistryError (NonEmpty.toList errors))
+  routingHistory <- case mkExpenseRoutingHistory decisions of
+    Right value -> Right value
+    Left errors -> Left
+      (map renderExpenseRoutingHistoryError (NonEmpty.toList errors))
+  Right HouseholdEnvelopeHistory
+    { householdEnvelopeRegistry = registry
+    , householdExpenseRoutingHistory = routingHistory
+    }
+
+parseEnvelopeHistoryIdentity :: Int -> Text -> Either [Text] EnvelopeId
+parseEnvelopeHistoryIdentity index raw =
+  case mkEnvelopeId raw of
+    Right envelope -> Right envelope
+    Left err -> Left
+      [renderEnvelopeIdError
+        (indexedPath "envelope-history.identities" index) err]
+
+parseExpenseRoutingDecision
+  :: Int
+  -> RawExpenseRoutingDecision
+  -> Either [Text] ExpenseRoutingDecision
+parseExpenseRoutingDecision index
+    (RawExpenseRoutingDecision rawDate rawAccount rawRoute rawTarget note) =
+  case (dateResult, accountResult, routeResult) of
+    (Right effectiveFrom, Right account, Right route) -> Right
+      ExpenseRoutingDecision
+        { expenseRoutingEffectiveFrom = effectiveFrom
+        , expenseRoutingAccount = account
+        , expenseRoutingRoute = route
+        , expenseRoutingNote = note
+        }
+    _ -> Left
+      ( either pure (const []) dateResult
+          ++ either pure (const []) accountResult
+          ++ either pure (const []) routeResult
+      )
+  where
+    path = indexedPath "envelope-history.expense-routing" index
+    dateResult = parseHistoryDate (path <> ".effective-from") rawDate
+    accountResult = case mkAccount rawAccount of
+      Right account -> Right account
+      Left err -> Left (renderAccountError (path <> ".expense-account") err)
+    routeResult = parseExpenseRoute path rawRoute rawTarget
+
+parseHistoryDate :: Text -> Text -> Either Text Day
+parseHistoryDate path raw =
+  case parseTimeM True defaultTimeLocale "%F" (T.unpack raw) :: Maybe Day of
+    Just day -> Right day
+    Nothing -> Left (path <> ": invalid ISO date " <> quoted raw)
+
+parseExpenseRoute :: Text -> Text -> Maybe Text -> Either Text ExpenseRoute
+parseExpenseRoute path rawRoute rawTarget = case (rawRoute, rawTarget) of
+  ("managed", Just target) ->
+    case mkEnvelopeId target of
+      Right envelope -> Right (ManagedByEnvelope envelope)
+      Left err -> Left (renderEnvelopeIdError (path <> ".target") err)
+  ("managed", Nothing) -> Left
+    (path <> ".target: managed routing requires an EnvelopeId")
+  ("unmanaged", Nothing) -> Right NotEnvelopeManaged
+  ("unmanaged", Just _) -> Left
+    (path <> ".target: unmanaged routing must not declare a target")
+  _ -> Left
+    (path <> ".route: expected managed or unmanaged; got " <> quoted rawRoute)
+
+collectParsed :: [Either [Text] value] -> Either [Text] [value]
+collectParsed values = case partitionEithers values of
+  ([], parsed) -> Right parsed
+  (errors, _) -> Left (concat errors)
+
+-- | Cross-source qualification for historical Envelope evidence.
+--
+-- Current policy Envelopes must belong to the stable registry; historical
+-- identities may outlive current policy. Expense routing is admitted against
+-- canonical Accounts and the same stable registry, never against current
+-- BudgetPolicy assignment maps.
+admitHouseholdEnvelopeHistoryReferences
+  :: AccountRegistry
+  -> BudgetPolicy
+  -> HouseholdEnvelopeHistory
+  -> Either (NonEmpty HouseholdEnvelopeHistoryReferenceError) HouseholdEnvelopeHistory
+admitHouseholdEnvelopeHistoryReferences accountRegistry budgetPolicy history =
+  case NonEmpty.nonEmpty errors of
+    Nothing -> Right history
+    Just found -> Left found
+  where
+    registry = householdEnvelopeRegistry history
+    currentPolicyErrors =
+      [ CurrentPolicyEnvelopeMissingFromRegistry envelope
+      | definition <- budgetPolicyEnvelopeDefinitions budgetPolicy
+      , let envelope = envelopeDefinitionId definition
+      , not (envelopeRegistryContains envelope registry)
+      ]
+    routingErrors = case admitExpenseRoutingReferences
+        accountRegistry
+        registry
+        (householdExpenseRoutingHistory history) of
+      Right _ -> []
+      Left found ->
+        map HouseholdExpenseRoutingReferenceError (NonEmpty.toList found)
+    errors = currentPolicyErrors ++ routingErrors
 
 axisAccounts :: Text -> [Text] -> ([Text], [Account])
 axisAccounts = parseAccounts
@@ -519,6 +707,19 @@ renderHouseholdAccountPolicyError err = case err of
     "retained Account evidence: fixed marker conflicts with spend class"
   RetainedAccountMetadataRemainsUnclassified ->
     "retained Account evidence: unclassified metadata remains"
+
+renderEnvelopeRegistryError :: EnvelopeRegistryError -> Text
+renderEnvelopeRegistryError err = case err of
+  DuplicateEnvelopeRegistryIdentity envelope ->
+    "envelope-history.identities: duplicate EnvelopeId "
+      <> quoted (envelopeIdText envelope)
+
+renderExpenseRoutingHistoryError :: ExpenseRoutingHistoryError -> Text
+renderExpenseRoutingHistoryError err = case err of
+  DuplicateExpenseRoutingDecision account effectiveFrom ->
+    "envelope-history.expense-routing: duplicate Account/day coordinate "
+      <> quoted (accountName account)
+      <> " / " <> T.pack (show effectiveFrom)
 
 renderEnvelopeIdError :: Text -> EnvelopeIdError -> Text
 renderEnvelopeIdError path err = path <> ": " <> case err of
