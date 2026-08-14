@@ -49,11 +49,9 @@ import HKernel.Period (Period, periodContains)
 import HKernel.Plan (PlanId)
 import HKernel.Plan.Completion
   ( ActualTransactionId
+  , PlanCompletionShapeError
   , identifiedActualId
   , identifiedActualTransaction
-  )
-import HKernel.Plan.CompletionShape
-  ( PlanCompletionShapeError
   , validatePlanCompletionShape
   )
 import HKernel.Plan.Journal
