@@ -114,7 +114,12 @@ characterizeHeadroom = do
       consumption = mustRight
         (observeEnvelopeConsumption period observedDay actual expenseRouting)
       fulfillment = mustRight
-        (observeEnvelopeFulfillment period observedDay actual fulfillmentRouting)
+        (observeEnvelopeFulfillment
+          period
+          observedDay
+          planJournal
+          actual
+          fulfillmentRouting)
       remaining = mustRight
         (calculateEnvelopeRemaining entitlement consumption fulfillment)
       commitment = commitmentThrough observedDay period actualSource
@@ -142,7 +147,12 @@ rejectHeadroomMisalignment = do
       consumption = mustRight
         (observeEnvelopeConsumption period observedDay actual expenseRouting)
       fulfillment = mustRight
-        (observeEnvelopeFulfillment period observedDay actual fulfillmentRouting)
+        (observeEnvelopeFulfillment
+          period
+          observedDay
+          planJournal
+          actual
+          fulfillmentRouting)
       remaining = mustRight
         (calculateEnvelopeRemaining entitlement consumption fulfillment)
       earlierCommitment = commitmentThrough (day 9) period actualSource
