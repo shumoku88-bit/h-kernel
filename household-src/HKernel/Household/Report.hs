@@ -210,7 +210,7 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
       outgoingDeclarations)
   budgetObservation <- mapLeft
     (fmap (sourceError "budget.journal" 0 . tshow))
-    (deriveHouseholdBudgetObservation observation current journal
+    (deriveHouseholdBudgetObservation observation current actualJournal
       validatedPolicy budget)
   let admittedPolicy = householdBudgetObservationPolicy budgetObservation
       consumption = householdBudgetConsumption budgetObservation
