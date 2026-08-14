@@ -39,17 +39,13 @@ import HKernel.Ledger
 import HKernel.Money
   ( Balance
   , addBalance
-  , amountCommodity
   , amountQuantity
   , emptyBalance
-  , lookupBalance
-  , mkAmount
-  , negateQuantity
   , singletonBalance
-  , subtractBalance
   , zeroQuantity
   )
 import HKernel.Period (Period, periodContains)
+import HKernel.Plan (PlanId)
 import HKernel.Plan.Completion
   ( ActualTransactionId
   , identifiedActualId
@@ -99,6 +95,15 @@ instance Monoid FulfillmentAmounts where
 fulfillmentNet :: FulfillmentAmounts -> Balance
 fulfillmentNet amounts =
   fulfillmentApplied amounts `subtractBalance` fulfillmentReversed amounts
+  where
+    subtractBalance left right =
+      addBalance left (negateBalance right)
+    negateBalance = foldr subtractAmount emptyBalance . balanceAmounts
+    subtractAmount amount = addBalance . singletonBalance . negateAmount
+    negateAmount = HKernel.Money.negateAmount
+
+-- The explicit local definition above keeps FulfillmentAmounts independent of
+-- any Account aggregation. The concrete helpers are imported qualified below.
 
 data EnvelopeFulfillment = EnvelopeFulfillment
   { envelopeFulfillmentPeriod          :: Period
@@ -110,21 +115,24 @@ data EnvelopeFulfillmentError
   = EnvelopeFulfillmentObservationOutsidePeriod Day Period
   | EnvelopeFulfillmentPlanObservationError OpenOutgoingPlanError
   | EnvelopeFulfillmentCompletionShapeError PlanCompletionShapeError
+  | EnvelopeFulfillmentActualFulfillsMultiplePlans ActualTransactionId (NonEmpty.NonEmpty PlanId)
   deriving (Eq, Show)
 
 -- | Observe completed non-Expense target Plans and their typed reversal chains
 -- through one inclusive day.
 --
--- A positive target posting only fulfills an Envelope when its root Actual is
--- explicit completion evidence for an admitted outgoing Plan. The root Plan and
--- Actual must have compatible Account order, posting directions, and commodity
--- coordinates; quantities may differ and the Actual quantity is authoritative.
+-- Fulfillment intent is selected by stable PlanId, never by Account. Once a
+-- routed Plan completes, its root Plan/Actual shape identifies target posting
+-- positions. Actual quantities at those positions are authoritative.
 --
--- Target routing is anchored to the root completion Actual date. Later routing
--- changes therefore cannot rewrite completed fulfillment. A typed reversal of
--- the completion reverses fulfillment and a reverse-of-reverse restores it.
--- Unrelated withdrawals, deposits, and their reversals never become fulfillment
--- merely because they touch the same target account.
+-- Reversal chains then reverse or restore that whole root fulfillment evidence.
+-- They do not re-derive target meaning from the reversal transaction's Account
+-- aggregate, so repeated target postings remain positionally well-defined.
+--
+-- Route identity is frozen at the root completion Actual date. A single Actual
+-- may generically complete several Plans, but if more than one of those Plans is
+-- routed as Envelope fulfillment this projection fails closed rather than
+-- inventing an amount-allocation rule.
 observeEnvelopeFulfillment
   :: Period
   -> Day
@@ -138,12 +146,16 @@ observeEnvelopeFulfillment period observedThrough plans actual routing
   | otherwise = do
       completed <- mapErrors EnvelopeFulfillmentPlanObservationError
         (resolveCompletedOutgoingPlanTransactionsAt observedThrough plans actual)
-      validated <- validateCompleted completed
-      let completionByActualId = Map.fromList
-            [ (identifiedActualId (completedOutgoingActual pair), pair)
-            | pair <- validated
+      let routed = routedCompleted completed
+      rejectAmbiguousRoutedActuals routed
+      validated <- validateCompleted routed
+      let fulfillmentByRoot = Map.fromList
+            [ (actualId, (envelope, targetBalance pair))
+            | (pair, envelope) <- validated
+            , let actualId = identifiedActualId (completedOutgoingActual pair)
+            , targetBalance pair /= emptyBalance
             ]
-          managed = foldr (observeEntry completionByActualId) Map.empty visibleEntries
+          managed = foldr (observeEntry fulfillmentByRoot) Map.empty visibleEntries
       Right EnvelopeFulfillment
         { envelopeFulfillmentPeriod = period
         , envelopeFulfillmentObservedThrough = observedThrough
@@ -165,86 +177,88 @@ observeEnvelopeFulfillment period observedThrough plans actual routing
       , entryDay <= observedThrough
       ]
 
-    validateCompleted completed =
-      case traverse validateOne completed of
+    routedCompleted completed =
+      [ (pair, envelope)
+      | pair <- completed
+      , let identifiedPlan = completedOutgoingPlan pair
+            identifiedActual = completedOutgoingActual pair
+            routeDay = transactionDate (identifiedActualTransaction identifiedActual)
+            planId = identifiedPlanId identifiedPlan
+      , Just (FulfillsEnvelope envelope) <-
+          [fulfillmentRouteAt routeDay planId routing]
+      ]
+
+    rejectAmbiguousRoutedActuals routed =
+      case NonEmpty.nonEmpty errors of
+        Nothing -> Right ()
+        Just found -> Left found
+      where
+        plansByActual = Map.fromListWith (++)
+          [ ( identifiedActualId (completedOutgoingActual pair)
+            , [identifiedPlanId (completedOutgoingPlan pair)]
+            )
+          | (pair, _) <- routed
+          ]
+        errors =
+          [ EnvelopeFulfillmentActualFulfillsMultiplePlans actualId planIds
+          | (actualId, planIdList) <- Map.toAscList plansByActual
+          , Just planIds <- [NonEmpty.nonEmpty planIdList]
+          , NonEmpty.length planIds > 1
+          ]
+
+    validateCompleted routed =
+      case traverse validateOne routed of
         Left err -> Left (EnvelopeFulfillmentCompletionShapeError err NonEmpty.:| [])
         Right values -> Right values
 
-    validateOne pair = do
+    validateOne routedPair@(pair, _) = do
       let identifiedPlan = completedOutgoingPlan pair
           identifiedActual = completedOutgoingActual pair
       validatePlanCompletionShape
         (identifiedPlanId identifiedPlan)
         (identifiedPlanTransaction identifiedPlan)
         (identifiedActualTransaction identifiedActual)
-      Right pair
+      Right routedPair
 
-    observeEntry completionByActualId entry accum =
+    targetBalance pair =
+      foldl addBalance emptyBalance
+        [ singletonBalance (postingAmount actualPosting)
+        | (planPosting, actualPosting) <- zip planPostings actualPostings
+        , amountQuantity (postingAmount planPosting) > zeroQuantity
+        , accountTypeFor (postingAccount planPosting) registry /= Just Expense
+        ]
+      where
+        planPostings = NonEmpty.toList
+          (transactionPostings
+            (identifiedPlanTransaction (completedOutgoingPlan pair)))
+        actualPostings = NonEmpty.toList
+          (transactionPostings
+            (identifiedActualTransaction (completedOutgoingActual pair)))
+
+    observeEntry fulfillmentByRoot entry accum =
       case actualTransactionEntryIdentity entry of
         Nothing -> accum
         Just actualId ->
-          case Map.lookup rootId completionByActualId of
+          case Map.lookup rootId fulfillmentByRoot of
             Nothing -> accum
-            Just pair ->
-              foldr
-                (observeTarget typedReversal currentEffects)
-                accum
-                (targetCoordinates pair)
+            Just (envelope, balance) ->
+              Map.insertWith (<>) envelope amounts accum
+              where
+                amounts
+                  | even depth = FulfillmentAmounts balance emptyBalance
+                  | otherwise = FulfillmentAmounts emptyBalance balance
           where
-            rootId = rootActualId reversalTargetById actualId
-            typedReversal = Map.member actualId reversalTargetById
-            currentEffects = transactionEffects
-              (actualTransactionEntryTransaction entry)
+            (rootId, depth) = rootActualWithDepth reversalTargetById actualId
 
-    targetCoordinates pair =
-      [ (account, commodity, envelope)
-      | posting <- NonEmpty.toList
-          (transactionPostings
-            (identifiedPlanTransaction (completedOutgoingPlan pair)))
-      , let account = postingAccount posting
-            amount = postingAmount posting
-            commodity = amountCommodity amount
-      , amountQuantity amount > zeroQuantity
-      , accountTypeFor account registry /= Just Expense
-      , Just (FulfillsEnvelope envelope) <-
-          [fulfillmentRouteAt routeDay account routing]
-      ]
-      where
-        routeDay = transactionDate
-          (identifiedActualTransaction (completedOutgoingActual pair))
-
-    observeTarget typedReversal currentEffects (account, commodity, envelope) accum
-      | currentQuantity > zeroQuantity =
-          Map.insertWith (<>) envelope
-            (FulfillmentAmounts
-              (singletonBalance (mkAmount commodity currentQuantity))
-              emptyBalance)
-            accum
-      | typedReversal && currentQuantity < zeroQuantity =
-          Map.insertWith (<>) envelope
-            (FulfillmentAmounts
-              emptyBalance
-              (singletonBalance (mkAmount commodity (negateQuantity currentQuantity))))
-            accum
-      | otherwise = accum
-      where
-        currentQuantity = lookupBalance commodity
-          (Map.findWithDefault emptyBalance account currentEffects)
-
-transactionEffects transaction = Map.fromListWith addBalance
-  [ (postingAccount posting, singletonBalance (postingAmount posting))
-  | posting <- NonEmpty.toList (transactionPostings transaction)
-  ]
-
-rootActualId
+rootActualWithDepth
   :: Map.Map ActualTransactionId ActualTransactionId
   -> ActualTransactionId
-  -> ActualTransactionId
-rootActualId reversalTargetById = go
+  -> (ActualTransactionId, Int)
+rootActualWithDepth reversalTargetById = go 0
   where
-    go actualId = case Map.lookup actualId reversalTargetById of
-      Nothing -> actualId
-      Just targetId -> go targetId
+    go depth actualId = case Map.lookup actualId reversalTargetById of
+      Nothing -> (actualId, depth)
+      Just targetId -> go (depth + 1) targetId
 
 mapErrors
   :: (left -> right)
