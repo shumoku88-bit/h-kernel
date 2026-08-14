@@ -2,11 +2,13 @@
 -- domain observation.
 --
 -- Stable Household policy is admitted by 'HKernel.Household.Config' and checked
--- against the canonical AccountRegistry before it reaches this module. During
--- Envelope-native migration this owner also admits the same ordered
--- @budget.journal@ evidence as native Envelope Entitlement. Legacy execution
--- mirrors are deliberately excluded from that native projection so Actual
--- consumption / fulfillment can own execution without double counting.
+-- against the canonical AccountRegistry before it reaches this module. Expense
+-- routing is also admitted by its historical owner and arrives only as semantic
+-- query capability; this module no longer reconstructs routing from the current
+-- BudgetPolicy. During Envelope-native migration this owner also admits the same
+-- ordered @budget.journal@ evidence as native Envelope Entitlement. Legacy
+-- execution mirrors are deliberately excluded from that native projection so
+-- Actual consumption / fulfillment can own execution without double counting.
 module HKernel.Household.BudgetObservation
   ( HouseholdBudgetObservation
   , householdBudgetObservationPolicy
@@ -50,11 +52,6 @@ import HKernel.Budget.History
   , BudgetHistoryError
   , mkBudgetHistory
   )
-import HKernel.Budget.Policy
-  ( AccountValidatedBudgetPolicy
-  , accountValidatedBudgetPolicy
-  , budgetPolicyEnvelopeForExpense
-  )
 import HKernel.Budget.Remaining
   ( BudgetRemaining
   , RemainingError
@@ -80,10 +77,7 @@ import HKernel.Envelope.EntitlementTransfer
   , EnvelopeEntitlementTransferError
   , mkEnvelopeEntitlementTransfer
   )
-import HKernel.Envelope.ExpenseRouting
-  ( ExpenseRoute(..)
-  , ExpenseRouteResolver(..)
-  )
+import HKernel.Envelope.ExpenseRouting (ExpenseRouteResolver)
 import HKernel.Household.AccountProfile
   ( HouseholdAccountPolicy
   , RetainedBudgetAccountKind(..)
@@ -93,7 +87,6 @@ import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.Policy
   ( AccountValidatedHouseholdPolicy
   , HouseholdPolicy
-  , accountValidatedHouseholdBudgetPolicy
   , accountValidatedHouseholdPolicy
   , householdAllocationEnvelopes
   , householdBudgetPolicy
@@ -116,8 +109,8 @@ import HKernel.Period
 --
 -- Legacy 'BudgetConsumption' is deliberately absent: Actual Expense ownership
 -- has migrated to 'EnvelopeConsumption'. Entitlement and Remaining are retained
--- as compatibility surfaces until native entitlement, historical Expense
--- routing, and target fulfillment can cut over together.
+-- as compatibility surfaces until native entitlement and target fulfillment can
+-- cut over together.
 data HouseholdBudgetObservation = HouseholdBudgetObservation
   { householdBudgetObservationPolicy :: HouseholdPolicy
   , householdEnvelopeConsumption     :: EnvelopeConsumption
@@ -156,18 +149,20 @@ data LegacyBudgetEndpoint
   | LegacySpent
 
 -- | Derive one aligned point-in-time household budget observation from ordered
--- movement facts and one already validated Household policy.
+-- movement facts, one already validated Household policy, and one already
+-- admitted historical Expense routing query.
 deriveHouseholdBudgetObservation
   :: Day
   -> Period
   -> ActualJournal
   -> AccountValidatedHouseholdPolicy
+  -> ExpenseRouteResolver
   -> [HouseholdBudgetMovement]
   -> Either (NonEmpty HouseholdBudgetError) HouseholdBudgetObservation
-deriveHouseholdBudgetObservation observedThrough period actualJournal policy movements = do
+deriveHouseholdBudgetObservation observedThrough period actualJournal policy routeResolver movements = do
   evidence <- admitHouseholdBudgetEvidence
     observedThrough period policy movements
-  calculateHouseholdBudgetObservation actualJournal evidence
+  calculateHouseholdBudgetObservation actualJournal routeResolver evidence
 
 -- | Admit the current canonical @budget.journal@ movement facts directly into
 -- native Envelope entitlement for one resolved period/day.
@@ -220,12 +215,13 @@ admitHouseholdBudgetEvidence observedThrough period validatedPolicy movements = 
 
 calculateHouseholdBudgetObservation
   :: ActualJournal
+  -> ExpenseRouteResolver
   -> HouseholdBudgetEvidence
   -> Either (NonEmpty HouseholdBudgetError) HouseholdBudgetObservation
-calculateHouseholdBudgetObservation actualJournal evidence = do
+calculateHouseholdBudgetObservation actualJournal routeResolver evidence = do
   envelopeConsumption <- singleLeft HouseholdEnvelopeConsumptionError
-    (observeEnvelopeConsumption period observedThrough actualJournal
-      (legacyStaticExpenseRouteResolver validatedBudgetPolicy))
+    (observeEnvelopeConsumption
+      period observedThrough actualJournal routeResolver)
   entitlement <- mapLeft (fmap HouseholdBudgetEntitlementError)
     (calculateBudgetEntitlement observation budgetPolicy history)
   remaining <- mapLeft (fmap HouseholdBudgetRemainingError)
@@ -241,11 +237,9 @@ calculateHouseholdBudgetObservation actualJournal evidence = do
     observation = householdBudgetEvidenceObservation evidence
     period = householdBudgetEvidencePeriod evidence
     observedThrough = budgetObservationObservedThrough observation
-    validatedPolicy = householdBudgetEvidencePolicy evidence
-    policy = accountValidatedHouseholdPolicy validatedPolicy
+    policy = accountValidatedHouseholdPolicy
+      (householdBudgetEvidencePolicy evidence)
     budgetPolicy = householdBudgetPolicy policy
-    validatedBudgetPolicy =
-      accountValidatedHouseholdBudgetPolicy validatedPolicy
     history = householdBudgetEvidenceHistory evidence
 
 projectEnvelopeEntitlementHistory
@@ -345,23 +339,6 @@ projectEnvelopeEntitlementHistory period policy accountPolicy movements =
               [ HouseholdEnvelopeEntitlementTransferError
                   transactionIndex err
               ]
-
--- | Adapt the current static 'BudgetPolicy' into the native Expense route
--- resolver while production historical routing is not connected yet.
---
--- Static compatibility semantics ignore transaction dates and route exclusively
--- through Account-to-Envelope policy membership. 'NotEnvelopeManaged' is never
--- invented; unmapped Expense Accounts remain 'Nothing' (unrouted).
-legacyStaticExpenseRouteResolver
-  :: AccountValidatedBudgetPolicy
-  -> ExpenseRouteResolver
-legacyStaticExpenseRouteResolver validatedPolicy =
-  ExpenseRouteResolver (\_day account ->
-    case budgetPolicyEnvelopeForExpense account policy of
-      Just envelope -> Just (ManagedByEnvelope envelope)
-      Nothing       -> Nothing)
-  where
-    policy = accountValidatedBudgetPolicy validatedPolicy
 
 budgetChangesForMovement
   :: BudgetCycle

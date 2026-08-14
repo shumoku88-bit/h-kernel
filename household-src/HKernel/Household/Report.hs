@@ -50,6 +50,7 @@ import HKernel.Engine
   ( LedgerEntry(..)
   , journalEntries
   )
+import HKernel.Envelope.ExpenseRouting (ExpenseRouteResolver)
 import HKernel.Household.Backing
   ( HouseholdBackingPlan(..)
   , EnvelopeBackingLine(..)
@@ -176,18 +177,20 @@ data HouseholdReportSurface = HouseholdReportSurface
 -- | Calculate the Household report surface from already admitted typed values.
 -- Admission adapters may differ, but cycle, Plan completion, Plan retirement,
 -- Budget observation, backing, and Daily Target calculation have one semantic
--- owner here.
+-- owner here. Expense routing is supplied as admitted historical semantics, not
+-- reconstructed from current policy.
 buildHouseholdReportSurfaceFromAdmitted
   :: Day
   -> ActualJournal
   -> HouseholdPolicy
   -> AccountValidatedHouseholdPolicy
+  -> ExpenseRouteResolver
   -> AdmittedPlans
   -> [HouseholdBudgetMovement]
   -> [HouseholdIssue]
   -> DailyTargetScope
   -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
-buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validatedPolicy admittedPlans budget issues dailyScope = do
+buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validatedPolicy routeResolver admittedPlans budget issues dailyScope = do
   let journal = actualJournalValue actualJournal
       cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
       retiredPlanIds = retiredPlanIdsAt observation
@@ -211,7 +214,7 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
   budgetObservation <- mapLeft
     (fmap (sourceError "budget.journal" 0 . tshow))
     (deriveHouseholdBudgetObservation observation current actualJournal
-      validatedPolicy budget)
+      validatedPolicy routeResolver budget)
   let admittedPolicy = householdBudgetObservationPolicy budgetObservation
       envelopeConsumption = householdEnvelopeConsumption budgetObservation
       entitlement = householdBudgetEntitlement budgetObservation
