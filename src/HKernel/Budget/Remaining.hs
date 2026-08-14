@@ -1,10 +1,9 @@
 -- | Exact remaining envelope capacity derived by coordinatewise subtraction.
 --
--- This module combines one canonical entitlement result with one canonical
--- consumption result. It refuses to subtract different cycles, observation
--- horizons, or envelope coordinate sets, then preserves commodity identity
--- through exact 'Balance' subtraction. Negative remaining balances are valid
--- overspending evidence and are never clamped to zero.
+-- This compatibility module still publishes the legacy 'BudgetRemaining'
+-- surface, but production Household composition can now subtract native
+-- 'EnvelopeConsumption' directly. The legacy 'BudgetConsumption' entry point is
+-- retained only for callers that have not migrated yet.
 module HKernel.Budget.Remaining
   ( EnvelopeRemaining
   , envelopeRemainingEnvelope
@@ -16,6 +15,7 @@ module HKernel.Budget.Remaining
   , budgetRemainingEnvelopes
   , RemainingError(..)
   , calculateBudgetRemaining
+  , calculateBudgetRemainingFromEnvelopeConsumption
   ) where
 
 import Data.List.NonEmpty (NonEmpty)
@@ -27,6 +27,8 @@ import HKernel.Budget
   ( BudgetCycle
   , BudgetObservation
   , EnvelopeId
+  , budgetCycleEndExclusive
+  , budgetCycleStart
   , budgetObservationCycle
   , budgetObservationObservedThrough
   )
@@ -47,9 +49,15 @@ import HKernel.Budget.Entitlement
   , envelopeEntitlementBalance
   , envelopeEntitlementEnvelope
   )
+import qualified HKernel.Envelope.Consumption as Native
 import HKernel.Money
   ( Balance
   , subtractBalance
+  )
+import HKernel.Period
+  ( Period
+  , periodEndExclusive
+  , periodStart
   )
 
 -- | Exact remaining capacity at one spendable-envelope coordinate.
@@ -79,22 +87,14 @@ budgetRemainingObservedThrough =
 -- agree.
 data RemainingError
   = RemainingCycleMismatch BudgetCycle BudgetCycle
+  | RemainingPeriodMismatch BudgetCycle Period
   | RemainingObservedThroughMismatch Day Day
   | RemainingEnvelopeMissingFromEntitlement EnvelopeId
   | RemainingEnvelopeMissingFromConsumption EnvelopeId
   deriving (Eq, Show)
 
--- | Subtract exact consumption from exact entitlement coordinate by coordinate.
---
--- The calculation has three semantic stages:
---
--- * verify that both results describe the same cycle and inclusive observation
---   horizon,
--- * verify that both results expose the same envelope coordinate set,
--- * subtract balances at each aligned envelope identity.
---
--- Unassigned Expense evidence remains owned by 'BudgetConsumption'; this
--- envelope-only subtraction neither transforms nor discards the input value.
+-- | Legacy compatibility entry point for callers still producing
+-- 'BudgetConsumption'.
 calculateBudgetRemaining
   :: BudgetEntitlement
   -> BudgetConsumption
@@ -102,6 +102,21 @@ calculateBudgetRemaining
 calculateBudgetRemaining entitlement consumption =
   publishBudgetRemaining (budgetEntitlementObservation entitlement)
     <$> alignedRemainingBalances entitlement consumption
+
+-- | Subtract native Envelope consumption from legacy-compatible entitlement.
+--
+-- Native consumption has total zero lookup for untouched Envelopes, so an
+-- absent consumption coordinate means canonical zero rather than an alignment
+-- failure. Managed consumption that names an Envelope absent from entitlement
+-- still fails closed. Unrouted and explicit unmanaged Expense evidence are not
+-- Envelope coordinates and therefore do not participate in remaining arithmetic.
+calculateBudgetRemainingFromEnvelopeConsumption
+  :: BudgetEntitlement
+  -> Native.EnvelopeConsumption
+  -> Either (NonEmpty RemainingError) BudgetRemaining
+calculateBudgetRemainingFromEnvelopeConsumption entitlement consumption =
+  publishBudgetRemaining (budgetEntitlementObservation entitlement)
+    <$> alignedRemainingBalancesFromEnvelopeConsumption entitlement consumption
 
 alignedRemainingBalances
   :: BudgetEntitlement
@@ -144,6 +159,51 @@ alignedRemainingBalances entitlement consumption =
           (Map.keys (Map.difference consumptionBalances entitlementBalances))
         ++ map RemainingEnvelopeMissingFromConsumption
           (Map.keys (Map.difference entitlementBalances consumptionBalances))
+
+alignedRemainingBalancesFromEnvelopeConsumption
+  :: BudgetEntitlement
+  -> Native.EnvelopeConsumption
+  -> Either (NonEmpty RemainingError) (Map EnvelopeId Balance)
+alignedRemainingBalancesFromEnvelopeConsumption entitlement consumption =
+  case NonEmpty.nonEmpty alignmentErrors of
+    Just errors -> Left errors
+    Nothing -> Right
+      (Map.mapWithKey remainingFor entitlementBalances)
+  where
+    entitlementCycle = budgetEntitlementCycle entitlement
+    consumptionPeriod = Native.envelopeConsumptionPeriod consumption
+    entitlementObservedThrough = budgetEntitlementObservedThrough entitlement
+    consumptionObservedThrough = Native.envelopeConsumptionObservedThrough consumption
+    entitlementBalances = Map.fromList
+      [ ( envelopeEntitlementEnvelope entry
+        , envelopeEntitlementBalance entry
+        )
+      | entry <- budgetEntitlementEnvelopes entitlement
+      ]
+    consumptionCoordinates = Map.fromList
+      [ (envelope, ())
+      | (envelope, _) <- Native.envelopeConsumptionEntries consumption
+      ]
+    periodMatches =
+      budgetCycleStart entitlementCycle == periodStart consumptionPeriod
+        && budgetCycleEndExclusive entitlementCycle
+          == periodEndExclusive consumptionPeriod
+    alignmentErrors =
+      [ RemainingPeriodMismatch entitlementCycle consumptionPeriod
+      | not periodMatches
+      ]
+        ++ [ RemainingObservedThroughMismatch
+              entitlementObservedThrough
+              consumptionObservedThrough
+           | entitlementObservedThrough /= consumptionObservedThrough
+           ]
+        ++ map RemainingEnvelopeMissingFromEntitlement
+          (Map.keys (Map.difference consumptionCoordinates entitlementBalances))
+    remainingFor envelope entitlementBalance =
+      entitlementBalance
+        `subtractBalance`
+          Native.consumptionNet
+            (Native.envelopeConsumptionFor envelope consumption)
 
 publishBudgetRemaining
   :: BudgetObservation
