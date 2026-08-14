@@ -44,6 +44,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
+import HKernel.Account (Account)
 import HKernel.Journal
   ( Journal
   , JournalDocument
@@ -60,7 +61,21 @@ import HKernel.Journal
   , parseJournalDocument
   , validateJournalDocument
   )
-import HKernel.Ledger (Transaction)
+import HKernel.Ledger
+  ( Transaction
+  , postingAccount
+  , postingAmount
+  , transactionPostings
+  )
+import HKernel.Money
+  ( Commodity
+  , Quantity
+  , addQuantity
+  , amountCommodity
+  , amountQuantity
+  , negateQuantity
+  , zeroQuantity
+  )
 import HKernel.Plan
   ( PlanId
   , PlanIdError
@@ -75,6 +90,7 @@ import HKernel.Plan.Completion
   , declarePlanCompletion
   , identifyActualTransaction
   , identifiedActualId
+  , identifiedActualTransaction
   , mkActualTransactionId
   )
 
@@ -134,6 +150,8 @@ data ActualJournalError
   | ActualReversalSelfReference Int ActualTransactionId
   | UnknownActualReversalTarget ActualTransactionId ActualTransactionId
   | DuplicateActualReversalTarget ActualTransactionId (NonEmpty ActualTransactionId)
+  | ActualReversalPostingMismatch ActualTransactionId ActualTransactionId
+  | ActualReversalCycle (NonEmpty ActualTransactionId)
   | ActualTransactionMetadataAlignmentMismatch Int Int
   | ActualTransactionSourceAlignmentMismatch Int
   deriving (Eq, Show)
@@ -368,9 +386,16 @@ reversalIntegrityErrors
   -> [ActualReversalDeclaration]
   -> [ActualJournalError]
 reversalIntegrityErrors identified reversals =
-  unknownTargetErrors ++ duplicateTargetErrors
+  unknownTargetErrors
+    ++ duplicateTargetErrors
+    ++ postingMismatchErrors
+    ++ cycleErrors
   where
-    identifiedIds = Set.fromList (map identifiedActualId identified)
+    identifiedById = Map.fromList
+      [ (identifiedActualId actual, identifiedActualTransaction actual)
+      | actual <- identified
+      ]
+    identifiedIds = Map.keysSet identifiedById
 
     unknownTargetErrors =
       [ UnknownActualReversalTarget reversalId targetId
@@ -392,3 +417,62 @@ reversalIntegrityErrors identified reversals =
       , Just reversalIds <- [NonEmpty.nonEmpty (sort ids)]
       , NonEmpty.length reversalIds > 1
       ]
+
+    postingMismatchErrors =
+      [ ActualReversalPostingMismatch reversalId targetId
+      | declaration <- reversals
+      , let reversalId = reversalTransactionId declaration
+      , let targetId = reversedTransactionId declaration
+      , Just reversalTransaction <- [Map.lookup reversalId identifiedById]
+      , Just targetTransaction <- [Map.lookup targetId identifiedById]
+      , transactionPostingEffect reversalTransaction
+          /= Map.map negateQuantity (transactionPostingEffect targetTransaction)
+      ]
+
+    targetByReversal = Map.fromList
+      [ (reversalTransactionId declaration, reversedTransactionId declaration)
+      | declaration <- reversals
+      ]
+
+    cycleSets = Set.fromList
+      [ Set.fromList cycleMembers
+      | reversalId <- Map.keys targetByReversal
+      , Just cycleMembers <- [reversalCycleFrom targetByReversal reversalId]
+      ]
+
+    cycleErrors =
+      [ ActualReversalCycle cycleIds
+      | cycleSet <- Set.toAscList cycleSets
+      , Just cycleIds <- [NonEmpty.nonEmpty (Set.toAscList cycleSet)]
+      ]
+
+transactionPostingEffect
+  :: Transaction
+  -> Map.Map (Account, Commodity) Quantity
+transactionPostingEffect =
+  Map.filter (/= zeroQuantity)
+    . Map.fromListWith addQuantity
+    . map postingCoordinate
+    . NonEmpty.toList
+    . transactionPostings
+  where
+    postingCoordinate posting =
+      ( (postingAccount posting, amountCommodity amount)
+      , amountQuantity amount
+      )
+      where
+        amount = postingAmount posting
+
+reversalCycleFrom
+  :: Map.Map ActualTransactionId ActualTransactionId
+  -> ActualTransactionId
+  -> Maybe [ActualTransactionId]
+reversalCycleFrom targetByReversal = go Set.empty []
+  where
+    go seen path current
+      | current `Set.member` seen =
+          Just (dropWhile (/= current) path)
+      | otherwise = case Map.lookup current targetByReversal of
+          Nothing -> Nothing
+          Just target ->
+            go (Set.insert current seen) (path ++ [current]) target
