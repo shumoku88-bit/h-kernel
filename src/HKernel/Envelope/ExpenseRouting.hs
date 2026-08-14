@@ -1,18 +1,23 @@
 module HKernel.Envelope.ExpenseRouting
   ( ExpenseRoute(..)
+  , InitialExpenseRoutingDecision(..)
   , ExpenseRoutingDecision(..)
   , ExpenseRoutingHistory
   , ExpenseRoutingHistoryError(..)
   , ExpenseRoutingReferenceError(..)
   , mkExpenseRoutingHistory
+  , mkExpenseRoutingHistoryWithInitial
   , admitExpenseRoutingReferences
+  , expenseRoutingHistoryInitialDecisions
   , expenseRoutingHistoryDecisions
+  , initialExpenseRoutingDecisionFor
   , expenseRoutingDecisionAt
   , expenseRouteAt
   , ExpenseRouteResolver(..)
   , expenseRoutingResolver
   ) where
 
+import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
@@ -41,7 +46,20 @@ data ExpenseRoute
   | NotEnvelopeManaged
   deriving (Eq, Ord, Show)
 
--- | One effective-dated routing decision.
+-- | Routing evidence that is already effective before the bounded household
+-- history being observed.
+--
+-- This is not an unknown or guessed date. It represents a policy source whose
+-- original semantics were timeless/static, or an explicitly declared opening
+-- routing state. Later dated decisions may override it without inventing a fake
+-- @effective_from@ coordinate for the initial state.
+data InitialExpenseRoutingDecision = InitialExpenseRoutingDecision
+  { initialExpenseRoutingAccount :: Account
+  , initialExpenseRoutingRoute   :: ExpenseRoute
+  , initialExpenseRoutingNote    :: Text
+  } deriving (Eq, Show)
+
+-- | One effective-dated routing change.
 --
 -- The decision is policy history rather than accounting fact. Its effective day
 -- lets later configuration changes alter current intent without rewriting how
@@ -53,63 +71,84 @@ data ExpenseRoutingDecision = ExpenseRoutingDecision
   , expenseRoutingNote          :: Text
   } deriving (Eq, Show)
 
-newtype ExpenseRoutingHistory = ExpenseRoutingHistory
-  { expenseRoutingHistoryDecisions :: [ExpenseRoutingDecision]
+data ExpenseRoutingHistory = ExpenseRoutingHistory
+  { expenseRoutingHistoryInitialDecisions :: [InitialExpenseRoutingDecision]
+  , expenseRoutingHistoryDecisions        :: [ExpenseRoutingDecision]
   } deriving (Eq, Show)
 
 data ExpenseRoutingHistoryError
-  = DuplicateExpenseRoutingDecision Account Day
+  = DuplicateInitialExpenseRoutingDecision Account
+  | DuplicateExpenseRoutingDecision Account Day
   deriving (Eq, Show)
 
 -- | A source-admitted routing decision may still dangle across stable Account
 -- or Envelope identity boundaries, or attempt to route a non-Expense Account.
--- Errors retain the historical Account/day coordinate without keeping any
--- private source row.
+-- Initial errors deliberately have no day coordinate because inventing one would
+-- destroy the distinction this model preserves.
 data ExpenseRoutingReferenceError
-  = UnknownExpenseRoutingAccount Account Day
+  = UnknownInitialExpenseRoutingAccount Account
+  | InitialExpenseRoutingAccountNotExpense Account AccountType
+  | UnknownInitialExpenseRoutingEnvelope Account EnvelopeId
+  | UnknownExpenseRoutingAccount Account Day
   | ExpenseRoutingAccountNotExpense Account Day AccountType
   | UnknownExpenseRoutingEnvelope Account Day EnvelopeId
   deriving (Eq, Show)
 
--- | Admit routing decisions while preserving source order as provenance.
---
--- A household day is the routing time granularity. Two decisions for the same
--- Expense account with the same effective day are therefore ambiguous and fail
--- closed, even if their targets happen to be equal.
+-- | Backward-compatible constructor for histories containing dated decisions
+-- only.
 mkExpenseRoutingHistory
   :: [ExpenseRoutingDecision]
   -> Either (NonEmpty ExpenseRoutingHistoryError) ExpenseRoutingHistory
-mkExpenseRoutingHistory decisions =
+mkExpenseRoutingHistory = mkExpenseRoutingHistoryWithInitial []
+
+-- | Admit opening routing state and effective-dated changes as distinct facts.
+--
+-- At most one initial decision exists per Expense Account. A household day is
+-- the dated routing time granularity, so two dated decisions for the same
+-- Account/day are ambiguous and fail closed even if their routes are equal.
+-- Source order is preserved independently within the initial and dated evidence
+-- streams.
+mkExpenseRoutingHistoryWithInitial
+  :: [InitialExpenseRoutingDecision]
+  -> [ExpenseRoutingDecision]
+  -> Either (NonEmpty ExpenseRoutingHistoryError) ExpenseRoutingHistory
+mkExpenseRoutingHistoryWithInitial initialDecisions decisions =
   case NonEmpty.nonEmpty duplicateErrors of
     Just errors -> Left errors
-    Nothing -> Right (ExpenseRoutingHistory decisions)
+    Nothing -> Right ExpenseRoutingHistory
+      { expenseRoutingHistoryInitialDecisions = initialDecisions
+      , expenseRoutingHistoryDecisions = decisions
+      }
   where
-    grouped :: Map (Account, Day) Int
-    grouped = Map.fromListWith (+)
+    initialGrouped :: Map Account Int
+    initialGrouped = Map.fromListWith (+)
+      [ (initialExpenseRoutingAccount decision, 1)
+      | decision <- initialDecisions
+      ]
+    datedGrouped :: Map (Account, Day) Int
+    datedGrouped = Map.fromListWith (+)
       [ ((expenseRoutingAccount decision, expenseRoutingEffectiveFrom decision), 1)
       | decision <- decisions
       ]
-    duplicateErrors =
-      [ DuplicateExpenseRoutingDecision account effectiveFrom
-      | ((account, effectiveFrom), count) <- Map.toAscList grouped
+    duplicateInitialErrors =
+      [ DuplicateInitialExpenseRoutingDecision account
+      | (account, count) <- Map.toAscList initialGrouped
       , count > 1
       ]
+    duplicateDatedErrors =
+      [ DuplicateExpenseRoutingDecision account effectiveFrom
+      | ((account, effectiveFrom), count) <- Map.toAscList datedGrouped
+      , count > 1
+      ]
+    duplicateErrors = duplicateInitialErrors ++ duplicateDatedErrors
 
--- | Admit the stable references of an already source-admitted Expense routing
--- history.
+-- | Admit stable references without interpreting current configuration as
+-- historical truth.
 --
--- Account existence and accounting type are checked against the admitted
--- AccountRegistry. An explicit 'NotEnvelopeManaged' decision still requires an
--- admitted Expense Account.
---
--- Envelope target existence is checked against the stable EnvelopeRegistry,
--- never against current TOML or current BudgetPolicy membership. Removing an
--- Envelope from current policy cannot retroactively invalidate an earlier
--- Expense routing decision.
---
--- Errors accumulate in source order. If one decision has both an invalid
--- Account reference and an unknown Envelope target, both dangling coordinates
--- remain visible.
+-- Account existence/type is checked against the admitted AccountRegistry and
+-- managed Envelope targets against the stable EnvelopeRegistry. Initial policy
+-- and dated changes are both qualified; initial failures intentionally retain no
+-- synthetic date coordinate.
 admitExpenseRoutingReferences
   :: AccountRegistry
   -> EnvelopeRegistry
@@ -120,12 +159,43 @@ admitExpenseRoutingReferences accountRegistry envelopeRegistry history =
     Nothing -> Right history
     Just found -> Left found
   where
-    errors = concatMap referenceErrors
-      (expenseRoutingHistoryDecisions history)
+    errors =
+      concatMap initialReferenceErrors
+        (expenseRoutingHistoryInitialDecisions history)
+        ++ concatMap datedReferenceErrors
+          (expenseRoutingHistoryDecisions history)
 
-    referenceErrors decision = accountErrors decision ++ envelopeErrors decision
+    initialReferenceErrors decision =
+      initialAccountErrors decision ++ initialEnvelopeErrors decision
 
-    accountErrors decision =
+    initialAccountErrors decision =
+      case lookupAccountDeclaration
+          (initialExpenseRoutingAccount decision) accountRegistry of
+        Nothing ->
+          [ UnknownInitialExpenseRoutingAccount
+              (initialExpenseRoutingAccount decision)
+          ]
+        Just declaration
+          | declaredAccountType declaration == Expense -> []
+          | otherwise ->
+              [ InitialExpenseRoutingAccountNotExpense
+                  (initialExpenseRoutingAccount decision)
+                  (declaredAccountType declaration)
+              ]
+
+    initialEnvelopeErrors decision = case initialExpenseRoutingRoute decision of
+      NotEnvelopeManaged -> []
+      ManagedByEnvelope envelope ->
+        [ UnknownInitialExpenseRoutingEnvelope
+            (initialExpenseRoutingAccount decision)
+            envelope
+        | not (envelopeRegistryContains envelope envelopeRegistry)
+        ]
+
+    datedReferenceErrors decision =
+      datedAccountErrors decision ++ datedEnvelopeErrors decision
+
+    datedAccountErrors decision =
       case lookupAccountDeclaration (expenseRoutingAccount decision) accountRegistry of
         Nothing ->
           [ UnknownExpenseRoutingAccount
@@ -141,7 +211,7 @@ admitExpenseRoutingReferences accountRegistry envelopeRegistry history =
                   (declaredAccountType declaration)
               ]
 
-    envelopeErrors decision = case expenseRoutingRoute decision of
+    datedEnvelopeErrors decision = case expenseRoutingRoute decision of
       NotEnvelopeManaged -> []
       ManagedByEnvelope envelope ->
         [ UnknownExpenseRoutingEnvelope
@@ -151,10 +221,23 @@ admitExpenseRoutingReferences accountRegistry envelopeRegistry history =
         | not (envelopeRegistryContains envelope envelopeRegistry)
         ]
 
--- | Latest decision effective on or before the observation day.
+-- | Opening routing evidence for one Account, if declared.
+initialExpenseRoutingDecisionFor
+  :: Account
+  -> ExpenseRoutingHistory
+  -> Maybe InitialExpenseRoutingDecision
+initialExpenseRoutingDecisionFor account =
+  foldl' choose Nothing
+    . filter ((== account) . initialExpenseRoutingAccount)
+    . expenseRoutingHistoryInitialDecisions
+  where
+    choose Nothing decision = Just decision
+    choose current _ = current
+
+-- | Latest dated decision effective on or before the observation day.
 --
--- Effective date, not source order, governs meaning. Admission already proves
--- that no two decisions occupy the same account/day coordinate.
+-- This query intentionally returns only effective-dated evidence. Use
+-- 'expenseRouteAt' for resolved semantics including an initial route.
 expenseRoutingDecisionAt
   :: Day
   -> Account
@@ -174,30 +257,29 @@ expenseRoutingDecisionAt observedOn account =
           > expenseRoutingEffectiveFrom current = Just decision
       | otherwise = Just current
 
--- | Total only after distinguishing missing policy from explicit management.
--- Nothing means no routing decision exists through the observation day.
+-- | Resolve routing semantics without fabricating a beginning date.
+--
+-- The latest dated decision visible on the observation day wins. When no dated
+-- decision is visible, an initial decision supplies the opening route. Nothing
+-- means neither kind of routing evidence exists through the observation day.
 expenseRouteAt
   :: Day
   -> Account
   -> ExpenseRoutingHistory
   -> Maybe ExpenseRoute
-expenseRouteAt observedOn account =
-  fmap expenseRoutingRoute . expenseRoutingDecisionAt observedOn account
+expenseRouteAt observedOn account history =
+  case expenseRoutingDecisionAt observedOn account history of
+    Just decision -> Just (expenseRoutingRoute decision)
+    Nothing -> initialExpenseRoutingRoute
+      <$> initialExpenseRoutingDecisionFor account history
 
--- | Semantic query boundary for resolving an Expense account route at one
+-- | Semantic query boundary for resolving an Expense Account route at one
 -- observation date.
---
--- This is a pure query projection rather than historical evidence itself.
--- 'ExpenseRoutingHistory' owns effective-dated policy facts; 'ExpenseRouteResolver'
--- isolates consumers (such as Consumption) from concrete policy history storage.
 newtype ExpenseRouteResolver = ExpenseRouteResolver
   { resolveExpenseRoute :: Day -> Account -> Maybe ExpenseRoute
   }
 
--- | Project effective-dated historical evidence into semantic query semantics.
---
--- Routing lookup follows the latest decision effective on or before the given
--- day.
+-- | Project historical routing evidence into semantic query semantics.
 expenseRoutingResolver
   :: ExpenseRoutingHistory
   -> ExpenseRouteResolver
