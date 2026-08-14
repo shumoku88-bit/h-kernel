@@ -41,7 +41,7 @@ module HKernel.Budget.Policy
   , budgetPolicyBackingPoolForAsset
   ) where
 
-import Data.Char (isControl, isSpace)
+import Data.Char (isControl)
 import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -56,29 +56,13 @@ import HKernel.Account
   , declaredAccountType
   , lookupAccountDeclaration
   )
+import HKernel.Backing.Identity
+  ( BackingPoolId
+  , BackingPoolIdError(..)
+  , backingPoolIdText
+  , mkBackingPoolId
+  )
 import HKernel.Budget (EnvelopeId, Pacing)
-
--- | Stable machine identity for one group of Asset accounts that backs one or
--- more spendable envelopes.
-newtype BackingPoolId = BackingPoolId { backingPoolIdText :: Text }
-  deriving (Eq, Ord, Show)
-
-data BackingPoolIdError
-  = EmptyBackingPoolId
-  | BackingPoolIdHasSurroundingWhitespace Text
-  | BackingPoolIdContainsControlCharacter Text
-  | BackingPoolIdContainsWhitespace Text
-  deriving (Eq, Show)
-
-mkBackingPoolId :: Text -> Either BackingPoolIdError BackingPoolId
-mkBackingPoolId value
-  | T.null value = Left EmptyBackingPoolId
-  | T.strip value /= value =
-      Left (BackingPoolIdHasSurroundingWhitespace value)
-  | T.any isControl value =
-      Left (BackingPoolIdContainsControlCharacter value)
-  | T.any isSpace value = Left (BackingPoolIdContainsWhitespace value)
-  | otherwise = Right (BackingPoolId value)
 
 -- | Human-facing envelope name. Unlike 'EnvelopeId', labels may contain ordinary
 -- internal whitespace and non-ASCII text.
