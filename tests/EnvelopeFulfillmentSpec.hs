@@ -53,17 +53,18 @@ fulfillmentLaws = do
     (fulfillmentNet (envelopeFulfillmentFor (envelope "should-not-count") fulfillment))
 
 historicalRoutingLaw :: IO ()
-  = do
-      let fulfillment = fulfillmentThrough (day 5)
-          jpy = commodity "JPY"
-      equal "future route changes do not rewrite earlier target fulfillment"
-        (one jpy 100)
-        (fulfillmentNet (envelopeFulfillmentFor (envelope "savings-old") fulfillment))
-      equal "future target route is absent from the earlier observation"
-        emptyBalance
-        (fulfillmentNet (envelopeFulfillmentFor (envelope "savings-new") fulfillment))
+historicalRoutingLaw = do
+  let fulfillment = fulfillmentThrough (day 5)
+      jpy = commodity "JPY"
+  equal "future route changes do not rewrite earlier target fulfillment"
+    (one jpy 100)
+    (fulfillmentNet (envelopeFulfillmentFor (envelope "savings-old") fulfillment))
+  equal "future target route is absent from the earlier observation"
+    emptyBalance
+    (fulfillmentNet (envelopeFulfillmentFor (envelope "savings-new") fulfillment))
 
-routingAdmissionLaw :: IO () = do
+routingAdmissionLaw :: IO ()
+routingAdmissionLaw = do
   let duplicate =
         [ decision (day 1) "assets:savings" (FulfillsEnvelope (envelope "a"))
         , decision (day 1) "assets:savings" (FulfillsEnvelope (envelope "b"))
@@ -77,7 +78,8 @@ routingAdmissionLaw :: IO () = do
       DuplicateFulfillmentRoutingDecision accountName effectiveFrom ->
         accountName == account "assets:savings" && effectiveFrom == day 1
 
-observationLaw :: IO () =
+observationLaw :: IO ()
+observationLaw =
   left "observation outside the selected Period fails closed"
     (observeEnvelopeFulfillment
       period
