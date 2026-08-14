@@ -9,20 +9,22 @@ module HKernel.Envelope.FulfillmentRouting
   , fulfillmentRouteAt
   ) where
 
-import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.Time.Calendar (Day)
-import HKernel.Account (Account)
 import HKernel.Envelope.Identity (EnvelopeId)
+import HKernel.Plan (PlanId)
 
--- | Whether one non-Expense target account currently fulfills an Envelope.
+-- | Whether one stable Plan currently represents fulfillment of an Envelope.
 --
--- A negative decision is explicit so a later policy change can stop treating a
--- former savings/investment/debt target as Envelope fulfillment without
--- rewriting earlier observations.
+-- Fulfillment intent belongs to the household decision represented by PlanId,
+-- not to an accounting Account. The same savings, investment, or bank Account
+-- may therefore appear in unrelated Plans without inheriting Envelope meaning.
+--
+-- A negative decision is explicit so later intent can stop treating a Plan as
+-- an Envelope target without rewriting earlier observations.
 data FulfillmentRoute
   = FulfillsEnvelope EnvelopeId
   | NotFulfillmentTarget
@@ -30,7 +32,7 @@ data FulfillmentRoute
 
 data FulfillmentRoutingDecision = FulfillmentRoutingDecision
   { fulfillmentRoutingEffectiveFrom :: Day
-  , fulfillmentRoutingAccount       :: Account
+  , fulfillmentRoutingPlanId        :: PlanId
   , fulfillmentRoutingRoute         :: FulfillmentRoute
   , fulfillmentRoutingNote          :: Text
   } deriving (Eq, Show)
@@ -40,7 +42,7 @@ newtype FulfillmentRoutingHistory = FulfillmentRoutingHistory
   } deriving (Eq, Show)
 
 data FulfillmentRoutingHistoryError
-  = DuplicateFulfillmentRoutingDecision Account Day
+  = DuplicateFulfillmentRoutingDecision PlanId Day
   deriving (Eq, Show)
 
 mkFulfillmentRoutingHistory
@@ -52,27 +54,27 @@ mkFulfillmentRoutingHistory decisions =
     Nothing -> Right (FulfillmentRoutingHistory decisions)
   where
     grouped = Map.fromListWith (+)
-      [ ((fulfillmentRoutingAccount decision, fulfillmentRoutingEffectiveFrom decision), 1 :: Int)
+      [ ((fulfillmentRoutingPlanId decision, fulfillmentRoutingEffectiveFrom decision), 1 :: Int)
       | decision <- decisions
       ]
     duplicateErrors =
-      [ DuplicateFulfillmentRoutingDecision account effectiveFrom
-      | ((account, effectiveFrom), count) <- Map.toAscList grouped
+      [ DuplicateFulfillmentRoutingDecision planId effectiveFrom
+      | ((planId, effectiveFrom), count) <- Map.toAscList grouped
       , count > 1
       ]
 
 fulfillmentRoutingDecisionAt
   :: Day
-  -> Account
+  -> PlanId
   -> FulfillmentRoutingHistory
   -> Maybe FulfillmentRoutingDecision
-fulfillmentRoutingDecisionAt observedOn account =
+fulfillmentRoutingDecisionAt observedOn planId =
   foldl' laterDecision Nothing
     . filter visible
     . fulfillmentRoutingHistoryDecisions
   where
     visible decision =
-      fulfillmentRoutingAccount decision == account
+      fulfillmentRoutingPlanId decision == planId
         && fulfillmentRoutingEffectiveFrom decision <= observedOn
     laterDecision Nothing decision = Just decision
     laterDecision (Just current) decision
@@ -82,8 +84,8 @@ fulfillmentRoutingDecisionAt observedOn account =
 
 fulfillmentRouteAt
   :: Day
-  -> Account
+  -> PlanId
   -> FulfillmentRoutingHistory
   -> Maybe FulfillmentRoute
-fulfillmentRouteAt observedOn account =
-  fmap fulfillmentRoutingRoute . fulfillmentRoutingDecisionAt observedOn account
+fulfillmentRouteAt observedOn planId =
+  fmap fulfillmentRoutingRoute . fulfillmentRoutingDecisionAt observedOn planId
