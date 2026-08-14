@@ -39,13 +39,16 @@ import HKernel.Money
   , zeroQuantity
   )
 import HKernel.Period (Period, periodContains, periodEndExclusive)
+import HKernel.Plan.Completion (PlanCompletionError)
 import HKernel.Plan.Journal
-  ( PlanJournal
+  ( PlanClassificationError
+  , PlanJournal
+  , PlanLifecycleError
   , identifiedPlanTransaction
   , planJournalValue
   )
 import HKernel.Plan.Open
-  ( OpenOutgoingPlanError
+  ( OpenOutgoingPlanError(..)
   , resolveOpenOutgoingPlanTransactionsAt
   )
 
@@ -65,7 +68,9 @@ data EnvelopeCommitment = EnvelopeCommitment
 
 data EnvelopeCommitmentError
   = EnvelopeCommitmentObservationOutsidePeriod Day Period
-  | EnvelopeCommitmentOpenPlanError OpenOutgoingPlanError
+  | EnvelopeCommitmentPlanLifecycleError PlanLifecycleError
+  | EnvelopeCommitmentPlanClassificationError PlanClassificationError
+  | EnvelopeCommitmentCompletionError PlanCompletionError
   deriving (Eq, Show)
 
 -- | Observe still-open outgoing Plan Expense postings through one inclusive
@@ -91,7 +96,7 @@ observeEnvelopeCommitment period observedThrough plans actual routing
   | not (periodContains period observedThrough) =
       Left (EnvelopeCommitmentObservationOutsidePeriod observedThrough period NonEmpty.:| [])
   | otherwise = do
-      openPlans <- mapErrors EnvelopeCommitmentOpenPlanError
+      openPlans <- mapErrors mapOpenPlanError
         (resolveOpenOutgoingPlanTransactionsAt observedThrough plans actual)
       let openInHorizon =
             [ identified
@@ -129,6 +134,15 @@ observeEnvelopeCommitment period observedThrough plans actual routing
       where
         account = postingAccount posting
         amount = postingAmount posting
+
+mapOpenPlanError :: OpenOutgoingPlanError -> EnvelopeCommitmentError
+mapOpenPlanError err = case err of
+  OpenOutgoingPlanLifecycleError lifecycleError ->
+    EnvelopeCommitmentPlanLifecycleError lifecycleError
+  OpenOutgoingPlanClassificationError classificationError ->
+    EnvelopeCommitmentPlanClassificationError classificationError
+  OpenOutgoingPlanCompletionError completionError ->
+    EnvelopeCommitmentCompletionError completionError
 
 addAt :: Ord key => key -> Amount -> Map.Map key Balance -> Map.Map key Balance
 addAt key amount = Map.insertWith addBalance key (singletonBalance amount)
