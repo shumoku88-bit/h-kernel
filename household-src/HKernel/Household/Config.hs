@@ -29,6 +29,8 @@ import HKernel.Account
   , accountName
   , mkAccount
   )
+import HKernel.Backing.Identity (backingPoolIdText)
+import HKernel.Backing.Policy (BackingPolicyError(..))
 import HKernel.Budget
   ( EnvelopeIdError(..)
   , envelopeIdText
@@ -477,6 +479,27 @@ renderHouseholdPolicyError err = case err of
     "budget.unassigned-accounts: allocation Account " <> quoted (accountName account)
       <> " for envelope " <> quoted (envelopeIdText envelope)
       <> " cannot also be unassigned"
+  HouseholdBackingPolicyCompatibilityError backingError ->
+    "budget: Backing policy compatibility error: "
+      <> renderBackingPolicyError backingError
+
+renderBackingPolicyError :: BackingPolicyError -> Text
+renderBackingPolicyError err = case err of
+  DuplicateBackingPoolDefinition poolId ->
+    "duplicate BackingPool " <> quoted (backingPoolIdText poolId)
+  BackingPoolHasNoAssetAccounts poolId ->
+    "BackingPool " <> quoted (backingPoolIdText poolId) <> " has no Asset accounts"
+  DuplicateAssetAccountMembership account firstPool repeatedPool ->
+    "Asset Account " <> quoted (accountName account)
+      <> " belongs to both " <> quoted (backingPoolIdText firstPool)
+      <> " and " <> quoted (backingPoolIdText repeatedPool)
+  DuplicateEnvelopeBackingAssignment envelope firstPool repeatedPool ->
+    "Envelope " <> quoted (envelopeIdText envelope)
+      <> " is assigned to both " <> quoted (backingPoolIdText firstPool)
+      <> " and " <> quoted (backingPoolIdText repeatedPool)
+  EnvelopeReferencesUnknownBackingPool envelope poolId ->
+    "Envelope " <> quoted (envelopeIdText envelope)
+      <> " references unknown BackingPool " <> quoted (backingPoolIdText poolId)
 
 renderHouseholdAccountPolicyError :: HouseholdAccountPolicyError -> Text
 renderHouseholdAccountPolicyError err = case err of
