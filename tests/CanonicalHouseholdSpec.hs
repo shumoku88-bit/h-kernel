@@ -715,6 +715,16 @@ syntheticHouseholdToml = T.unlines
   , "[account-policy.expenses]"
   , "fixed = []"
   , "variable = [\"Expenses:Groceries\"]"
+  , ""
+  , "[envelope-history]"
+  , "identities = [\"Daily\"]"
+  , ""
+  , "[[envelope-history.expense-routing]]"
+  , "effective-from = \"initial\""
+  , "expense-account = \"Expenses:Groceries\""
+  , "route = \"managed\""
+  , "target = \"Daily\""
+  , "note = \"synthetic canonical initial routing\""
   ]
 
 syntheticReportToml :: Text
