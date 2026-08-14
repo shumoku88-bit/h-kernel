@@ -26,6 +26,10 @@ path = "docs/BUDGET_PLAN_COMMITMENT_OBSERVATION.md"
 role = "observation"
 
 [[documents]]
+path = "docs/ENVELOPE_NATIVE_MODEL.md"
+role = "architecture"
+
+[[documents]]
 path = "docs/DAILY_TARGET_POLICY.md"
 role = "contract"
 
