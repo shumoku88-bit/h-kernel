@@ -17,9 +17,11 @@ module HKernel.Household.Report
   , envelopeLedgerRemaining
   , envelopePostPlanHeadroom
   , EnvelopeBacking(..)
+  , envelopeFundingBalance
   , envelopeSignedTotal
   , envelopeBackingRequired
   , envelopeBackingSurplus
+  , envelopeAvailableBackingSurplus
   , envelopeReconciliationDelta
   , DailyTarget(..)
   , dailyTargetCapacity
@@ -54,9 +56,11 @@ import HKernel.Household.Backing
   , envelopeLedgerRemaining
   , envelopePostPlanHeadroom
   , EnvelopeBacking(..)
+  , envelopeFundingBalance
   , envelopeSignedTotal
   , envelopeBackingRequired
   , envelopeBackingSurplus
+  , envelopeAvailableBackingSurplus
   , envelopeReconciliationDelta
   , deriveHouseholdBacking
   )
@@ -220,17 +224,23 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
       currentOpenPlans = filter
         (periodContains current . committedPlanDate)
         openPlans
+      backingOpenPlans = filter
+        ((< periodEndExclusive current) . committedPlanDate)
+        openPlans
       backingPlans =
         [ HouseholdBackingPlan
-            { householdBackingPlanDestination = committedPlanDestination plan
+            { householdBackingPlanSource = committedPlanSource plan
+            , householdBackingPlanDestination = committedPlanDestination plan
             , householdBackingPlanAmount = committedPlanAmount plan
             }
-        | plan <- currentOpenPlans
+        | plan <- backingOpenPlans
         ]
-      backing = deriveHouseholdBacking
-        observation current journal admittedPolicy
-        budget entitlement consumption remaining backingPlans
-      target = deriveDailyTarget observation current journal
+  backing <- mapLeft
+    (fmap (sourceError "backing" 0 . tshow))
+    (deriveHouseholdBacking
+      observation current journal admittedPolicy
+      budget entitlement consumption remaining backingPlans)
+  let target = deriveDailyTarget observation current journal
         dailyScope currentOpenPlans
       comparison = alignedHouseholdCycleComparison
         observation current previous journal currentCycle
@@ -332,6 +342,13 @@ projectIncomingCycleAnchor registry identified =
       , accountTypeFor (postingAccount posting) registry == Just Income
       , amountQuantity (postingAmount posting) < zeroQuantity
       ]
+
+committedPlanSource :: CommittedOutgoingPlan -> Account
+committedPlanSource plan =
+  declaredAccount (declaredPaymentSource direction)
+  where
+    direction =
+      declaredOutgoingPaymentDirection (committedPlanDirection plan)
 
 committedPlanDestination :: CommittedOutgoingPlan -> Account
 committedPlanDestination plan =
