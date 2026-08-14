@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import qualified Data.Text as T
 import Data.Time.Calendar (Day, fromGregorian)
 import HKernel.Account (Account, mkAccount)
 import HKernel.Actual.Journal (parseActualJournal)
@@ -13,7 +14,7 @@ import HKernel.Envelope.ExpenseRouting
 import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
 import HKernel.Envelope.Remaining
 import HKernel.Money
-import HKernel.Period (Period, mkPeriod)
+import HKernel.Period (Period, mkPeriod, periodStart)
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -81,11 +82,12 @@ entitlementThrough observedThrough selectedPeriod =
   mustRight (observeEnvelopeEntitlement selectedPeriod observedThrough history)
   where
     jpy = commodity "JPY"
+    start = periodStart selectedPeriod
     history = mustRight (mkEnvelopeEntitlementHistory
-      [ grant selectedPeriod (periodStartDay selectedPeriod) (envelope "food") jpy 100
-      , grant selectedPeriod (periodStartDay selectedPeriod) (envelope "stock") jpy 50
-      , grant selectedPeriod (periodStartDay selectedPeriod) (envelope "temporary") jpy 20
-      , grant selectedPeriod (periodStartDay selectedPeriod) (envelope "unused") jpy 10
+      [ grant selectedPeriod start (envelope "food") jpy 100
+      , grant selectedPeriod start (envelope "stock") jpy 50
+      , grant selectedPeriod start (envelope "temporary") jpy 20
+      , grant selectedPeriod start (envelope "unused") jpy 10
       ])
 
 consumptionThrough :: Day -> Period -> EnvelopeConsumption
@@ -102,8 +104,8 @@ consumptionThrough observedThrough selectedPeriod =
       , route (day 1) "expenses:unmanaged" NotEnvelopeManaged
       ])
 
-actualSource :: Data.Text.Text
-actualSource = Data.Text.unlines
+actualSource :: T.Text
+actualSource = T.unlines
   [ "account assets:cash"
   , "  type: Asset"
   , "  commodity: JPY"
@@ -171,22 +173,16 @@ observedDay = day 10
 day :: Int -> Day
 day = fromGregorian 2026 8
 
-periodStartDay :: Period -> Day
-periodStartDay selectedPeriod =
-  if selectedPeriod == period
-    then fromGregorian 2026 8 1
-    else fromGregorian 2026 9 1
-
-account :: Data.Text.Text -> Account
+account :: T.Text -> Account
 account = mustRight . mkAccount
 
-envelope :: Data.Text.Text -> EnvelopeId
+envelope :: T.Text -> EnvelopeId
 envelope = mustRight . mkEnvelopeId
 
-commodity :: Data.Text.Text -> Commodity
+commodity :: T.Text -> Commodity
 commodity = mustRight . mkCommodity
 
-route :: Day -> Data.Text.Text -> ExpenseRoute -> ExpenseRoutingDecision
+route :: Day -> T.Text -> ExpenseRoute -> ExpenseRoutingDecision
 route effectiveFrom accountName routeValue = ExpenseRoutingDecision
   { expenseRoutingEffectiveFrom = effectiveFrom
   , expenseRoutingAccount = account accountName
