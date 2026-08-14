@@ -376,6 +376,11 @@ leftSatisfies label predicate result = case result of
     | otherwise -> failTest label "rejected for the wrong reason"
   Right value -> failTest label ("unexpectedly accepted: " ++ show value)
 
+right :: Show error => String -> Either error value -> IO ()
+right label result = case result of
+  Right _ -> pass label
+  Left err -> failTest label ("unexpectedly rejected: " ++ show err)
+
 equal :: (Eq value, Show value) => String -> value -> value -> IO ()
 equal label expected actualValue
   | expected == actualValue = pass label
