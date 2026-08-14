@@ -284,6 +284,7 @@ test-suite h-kernel-household-backing-test
     type:             exitcode-stdio-1.0
     main-is:          HouseholdBackingSpec.hs
     build-depends:    base >= 4.14 && < 5
+                    , containers >= 0.6 && < 0.8
                     , h-kernel
                     , h-kernel-household
                     , text

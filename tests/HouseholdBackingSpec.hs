@@ -2,9 +2,11 @@
 
 module Main (main) where
 
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Account (mkAccount)
+import HKernel.Actual.Journal (actualJournalValue, parseActualJournal)
 import HKernel.Backing
 import HKernel.Backing.Identity
 import HKernel.Backing.Policy
@@ -26,10 +28,21 @@ import HKernel.Budget.Entitlement (calculateBudgetEntitlement)
 import HKernel.Budget.History (mkBudgetHistory)
 import qualified HKernel.Budget.Policy as Budget
 import HKernel.Budget.Remaining (calculateBudgetRemaining)
+import HKernel.Envelope.Consumption
+  ( ConsumptionAmounts(ConsumptionAmounts)
+  , consumptionCharges
+  , consumptionRefunds
+  , envelopeConsumptionUnmanaged
+  , observeEnvelopeConsumption
+  )
+import HKernel.Envelope.ExpenseRouting
+  ( ExpenseRoute(..)
+  , ExpenseRouteResolver(..)
+  )
 import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Household.Backing
 import HKernel.Household.Policy
-import HKernel.Journal (journalAccountRegistry, parseJournal)
+import HKernel.Journal (journalAccountRegistry)
 import HKernel.Money
 import HKernel.Period
 import HKernel.Plan (mkPositiveAmount)
@@ -40,6 +53,7 @@ main = do
   characterizeHouseholdBackingLines
   characterizeBudgetPolicyCompatibilityProjection
   characterizeHouseholdBackingDerivation
+  characterizeHouseholdBackingNativeConsumptionRouting
 
 characterizeHouseholdBackingLines :: IO ()
 characterizeHouseholdBackingLines = do
@@ -269,7 +283,8 @@ characterizeHouseholdBackingDerivation = do
         , "  assets:cash  -30 JPY"
         , "  assets:bank  -50 JPY"
         ]
-      journal = mustRight (parseJournal journalSource)
+      actualJournal = mustRight (parseActualJournal journalSource)
+      journal = actualJournalValue actualJournal
       cycleVal = mustRight
         (mkBudgetCycle (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
       obs = mustRight (mkBudgetObservation cycleVal obsDay)
@@ -281,12 +296,18 @@ characterizeHouseholdBackingDerivation = do
         (Budget.validateBudgetPolicyAccounts
           (HKernel.Journal.journalAccountRegistry journal)
           budgetPolicy)
-      consumption = mustRight
+      legacyConsumption = mustRight
         (calculateBudgetConsumption obs validatedBudget journal)
+      envelopeConsumption = mustRight
+        (observeEnvelopeConsumption period obsDay actualJournal
+          (ExpenseRouteResolver (\_day acc ->
+            case Budget.budgetPolicyEnvelopeForExpense acc budgetPolicy of
+              Just env -> Just (ManagedByEnvelope env)
+              Nothing  -> Nothing)))
       entitlement = mustRight
         (calculateBudgetEntitlement obs budgetPolicy history)
       remaining = mustRight
-        (calculateBudgetRemaining entitlement consumption)
+        (calculateBudgetRemaining entitlement legacyConsumption)
 
       plans =
         [ HouseholdBackingPlan
@@ -305,7 +326,7 @@ characterizeHouseholdBackingDerivation = do
           householdPolicy
           []
           entitlement
-          consumption
+          envelopeConsumption
           remaining
           plans)
 
@@ -329,6 +350,26 @@ characterizeHouseholdBackingDerivation = do
     "derived backing available surplus matches aggregate"
     (one jpy 50)
     (envelopeAvailableBackingSurplus backingResult)
+
+  case envelopeBackingLines backingResult of
+    [foodLine, travelLine] -> do
+      assertEqual
+        "food line receives actual consumption"
+        (one jpy 30)
+        (envelopeActualConsumption foodLine)
+      assertEqual
+        "food line receives actual refunds"
+        mempty
+        (envelopeActualRefunds foodLine)
+      assertEqual
+        "travel line receives actual consumption"
+        (one jpy 50)
+        (envelopeActualConsumption travelLine)
+      assertEqual
+        "travel line receives actual refunds"
+        mempty
+        (envelopeActualRefunds travelLine)
+    _ -> failTest "derived lines layout" "expected exactly two envelope backing lines [foodLine, travelLine]"
 
   case envelopeBackingPools backingResult of
     [cashPoolPos, reservePoolPos] -> do
@@ -391,6 +432,173 @@ characterizeHouseholdBackingDerivation = do
         (backingPoolAvailableSurplus reservePoolPos)
 
     _ -> failTest "derived pools layout" "expected exactly two pool positions [cashPoolPos, reservePoolPos]"
+
+characterizeHouseholdBackingNativeConsumptionRouting :: IO ()
+characterizeHouseholdBackingNativeConsumptionRouting = do
+  let jpy = mustRight (mkCommodity "JPY")
+      period = mustRight
+        (mkPeriod (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
+      obsDay = fromGregorian 2026 8 15
+      foodId = mustRight (mkEnvelopeId "food")
+      travelId = mustRight (mkEnvelopeId "travel")
+      cashPoolId = mustRight (mkBackingPoolId "cash")
+      reservePoolId = mustRight (mkBackingPoolId "reserve")
+      cash = mustRight (mkAccount "assets:cash")
+      bank = mustRight (mkAccount "assets:bank")
+      income = mustRight (mkAccount "income:salary")
+      unassigned = mustRight (mkAccount "budget:unassigned")
+      foodAlloc = mustRight (mkAccount "budget:food")
+      travelAlloc = mustRight (mkAccount "budget:travel")
+      foodExpense = mustRight (mkAccount "expenses:food")
+      travelExpense = mustRight (mkAccount "expenses:travel")
+      taxExpense = mustRight (mkAccount "expenses:tax")
+      unroutedExpense = mustRight (mkAccount "expenses:unrouted")
+      foodLabel = mustRight (Budget.mkEnvelopeLabel "Food")
+      travelLabel = mustRight (Budget.mkEnvelopeLabel "Travel")
+
+      budgetPools =
+        [ Budget.defineBackingPool cashPoolId [cash]
+        , Budget.defineBackingPool reservePoolId [bank]
+        ]
+      budgetEnvelopes =
+        [ Budget.defineEnvelope foodId foodLabel Daily cashPoolId [foodExpense]
+        , Budget.defineEnvelope travelId travelLabel Flex reservePoolId [travelExpense]
+        ]
+      budgetPolicy = mustRight (Budget.mkBudgetPolicy budgetEnvelopes budgetPools)
+
+      coords =
+        [ defineHouseholdEnvelopeCoordinates foodId foodAlloc []
+        , defineHouseholdEnvelopeCoordinates travelId travelAlloc []
+        ]
+      householdPolicy = mustRight
+        (mkHouseholdPolicy
+          (incomeAnchorCyclePolicy income)
+          budgetPolicy
+          coords
+          [unassigned])
+
+      journalSource = T.unlines
+        [ "account assets:cash"
+        , "  type: Asset"
+        , "account assets:bank"
+        , "  type: Asset"
+        , "account income:salary"
+        , "  type: Income"
+        , "account expenses:food"
+        , "  type: Expense"
+        , "account expenses:travel"
+        , "  type: Expense"
+        , "account expenses:tax"
+        , "  type: Expense"
+        , "account expenses:unrouted"
+        , "  type: Expense"
+        , "account budget:unassigned"
+        , "  type: Budget"
+        , "account budget:food"
+        , "  type: Budget"
+        , "account budget:travel"
+        , "  type: Budget"
+        , ""
+        , "2026-08-01 salary"
+        , "  assets:cash  500 JPY"
+        , "  income:salary  -500 JPY"
+        , ""
+        , "2026-08-02 food charge"
+        , "  expenses:food  50 JPY"
+        , "  assets:cash  -50 JPY"
+        , ""
+        , "2026-08-03 food refund"
+        , "  expenses:food  -10 JPY"
+        , "  assets:cash  10 JPY"
+        , ""
+        , "2026-08-04 tax expense (unmanaged)"
+        , "  expenses:tax  100 JPY"
+        , "  assets:cash  -100 JPY"
+        , ""
+        , "2026-08-05 unrouted expense charge"
+        , "  expenses:unrouted  20 JPY"
+        , "  assets:cash  -20 JPY"
+        , ""
+        , "2026-08-06 unrouted expense refund"
+        , "  expenses:unrouted  -5 JPY"
+        , "  assets:cash  5 JPY"
+        ]
+      actualJournal = mustRight (parseActualJournal journalSource)
+      journal = actualJournalValue actualJournal
+
+      cycleVal = mustRight
+        (mkBudgetCycle (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
+      obs = mustRight (mkBudgetObservation cycleVal obsDay)
+      history = mustRight (mkBudgetHistory
+        [ mustRight (mkBudgetChange (fromGregorian 2026 8 1) cycleVal foodId (mkAmount jpy (quantityFromInteger 150)) "food entitlement")
+        , mustRight (mkBudgetChange (fromGregorian 2026 8 1) cycleVal travelId (mkAmount jpy (quantityFromInteger 200)) "travel entitlement")
+        ])
+      validatedBudget = mustRight
+        (Budget.validateBudgetPolicyAccounts
+          (HKernel.Journal.journalAccountRegistry journal)
+          budgetPolicy)
+      legacyBudgetConsumption = mustRight
+        (calculateBudgetConsumption obs validatedBudget journal)
+      entitlement = mustRight
+        (calculateBudgetEntitlement obs budgetPolicy history)
+      remaining = mustRight
+        (calculateBudgetRemaining entitlement legacyBudgetConsumption)
+
+      customResolver = ExpenseRouteResolver (\_day acc ->
+        if acc == foodExpense then Just (ManagedByEnvelope foodId)
+        else if acc == travelExpense then Just (ManagedByEnvelope travelId)
+        else if acc == taxExpense then Just NotEnvelopeManaged
+        else Nothing)
+
+      envelopeConsumption = mustRight
+        (observeEnvelopeConsumption period obsDay actualJournal customResolver)
+
+      backingResult = mustRight
+        (deriveHouseholdBacking
+          obsDay
+          period
+          journal
+          householdPolicy
+          []
+          entitlement
+          envelopeConsumption
+          remaining
+          [])
+
+  case envelopeBackingLines backingResult of
+    [foodLine, travelLine] -> do
+      assertEqual
+        "native managed charges reach Backing line"
+        (one jpy 50)
+        (envelopeActualConsumption foodLine)
+      assertEqual
+        "native managed refunds reach Backing line"
+        (one jpy 10)
+        (envelopeActualRefunds foodLine)
+      assertEqual
+        "travel line without activity has empty charges"
+        mempty
+        (envelopeActualConsumption travelLine)
+      assertEqual
+        "travel line without activity has empty refunds"
+        mempty
+        (envelopeActualRefunds travelLine)
+    _ -> failTest "routing test lines layout" "expected exactly two envelope backing lines"
+
+  assertEqual
+    "native unrouted expense reaches existing unassigned attention"
+    [(unroutedExpense, one jpy 15)]
+    (envelopeUnassignedExpenses backingResult)
+
+  assertEqual
+    "native unmanaged expense does not mix into unassigned attention"
+    Nothing
+    (lookup taxExpense (envelopeUnassignedExpenses backingResult))
+
+  assertEqual
+    "native unmanaged expense remains preserved in EnvelopeConsumption"
+    (Just (ConsumptionAmounts (one jpy 100) mempty))
+    (Map.lookup taxExpense (envelopeConsumptionUnmanaged envelopeConsumption))
 
 one :: Commodity -> Integer -> Balance
 one commodity value =

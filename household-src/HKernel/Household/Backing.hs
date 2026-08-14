@@ -47,17 +47,15 @@ import HKernel.Backing.Policy
   , envelopeBackingAssignmentEnvelope
   , envelopeBackingAssignmentPool
   )
-import HKernel.Budget (envelopeIdText)
-import HKernel.Budget.Consumption
-  ( BudgetConsumption
-  , budgetConsumptionEnvelopes
-  , budgetConsumptionUnassignedExpenses
-  , envelopeConsumptionCharges
-  , envelopeConsumptionEnvelope
-  , envelopeConsumptionRefunds
-  , unassignedExpenseAccount
-  , unassignedExpenseBalance
+import HKernel.Envelope.Consumption
+  ( EnvelopeConsumption
+  , consumptionCharges
+  , consumptionNet
+  , consumptionRefunds
+  , envelopeConsumptionFor
+  , envelopeConsumptionUnrouted
   )
+import HKernel.Envelope.Identity (envelopeIdText)
 import HKernel.Budget.Entitlement
   ( BudgetEntitlement
   , budgetEntitlementEnvelopes
@@ -183,7 +181,7 @@ deriveHouseholdBacking
   -> HouseholdPolicy
   -> [HouseholdBudgetMovement]
   -> BudgetEntitlement
-  -> BudgetConsumption
+  -> EnvelopeConsumption
   -> BudgetRemaining
   -> [HouseholdBackingPlan]
   -> Either (NonEmpty BackingPoolError) EnvelopeBacking
@@ -196,8 +194,13 @@ deriveHouseholdBacking observation period journal policy movements entitlement c
     , envelopeBackingPools = pools
     , envelopeLedgerUnassigned = budgetClosing unassignedAccounts
     , envelopeUnassignedExpenses =
-        [ (unassignedExpenseAccount entry, unassignedExpenseBalance entry)
-        | entry <- budgetConsumptionUnassignedExpenses consumption
+        -- Unrouted expenses represent missing route configurations that require
+        -- user attention, so they feed the legacy unassigned expenses surface.
+        -- Explicit NotEnvelopeManaged expenses are intentionally not managed
+        -- by envelopes (not an omission) and are ignored here; native
+        -- EnvelopeConsumption preserves their unmanaged evidence separately.
+        [ (account, consumptionNet amounts)
+        | (account, amounts) <- Map.toAscList (envelopeConsumptionUnrouted consumption)
         ]
     }
   where
@@ -210,29 +213,23 @@ deriveHouseholdBacking observation period journal policy movements entitlement c
       [ (envelopeEntitlementEnvelope entry, entry)
       | entry <- budgetEntitlementEnvelopes entitlement
       ]
-    consumptionByEnvelope = Map.fromList
-      [ (envelopeConsumptionEnvelope entry, entry)
-      | entry <- budgetConsumptionEnvelopes consumption
-      ]
     remainingByEnvelope = Map.fromList
       [ (envelopeRemainingEnvelope entry, entry)
       | entry <- budgetRemainingEnvelopes remaining
       ]
 
-    lineFor envelope = EnvelopeBackingLine
-      { envelopeBackingName = envelopeIdText envelope
-      , envelopeEntitlement = maybe mempty
-          envelopeEntitlementBalance
-          (Map.lookup envelope entitlementByEnvelope)
-      , envelopeActualConsumption = maybe mempty
-          envelopeConsumptionCharges
-          (Map.lookup envelope consumptionByEnvelope)
-      , envelopeActualRefunds = maybe mempty
-          envelopeConsumptionRefunds
-          (Map.lookup envelope consumptionByEnvelope)
-      , envelopeBudgetRemaining = remainingFor envelope
-      , envelopeOpenPlanReserve = reserveFor envelope
-      }
+    lineFor envelope =
+      let amounts = envelopeConsumptionFor envelope consumption
+      in EnvelopeBackingLine
+        { envelopeBackingName = envelopeIdText envelope
+        , envelopeEntitlement = maybe mempty
+            envelopeEntitlementBalance
+            (Map.lookup envelope entitlementByEnvelope)
+        , envelopeActualConsumption = consumptionCharges amounts
+        , envelopeActualRefunds = consumptionRefunds amounts
+        , envelopeBudgetRemaining = remainingFor envelope
+        , envelopeOpenPlanReserve = reserveFor envelope
+        }
 
     remainingFor envelope = maybe mempty
       envelopeRemainingBalance
