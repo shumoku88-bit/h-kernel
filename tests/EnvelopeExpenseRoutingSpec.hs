@@ -6,16 +6,28 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, fromGregorian)
-import HKernel.Account (Account, mkAccount)
+import HKernel.Account
+  ( Account
+  , AccountType(..)
+  , declareAccount
+  , emptyAccountRegistry
+  , mkAccount
+  , registerAccount
+  )
 import HKernel.Envelope.ExpenseRouting
 import HKernel.Envelope.ExpenseRouting.TSV
-import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
+import HKernel.Envelope.Identity
+  ( EnvelopeId
+  , mkEnvelopeId
+  , mkEnvelopeRegistry
+  )
 import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
   historyLaws
   tsvLaws
+  referenceAdmissionLaws
 
 historyLaws :: IO ()
 historyLaws = do
@@ -143,6 +155,125 @@ tsvLaws = do
       , "2026-08-01\texpenses:食費\tmanaged\t食費\tfirst"
       , "2026-08-01\texpenses:食費\tunmanaged\t-\tsecond"
       ]))
+
+referenceAdmissionLaws :: IO ()
+referenceAdmissionLaws = do
+  let foodExpense = account "expenses:食費"
+      travelExpense = account "expenses:travel-jpy"
+      bankAsset = account "assets:bank"
+      salaryIncome = account "income:salary"
+      undeclaredAccount = account "expenses:undeclared"
+
+      foodEnvelope = envelope "食費"
+      historicalEnvelope = envelope "historical-retired"
+      missingEnvelope = envelope "missing-envelope"
+
+      accountRegistry = mustRight
+        ( registerAccount (declareAccount foodExpense Expense)
+        =<< registerAccount (declareAccount travelExpense Expense)
+        =<< registerAccount (declareAccount bankAsset Asset)
+        =<< registerAccount (declareAccount salaryIncome Income) emptyAccountRegistry
+        )
+
+      envelopeRegistry = mustRight
+        (mkEnvelopeRegistry [foodEnvelope, historicalEnvelope])
+
+      validManaged = mustRight (mkExpenseRoutingHistory
+        [ decision (day 1) foodExpense (ManagedByEnvelope foodEnvelope) "valid managed"
+        ])
+      validHistorical = mustRight (mkExpenseRoutingHistory
+        [ decision (day 2) foodExpense (ManagedByEnvelope historicalEnvelope) "historical target"
+        ])
+      validUnmanaged = mustRight (mkExpenseRoutingHistory
+        [ decision (day 3) travelExpense NotEnvelopeManaged "valid unmanaged"
+        ])
+      unknownEnvelopeHistory = mustRight (mkExpenseRoutingHistory
+        [ decision (day 4) foodExpense (ManagedByEnvelope missingEnvelope) "unknown envelope"
+        ])
+      undeclaredAccountHistory = mustRight (mkExpenseRoutingHistory
+        [ decision (day 5) undeclaredAccount (ManagedByEnvelope foodEnvelope) "undeclared account"
+        ])
+      assetAccountHistory = mustRight (mkExpenseRoutingHistory
+        [ decision (day 6) bankAsset (ManagedByEnvelope foodEnvelope) "asset account"
+        ])
+      incomeAccountHistory = mustRight (mkExpenseRoutingHistory
+        [ decision (day 7) salaryIncome (ManagedByEnvelope foodEnvelope) "income account"
+        ])
+      unmanagedUndeclaredHistory = mustRight (mkExpenseRoutingHistory
+        [ decision (day 8) undeclaredAccount NotEnvelopeManaged "unmanaged undeclared"
+        ])
+      unmanagedNonExpenseHistory = mustRight (mkExpenseRoutingHistory
+        [ decision (day 9) bankAsset NotEnvelopeManaged "unmanaged asset"
+        ])
+      doublyDanglingHistory = mustRight (mkExpenseRoutingHistory
+        [ decision (day 10) undeclaredAccount (ManagedByEnvelope missingEnvelope) "undeclared and unknown envelope"
+        ])
+      nonExpenseAndUnknownEnvelopeHistory = mustRight (mkExpenseRoutingHistory
+        [ decision (day 11) bankAsset (ManagedByEnvelope missingEnvelope) "non-expense and unknown envelope"
+        ])
+      orderedMultiErrorHistory = mustRight (mkExpenseRoutingHistory
+        [ decision (day 1) undeclaredAccount (ManagedByEnvelope missingEnvelope) "first error pair"
+        , decision (day 2) bankAsset NotEnvelopeManaged "second error"
+        ])
+
+  right "admitted Expense Account and registered Envelope accepts"
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry validManaged)
+  right "historical registered Envelope accepts regardless of current policy"
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry validHistorical)
+  right "admitted Expense Account with NotEnvelopeManaged accepts without Envelope target check"
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry validUnmanaged)
+
+  equal "unknown Envelope target fails closed"
+    (Left (UnknownExpenseRoutingEnvelope foodExpense (day 4) missingEnvelope NonEmpty.:| []))
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry unknownEnvelopeHistory)
+
+  equal "undeclared routing Account fails closed"
+    (Left (UnknownExpenseRoutingAccount undeclaredAccount (day 5) NonEmpty.:| []))
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry undeclaredAccountHistory)
+
+  equal "Asset routing Account fails with actual type"
+    (Left (ExpenseRoutingAccountNotExpense bankAsset (day 6) Asset NonEmpty.:| []))
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry assetAccountHistory)
+
+  equal "Income routing Account fails with actual type"
+    (Left (ExpenseRoutingAccountNotExpense salaryIncome (day 7) Income NonEmpty.:| []))
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry incomeAccountHistory)
+
+  equal "unmanaged route still requires declared Account"
+    (Left (UnknownExpenseRoutingAccount undeclaredAccount (day 8) NonEmpty.:| []))
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry unmanagedUndeclaredHistory)
+
+  equal "unmanaged route still requires Expense type"
+    (Left (ExpenseRoutingAccountNotExpense bankAsset (day 9) Asset NonEmpty.:| []))
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry unmanagedNonExpenseHistory)
+
+  equal "one decision with independent invalid references accumulates errors deterministically"
+    (Left
+      ( UnknownExpenseRoutingAccount undeclaredAccount (day 10)
+        NonEmpty.:|
+          [ UnknownExpenseRoutingEnvelope undeclaredAccount (day 10) missingEnvelope
+          ]
+      ))
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry doublyDanglingHistory)
+
+  equal "one non-Expense decision with unknown Envelope accumulates both errors"
+    (Left
+      ( ExpenseRoutingAccountNotExpense bankAsset (day 11) Asset
+        NonEmpty.:|
+          [ UnknownExpenseRoutingEnvelope bankAsset (day 11) missingEnvelope
+          ]
+      ))
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry nonExpenseAndUnknownEnvelopeHistory)
+
+  equal "multiple decisions accumulate all errors in source order"
+    (Left
+      ( UnknownExpenseRoutingAccount undeclaredAccount (day 1)
+        NonEmpty.:|
+          [ UnknownExpenseRoutingEnvelope undeclaredAccount (day 1) missingEnvelope
+          , ExpenseRoutingAccountNotExpense bankAsset (day 2) Asset
+          ]
+      ))
+    (admitExpenseRoutingReferences accountRegistry envelopeRegistry orderedMultiErrorHistory)
 
 header :: Text
 header = "effective_from\texpense_account\troute\ttarget\tnote"
