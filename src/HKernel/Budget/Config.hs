@@ -66,6 +66,11 @@ instance FromValue RawEnvelope where
       <*> reqKey "backing-pool"
       <*> reqKey "expense-accounts")
 
+-- | Decode @budget.toml@ into canonical typed policy.
+--
+-- Expected top-level arrays of tables are @[[backing-pools]]@ and
+-- @[[envelopes]]@. Unknown TOML keys are treated as errors rather than ignored
+-- warnings.
 parseBudgetPolicy :: Text -> Either [Text] BudgetPolicy
 parseBudgetPolicy input = case (decode input :: Result String RawBudgetPolicy) of
   Failure errors -> Left (map T.pack errors)
@@ -73,6 +78,11 @@ parseBudgetPolicy input = case (decode input :: Result String RawBudgetPolicy) o
     | null warnings -> rawToBudgetPolicy raw
     | otherwise -> Left (map T.pack warnings)
 
+-- | Render one admitted policy as deterministic canonical TOML.
+--
+-- Source comments, table order, and whitespace are not policy coordinates and
+-- are therefore not preserved. Re-admission of this text is expected to recover
+-- the exact same 'BudgetPolicy'.
 renderBudgetPolicy :: BudgetPolicy -> Text
 renderBudgetPolicy policy =
   T.intercalate "\n"
