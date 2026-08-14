@@ -24,11 +24,11 @@ import HKernel.Account
   )
 import HKernel.Budget
   ( EnvelopeIdError(..)
+  , Pacing(..)
   , envelopeIdText
   , mkEnvelopeId
   )
 import HKernel.Budget.Policy
-import HKernel.Envelope.Mode (EnvelopeMode(..))
 import Toml (decode)
 import Toml.Schema
   ( FromValue(..)
@@ -66,11 +66,6 @@ instance FromValue RawEnvelope where
       <*> reqKey "backing-pool"
       <*> reqKey "expense-accounts")
 
--- | Decode @budget.toml@ into canonical typed policy.
---
--- Expected top-level arrays of tables are @[[backing-pools]]@ and
--- @[[envelopes]]@. Unknown TOML keys are treated as errors rather than ignored
--- warnings.
 parseBudgetPolicy :: Text -> Either [Text] BudgetPolicy
 parseBudgetPolicy input = case (decode input :: Result String RawBudgetPolicy) of
   Failure errors -> Left (map T.pack errors)
@@ -78,11 +73,6 @@ parseBudgetPolicy input = case (decode input :: Result String RawBudgetPolicy) o
     | null warnings -> rawToBudgetPolicy raw
     | otherwise -> Left (map T.pack warnings)
 
--- | Render one admitted policy as deterministic canonical TOML.
---
--- Source comments, table order, and whitespace are not policy coordinates and
--- are therefore not preserved. Re-admission of this text is expected to recover
--- the exact same 'BudgetPolicy'.
 renderBudgetPolicy :: BudgetPolicy -> Text
 renderBudgetPolicy policy =
   T.intercalate "\n"
@@ -109,17 +99,16 @@ renderEnvelopeDefinition definition = T.unlines
   , "label = " <> tomlString
       (envelopeLabelText (envelopeDefinitionLabel definition))
   , "pacing = " <> tomlString
-      (renderEnvelopeMode (envelopeDefinitionMode definition))
+      (renderPacing (envelopeDefinitionPacing definition))
   , "backing-pool = " <> tomlString
       (backingPoolIdText (envelopeDefinitionBackingPool definition))
   , "expense-accounts = " <> renderAccountArray
       (envelopeDefinitionExpenseAccounts definition)
   ]
 
-renderEnvelopeMode :: EnvelopeMode -> Text
-renderEnvelopeMode Daily = "daily"
-renderEnvelopeMode Flex = "flex"
-renderEnvelopeMode Reserve = "reserve"
+renderPacing :: Pacing -> Text
+renderPacing Daily = "daily"
+renderPacing Flex = "flex"
 
 renderAccountArray :: [Account] -> Text
 renderAccountArray accounts =
@@ -173,16 +162,16 @@ parseRawEnvelope
   :: Int
   -> RawEnvelope
   -> Either [Text] EnvelopeDefinition
-parseRawEnvelope index (RawEnvelope rawId rawLabel rawMode rawPool rawAccounts) =
-  case (envelopeIdResult, labelResult, modeResult, poolResult, errors) of
-    (Right envelopeId, Right label, Right mode, Right poolId, []) ->
-      Right (defineEnvelopeWithMode envelopeId label mode poolId accounts)
+parseRawEnvelope index (RawEnvelope rawId rawLabel rawPacing rawPool rawAccounts) =
+  case (envelopeIdResult, labelResult, pacingResult, poolResult, errors) of
+    (Right envelopeId, Right label, Right pacing, Right poolId, []) ->
+      Right (defineEnvelope envelopeId label pacing poolId accounts)
     _ -> Left errors
   where
     path = indexedPath "envelopes" index
     envelopeIdResult = mkEnvelopeId rawId
     labelResult = mkEnvelopeLabel rawLabel
-    modeResult = parseEnvelopeMode (path <> ".pacing") rawMode
+    pacingResult = parsePacing (path <> ".pacing") rawPacing
     poolResult = mkBackingPoolId rawPool
     (accountErrors, accounts) = parseAccounts
       (path <> ".expense-accounts")
@@ -196,19 +185,18 @@ parseRawEnvelope index (RawEnvelope rawId rawLabel rawMode rawPool rawAccounts) 
           (pure . renderEnvelopeLabelError (path <> ".label"))
           (const [])
           labelResult
-        ++ either id (const []) modeResult
+        ++ either id (const []) pacingResult
         ++ either
           (pure . renderBackingPoolIdError (path <> ".backing-pool"))
           (const [])
           poolResult
         ++ accountErrors
 
-parseEnvelopeMode :: Text -> Text -> Either [Text] EnvelopeMode
-parseEnvelopeMode _ "daily" = Right Daily
-parseEnvelopeMode _ "flex" = Right Flex
-parseEnvelopeMode _ "reserve" = Right Reserve
-parseEnvelopeMode path value = Left
-  [ path <> ": expected daily, flex, or reserve; got " <> quoted value ]
+parsePacing :: Text -> Text -> Either [Text] Pacing
+parsePacing _ "daily" = Right Daily
+parsePacing _ "flex" = Right Flex
+parsePacing path value = Left
+  [ path <> ": expected daily or flex; got " <> quoted value ]
 
 parseAccounts :: Text -> [Text] -> ([Text], [Account])
 parseAccounts path = finish . foldl' add ([], []) . zip [0..]
