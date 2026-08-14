@@ -146,13 +146,26 @@ completionActualsThrough observedThrough plans actual =
       , Map.notMember actualId actualById
       ]
 
+    validDeclarations =
+      [ declaration
+      | declaration <- declarations
+      , declaredCompletionPlanId declaration `Set.member` knownPlans
+      , Map.member (declaredCompletionActualId declaration) actualById
+      ]
+
     actualIdsByPlan = Map.fromListWith Set.union
       [ ( declaredCompletionPlanId declaration
         , Set.singleton (declaredCompletionActualId declaration)
         )
-      | declaration <- declarations
-      , declaredCompletionPlanId declaration `Set.member` knownPlans
+      | declaration <- validDeclarations
       ]
+    planIdsByActual = Map.fromListWith Set.union
+      [ ( declaredCompletionActualId declaration
+        , Set.singleton (declaredCompletionPlanId declaration)
+        )
+      | declaration <- validDeclarations
+      ]
+
     multipleActualErrors =
       [ OpenOutgoingPlanCompletionError
           (PlanReferencedByMultipleActuals planId actualIds)
@@ -160,18 +173,28 @@ completionActualsThrough observedThrough plans actual =
       , Just actualIds <- [NonEmpty.nonEmpty (Set.toAscList actualIdSet)]
       , NonEmpty.length actualIds > 1
       ]
+    multiplePlanErrors =
+      [ OpenOutgoingPlanCompletionError
+          (ActualReferencesMultiplePlans actualId planIds)
+      | (actualId, planIdSet) <- Map.toAscList planIdsByActual
+      , Just planIds <- [NonEmpty.nonEmpty (Set.toAscList planIdSet)]
+      , NonEmpty.length planIds > 1
+      ]
 
     visibleCompleted =
       [ (planId, identified)
-      | declaration <- declarations
+      | declaration <- validDeclarations
       , let planId = declaredCompletionPlanId declaration
             actualId = declaredCompletionActualId declaration
-      , planId `Set.member` knownPlans
       , Just identified <- [Map.lookup actualId actualById]
       , transactionDate (identifiedActualTransaction identified) <= observedThrough
       ]
 
-    errors = unknownPlanErrors ++ unknownActualErrors ++ multipleActualErrors
+    errors =
+      unknownPlanErrors
+        ++ unknownActualErrors
+        ++ multipleActualErrors
+        ++ multiplePlanErrors
 
 mapErrors
   :: (left -> right)
