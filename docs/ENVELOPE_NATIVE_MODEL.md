@@ -160,9 +160,19 @@ Target route identity is observed at the root completing Actual date. Typed
 reversal chains cancel or restore that root fulfillment evidence without
 re-inferring meaning from the reversal transaction's Accounts.
 
-The physical source for the effective-dated PlanId routing history is not fixed
-by this document yet. It must preserve historical decisions and reject dangling
-or conflicting references at a named cross-source admission boundary.
+A source-local TSV admission now exists for the effective-dated PlanId routing
+history with the coordinate shape:
+
+```text
+effective_from / plan_id / route / target / note
+```
+
+That admission establishes physical syntax only. The canonical Household path,
+writer authority, snapshot participation, and historical Envelope identity
+registry are still deliberately unfixed. Cross-source Plan existence is a
+separate named admission boundary. Historical Envelope targets must not be
+validated by replaying current TOML, because that would silently rewrite old
+intent.
 
 ## Plan observation and commitment
 
