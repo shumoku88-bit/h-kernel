@@ -17,9 +17,10 @@ module HKernel.Budget.Policy
   , envelopeLabelText
   , EnvelopeDefinition
   , defineEnvelope
+  , defineEnvelopeWithMode
   , envelopeDefinitionId
   , envelopeDefinitionLabel
-  , envelopeDefinitionPacing
+  , envelopeDefinitionMode
   , envelopeDefinitionBackingPool
   , envelopeDefinitionExpenseAccounts
   , BackingPoolDefinition
@@ -56,10 +57,10 @@ import HKernel.Account
   , declaredAccountType
   , lookupAccountDeclaration
   )
-import HKernel.Budget (EnvelopeId, Pacing)
+import HKernel.Budget (EnvelopeId, Pacing(..))
+import HKernel.Envelope.Mode (EnvelopeMode)
+import qualified HKernel.Envelope.Mode as EnvelopeMode
 
--- | Stable machine identity for one group of Asset accounts that backs one or
--- more spendable envelopes.
 newtype BackingPoolId = BackingPoolId { backingPoolIdText :: Text }
   deriving (Eq, Ord, Show)
 
@@ -73,15 +74,11 @@ data BackingPoolIdError
 mkBackingPoolId :: Text -> Either BackingPoolIdError BackingPoolId
 mkBackingPoolId value
   | T.null value = Left EmptyBackingPoolId
-  | T.strip value /= value =
-      Left (BackingPoolIdHasSurroundingWhitespace value)
-  | T.any isControl value =
-      Left (BackingPoolIdContainsControlCharacter value)
+  | T.strip value /= value = Left (BackingPoolIdHasSurroundingWhitespace value)
+  | T.any isControl value = Left (BackingPoolIdContainsControlCharacter value)
   | T.any isSpace value = Left (BackingPoolIdContainsWhitespace value)
   | otherwise = Right (BackingPoolId value)
 
--- | Human-facing envelope name. Unlike 'EnvelopeId', labels may contain ordinary
--- internal whitespace and non-ASCII text.
 newtype EnvelopeLabel = EnvelopeLabel { envelopeLabelText :: Text }
   deriving (Eq, Ord, Show)
 
@@ -94,17 +91,14 @@ data EnvelopeLabelError
 mkEnvelopeLabel :: Text -> Either EnvelopeLabelError EnvelopeLabel
 mkEnvelopeLabel value
   | T.null value = Left EmptyEnvelopeLabel
-  | T.strip value /= value =
-      Left (EnvelopeLabelHasSurroundingWhitespace value)
-  | T.any isControl value =
-      Left (EnvelopeLabelContainsControlCharacter value)
+  | T.strip value /= value = Left (EnvelopeLabelHasSurroundingWhitespace value)
+  | T.any isControl value = Left (EnvelopeLabelContainsControlCharacter value)
   | otherwise = Right (EnvelopeLabel value)
 
--- | Stable policy for one spendable envelope.
 data EnvelopeDefinition = EnvelopeDefinition
   { envelopeDefinitionId              :: EnvelopeId
   , envelopeDefinitionLabel           :: EnvelopeLabel
-  , envelopeDefinitionPacing          :: Pacing
+  , envelopeDefinitionMode            :: EnvelopeMode
   , envelopeDefinitionBackingPool     :: BackingPoolId
   , envelopeDefinitionExpenseAccounts :: [Account]
   } deriving (Eq, Show)
@@ -116,9 +110,22 @@ defineEnvelope
   -> BackingPoolId
   -> [Account]
   -> EnvelopeDefinition
-defineEnvelope = EnvelopeDefinition
+defineEnvelope envelope label pacing pool accounts =
+  defineEnvelopeWithMode envelope label (pacingToMode pacing) pool accounts
 
--- | Stable policy for one backing pool.
+defineEnvelopeWithMode
+  :: EnvelopeId
+  -> EnvelopeLabel
+  -> EnvelopeMode
+  -> BackingPoolId
+  -> [Account]
+  -> EnvelopeDefinition
+defineEnvelopeWithMode = EnvelopeDefinition
+
+pacingToMode :: Pacing -> EnvelopeMode
+pacingToMode Daily = EnvelopeMode.Daily
+pacingToMode Flex = EnvelopeMode.Flex
+
 data BackingPoolDefinition = BackingPoolDefinition
   { backingPoolDefinitionId            :: BackingPoolId
   , backingPoolDefinitionAssetAccounts :: [Account]
@@ -127,10 +134,6 @@ data BackingPoolDefinition = BackingPoolDefinition
 defineBackingPool :: BackingPoolId -> [Account] -> BackingPoolDefinition
 defineBackingPool = BackingPoolDefinition
 
--- | Canonical budget policy indexed by its semantic identities.
---
--- Constructors remain hidden so duplicate assignments and unresolved backing
--- references cannot enter later calculations.
 data BudgetPolicy = BudgetPolicy
   { policyEnvelopes          :: Map EnvelopeId EnvelopeDefinition
   , policyBackingPools       :: Map BackingPoolId BackingPoolDefinition
@@ -150,11 +153,6 @@ data BudgetPolicyError
   | DuplicateAssetAccountMembership Account BackingPoolId BackingPoolId
   deriving (Eq, Show)
 
--- | One semantic coordinate system observed from source-order values.
---
--- The first value at each coordinate becomes canonical. Later values remain
--- visible as source-ordered conflicts instead of being entangled with index
--- construction.
 data CoordinateObservation key value = CoordinateObservation
   { coordinateValues    :: Map key value
   , coordinateConflicts :: [(key, value, value)]
@@ -168,8 +166,7 @@ observeCoordinates coordinates = CoordinateObservation
   { coordinateValues = Map.map (snd . NonEmpty.head) groupedCoordinates
   , coordinateConflicts =
       [ (key, firstValue, repeatedValue)
-      | (_, key, firstValue, repeatedValue) <-
-          sortOn conflictPosition conflictsByPosition
+      | (_, key, firstValue, repeatedValue) <- sortOn conflictPosition conflictsByPosition
       ]
   }
   where
@@ -177,21 +174,15 @@ observeCoordinates coordinates = CoordinateObservation
       [ (key, NonEmpty.singleton (position, value))
       | (position, (key, value)) <- zip [(0 :: Int)..] coordinates
       ]
-
-    appendLaterOccurrence laterOccurrences earlierOccurrences =
-      earlierOccurrences <> laterOccurrences
-
+    appendLaterOccurrence laterOccurrences earlierOccurrences = earlierOccurrences <> laterOccurrences
     conflictsByPosition =
       [ (position, key, firstValue, repeatedValue)
       | (key, occurrences) <- Map.toList groupedCoordinates
       , let firstValue = snd (NonEmpty.head occurrences)
       , (position, repeatedValue) <- NonEmpty.tail occurrences
       ]
-
     conflictPosition (position, _, _, _) = position
 
--- | Construct canonical policy while reporting every independent structural
--- conflict that can be determined without consulting an account registry.
 mkBudgetPolicy
   :: [EnvelopeDefinition]
   -> [BackingPoolDefinition]
@@ -216,7 +207,6 @@ mkBudgetPolicy envelopeDefinitions backingPoolDefinitions =
       [ DuplicateEnvelopeDefinition envelope
       | (envelope, _, _) <- coordinateConflicts envelopeObservation
       ]
-
     labelCoordinates =
       [ (envelopeDefinitionLabel definition, envelopeDefinitionId definition)
       | definition <- envelopeDefinitions
@@ -224,10 +214,8 @@ mkBudgetPolicy envelopeDefinitions backingPoolDefinitions =
     labelObservation = observeCoordinates labelCoordinates
     duplicateLabelErrors =
       [ DuplicateEnvelopeLabel label firstEnvelope repeatedEnvelope
-      | (label, firstEnvelope, repeatedEnvelope) <-
-          coordinateConflicts labelObservation
+      | (label, firstEnvelope, repeatedEnvelope) <- coordinateConflicts labelObservation
       ]
-
     backingPoolCoordinates =
       [ (backingPoolDefinitionId definition, definition)
       | definition <- backingPoolDefinitions
@@ -238,7 +226,6 @@ mkBudgetPolicy envelopeDefinitions backingPoolDefinitions =
       [ DuplicateBackingPoolDefinition pool
       | (pool, _, _) <- coordinateConflicts backingPoolObservation
       ]
-
     expenseCoordinates =
       [ (account, envelopeDefinitionId definition)
       | definition <- envelopeDefinitions
@@ -247,14 +234,9 @@ mkBudgetPolicy envelopeDefinitions backingPoolDefinitions =
     expenseObservation = observeCoordinates expenseCoordinates
     expenseAssignments = coordinateValues expenseObservation
     duplicateExpenseErrors =
-      [ DuplicateExpenseAccountAssignment
-          account
-          firstEnvelope
-          repeatedEnvelope
-      | (account, firstEnvelope, repeatedEnvelope) <-
-          coordinateConflicts expenseObservation
+      [ DuplicateExpenseAccountAssignment account firstEnvelope repeatedEnvelope
+      | (account, firstEnvelope, repeatedEnvelope) <- coordinateConflicts expenseObservation
       ]
-
     assetCoordinates =
       [ (account, backingPoolDefinitionId definition)
       | definition <- backingPoolDefinitions
@@ -264,10 +246,8 @@ mkBudgetPolicy envelopeDefinitions backingPoolDefinitions =
     assetMemberships = coordinateValues assetObservation
     duplicateAssetErrors =
       [ DuplicateAssetAccountMembership account firstPool repeatedPool
-      | (account, firstPool, repeatedPool) <-
-          coordinateConflicts assetObservation
+      | (account, firstPool, repeatedPool) <- coordinateConflicts assetObservation
       ]
-
     emptyPoolErrors =
       [ BackingPoolHasNoAssetAccounts (backingPoolDefinitionId definition)
       | definition <- backingPoolDefinitions
@@ -278,32 +258,24 @@ mkBudgetPolicy envelopeDefinitions backingPoolDefinitions =
           (envelopeDefinitionId definition)
           (envelopeDefinitionBackingPool definition)
       | definition <- envelopeDefinitions
-      , Map.notMember
-          (envelopeDefinitionBackingPool definition)
-          backingPoolMap
+      , Map.notMember (envelopeDefinitionBackingPool definition) backingPoolMap
       ]
     presenceErrors =
       [ BudgetPolicyHasNoEnvelopes | null envelopeDefinitions ]
         ++ [ BudgetPolicyHasNoBackingPools | null backingPoolDefinitions ]
-    errors =
-      presenceErrors
-        ++ duplicateEnvelopeErrors
-        ++ duplicateLabelErrors
-        ++ duplicatePoolErrors
-        ++ emptyPoolErrors
-        ++ unknownPoolErrors
-        ++ duplicateExpenseErrors
-        ++ duplicateAssetErrors
+    errors = presenceErrors
+      ++ duplicateEnvelopeErrors
+      ++ duplicateLabelErrors
+      ++ duplicatePoolErrors
+      ++ emptyPoolErrors
+      ++ unknownPoolErrors
+      ++ duplicateExpenseErrors
+      ++ duplicateAssetErrors
 
--- | A canonical policy whose referenced accounts have been checked against one
--- account registry. The constructor is hidden so this evidence can only be
--- produced by 'validateBudgetPolicyAccounts'.
 newtype AccountValidatedBudgetPolicy = AccountValidatedBudgetPolicy
   { accountValidatedBudgetPolicy :: BudgetPolicy
   } deriving (Eq, Show)
 
--- | Account-registry conflicts that remain after TOML and structural policy
--- admission have succeeded.
 data BudgetPolicyAccountError
   = BudgetPolicyExpenseAccountUndeclared EnvelopeId Account
   | BudgetPolicyExpenseAccountNotExpense EnvelopeId Account AccountType
@@ -311,12 +283,6 @@ data BudgetPolicyAccountError
   | BudgetPolicyAssetAccountNotAsset BackingPoolId Account AccountType
   deriving (Eq, Show)
 
--- | Check that every policy account exists with the role its policy position
--- requires. All independent account conflicts are reported together.
---
--- This function does not inspect postings or calculate balances. On success it
--- returns typed evidence that later calculations can require instead of an
--- unchecked 'BudgetPolicy'.
 validateBudgetPolicyAccounts
   :: AccountRegistry
   -> BudgetPolicy
@@ -324,45 +290,35 @@ validateBudgetPolicyAccounts
 validateBudgetPolicyAccounts registry policy =
   case NonEmpty.nonEmpty errors of
     Just nonEmptyErrors -> Left nonEmptyErrors
-    Nothing             -> Right (AccountValidatedBudgetPolicy policy)
+    Nothing -> Right (AccountValidatedBudgetPolicy policy)
   where
     errors =
       concatMap validateEnvelope (budgetPolicyEnvelopeDefinitions policy)
-        ++ concatMap validateBackingPool
-          (budgetPolicyBackingPoolDefinitions policy)
-
+        ++ concatMap validateBackingPool (budgetPolicyBackingPoolDefinitions policy)
     validateEnvelope definition =
       concatMap
         (validateExpenseAccount (envelopeDefinitionId definition))
         (envelopeDefinitionExpenseAccounts definition)
-
     validateExpenseAccount envelope account =
       case lookupAccountDeclaration account registry of
-        Nothing ->
-          [BudgetPolicyExpenseAccountUndeclared envelope account]
+        Nothing -> [BudgetPolicyExpenseAccountUndeclared envelope account]
         Just declaration
           | declaredAccountType declaration == Expense -> []
           | otherwise ->
-              [ BudgetPolicyExpenseAccountNotExpense
-                  envelope
-                  account
+              [ BudgetPolicyExpenseAccountNotExpense envelope account
                   (declaredAccountType declaration)
               ]
-
     validateBackingPool definition =
       concatMap
         (validateAssetAccount (backingPoolDefinitionId definition))
         (backingPoolDefinitionAssetAccounts definition)
-
     validateAssetAccount pool account =
       case lookupAccountDeclaration account registry of
         Nothing -> [BudgetPolicyAssetAccountUndeclared pool account]
         Just declaration
           | declaredAccountType declaration == Asset -> []
           | otherwise ->
-              [ BudgetPolicyAssetAccountNotAsset
-                  pool
-                  account
+              [ BudgetPolicyAssetAccountNotAsset pool account
                   (declaredAccountType declaration)
               ]
 
@@ -376,20 +332,16 @@ budgetPolicyEnvelopeDefinition
   :: EnvelopeId
   -> BudgetPolicy
   -> Maybe EnvelopeDefinition
-budgetPolicyEnvelopeDefinition envelope =
-  Map.lookup envelope . policyEnvelopes
+budgetPolicyEnvelopeDefinition envelope = Map.lookup envelope . policyEnvelopes
 
 budgetPolicyBackingPoolDefinition
   :: BackingPoolId
   -> BudgetPolicy
   -> Maybe BackingPoolDefinition
-budgetPolicyBackingPoolDefinition pool =
-  Map.lookup pool . policyBackingPools
+budgetPolicyBackingPoolDefinition pool = Map.lookup pool . policyBackingPools
 
 budgetPolicyEnvelopeForExpense :: Account -> BudgetPolicy -> Maybe EnvelopeId
-budgetPolicyEnvelopeForExpense account =
-  Map.lookup account . policyExpenseAssignments
+budgetPolicyEnvelopeForExpense account = Map.lookup account . policyExpenseAssignments
 
 budgetPolicyBackingPoolForAsset :: Account -> BudgetPolicy -> Maybe BackingPoolId
-budgetPolicyBackingPoolForAsset account =
-  Map.lookup account . policyAssetMemberships
+budgetPolicyBackingPoolForAsset account = Map.lookup account . policyAssetMemberships
