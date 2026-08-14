@@ -113,7 +113,7 @@ characterizeHeadroom = do
       entitlement = mustRight
         (observeEnvelopeEntitlement period observedDay entitlementHistory)
       consumption = mustRight
-        (observeEnvelopeConsumption period observedDay actual expenseRouting)
+        (observeEnvelopeConsumption period observedDay actual (expenseRoutingResolver expenseRouting))
       fulfillment = mustRight
         (observeEnvelopeFulfillment
           period
@@ -146,7 +146,7 @@ rejectHeadroomMisalignment = do
       entitlement = mustRight
         (observeEnvelopeEntitlement period observedDay entitlementHistory)
       consumption = mustRight
-        (observeEnvelopeConsumption period observedDay actual expenseRouting)
+        (observeEnvelopeConsumption period observedDay actual (expenseRoutingResolver expenseRouting))
       fulfillment = mustRight
         (observeEnvelopeFulfillment
           period

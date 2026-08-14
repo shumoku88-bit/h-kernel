@@ -113,7 +113,7 @@ entitlementThrough observedThrough selectedPeriod =
 consumptionThrough :: Day -> Period -> EnvelopeConsumption
 consumptionThrough observedThrough selectedPeriod =
   mustRight
-    (observeEnvelopeConsumption selectedPeriod observedThrough actual expenseRouting)
+    (observeEnvelopeConsumption selectedPeriod observedThrough actual (expenseRoutingResolver expenseRouting))
   where
     actual = mustRight (parseActualJournal actualSource)
 
