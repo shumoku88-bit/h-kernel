@@ -38,6 +38,15 @@ import HKernel.Backing
   , backingPoolGrossSurplus
   , deriveBackingPoolPosition
   )
+import HKernel.Backing.Policy
+  ( backingPoolDefinitionAssetAccounts
+  , backingPoolDefinitionId
+  , backingPolicyEnvelopeAssignments
+  , backingPolicyPoolDefinitions
+  , backingPolicyPoolForAsset
+  , envelopeBackingAssignmentEnvelope
+  , envelopeBackingAssignmentPool
+  )
 import HKernel.Budget (envelopeIdText)
 import HKernel.Budget.Consumption
   ( BudgetConsumption
@@ -55,15 +64,6 @@ import HKernel.Budget.Entitlement
   , envelopeEntitlementBalance
   , envelopeEntitlementEnvelope
   )
-import HKernel.Budget.Policy
-  ( backingPoolDefinitionAssetAccounts
-  , backingPoolDefinitionId
-  , budgetPolicyBackingPoolDefinitions
-  , budgetPolicyBackingPoolForAsset
-  , budgetPolicyEnvelopeDefinitions
-  , envelopeDefinitionBackingPool
-  , envelopeDefinitionId
-  )
 import HKernel.Budget.Remaining
   ( BudgetRemaining
   , budgetRemainingEnvelopes
@@ -74,7 +74,7 @@ import HKernel.Engine (accountBalance, accountBalancesThrough)
 import HKernel.Household.BudgetMovement
 import HKernel.Household.Policy
   ( HouseholdPolicy
-  , householdBudgetPolicy
+  , householdBackingPolicy
   , householdEnvelopeForPlanDestination
   , householdEnvelopeOrder
   , householdUnassignedBudgetAccounts
@@ -201,9 +201,9 @@ deriveHouseholdBacking observation period journal policy movements entitlement c
         ]
     }
   where
-    budgetPolicy = householdBudgetPolicy policy
-    poolDefinitions = budgetPolicyBackingPoolDefinitions budgetPolicy
-    envelopeDefinitions = budgetPolicyEnvelopeDefinitions budgetPolicy
+    backingPolicy = householdBackingPolicy policy
+    poolDefinitions = backingPolicyPoolDefinitions backingPolicy
+    envelopeAssignments = backingPolicyEnvelopeAssignments backingPolicy
     envelopes = householdEnvelopeOrder policy
     unassignedAccounts = householdUnassignedBudgetAccounts policy
     entitlementByEnvelope = Map.fromList
@@ -259,8 +259,8 @@ deriveHouseholdBacking observation period journal policy movements entitlement c
           (singletonBalance . positiveAmountValue . householdBackingPlanAmount)
           [ plan
           | plan <- plans
-          , budgetPolicyBackingPoolForAsset
-              (householdBackingPlanSource plan) budgetPolicy == Just poolId
+          , backingPolicyPoolForAsset
+              (householdBackingPlanSource plan) backingPolicy == Just poolId
           ]
         claims =
           [ BackedEnvelopeClaim
@@ -269,9 +269,9 @@ deriveHouseholdBacking observation period journal policy movements entitlement c
               , backedEnvelopeHeadroom =
                   remainingFor envelope `subtractBalance` reserveFor envelope
               }
-          | definition' <- envelopeDefinitions
-          , envelopeDefinitionBackingPool definition' == poolId
-          , let envelope = envelopeDefinitionId definition'
+          | assignment <- envelopeAssignments
+          , envelopeBackingAssignmentPool assignment == poolId
+          , let envelope = envelopeBackingAssignmentEnvelope assignment
           ]
 
     budgetClosing selected = foldMap

@@ -48,12 +48,14 @@ open HouseholdBackingPlan evidence
 
 ### Policy
 
-現在のcompatibility windowでは`BudgetPolicy`が次を供給する。
+現在のcompatibility windowでは、`HouseholdPolicy`が保持するnative `BackingPolicy`（`HKernel.Backing.Policy`）が次を供給する。
 
 - Envelope -> BackingPool
 - BackingPool -> Asset Account membership
 
-`BackingPoolId`そのものは`HKernel.Backing.Identity`が所有し、Budget policyは同じidentityを再利用する。
+既存のcanonical `budget.toml` / `BudgetPolicy`からは`budgetPolicyBackingPolicy`による一方向のcompatibility projectionを通じてnative `BackingPolicy`が構成される。
+
+`BackingPoolId`そのものは`HKernel.Backing.Identity`が所有し、native `BackingPolicy`およびcompatibility projectionは同じidentityを再利用する。
 
 Household BackingはAsset Accountの名前や残高からpool membershipを推測しない。
 
@@ -193,6 +195,8 @@ Available Backing Surplus
 
 - native `BackingPoolId`
 - pool-local exact arithmetic owner
+- native `HKernel.Backing.Policy`によるBacking座標（Envelope -> pool, Asset -> pool）の所有
+- `Household.Backing` compositionがnative `BackingPolicy`から読むこと
 - Household compositionがpool positionを保持すること
 - Plan source Assetからpool funding commitmentを導くこと
 - overdue open Planをcurrent funding horizonから落とさないこと

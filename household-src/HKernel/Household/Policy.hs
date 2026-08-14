@@ -18,6 +18,7 @@ module HKernel.Household.Policy
   , mkHouseholdPolicy
   , householdPolicyCycle
   , householdBudgetPolicy
+  , householdBackingPolicy
   , householdEnvelopeOrder
   , householdAllocationEnvelopes
   , householdUnassignedBudgetAccounts
@@ -25,6 +26,7 @@ module HKernel.Household.Policy
   , AccountValidatedHouseholdPolicy
   , accountValidatedHouseholdPolicy
   , accountValidatedHouseholdBudgetPolicy
+  , accountValidatedHouseholdBackingPolicy
   , HouseholdPolicyAccountError(..)
   , validateHouseholdPolicyAccounts
   ) where
@@ -43,12 +45,23 @@ import HKernel.Account
   , declaredAccountType
   , lookupAccountDeclaration
   )
+import HKernel.Backing.Policy
+  ( BackingPolicy
+  , BackingPolicyError
+  , assignEnvelopeBackingPool
+  , defineBackingPool
+  , mkBackingPolicy
+  )
 import HKernel.Budget (EnvelopeId)
 import HKernel.Budget.Policy
   ( AccountValidatedBudgetPolicy
   , BudgetPolicy
   , BudgetPolicyAccountError
+  , backingPoolDefinitionAssetAccounts
+  , backingPoolDefinitionId
+  , budgetPolicyBackingPoolDefinitions
   , budgetPolicyEnvelopeDefinitions
+  , envelopeDefinitionBackingPool
   , envelopeDefinitionExpenseAccounts
   , envelopeDefinitionId
   , validateBudgetPolicyAccounts
@@ -89,6 +102,7 @@ data HouseholdPolicyError
   | HouseholdPolicyHasNoUnassignedBudgetAccounts
   | DuplicateUnassignedBudgetAccount Account
   | AllocationAccountAlsoUnassigned Account EnvelopeId
+  | HouseholdBackingPolicyCompatibilityError BackingPolicyError
   deriving (Eq, Show)
 
 -- | Canonical household policy. The constructor stays hidden so every lookup
@@ -96,6 +110,7 @@ data HouseholdPolicyError
 data HouseholdPolicy = HouseholdPolicy
   { householdPolicyCycle                :: HouseholdCyclePolicy
   , householdBudgetPolicy               :: BudgetPolicy
+  , householdBackingPolicy              :: BackingPolicy
   , householdEnvelopeOrder              :: [EnvelopeId]
   , householdAllocationEnvelopes        :: Map Account EnvelopeId
   , householdPlanDestinationEnvelopes   :: Map Account EnvelopeId
@@ -112,11 +127,12 @@ mkHouseholdPolicy
   -> [Account]
   -> Either (NonEmpty HouseholdPolicyError) HouseholdPolicy
 mkHouseholdPolicy cyclePolicy budgetPolicy coordinates unassignedAccounts =
-  case NonEmpty.nonEmpty errors of
-    Just nonEmptyErrors -> Left nonEmptyErrors
-    Nothing -> Right HouseholdPolicy
+  case (NonEmpty.nonEmpty errors, backingPolicyResult) of
+    (Just nonEmptyErrors, _) -> Left nonEmptyErrors
+    (Nothing, Right backingPolicy) -> Right HouseholdPolicy
       { householdPolicyCycle = cyclePolicy
       , householdBudgetPolicy = budgetPolicy
+      , householdBackingPolicy = backingPolicy
       , householdEnvelopeOrder = map householdEnvelopeCoordinateId coordinates
       , householdAllocationEnvelopes = coordinateValues allocationObservation
       , householdPlanDestinationEnvelopes = coordinateValues planObservation
@@ -124,6 +140,8 @@ mkHouseholdPolicy cyclePolicy budgetPolicy coordinates unassignedAccounts =
           coordinateValues additionalPlanObservation
       , householdUnassignedBudgetAccounts = Set.fromList unassignedAccounts
       }
+    (Nothing, Left backingErrList) ->
+      Left (NonEmpty.map HouseholdBackingPolicyCompatibilityError backingErrList)
   where
     budgetEnvelopeDefinitions = budgetPolicyEnvelopeDefinitions budgetPolicy
     knownEnvelopes = Set.fromList
@@ -206,6 +224,10 @@ mkHouseholdPolicy cyclePolicy budgetPolicy coordinates unassignedAccounts =
           (coordinateValues allocationObservation)
       , Set.member account (Set.fromList unassignedAccounts)
       ]
+    backingPolicyResult = projectBudgetBackingPolicy budgetPolicy
+    backingErrors = case backingPolicyResult of
+      Left errs -> map HouseholdBackingPolicyCompatibilityError (NonEmpty.toList errs)
+      Right _ -> []
     errors =
       duplicateCoordinateErrors
         ++ unknownCoordinateErrors
@@ -215,6 +237,32 @@ mkHouseholdPolicy cyclePolicy budgetPolicy coordinates unassignedAccounts =
         ++ presenceErrors
         ++ unassignedErrors
         ++ overlapErrors
+        ++ backingErrors
+
+-- | Private one-way compatibility projection from legacy 'BudgetPolicy' to
+-- native 'BackingPolicy'.
+--
+-- 'BudgetPolicy' indexes pools and envelopes in internal Maps and does not
+-- preserve original TOML source order. This projection extracts canonical
+-- pool definitions and envelope assignments in coordinate index order.
+projectBudgetBackingPolicy
+  :: BudgetPolicy
+  -> Either (NonEmpty BackingPolicyError) BackingPolicy
+projectBudgetBackingPolicy budgetPolicy =
+  mkBackingPolicy poolDefinitions assignments
+  where
+    poolDefinitions =
+      [ defineBackingPool
+          (backingPoolDefinitionId definition)
+          (backingPoolDefinitionAssetAccounts definition)
+      | definition <- budgetPolicyBackingPoolDefinitions budgetPolicy
+      ]
+    assignments =
+      [ assignEnvelopeBackingPool
+          (envelopeDefinitionId definition)
+          (envelopeDefinitionBackingPool definition)
+      | definition <- budgetPolicyEnvelopeDefinitions budgetPolicy
+      ]
 
 householdEnvelopeForPlanDestination
   :: Account
@@ -229,6 +277,12 @@ data AccountValidatedHouseholdPolicy = AccountValidatedHouseholdPolicy
   { accountValidatedHouseholdPolicy       :: HouseholdPolicy
   , accountValidatedHouseholdBudgetPolicy :: AccountValidatedBudgetPolicy
   } deriving (Eq, Show)
+
+accountValidatedHouseholdBackingPolicy
+  :: AccountValidatedHouseholdPolicy
+  -> BackingPolicy
+accountValidatedHouseholdBackingPolicy =
+  householdBackingPolicy . accountValidatedHouseholdPolicy
 
 data HouseholdPolicyAccountError
   = HouseholdBudgetPolicyAccountError BudgetPolicyAccountError
