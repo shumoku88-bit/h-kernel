@@ -3,6 +3,7 @@
 module Main (main) where
 
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Text (Text)
 import HKernel.Backing
 import HKernel.Backing.Identity
 import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
@@ -115,30 +116,28 @@ rejectDuplicateEnvelopeClaim = do
       . NonEmpty.toList)
     (deriveBackingPoolPosition poolId (one jpy 100) emptyBalance [food, food])
 
-characterizePoolIdentity :: IO () = do
+characterizePoolIdentity :: IO ()
+characterizePoolIdentity = do
   left "empty BackingPoolId is rejected" (mkBackingPoolId "")
   left "whitespace inside BackingPoolId is rejected" (mkBackingPoolId "cash pool")
   equal "stable BackingPoolId round-trips exact text"
     "living"
     (backingPoolIdText (pool "living"))
 
-claim :: String -> Balance -> Balance -> BackedEnvelopeClaim
+claim :: Text -> Balance -> Balance -> BackedEnvelopeClaim
 claim name remaining headroom = BackedEnvelopeClaim
-  { backedEnvelopeId = envelopeString name
+  { backedEnvelopeId = envelope name
   , backedEnvelopeRemaining = remaining
   , backedEnvelopeHeadroom = headroom
   }
 
-envelopeString :: String -> EnvelopeId
-envelopeString = envelope . fromString
+pool :: Text -> BackingPoolId
+pool = mustRight . mkBackingPoolId
 
-pool :: String -> BackingPoolId
-pool = mustRight . mkBackingPoolId . fromString
-
-envelope :: T.Text -> EnvelopeId
+envelope :: Text -> EnvelopeId
 envelope = mustRight . mkEnvelopeId
 
-commodity :: T.Text -> Commodity
+commodity :: Text -> Commodity
 commodity = mustRight . mkCommodity
 
 one :: Commodity -> Integer -> Balance
