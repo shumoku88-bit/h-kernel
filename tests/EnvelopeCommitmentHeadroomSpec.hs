@@ -17,11 +17,14 @@ import HKernel.Envelope.EntitlementHistory
   )
 import HKernel.Envelope.EntitlementTransfer
 import HKernel.Envelope.ExpenseRouting
+import HKernel.Envelope.Fulfillment
+import HKernel.Envelope.FulfillmentRouting
 import HKernel.Envelope.Headroom
 import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
 import HKernel.Envelope.Remaining (calculateEnvelopeRemaining)
 import HKernel.Money
 import HKernel.Period (Period, mkPeriod, periodStart)
+import HKernel.Plan (PlanId, mkPlanId)
 import HKernel.Plan.Completion (PlanCompletionError(..))
 import HKernel.Plan.Journal (PlanJournal, parsePlanJournal)
 import System.Exit (exitFailure)
@@ -40,6 +43,7 @@ characterizeCurrentCommitment = do
       jpy = commodity "JPY"
       groceries = envelope "groceries"
       stock = envelope "stock"
+      savings = envelope "savings"
 
   equal "Commitment keeps the selected Period"
     period
@@ -47,22 +51,25 @@ characterizeCurrentCommitment = do
   equal "Commitment keeps the inclusive observation day"
     observedDay
     (envelopeCommitmentObservedThrough commitment)
-  equal "overdue and future-in-period open Plans both bind current intent"
+  equal "overdue and future-in-period open Expense Plans bind current intent"
     (one jpy 160)
     (envelopeCommitmentFor groceries commitment)
   equal "whole multi-posting Plan Expense coordinates are routed independently"
     (one jpy 20)
     (envelopeCommitmentFor stock commitment)
+  equal "explicit non-Expense target Plan also binds its Envelope"
+    (one jpy 25)
+    (envelopeCommitmentFor savings commitment)
   equal "explicit non-Envelope Plan Expense remains separate evidence"
     (Just (one jpy 7))
     (Map.lookup (account "expenses:unmanaged")
       (envelopeCommitmentUnmanaged commitment))
-  equal "missing Plan route remains attention evidence"
+  equal "missing Expense Plan route remains attention evidence"
     (Just (one jpy 8))
     (Map.lookup (account "expenses:unrouted")
       (envelopeCommitmentUnrouted commitment))
-  equal "Liability destination does not invent an Envelope claim"
-    2
+  equal "unrouted Liability destination does not invent an Envelope claim"
+    3
     (length (envelopeCommitmentEntries commitment))
 
 characterizeHistoricalIntent :: IO ()
@@ -75,9 +82,12 @@ characterizeHistoricalIntent = do
   equal "future retirement and completion do not rewrite an earlier observation"
     (one jpy 260)
     (envelopeCommitmentFor oldFood commitment)
-  equal "open Plan routing follows intent effective at the observation day"
+  equal "open Expense Plan routing follows intent effective at the observation day"
     emptyBalance
     (envelopeCommitmentFor groceries commitment)
+  equal "future-in-period target fulfillment Plan already reserves headroom"
+    (one jpy 25)
+    (envelopeCommitmentFor (envelope "savings") commitment)
 
 rejectUnknownCompletionPlan :: IO ()
 rejectUnknownCompletionPlan =
@@ -89,7 +99,8 @@ rejectUnknownCompletionPlan =
       observedDay
       planJournal
       (mustRight (parseActualJournal unknownCompletionSource))
-      routing)
+      expenseRouting
+      fulfillmentRouting)
   where
     isUnknown err = case err of
       EnvelopeCommitmentCompletionError
@@ -102,20 +113,31 @@ characterizeHeadroom = do
       entitlement = mustRight
         (observeEnvelopeEntitlement period observedDay entitlementHistory)
       consumption = mustRight
-        (observeEnvelopeConsumption period observedDay actual routing)
-      remaining = mustRight (calculateEnvelopeRemaining entitlement consumption)
+        (observeEnvelopeConsumption period observedDay actual expenseRouting)
+      fulfillment = mustRight
+        (observeEnvelopeFulfillment
+          period
+          observedDay
+          planJournal
+          actual
+          fulfillmentRouting)
+      remaining = mustRight
+        (calculateEnvelopeRemaining entitlement consumption fulfillment)
       commitment = commitmentThrough observedDay period actualSource
       headroom = mustRight (calculateEnvelopeHeadroom remaining commitment)
       jpy = commodity "JPY"
 
-  equal "Headroom subtracts posted Actual and still-open Plan commitment"
+  equal "Headroom subtracts posted Actual and still-open Expense commitment"
     (one jpy 80)
     (envelopeHeadroomFor (envelope "groceries") headroom)
   equal "multi-posting stock commitment reduces only its routed Envelope"
     (one jpy 80)
     (envelopeHeadroomFor (envelope "stock") headroom)
-  equal "unmanaged and unrouted Plan evidence does not invent Headroom coordinates"
-    2
+  equal "target fulfillment Plan reserves non-Expense Envelope headroom"
+    (one jpy 25)
+    (envelopeHeadroomFor (envelope "savings") headroom)
+  equal "unmanaged and unrouted Expense Plan evidence does not invent Headroom coordinates"
+    3
     (length (envelopeHeadroomEntries headroom))
 
 rejectHeadroomMisalignment :: IO ()
@@ -124,8 +146,16 @@ rejectHeadroomMisalignment = do
       entitlement = mustRight
         (observeEnvelopeEntitlement period observedDay entitlementHistory)
       consumption = mustRight
-        (observeEnvelopeConsumption period observedDay actual routing)
-      remaining = mustRight (calculateEnvelopeRemaining entitlement consumption)
+        (observeEnvelopeConsumption period observedDay actual expenseRouting)
+      fulfillment = mustRight
+        (observeEnvelopeFulfillment
+          period
+          observedDay
+          planJournal
+          actual
+          fulfillmentRouting)
+      remaining = mustRight
+        (calculateEnvelopeRemaining entitlement consumption fulfillment)
       earlierCommitment = commitmentThrough (day 9) period actualSource
       september = mustRight
         (mkPeriod (fromGregorian 2026 9 1) (fromGregorian 2026 10 1))
@@ -144,23 +174,35 @@ commitmentThrough observedThrough selectedPeriod actualText =
       observedThrough
       planJournal
       (mustRight (parseActualJournal actualText))
-      routing)
+      expenseRouting
+      fulfillmentRouting)
 
 planJournal :: PlanJournal
 planJournal = mustRight (parsePlanJournal planSource)
 
-routing :: ExpenseRoutingHistory
-routing = mustRight (mkExpenseRoutingHistory
-  [ route (day 1) "expenses:food" (ManagedByEnvelope (envelope "food-old"))
-  , route (day 6) "expenses:food" (ManagedByEnvelope (envelope "groceries"))
-  , route (day 1) "expenses:stock" (ManagedByEnvelope (envelope "stock"))
-  , route (day 1) "expenses:unmanaged" NotEnvelopeManaged
+expenseRouting :: ExpenseRoutingHistory
+expenseRouting = mustRight (mkExpenseRoutingHistory
+  [ expenseRoute (day 1) "expenses:food" (ManagedByEnvelope (envelope "food-old"))
+  , expenseRoute (day 6) "expenses:food" (ManagedByEnvelope (envelope "groceries"))
+  , expenseRoute (day 1) "expenses:stock" (ManagedByEnvelope (envelope "stock"))
+  , expenseRoute (day 1) "expenses:unmanaged" NotEnvelopeManaged
+  ])
+
+fulfillmentRouting :: FulfillmentRoutingHistory
+fulfillmentRouting = mustRight (mkFulfillmentRoutingHistory
+  [ FulfillmentRoutingDecision
+      { fulfillmentRoutingEffectiveFrom = day 1
+      , fulfillmentRoutingPlanId = planId "p-save"
+      , fulfillmentRoutingRoute = FulfillsEnvelope (envelope "savings")
+      , fulfillmentRoutingNote = "test"
+      }
   ])
 
 entitlementHistory :: EnvelopeEntitlementHistory
 entitlementHistory = mustRight (mkEnvelopeEntitlementHistory
   [ grant (envelope "groceries") 300
   , grant (envelope "stock") 100
+  , grant (envelope "savings") 50
   ])
   where
     grant target quantity = mustRight
@@ -217,6 +259,11 @@ planSource = declarations <> T.unlines
   , "    expenses:food     10 JPY"
   , "    expenses:stock    20 JPY"
   , ""
+  , "2026-08-24 * save to explicit target"
+  , "    ; plan-id: p-save"
+  , "    assets:cash       -25 JPY"
+  , "    assets:savings     25 JPY"
+  , ""
   , "2026-08-26 * liability settlement"
   , "    ; plan-id: p-liability"
   , "    assets:cash        -15 JPY"
@@ -263,6 +310,10 @@ declarations = T.unlines
   , "    type: Asset"
   , "    commodity: JPY"
   , ""
+  , "account assets:savings"
+  , "    type: Asset"
+  , "    commodity: JPY"
+  , ""
   , "account expenses:food"
   , "    type: Expense"
   , "    commodity: JPY"
@@ -291,6 +342,10 @@ actualDeclarations = T.unlines
   , "    type: Asset"
   , "    commodity: JPY"
   , ""
+  , "account assets:savings"
+  , "    type: Asset"
+  , "    commodity: JPY"
+  , ""
   , "account expenses:food"
   , "    type: Expense"
   , "    commodity: JPY"
@@ -310,14 +365,17 @@ day = fromGregorian 2026 8
 account :: T.Text -> Account
 account = mustRight . mkAccount
 
+planId :: T.Text -> PlanId
+planId = mustRight . mkPlanId
+
 envelope :: T.Text -> EnvelopeId
 envelope = mustRight . mkEnvelopeId
 
 commodity :: T.Text -> Commodity
 commodity = mustRight . mkCommodity
 
-route :: Day -> T.Text -> ExpenseRoute -> ExpenseRoutingDecision
-route effectiveFrom accountName routeValue = ExpenseRoutingDecision
+expenseRoute :: Day -> T.Text -> ExpenseRoute -> ExpenseRoutingDecision
+expenseRoute effectiveFrom accountName routeValue = ExpenseRoutingDecision
   { expenseRoutingEffectiveFrom = effectiveFrom
   , expenseRoutingAccount = account accountName
   , expenseRoutingRoute = routeValue

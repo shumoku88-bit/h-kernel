@@ -27,6 +27,14 @@ import HKernel.Envelope.Entitlement
   , envelopeEntitlementObservedThrough
   , envelopeEntitlementPeriod
   )
+import HKernel.Envelope.Fulfillment
+  ( EnvelopeFulfillment
+  , envelopeFulfillmentEntries
+  , envelopeFulfillmentFor
+  , envelopeFulfillmentObservedThrough
+  , envelopeFulfillmentPeriod
+  , fulfillmentNet
+  )
 import HKernel.Envelope.Identity (EnvelopeId)
 import HKernel.Money
   ( Balance
@@ -36,11 +44,12 @@ import HKernel.Money
   )
 import HKernel.Period (Period)
 
--- | Exact spendable remainder after Actual consumption.
+-- | Exact spendable remainder after posted Actual use.
 --
--- This is a projection only. Negative values are valid overspending evidence;
--- current policy, presentation order, unmanaged activity, and unrouted attention
--- remain outside this arithmetic owner.
+-- Expense Consumption and explicit non-Expense target Fulfillment are separate
+-- evidence owners, then meet only in this arithmetic projection. Negative values
+-- remain valid overspending evidence; current policy, presentation order, and
+-- routing attention stay outside this owner.
 data EnvelopeRemaining = EnvelopeRemaining
   { envelopeRemainingPeriod          :: Period
   , envelopeRemainingObservedThrough :: Day
@@ -50,20 +59,24 @@ data EnvelopeRemaining = EnvelopeRemaining
 data EnvelopeRemainingError
   = EnvelopeRemainingPeriodMismatch Period Period
   | EnvelopeRemainingObservationMismatch Day Day
+  | EnvelopeRemainingFulfillmentPeriodMismatch Period Period
+  | EnvelopeRemainingFulfillmentObservationMismatch Day Day
   deriving (Eq, Show)
 
--- | Align two already-derived observations and subtract exact Actual
--- consumption from exact entitlement at every Envelope coordinate mentioned by
--- either side. Total lookups make policy-driven zero filling unnecessary.
 calculateEnvelopeRemaining
   :: EnvelopeEntitlement
   -> EnvelopeConsumption
+  -> EnvelopeFulfillment
   -> Either EnvelopeRemainingError EnvelopeRemaining
-calculateEnvelopeRemaining entitlement consumption
+calculateEnvelopeRemaining entitlement consumption fulfillment
   | entitlementPeriod /= consumptionPeriod =
       Left (EnvelopeRemainingPeriodMismatch entitlementPeriod consumptionPeriod)
   | entitlementDay /= consumptionDay =
       Left (EnvelopeRemainingObservationMismatch entitlementDay consumptionDay)
+  | entitlementPeriod /= fulfillmentPeriod =
+      Left (EnvelopeRemainingFulfillmentPeriodMismatch entitlementPeriod fulfillmentPeriod)
+  | entitlementDay /= fulfillmentDay =
+      Left (EnvelopeRemainingFulfillmentObservationMismatch entitlementDay fulfillmentDay)
   | otherwise = Right EnvelopeRemaining
       { envelopeRemainingPeriod = entitlementPeriod
       , envelopeRemainingObservedThrough = entitlementDay
@@ -76,17 +89,22 @@ calculateEnvelopeRemaining entitlement consumption
   where
     entitlementPeriod = envelopeEntitlementPeriod entitlement
     consumptionPeriod = envelopeConsumptionPeriod consumption
+    fulfillmentPeriod = envelopeFulfillmentPeriod fulfillment
     entitlementDay = envelopeEntitlementObservedThrough entitlement
     consumptionDay = envelopeConsumptionObservedThrough consumption
+    fulfillmentDay = envelopeFulfillmentObservedThrough fulfillment
     coordinates :: Set EnvelopeId
     coordinates = Set.fromList
       ( map fst (envelopeEntitlementEntries entitlement)
           ++ map fst (envelopeConsumptionEntries consumption)
+          ++ map fst (envelopeFulfillmentEntries fulfillment)
       )
     remainingFor envelope =
       envelopeEntitlementBalance envelope entitlement
         `subtractBalance`
           consumptionNet (envelopeConsumptionFor envelope consumption)
+        `subtractBalance`
+          fulfillmentNet (envelopeFulfillmentFor envelope fulfillment)
 
 envelopeRemainingFor :: EnvelopeId -> EnvelopeRemaining -> Balance
 envelopeRemainingFor envelope =

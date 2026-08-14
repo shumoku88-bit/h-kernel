@@ -21,6 +21,11 @@ import HKernel.Envelope.ExpenseRouting
   , ExpenseRoutingHistory
   , expenseRouteAt
   )
+import HKernel.Envelope.FulfillmentRouting
+  ( FulfillmentRoute(..)
+  , FulfillmentRoutingHistory
+  , fulfillmentRouteAt
+  )
 import HKernel.Envelope.Identity (EnvelopeId)
 import HKernel.Journal (journalAccountRegistry)
 import HKernel.Ledger
@@ -41,23 +46,25 @@ import HKernel.Money
 import HKernel.Period (Period, periodContains, periodEndExclusive)
 import HKernel.Plan.Completion (PlanCompletionError)
 import HKernel.Plan.Journal
-  ( PlanClassificationError
+  ( PlanClassificationError(..)
   , PlanJournal
   , PlanLifecycleError
+  , identifiedPlanId
   , identifiedPlanTransaction
   , planJournalValue
   )
 import HKernel.Plan.Open
-  ( OpenOutgoingPlanError(..)
-  , resolveOpenOutgoingPlanTransactionsAt
+  ( PlanObservationError(..)
+  , resolveOpenPlanTransactionsAt
   )
 
--- | Open Plan Expense commitments at one resolved period/day observation.
+-- | Open Plan commitments against Envelope headroom at one resolved period/day
+-- observation.
 --
--- Managed Envelope claims, explicit non-Envelope Plans, and missing-route
--- attention remain separate. Only Expense postings enter this projection;
--- Liability settlement remains a funding commitment for Backing rather than an
--- Envelope consumption claim.
+-- Expense destinations use Account routing. Explicit non-Expense fulfillment
+-- intent such as savings, investment, or debt goals belongs to stable PlanId.
+-- Ordinary non-Expense postings in unrelated Plans therefore do not inherit
+-- Envelope meaning from a shared Account coordinate.
 data EnvelopeCommitment = EnvelopeCommitment
   { envelopeCommitmentPeriod          :: Period
   , envelopeCommitmentObservedThrough :: Day
@@ -73,39 +80,43 @@ data EnvelopeCommitmentError
   | EnvelopeCommitmentCompletionError PlanCompletionError
   deriving (Eq, Show)
 
--- | Observe still-open outgoing Plan Expense postings through one inclusive
--- observation day.
+-- | Observe still-open Plan use through one inclusive observation day.
 --
--- Plan lifecycle/completion meaning is owned by 'HKernel.Plan.Open'. This owner
--- applies only the Envelope horizon and routing meanings: overdue open Plans
--- remain binding, while Plans at or beyond the next Period boundary do not
--- consume current headroom.
+-- Plan lifecycle/completion meaning is owned by the role-neutral observer in
+-- 'HKernel.Plan.Open'. This matters because an Asset-to-Asset target Plan is a
+-- valid Envelope commitment even though generic accounting role classification
+-- does not call it an outgoing Expense/Liability payment.
 --
--- Open Plans use the routing decision effective at the observation day: unlike
--- posted Actuals, they are still household intent and may move when current
--- Envelope policy changes. Whole multi-posting Plan transactions are retained;
--- each positive Expense posting is routed independently.
+-- Expense postings remain conservative: a Plan that claims positive Expense
+-- use must contain an Asset funding source. Non-Expense positive postings never
+-- claim Envelope headroom from their Account alone; they require an explicit
+-- PlanId fulfillment route. Open routed Plans use the route effective at the
+-- observation day because they remain current household intent.
 observeEnvelopeCommitment
   :: Period
   -> Day
   -> PlanJournal
   -> ActualJournal
   -> ExpenseRoutingHistory
+  -> FulfillmentRoutingHistory
   -> Either (NonEmpty EnvelopeCommitmentError) EnvelopeCommitment
-observeEnvelopeCommitment period observedThrough plans actual routing
+observeEnvelopeCommitment period observedThrough plans actual expenseRouting fulfillmentRouting
   | not (periodContains period observedThrough) =
       Left (EnvelopeCommitmentObservationOutsidePeriod observedThrough period NonEmpty.:| [])
   | otherwise = do
-      openPlans <- mapErrors mapOpenPlanError
-        (resolveOpenOutgoingPlanTransactionsAt observedThrough plans actual)
+      openPlans <- mapErrors mapPlanObservationError
+        (resolveOpenPlanTransactionsAt observedThrough plans actual)
       let openInHorizon =
             [ identified
             | identified <- openPlans
             , transactionDate (identifiedPlanTransaction identified)
                 < periodEndExclusive period
             ]
-          (managed, unmanaged, unrouted) =
-            foldl collectPlan (Map.empty, Map.empty, Map.empty) openInHorizon
+      validated <- case traverse validateRelevantPlan openInHorizon of
+        Left err -> Left (err NonEmpty.:| [])
+        Right values -> Right values
+      let (managed, unmanaged, unrouted) =
+            foldl collectPlan (Map.empty, Map.empty, Map.empty) validated
       Right EnvelopeCommitment
         { envelopeCommitmentPeriod = period
         , envelopeCommitmentObservedThrough = observedThrough
@@ -116,32 +127,55 @@ observeEnvelopeCommitment period observedThrough plans actual routing
   where
     registry = journalAccountRegistry (planJournalValue plans)
 
+    validateRelevantPlan identified
+      | hasPositiveExpense && not hasNegativeAsset =
+          Left (EnvelopeCommitmentPlanClassificationError
+            (UnsupportedPlanRoleFlow (identifiedPlanId identified)))
+      | otherwise = Right identified
+      where
+        postings = NonEmpty.toList
+          (transactionPostings (identifiedPlanTransaction identified))
+        hasPositiveExpense = any isPositiveExpense postings
+        hasNegativeAsset = any isNegativeAsset postings
+        isPositiveExpense posting =
+          accountTypeFor (postingAccount posting) registry == Just Expense
+            && amountQuantity (postingAmount posting) > zeroQuantity
+        isNegativeAsset posting =
+          accountTypeFor (postingAccount posting) registry == Just Asset
+            && amountQuantity (postingAmount posting) < zeroQuantity
+
     collectPlan totals identified =
-      foldl collectPosting totals
+      foldl (collectPosting planFulfillmentRoute) totals
         (NonEmpty.toList
           (transactionPostings (identifiedPlanTransaction identified)))
+      where
+        planFulfillmentRoute =
+          fulfillmentRouteAt observedThrough (identifiedPlanId identified) fulfillmentRouting
 
-    collectPosting totals posting
-      | accountTypeFor account registry /= Just Expense = totals
+    collectPosting planFulfillmentRoute totals posting
       | amountQuantity amount <= zeroQuantity = totals
-      | otherwise = case expenseRouteAt observedThrough account routing of
-          Just (ManagedByEnvelope envelope) ->
+      | accountTypeFor account registry == Just Expense =
+          case expenseRouteAt observedThrough account expenseRouting of
+            Just (ManagedByEnvelope envelope) ->
+              firstMap (addAt envelope amount) totals
+            Just NotEnvelopeManaged ->
+              secondMap (addAt account amount) totals
+            Nothing ->
+              thirdMap (addAt account amount) totals
+      | otherwise = case planFulfillmentRoute of
+          Just (FulfillsEnvelope envelope) ->
             firstMap (addAt envelope amount) totals
-          Just NotEnvelopeManaged ->
-            secondMap (addAt account amount) totals
-          Nothing ->
-            thirdMap (addAt account amount) totals
+          Just NotFulfillmentTarget -> totals
+          Nothing -> totals
       where
         account = postingAccount posting
         amount = postingAmount posting
 
-mapOpenPlanError :: OpenOutgoingPlanError -> EnvelopeCommitmentError
-mapOpenPlanError err = case err of
-  OpenOutgoingPlanLifecycleError lifecycleError ->
+mapPlanObservationError :: PlanObservationError -> EnvelopeCommitmentError
+mapPlanObservationError err = case err of
+  PlanObservationLifecycleError lifecycleError ->
     EnvelopeCommitmentPlanLifecycleError lifecycleError
-  OpenOutgoingPlanClassificationError classificationError ->
-    EnvelopeCommitmentPlanClassificationError classificationError
-  OpenOutgoingPlanCompletionError completionError ->
+  PlanObservationCompletionError completionError ->
     EnvelopeCommitmentCompletionError completionError
 
 addAt :: Ord key => key -> Amount -> Map.Map key Balance -> Map.Map key Balance
