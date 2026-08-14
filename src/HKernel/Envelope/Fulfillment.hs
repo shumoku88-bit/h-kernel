@@ -42,6 +42,7 @@ import HKernel.Money
   , amountQuantity
   , emptyBalance
   , singletonBalance
+  , subtractBalance
   , zeroQuantity
   )
 import HKernel.Period (Period, periodContains)
@@ -95,15 +96,6 @@ instance Monoid FulfillmentAmounts where
 fulfillmentNet :: FulfillmentAmounts -> Balance
 fulfillmentNet amounts =
   fulfillmentApplied amounts `subtractBalance` fulfillmentReversed amounts
-  where
-    subtractBalance left right =
-      addBalance left (negateBalance right)
-    negateBalance = foldr subtractAmount emptyBalance . balanceAmounts
-    subtractAmount amount = addBalance . singletonBalance . negateAmount
-    negateAmount = HKernel.Money.negateAmount
-
--- The explicit local definition above keeps FulfillmentAmounts independent of
--- any Account aggregation. The concrete helpers are imported qualified below.
 
 data EnvelopeFulfillment = EnvelopeFulfillment
   { envelopeFulfillmentPeriod          :: Period
@@ -115,7 +107,9 @@ data EnvelopeFulfillmentError
   = EnvelopeFulfillmentObservationOutsidePeriod Day Period
   | EnvelopeFulfillmentPlanObservationError OpenOutgoingPlanError
   | EnvelopeFulfillmentCompletionShapeError PlanCompletionShapeError
-  | EnvelopeFulfillmentActualFulfillsMultiplePlans ActualTransactionId (NonEmpty.NonEmpty PlanId)
+  | EnvelopeFulfillmentActualFulfillsMultiplePlans
+      ActualTransactionId
+      (NonEmpty.NonEmpty PlanId)
   deriving (Eq, Show)
 
 -- | Observe completed non-Expense target Plans and their typed reversal chains
@@ -150,10 +144,11 @@ observeEnvelopeFulfillment period observedThrough plans actual routing
       rejectAmbiguousRoutedActuals routed
       validated <- validateCompleted routed
       let fulfillmentByRoot = Map.fromList
-            [ (actualId, (envelope, targetBalance pair))
+            [ (actualId, (envelope, balance))
             | (pair, envelope) <- validated
             , let actualId = identifiedActualId (completedOutgoingActual pair)
-            , targetBalance pair /= emptyBalance
+                  balance = targetBalance pair
+            , balance /= emptyBalance
             ]
           managed = foldr (observeEntry fulfillmentByRoot) Map.empty visibleEntries
       Right EnvelopeFulfillment
