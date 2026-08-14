@@ -3,12 +3,11 @@
 --
 -- Stable Household policy is admitted by 'HKernel.Household.Config' and checked
 -- against the canonical AccountRegistry before it reaches this module. This
--- adapter owns only the interpretation of ordered movements as named
--- Consumption, Entitlement, and Remaining calculations.
+-- adapter owns only the interpretation of ordered movements as native Expense
+-- Consumption plus compatibility Entitlement and Remaining calculations.
 module HKernel.Household.BudgetObservation
   ( HouseholdBudgetObservation
   , householdBudgetObservationPolicy
-  , householdBudgetConsumption
   , householdEnvelopeConsumption
   , householdBudgetEntitlement
   , householdBudgetRemaining
@@ -21,7 +20,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import Data.Time.Calendar (Day)
 import HKernel.Account (Account)
-import HKernel.Actual.Journal (ActualJournal, actualJournalValue)
+import HKernel.Actual.Journal (ActualJournal)
 import HKernel.Budget
   ( BudgetChange
   , BudgetChangeError
@@ -35,11 +34,6 @@ import HKernel.Budget
   , mkBudgetChange
   , mkBudgetCycle
   , mkBudgetObservation
-  )
-import HKernel.Budget.Consumption
-  ( BudgetConsumption
-  , ConsumptionError
-  , calculateBudgetConsumption
   )
 import HKernel.Budget.Entitlement
   ( BudgetEntitlement
@@ -59,7 +53,7 @@ import HKernel.Budget.Policy
 import HKernel.Budget.Remaining
   ( BudgetRemaining
   , RemainingError
-  , calculateBudgetRemaining
+  , calculateBudgetRemainingFromEnvelopeConsumption
   )
 import HKernel.Envelope.Consumption
   ( EnvelopeConsumption
@@ -84,9 +78,13 @@ import HKernel.Period (Period, periodEndExclusive, periodStart)
 
 -- | Aligned household budget results and the exact validated policy that
 -- produced them.
+--
+-- Legacy 'BudgetConsumption' is deliberately absent: Actual Expense ownership
+-- has migrated to 'EnvelopeConsumption'. Entitlement and Remaining are retained
+-- as compatibility surfaces until their Envelope-native owners are connected to
+-- production Household sources.
 data HouseholdBudgetObservation = HouseholdBudgetObservation
   { householdBudgetObservationPolicy :: HouseholdPolicy
-  , householdBudgetConsumption       :: BudgetConsumption
   , householdEnvelopeConsumption     :: EnvelopeConsumption
   , householdBudgetEntitlement       :: BudgetEntitlement
   , householdBudgetRemaining         :: BudgetRemaining
@@ -95,7 +93,6 @@ data HouseholdBudgetObservation = HouseholdBudgetObservation
 data HouseholdBudgetError
   = HouseholdBudgetCycleError BudgetCycleError
   | HouseholdBudgetObservationError BudgetObservationError
-  | HouseholdBudgetConsumptionError ConsumptionError
   | HouseholdEnvelopeConsumptionError EnvelopeConsumptionError
   | HouseholdBudgetChangeError Day BudgetChangeError
   | HouseholdBudgetHistoryError BudgetHistoryError
@@ -157,24 +154,21 @@ calculateHouseholdBudgetObservation
   -> HouseholdBudgetEvidence
   -> Either (NonEmpty HouseholdBudgetError) HouseholdBudgetObservation
 calculateHouseholdBudgetObservation actualJournal evidence = do
-  consumption <- singleLeft HouseholdBudgetConsumptionError
-    (calculateBudgetConsumption observation validatedBudgetPolicy journal)
   envelopeConsumption <- singleLeft HouseholdEnvelopeConsumptionError
     (observeEnvelopeConsumption period observedThrough actualJournal
       (legacyStaticExpenseRouteResolver validatedBudgetPolicy))
   entitlement <- mapLeft (fmap HouseholdBudgetEntitlementError)
     (calculateBudgetEntitlement observation budgetPolicy history)
   remaining <- mapLeft (fmap HouseholdBudgetRemainingError)
-    (calculateBudgetRemaining entitlement consumption)
+    (calculateBudgetRemainingFromEnvelopeConsumption
+      entitlement envelopeConsumption)
   Right HouseholdBudgetObservation
     { householdBudgetObservationPolicy = policy
-    , householdBudgetConsumption = consumption
     , householdEnvelopeConsumption = envelopeConsumption
     , householdBudgetEntitlement = entitlement
     , householdBudgetRemaining = remaining
     }
   where
-    journal = actualJournalValue actualJournal
     observation = householdBudgetEvidenceObservation evidence
     period = householdBudgetEvidencePeriod evidence
     observedThrough = budgetObservationObservedThrough observation
@@ -185,12 +179,12 @@ calculateHouseholdBudgetObservation actualJournal evidence = do
       accountValidatedHouseholdBudgetPolicy validatedPolicy
     history = householdBudgetEvidenceHistory evidence
 
--- | Adapt a static 'BudgetPolicy' into an 'ExpenseRouteResolver' for
--- side-by-side characterization during Envelope-native migration.
+-- | Adapt the current static 'BudgetPolicy' into the native Expense route
+-- resolver while production @expense_routing.tsv@ is not connected yet.
 --
--- Legacy semantics ignore transaction dates and route exclusively through
--- the static Account-to-Envelope mapping. 'NotEnvelopeManaged' is never
--- generated; unmapped accounts remain 'Nothing' (unrouted).
+-- Static compatibility semantics ignore transaction dates and route exclusively
+-- through Account-to-Envelope policy membership. 'NotEnvelopeManaged' is never
+-- invented; unmapped Expense Accounts remain 'Nothing' (unrouted).
 legacyStaticExpenseRouteResolver
   :: AccountValidatedBudgetPolicy
   -> ExpenseRouteResolver
