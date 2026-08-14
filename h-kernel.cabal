@@ -44,6 +44,8 @@ library
                     , HKernel.Envelope.EntitlementHistory
                     , HKernel.Envelope.EntitlementTSV
                     , HKernel.Envelope.EntitlementTransfer
+                    , HKernel.Envelope.ExpenseRouting
+                    , HKernel.Envelope.ExpenseRouting.TSV
                     , HKernel.Envelope.Identity
                     , HKernel.Envelope.Mode
                     , HKernel.Envelope.Render
@@ -462,6 +464,15 @@ test-suite h-kernel-budget-history-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BudgetHistorySpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+
+test-suite h-kernel-envelope-expense-routing-test
+    import:           test-defaults
+    type:             exitcode-stdio-1.0
+    main-is:          EnvelopeExpenseRoutingSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
