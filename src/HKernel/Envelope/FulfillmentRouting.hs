@@ -5,7 +5,7 @@ module HKernel.Envelope.FulfillmentRouting
   , FulfillmentRoutingHistoryError(..)
   , FulfillmentRoutingReferenceError(..)
   , mkFulfillmentRoutingHistory
-  , admitFulfillmentRoutingPlanReferences
+  , admitFulfillmentRoutingReferences
   , fulfillmentRoutingHistoryDecisions
   , fulfillmentRoutingDecisionAt
   , fulfillmentRouteAt
@@ -17,7 +17,11 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time.Calendar (Day)
-import HKernel.Envelope.Identity (EnvelopeId)
+import HKernel.Envelope.Identity
+  ( EnvelopeId
+  , EnvelopeRegistry
+  , envelopeRegistryContains
+  )
 import HKernel.Plan (PlanId)
 
 -- | Whether one stable Plan currently represents fulfillment of an Envelope.
@@ -48,11 +52,12 @@ data FulfillmentRoutingHistoryError
   = DuplicateFulfillmentRoutingDecision PlanId Day
   deriving (Eq, Show)
 
--- | A source-admitted routing decision may still dangle across the Plan source
--- boundary. This error names the historical decision coordinate without
--- retaining any private source row.
+-- | A source-admitted routing decision may still dangle across stable identity
+-- boundaries. Errors retain the historical Plan/day coordinate without keeping
+-- any private source row.
 data FulfillmentRoutingReferenceError
   = UnknownFulfillmentRoutingPlan PlanId Day
+  | UnknownFulfillmentRoutingEnvelope PlanId Day EnvelopeId
   deriving (Eq, Show)
 
 mkFulfillmentRoutingHistory
@@ -73,37 +78,53 @@ mkFulfillmentRoutingHistory decisions =
       , count > 1
       ]
 
--- | Admit the Plan references of an already source-admitted routing history.
+-- | Admit the stable references of an already source-admitted routing history.
 --
 -- Plan existence is independent from current Plan lifecycle. A completed,
 -- cancelled, or superseded historical Plan therefore remains a valid routing
 -- coordinate as long as its stable PlanId belongs to the admitted Plan identity
 -- universe supplied by the caller.
 --
--- This boundary deliberately does not validate the Envelope target against
--- current TOML or infer an Envelope registry from entitlement activity. The
--- historical Envelope identity owner is a separate unresolved migration
--- question; using current policy here would silently rewrite old intent.
+-- Envelope target existence is checked against the stable EnvelopeRegistry,
+-- never against current TOML. Removing an Envelope from current policy cannot
+-- retroactively invalidate an earlier fulfillment decision. Likewise this
+-- boundary does not infer identity existence from entitlement activity; an
+-- Envelope may exist before it receives any allocation.
 --
--- Errors accumulate in source order so every dangling Plan decision remains
--- visible to the caller.
-admitFulfillmentRoutingPlanReferences
+-- Errors accumulate in source order. If one decision has both an unknown Plan
+-- and unknown Envelope target, both dangling coordinates remain visible.
+admitFulfillmentRoutingReferences
   :: [PlanId]
+  -> EnvelopeRegistry
   -> FulfillmentRoutingHistory
   -> Either (NonEmpty FulfillmentRoutingReferenceError) FulfillmentRoutingHistory
-admitFulfillmentRoutingPlanReferences knownPlans history =
+admitFulfillmentRoutingReferences knownPlans envelopeRegistry history =
   case NonEmpty.nonEmpty errors of
     Nothing -> Right history
     Just found -> Left found
   where
     known = Set.fromList knownPlans
-    errors =
+    errors = concatMap referenceErrors
+      (fulfillmentRoutingHistoryDecisions history)
+
+    referenceErrors decision = planErrors decision ++ envelopeErrors decision
+
+    planErrors decision =
       [ UnknownFulfillmentRoutingPlan
           (fulfillmentRoutingPlanId decision)
           (fulfillmentRoutingEffectiveFrom decision)
-      | decision <- fulfillmentRoutingHistoryDecisions history
-      , fulfillmentRoutingPlanId decision `Set.notMember` known
+      | fulfillmentRoutingPlanId decision `Set.notMember` known
       ]
+
+    envelopeErrors decision = case fulfillmentRoutingRoute decision of
+      NotFulfillmentTarget -> []
+      FulfillsEnvelope envelope ->
+        [ UnknownFulfillmentRoutingEnvelope
+            (fulfillmentRoutingPlanId decision)
+            (fulfillmentRoutingEffectiveFrom decision)
+            envelope
+        | not (envelopeRegistryContains envelope envelopeRegistry)
+        ]
 
 fulfillmentRoutingDecisionAt
   :: Day

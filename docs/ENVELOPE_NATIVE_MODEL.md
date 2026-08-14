@@ -43,8 +43,21 @@ intent, not a property inferred from the target Account.
 
 ## Envelope identity and current policy
 
-Each spendable Envelope has a stable identity. Current operational policy may
-assign:
+Each spendable Envelope has a stable `EnvelopeId`. The admitted historical
+identity universe is owned by `EnvelopeRegistry`, independently from current
+configuration.
+
+The Registry contains existence only. It does not carry label, mode,
+BackingPool, Expense routing, allocation amount, or active/retired state. Those
+coordinates have different lifetimes. In particular, removing an Envelope from
+current policy must not make its historical identity cease to exist, and an
+Envelope may exist before receiving any entitlement.
+
+The physical source that will populate the canonical Registry remains unfixed.
+It may eventually be derived from an append-only declaration history, but current
+TOML must not be treated as retrospective identity authority.
+
+Current operational policy may assign:
 
 - a human label,
 - an Envelope mode,
@@ -168,11 +181,11 @@ effective_from / plan_id / route / target / note
 ```
 
 That admission establishes physical syntax only. The canonical Household path,
-writer authority, snapshot participation, and historical Envelope identity
-registry are still deliberately unfixed. Cross-source Plan existence is a
-separate named admission boundary. Historical Envelope targets must not be
-validated by replaying current TOML, because that would silently rewrite old
-intent.
+writer authority, and snapshot participation are still deliberately unfixed.
+Cross-source admission proves both that the PlanId belongs to the admitted Plan
+identity universe and that a `FulfillsEnvelope` target belongs to the stable
+EnvelopeRegistry. A historical target is never validated by replaying current
+TOML, because that would silently rewrite old intent.
 
 ## Plan observation and commitment
 

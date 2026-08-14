@@ -8,7 +8,12 @@ import Data.Time.Calendar (Day, fromGregorian)
 import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.Envelope.Fulfillment
 import HKernel.Envelope.FulfillmentRouting
-import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
+import HKernel.Envelope.Identity
+  ( EnvelopeId
+  , EnvelopeRegistryError(..)
+  , mkEnvelopeId
+  , mkEnvelopeRegistry
+  )
 import HKernel.Money
 import HKernel.Period (Period, mkPeriod)
 import HKernel.Plan (PlanId, mkPlanId)
@@ -118,46 +123,87 @@ routingAdmissionLaw = do
         ]
       knownHistoricalPlan = planId "p-retired-historical"
       missingPlan = planId "p-missing"
-      referenceHistory = mustRight (mkFulfillmentRoutingHistory
+      historicalEnvelope = envelope "historical"
+      missingEnvelope = envelope "missing-envelope"
+      registry = mustRight (mkEnvelopeRegistry [historicalEnvelope])
+      knownHistory = mustRight (mkFulfillmentRoutingHistory
         [ FulfillmentRoutingDecision
             { fulfillmentRoutingEffectiveFrom = day 2
             , fulfillmentRoutingPlanId = knownHistoricalPlan
-            , fulfillmentRoutingRoute = FulfillsEnvelope (envelope "historical")
-            , fulfillmentRoutingNote = "historical Plan remains referable"
+            , fulfillmentRoutingRoute = FulfillsEnvelope historicalEnvelope
+            , fulfillmentRoutingNote = "historical identities remain referable"
             }
-        , FulfillmentRoutingDecision
+        ])
+      missingPlanHistory = mustRight (mkFulfillmentRoutingHistory
+        [ FulfillmentRoutingDecision
             { fulfillmentRoutingEffectiveFrom = day 3
             , fulfillmentRoutingPlanId = missingPlan
             , fulfillmentRoutingRoute = NotFulfillmentTarget
             , fulfillmentRoutingNote = "dangling Plan reference"
             }
         ])
+      missingEnvelopeHistory = mustRight (mkFulfillmentRoutingHistory
+        [ FulfillmentRoutingDecision
+            { fulfillmentRoutingEffectiveFrom = day 4
+            , fulfillmentRoutingPlanId = knownHistoricalPlan
+            , fulfillmentRoutingRoute = FulfillsEnvelope missingEnvelope
+            , fulfillmentRoutingNote = "dangling Envelope reference"
+            }
+        ])
+      doublyDanglingHistory = mustRight (mkFulfillmentRoutingHistory
+        [ FulfillmentRoutingDecision
+            { fulfillmentRoutingEffectiveFrom = day 5
+            , fulfillmentRoutingPlanId = missingPlan
+            , fulfillmentRoutingRoute = FulfillsEnvelope missingEnvelope
+            , fulfillmentRoutingNote = "both references are missing"
+            }
+        ])
+
   leftSatisfies
     "two fulfillment-routing decisions on one PlanId/day fail closed"
     (any isDuplicate . NonEmpty.toList)
     (mkFulfillmentRoutingHistory duplicate)
-  right "historical Plan identity remains valid independent of lifecycle state"
-    (admitFulfillmentRoutingPlanReferences
-      [knownHistoricalPlan]
-      (mustRight (mkFulfillmentRoutingHistory
-        [ FulfillmentRoutingDecision
-            { fulfillmentRoutingEffectiveFrom = day 2
-            , fulfillmentRoutingPlanId = knownHistoricalPlan
-            , fulfillmentRoutingRoute = FulfillsEnvelope (envelope "historical")
-            , fulfillmentRoutingNote = "retired later"
-            }
-        ])))
   leftSatisfies
-    "unknown PlanId in fulfillment routing fails closed at cross-source admission"
-    (any isMissingPlan . NonEmpty.toList)
-    (admitFulfillmentRoutingPlanReferences [knownHistoricalPlan] referenceHistory)
+    "Envelope registry does not silently collapse duplicate identities"
+    (any isDuplicateEnvelope . NonEmpty.toList)
+    (mkEnvelopeRegistry [historicalEnvelope, historicalEnvelope])
+  right "historical Plan and Envelope identities remain valid independent of current policy"
+    (admitFulfillmentRoutingReferences
+      [knownHistoricalPlan]
+      registry
+      knownHistory)
+  equal "unknown PlanId in fulfillment routing fails closed"
+    (Left (UnknownFulfillmentRoutingPlan missingPlan (day 3) NonEmpty.:| []))
+    (admitFulfillmentRoutingReferences
+      [knownHistoricalPlan]
+      registry
+      missingPlanHistory)
+  equal "unknown EnvelopeId is rejected by stable registry rather than current TOML"
+    (Left (UnknownFulfillmentRoutingEnvelope
+      knownHistoricalPlan (day 4) missingEnvelope NonEmpty.:| []))
+    (admitFulfillmentRoutingReferences
+      [knownHistoricalPlan]
+      registry
+      missingEnvelopeHistory)
+  equal "one routing decision retains both dangling identity coordinates"
+    (Left
+      ( UnknownFulfillmentRoutingPlan missingPlan (day 5)
+        NonEmpty.:|
+          [ UnknownFulfillmentRoutingEnvelope
+              missingPlan (day 5) missingEnvelope
+          ]
+      ))
+    (admitFulfillmentRoutingReferences
+      [knownHistoricalPlan]
+      registry
+      doublyDanglingHistory)
   where
     isDuplicate err = case err of
       DuplicateFulfillmentRoutingDecision routedPlanId effectiveFrom ->
         routedPlanId == planId "p-save-original" && effectiveFrom == day 1
-    isMissingPlan err = case err of
-      UnknownFulfillmentRoutingPlan routedPlanId effectiveFrom ->
-        routedPlanId == planId "p-missing" && effectiveFrom == day 3
+    isDuplicateEnvelope err = case err of
+      DuplicateEnvelopeRegistryIdentity envelopeId ->
+        envelopeId == envelope "historical"
 
 observationLaw :: IO ()
 observationLaw =
