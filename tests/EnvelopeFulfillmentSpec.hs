@@ -12,7 +12,6 @@ import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
 import HKernel.Money
 import HKernel.Period (Period, mkPeriod)
 import HKernel.Plan (PlanId, mkPlanId)
-import HKernel.Plan.CompletionShape (PlanCompletionShapeError(..))
 import HKernel.Plan.Journal (PlanJournal, parsePlanJournal)
 import System.Exit (exitFailure)
 
@@ -99,8 +98,7 @@ completionShapeLaw =
       routing)
   where
     isShapeMismatch err = case err of
-      EnvelopeFulfillmentCompletionShapeError
-        (PlanCompletionAccountShapeMismatch _) -> True
+      EnvelopeFulfillmentCompletionShapeError _ -> True
       _ -> False
 
 routingAdmissionLaw :: IO ()
