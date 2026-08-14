@@ -116,14 +116,48 @@ routingAdmissionLaw = do
         [ decision (day 1) "p-save-original" (FulfillsEnvelope (envelope "a"))
         , decision (day 1) "p-save-original" (FulfillsEnvelope (envelope "b"))
         ]
+      knownHistoricalPlan = planId "p-retired-historical"
+      missingPlan = planId "p-missing"
+      referenceHistory = mustRight (mkFulfillmentRoutingHistory
+        [ FulfillmentRoutingDecision
+            { fulfillmentRoutingEffectiveFrom = day 2
+            , fulfillmentRoutingPlanId = knownHistoricalPlan
+            , fulfillmentRoutingRoute = FulfillsEnvelope (envelope "historical")
+            , fulfillmentRoutingNote = "historical Plan remains referable"
+            }
+        , FulfillmentRoutingDecision
+            { fulfillmentRoutingEffectiveFrom = day 3
+            , fulfillmentRoutingPlanId = missingPlan
+            , fulfillmentRoutingRoute = NotFulfillmentTarget
+            , fulfillmentRoutingNote = "dangling Plan reference"
+            }
+        ])
   leftSatisfies
     "two fulfillment-routing decisions on one PlanId/day fail closed"
     (any isDuplicate . NonEmpty.toList)
     (mkFulfillmentRoutingHistory duplicate)
+  right "historical Plan identity remains valid independent of lifecycle state"
+    (admitFulfillmentRoutingPlanReferences
+      [knownHistoricalPlan]
+      (mustRight (mkFulfillmentRoutingHistory
+        [ FulfillmentRoutingDecision
+            { fulfillmentRoutingEffectiveFrom = day 2
+            , fulfillmentRoutingPlanId = knownHistoricalPlan
+            , fulfillmentRoutingRoute = FulfillsEnvelope (envelope "historical")
+            , fulfillmentRoutingNote = "retired later"
+            }
+        ])))
+  leftSatisfies
+    "unknown PlanId in fulfillment routing fails closed at cross-source admission"
+    (any isMissingPlan . NonEmpty.toList)
+    (admitFulfillmentRoutingPlanReferences [knownHistoricalPlan] referenceHistory)
   where
     isDuplicate err = case err of
       DuplicateFulfillmentRoutingDecision routedPlanId effectiveFrom ->
         routedPlanId == planId "p-save-original" && effectiveFrom == day 1
+    isMissingPlan err = case err of
+      UnknownFulfillmentRoutingPlan routedPlanId effectiveFrom ->
+        routedPlanId == planId "p-missing" && effectiveFrom == day 3
 
 observationLaw :: IO ()
 observationLaw =
