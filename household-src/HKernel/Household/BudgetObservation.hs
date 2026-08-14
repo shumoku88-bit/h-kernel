@@ -3,20 +3,19 @@
 --
 -- Stable Household policy is admitted by 'HKernel.Household.Config' and checked
 -- against the canonical AccountRegistry before it reaches this module. During
--- Envelope-native migration this owner interprets the same ordered
--- @budget.journal@ evidence twice: legacy Budget Entitlement remains only for
--- compatibility Remaining, while allocation decisions also produce native
--- Envelope Entitlement. Legacy execution mirrors are deliberately excluded from
--- that native history so Actual consumption / fulfillment can own execution.
+-- Envelope-native migration this owner also admits the same ordered
+-- @budget.journal@ evidence as native Envelope Entitlement. Legacy execution
+-- mirrors are deliberately excluded from that native projection so Actual
+-- consumption / fulfillment can own execution without double counting.
 module HKernel.Household.BudgetObservation
   ( HouseholdBudgetObservation
   , householdBudgetObservationPolicy
   , householdEnvelopeConsumption
-  , householdEnvelopeEntitlement
   , householdBudgetEntitlement
   , householdBudgetRemaining
   , HouseholdBudgetError(..)
   , deriveHouseholdBudgetObservation
+  , deriveHouseholdEnvelopeEntitlement
   ) where
 
 import Data.Either (partitionEithers)
@@ -78,7 +77,6 @@ import HKernel.Envelope.EntitlementHistory
   )
 import HKernel.Envelope.EntitlementTransfer
   ( EnvelopeEndpoint(..)
-  , EnvelopeEntitlementTransfer
   , EnvelopeEntitlementTransferError
   , mkEnvelopeEntitlementTransfer
   )
@@ -116,14 +114,13 @@ import HKernel.Period
 -- | Aligned household budget results and the exact validated policy that
 -- produced them.
 --
--- Actual Expense ownership is native. Native Entitlement is now derived from
--- canonical allocation decisions side-by-side with the compatibility Budget
--- Entitlement/Remaining surface. This lets the next routing cutover remove the
--- legacy execution mirror without inventing historical allocation dates.
+-- Legacy 'BudgetConsumption' is deliberately absent: Actual Expense ownership
+-- has migrated to 'EnvelopeConsumption'. Entitlement and Remaining are retained
+-- as compatibility surfaces until native entitlement, historical Expense
+-- routing, and target fulfillment can cut over together.
 data HouseholdBudgetObservation = HouseholdBudgetObservation
   { householdBudgetObservationPolicy :: HouseholdPolicy
   , householdEnvelopeConsumption     :: EnvelopeConsumption
-  , householdEnvelopeEntitlement     :: EnvelopeEntitlement
   , householdBudgetEntitlement       :: BudgetEntitlement
   , householdBudgetRemaining         :: BudgetRemaining
   } deriving (Eq, Show)
@@ -144,13 +141,12 @@ data HouseholdBudgetError
   | HouseholdBudgetRemainingError RemainingError
   deriving (Eq, Show)
 
--- | Admitted evidence required by the aligned domain calculations.
+-- | Admitted evidence required by the aligned compatibility calculations.
 data HouseholdBudgetEvidence = HouseholdBudgetEvidence
-  { householdBudgetEvidenceObservation      :: BudgetObservation
-  , householdBudgetEvidencePeriod           :: Period
-  , householdBudgetEvidencePolicy           :: AccountValidatedHouseholdPolicy
-  , householdBudgetEvidenceHistory          :: BudgetHistory
-  , householdEnvelopeEntitlementHistory     :: EnvelopeEntitlementHistory
+  { householdBudgetEvidenceObservation :: BudgetObservation
+  , householdBudgetEvidencePeriod      :: Period
+  , householdBudgetEvidencePolicy      :: AccountValidatedHouseholdPolicy
+  , householdBudgetEvidenceHistory     :: BudgetHistory
   }
 
 data LegacyBudgetEndpoint
@@ -160,28 +156,48 @@ data LegacyBudgetEndpoint
   | LegacySpent
 
 -- | Derive one aligned point-in-time household budget observation from ordered
--- movement facts and one already validated Household policy/account policy.
+-- movement facts and one already validated Household policy.
 deriveHouseholdBudgetObservation
   :: Day
   -> Period
   -> ActualJournal
   -> AccountValidatedHouseholdPolicy
-  -> HouseholdAccountPolicy
   -> [HouseholdBudgetMovement]
   -> Either (NonEmpty HouseholdBudgetError) HouseholdBudgetObservation
-deriveHouseholdBudgetObservation observedThrough period actualJournal policy accountPolicy movements = do
+deriveHouseholdBudgetObservation observedThrough period actualJournal policy movements = do
   evidence <- admitHouseholdBudgetEvidence
-    observedThrough period policy accountPolicy movements
+    observedThrough period policy movements
   calculateHouseholdBudgetObservation actualJournal evidence
+
+-- | Admit the current canonical @budget.journal@ movement facts directly into
+-- native Envelope entitlement for one resolved period/day.
+--
+-- Allocation is intentionally narrower than "any movement touching an Envelope
+-- Budget Account". Transfers through configured unassigned capacity, direct
+-- Envelope-to-Envelope rebalances, and direct opening allocations are genuine
+-- entitlement decisions. Legacy @Envelope <-> spent@ rows are execution mirrors
+-- and are excluded. Account-kind coordinates are required so an unknown or
+-- contradictory Budget endpoint fails closed rather than being guessed.
+deriveHouseholdEnvelopeEntitlement
+  :: Day
+  -> Period
+  -> HouseholdPolicy
+  -> HouseholdAccountPolicy
+  -> [HouseholdBudgetMovement]
+  -> Either (NonEmpty HouseholdBudgetError) EnvelopeEntitlement
+deriveHouseholdEnvelopeEntitlement observedThrough period policy accountPolicy movements = do
+  history <- projectEnvelopeEntitlementHistory
+    period policy accountPolicy movements
+  singleLeft HouseholdEnvelopeEntitlementObservationError
+    (observeEnvelopeEntitlement period observedThrough history)
 
 admitHouseholdBudgetEvidence
   :: Day
   -> Period
   -> AccountValidatedHouseholdPolicy
-  -> HouseholdAccountPolicy
   -> [HouseholdBudgetMovement]
   -> Either (NonEmpty HouseholdBudgetError) HouseholdBudgetEvidence
-admitHouseholdBudgetEvidence observedThrough period validatedPolicy accountPolicy movements = do
+admitHouseholdBudgetEvidence observedThrough period validatedPolicy movements = do
   budgetCycle <- singleLeft HouseholdBudgetCycleError
     (mkBudgetCycle (periodStart period) (periodEndExclusive period))
   observation <- singleLeft HouseholdBudgetObservationError
@@ -193,14 +209,11 @@ admitHouseholdBudgetEvidence observedThrough period validatedPolicy accountPolic
       movements)
   history <- mapLeft (fmap HouseholdBudgetHistoryError)
     (mkBudgetHistory changes)
-  envelopeHistory <- projectEnvelopeEntitlementHistory
-    period policy accountPolicy movements
   Right HouseholdBudgetEvidence
     { householdBudgetEvidenceObservation = observation
     , householdBudgetEvidencePeriod = period
     , householdBudgetEvidencePolicy = validatedPolicy
     , householdBudgetEvidenceHistory = history
-    , householdEnvelopeEntitlementHistory = envelopeHistory
     }
   where
     policy = accountValidatedHouseholdPolicy validatedPolicy
@@ -213,9 +226,6 @@ calculateHouseholdBudgetObservation actualJournal evidence = do
   envelopeConsumption <- singleLeft HouseholdEnvelopeConsumptionError
     (observeEnvelopeConsumption period observedThrough actualJournal
       (legacyStaticExpenseRouteResolver validatedBudgetPolicy))
-  envelopeEntitlement <- singleLeft HouseholdEnvelopeEntitlementObservationError
-    (observeEnvelopeEntitlement
-      period observedThrough envelopeEntitlementHistory)
   entitlement <- mapLeft (fmap HouseholdBudgetEntitlementError)
     (calculateBudgetEntitlement observation budgetPolicy history)
   remaining <- mapLeft (fmap HouseholdBudgetRemainingError)
@@ -224,7 +234,6 @@ calculateHouseholdBudgetObservation actualJournal evidence = do
   Right HouseholdBudgetObservation
     { householdBudgetObservationPolicy = policy
     , householdEnvelopeConsumption = envelopeConsumption
-    , householdEnvelopeEntitlement = envelopeEntitlement
     , householdBudgetEntitlement = entitlement
     , householdBudgetRemaining = remaining
     }
@@ -238,17 +247,7 @@ calculateHouseholdBudgetObservation actualJournal evidence = do
     validatedBudgetPolicy =
       accountValidatedHouseholdBudgetPolicy validatedPolicy
     history = householdBudgetEvidenceHistory evidence
-    envelopeEntitlementHistory =
-      householdEnvelopeEntitlementHistory evidence
 
--- | Project the current canonical Budget-Account source into native Envelope
--- entitlement history for one resolved period.
---
--- Only movements that actually touch an Envelope allocation coordinate can
--- become native entitlement. @opening@ and unrelated capacity bookkeeping do
--- not. @Envelope <-> spent@ is explicitly excluded because those rows mirror
--- execution that belongs to Actual consumption / target fulfillment in the
--- native model.
 projectEnvelopeEntitlementHistory
   :: Period
   -> HouseholdPolicy
