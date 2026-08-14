@@ -13,14 +13,9 @@ module HKernel.Envelope.Commitment
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import Data.Time.Calendar (Day)
 import HKernel.Account (Account, AccountType(..), accountTypeFor)
-import HKernel.Actual.Journal
-  ( ActualJournal
-  , actualJournalCompletionDeclarations
-  , actualJournalIdentifiedTransactions
-  )
+import HKernel.Actual.Journal (ActualJournal)
 import HKernel.Envelope.ExpenseRouting
   ( ExpenseRoute(..)
   , ExpenseRoutingHistory
@@ -44,26 +39,14 @@ import HKernel.Money
   , zeroQuantity
   )
 import HKernel.Period (Period, periodContains, periodEndExclusive)
-import HKernel.Plan (PlanId)
-import HKernel.Plan.Completion
-  ( PlanCompletionError(..)
-  , declaredCompletionActualId
-  , declaredCompletionPlanId
-  , identifiedActualId
-  , identifiedActualTransaction
-  )
 import HKernel.Plan.Journal
-  ( PlanClassificationError
-  , PlanJournal
-  , PlanLifecycleError
-  , admitPlanRetirements
-  , classifiedOutgoingPlanTransactions
-  , classifyPlanJournal
-  , identifiedPlanId
+  ( PlanJournal
   , identifiedPlanTransaction
-  , planJournalTransactions
   , planJournalValue
-  , retiredPlanIdsAt
+  )
+import HKernel.Plan.Open
+  ( OpenOutgoingPlanError
+  , resolveOpenOutgoingPlanTransactionsAt
   )
 
 -- | Open Plan Expense commitments at one resolved period/day observation.
@@ -82,18 +65,16 @@ data EnvelopeCommitment = EnvelopeCommitment
 
 data EnvelopeCommitmentError
   = EnvelopeCommitmentObservationOutsidePeriod Day Period
-  | EnvelopeCommitmentPlanLifecycleError PlanLifecycleError
-  | EnvelopeCommitmentPlanClassificationError PlanClassificationError
-  | EnvelopeCommitmentCompletionError PlanCompletionError
+  | EnvelopeCommitmentOpenPlanError OpenOutgoingPlanError
   deriving (Eq, Show)
 
 -- | Observe still-open outgoing Plan Expense postings through one inclusive
 -- observation day.
 --
--- A Plan remains binding when overdue. Plans at or beyond the next Period
--- boundary do not consume current Envelope headroom. Retirement is interpreted
--- as of the observation day, while completion closes a Plan only when the
--- completing Actual transaction is dated on or before that observation.
+-- Plan lifecycle/completion meaning is owned by 'HKernel.Plan.Open'. This owner
+-- applies only the Envelope horizon and routing meanings: overdue open Plans
+-- remain binding, while Plans at or beyond the next Period boundary do not
+-- consume current headroom.
 --
 -- Open Plans use the routing decision effective at the observation day: unlike
 -- posted Actuals, they are still household intent and may move when current
@@ -110,22 +91,16 @@ observeEnvelopeCommitment period observedThrough plans actual routing
   | not (periodContains period observedThrough) =
       Left (EnvelopeCommitmentObservationOutsidePeriod observedThrough period NonEmpty.:| [])
   | otherwise = do
-      retirements <- mapErrors EnvelopeCommitmentPlanLifecycleError
-        (admitPlanRetirements plans)
-      classified <- mapErrors EnvelopeCommitmentPlanClassificationError
-        (classifyPlanJournal plans)
-      completed <- completedPlanIdsThrough observedThrough plans actual
-      let retired = retiredPlanIdsAt observedThrough retirements
-          openOutgoing =
+      openPlans <- mapErrors EnvelopeCommitmentOpenPlanError
+        (resolveOpenOutgoingPlanTransactionsAt observedThrough plans actual)
+      let openInHorizon =
             [ identified
-            | identified <- classifiedOutgoingPlanTransactions classified
-            , identifiedPlanId identified `Set.notMember` retired
-            , identifiedPlanId identified `Set.notMember` completed
+            | identified <- openPlans
             , transactionDate (identifiedPlanTransaction identified)
                 < periodEndExclusive period
             ]
           (managed, unmanaged, unrouted) =
-            foldl collectPlan (Map.empty, Map.empty, Map.empty) openOutgoing
+            foldl collectPlan (Map.empty, Map.empty, Map.empty) openInHorizon
       Right EnvelopeCommitment
         { envelopeCommitmentPeriod = period
         , envelopeCommitmentObservedThrough = observedThrough
@@ -154,59 +129,6 @@ observeEnvelopeCommitment period observedThrough plans actual routing
       where
         account = postingAccount posting
         amount = postingAmount posting
-
-completedPlanIdsThrough
-  :: Day
-  -> PlanJournal
-  -> ActualJournal
-  -> Either (NonEmpty EnvelopeCommitmentError) (Set.Set PlanId)
-completedPlanIdsThrough observedThrough plans actual =
-  case NonEmpty.nonEmpty errors of
-    Just completionErrors -> Left completionErrors
-    Nothing -> Right (Set.fromList visibleCompleted)
-  where
-    knownPlans = Set.fromList (map identifiedPlanId (planJournalTransactions plans))
-    actualById = Map.fromList
-      [ (identifiedActualId identified, identified)
-      | identified <- actualJournalIdentifiedTransactions actual
-      ]
-    declarations = actualJournalCompletionDeclarations actual
-
-    unknownPlanErrors =
-      [ EnvelopeCommitmentCompletionError
-          (UnknownCompletionPlanReference planId actualId)
-      | declaration <- declarations
-      , let planId = declaredCompletionPlanId declaration
-            actualId = declaredCompletionActualId declaration
-      , planId `Set.notMember` knownPlans
-      ]
-
-    actualIdsByPlan = Map.fromListWith Set.union
-      [ ( declaredCompletionPlanId declaration
-        , Set.singleton (declaredCompletionActualId declaration)
-        )
-      | declaration <- declarations
-      , declaredCompletionPlanId declaration `Set.member` knownPlans
-      ]
-    multipleActualErrors =
-      [ EnvelopeCommitmentCompletionError
-          (PlanReferencedByMultipleActuals planId actualIds)
-      | (planId, actualIdSet) <- Map.toAscList actualIdsByPlan
-      , Just actualIds <- [NonEmpty.nonEmpty (Set.toAscList actualIdSet)]
-      , NonEmpty.length actualIds > 1
-      ]
-
-    visibleCompleted =
-      [ planId
-      | declaration <- declarations
-      , let planId = declaredCompletionPlanId declaration
-            actualId = declaredCompletionActualId declaration
-      , planId `Set.member` knownPlans
-      , Just identified <- [Map.lookup actualId actualById]
-      , transactionDate (identifiedActualTransaction identified) <= observedThrough
-      ]
-
-    errors = unknownPlanErrors ++ multipleActualErrors
 
 addAt :: Ord key => key -> Amount -> Map.Map key Balance -> Map.Map key Balance
 addAt key amount = Map.insertWith addBalance key (singletonBalance amount)
