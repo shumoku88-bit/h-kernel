@@ -6,6 +6,8 @@
 -- General envelope, pacing, Expense assignment, and backing-pool syntax belongs
 -- to 'HKernel.Budget.Config'. This module parses only household-specific
 -- coordinates and combines both values immediately into typed configuration.
+-- The shared @envelope-history@ section is consumed opaquely here; its historical
+-- meaning is owned by 'HKernel.Household.EnvelopeHistory'.
 module HKernel.Household.Config
   ( HouseholdConfiguration
   , householdConfigurationPolicy
@@ -59,7 +61,7 @@ import HKernel.Money
   , CommodityError(..)
   , mkCommodity
   )
-import Toml (decode)
+import Toml (Value, decode)
 import Toml.Schema
   ( FromValue(..)
   , Result(..)
@@ -81,6 +83,7 @@ data RawHouseholdPolicy = RawHouseholdPolicy
   (Maybe RawMoney)
   (Maybe RawDailyTarget)
   (Maybe RawAccountPolicy)
+  (Maybe Value)
 
 data RawCycle = RawCycle Text Text
 
@@ -126,7 +129,8 @@ instance FromValue RawHouseholdPolicy where
       <*> reqKey "budget"
       <*> optKey "money"
       <*> optKey "daily-target"
-      <*> optKey "account-policy")
+      <*> optKey "account-policy"
+      <*> optKey "envelope-history")
 
 instance FromValue RawCycle where
   fromValue = parseTableFromValue
@@ -236,7 +240,7 @@ rawToHouseholdConfiguration
   -> RawHouseholdPolicy
   -> Either [Text] HouseholdConfiguration
 rawToHouseholdConfiguration budgetPolicy
-    (RawHouseholdPolicy rawCycle rawHouseholdBudget rawMoney rawDailyTarget rawAccountPolicy) = do
+    (RawHouseholdPolicy rawCycle rawHouseholdBudget rawMoney rawDailyTarget rawAccountPolicy _rawEnvelopeHistory) = do
   policy <- rawToHouseholdPolicy budgetPolicy rawCycle rawHouseholdBudget
   primaryCommodity <- traverse parseRawMoney rawMoney
   dailyTargetAssets <- parseRawDailyTarget rawDailyTarget
