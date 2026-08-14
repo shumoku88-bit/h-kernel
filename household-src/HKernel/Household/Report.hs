@@ -106,7 +106,7 @@ import HKernel.Report.CycleAccounts
 import HKernel.Household.BudgetObservation
   ( deriveHouseholdBudgetObservation
   , householdBudgetObservationPolicy
-  , householdBudgetConsumption
+  , householdEnvelopeConsumption
   , householdBudgetEntitlement
   , householdBudgetRemaining
   )
@@ -213,7 +213,7 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
     (deriveHouseholdBudgetObservation observation current actualJournal
       validatedPolicy budget)
   let admittedPolicy = householdBudgetObservationPolicy budgetObservation
-      consumption = householdBudgetConsumption budgetObservation
+      envelopeConsumption = householdEnvelopeConsumption budgetObservation
       entitlement = householdBudgetEntitlement budgetObservation
       remaining = householdBudgetRemaining budgetObservation
       openPlanValues = filter
@@ -239,7 +239,7 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy validat
     (fmap (sourceError "backing" 0 . tshow))
     (deriveHouseholdBacking
       observation current journal admittedPolicy
-      budget entitlement consumption remaining backingPlans)
+      budget entitlement envelopeConsumption remaining backingPlans)
   let target = deriveDailyTarget observation current journal
         dailyScope currentOpenPlans
       comparison = alignedHouseholdCycleComparison
