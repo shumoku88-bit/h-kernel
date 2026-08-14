@@ -63,6 +63,7 @@ library
                     , HKernel.Plan
                     , HKernel.Plan.Journal
                     , HKernel.Plan.Completion
+                    , HKernel.Plan.Open
                     , HKernel.Plan.Reservation
                     , HKernel.Plan.Render
                     , HKernel.Render
