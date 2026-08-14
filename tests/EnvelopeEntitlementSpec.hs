@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import qualified Data.Text as T
 import Data.Time.Calendar (Day, fromGregorian)
 import HKernel.Envelope.Entitlement
 import HKernel.Envelope.EntitlementHistory (mkEnvelopeEntitlementHistory)
@@ -22,7 +23,7 @@ observationBoundary = do
   left "observation before Period is rejected"
     (observeEnvelopeEntitlement period (day 14) emptyHistory)
   left "Period end remains exclusive"
-    (observeEnvelopeEntitlement period (day 15 `inMonth` 10) emptyHistory)
+    (observeEnvelopeEntitlement period (fromGregorian 2026 10 15) emptyHistory)
 
 projectionLaws :: IO ()
 projectionLaws = do
@@ -47,6 +48,10 @@ projectionLaws = do
       history = mustRight (mkEnvelopeEntitlementHistory transfers)
       observed = mustRight (observeEnvelopeEntitlement period (day 20) history)
       later = mustRight (observeEnvelopeEntitlement period (day 25) history)
+      expectedFood = balance
+        [ mkAmount jpy (quantityFromInteger 8000)
+        , mkAmount usd (quantityFromInteger 5)
+        ]
 
   equal "projection retains explicit Period"
     period
@@ -55,7 +60,7 @@ projectionLaws = do
     (day 20)
     (envelopeEntitlementObservedThrough observed)
   equal "grant and transfer reduce exact JPY while preserving USD"
-    (balance [mkAmount jpy (quantityFromInteger 8000), mkAmount usd (quantityFromInteger 5)])
+    expectedFood
     (envelopeEntitlementBalance food observed)
   equal "Envelope-to-Envelope transfer creates destination entitlement"
     (balance [mkAmount jpy (quantityFromInteger 2000)])
@@ -67,10 +72,10 @@ projectionLaws = do
     (balance [mkAmount jpy (quantityFromInteger 1500)])
     (envelopeEntitlementBalance stock later)
   equal "future transfer is excluded from earlier observation"
-    (balance [mkAmount jpy (quantityFromInteger 8000), mkAmount usd (quantityFromInteger 5)])
+    expectedFood
     (envelopeEntitlementBalance food observed)
   equal "other Period is isolated"
-    (balance [mkAmount jpy (quantityFromInteger 8000), mkAmount usd (quantityFromInteger 5)])
+    expectedFood
     (envelopeEntitlementBalance food observed)
   equal "untouched Envelope lookup is canonical zero"
     emptyBalance
@@ -86,16 +91,13 @@ period = mustRight
   (mkPeriod (fromGregorian 2026 8 15) (fromGregorian 2026 10 15))
 
 day :: Int -> Day
-day dayOfMonth = fromGregorian 2026 8 dayOfMonth
-
-inMonth :: Day -> Int -> Day
-inMonth _ month = fromGregorian 2026 month 15
+day = fromGregorian 2026 8
 
 envelope :: String -> EnvelopeId
-envelope = mustRight . mkEnvelopeId . fromStringText
+envelope = mustRight . mkEnvelopeId . T.pack
 
 commodity :: String -> Commodity
-commodity = mustRight . mkCommodity . fromStringText
+commodity = mustRight . mkCommodity . T.pack
 
 transfer
   :: Day
@@ -114,13 +116,10 @@ transfer effectiveDay transferPeriod fromEndpoint toEndpoint unit quantity note 
       fromEndpoint
       toEndpoint
       (mkAmount unit (quantityFromInteger quantity))
-      (fromStringText note))
+      (T.pack note))
 
 balance :: [Amount] -> Balance
 balance = balanceFromAmounts
-
-fromStringText :: String -> Data.Text.Text
-fromStringText = Data.Text.pack
 
 left :: Show value => String -> Either error value -> IO ()
 left label result = case result of
