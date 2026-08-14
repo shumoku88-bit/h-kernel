@@ -1,11 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Pure identities and boundaries for the household budget model.
+-- | Pure identities and boundaries for the household budget compatibility model.
 --
--- This module does not parse files, inspect a 'Journal', calculate envelope
--- balances, or render a report. It gives later adapters and calculations one
--- small typed vocabulary for half-open cycles, point-in-time observation,
--- spendable envelope identity, pacing, and exact dated entitlement changes.
+-- Envelope identity is owned by 'HKernel.Envelope.Identity' and re-exported
+-- here while existing Budget modules migrate to the Envelope domain.
 module HKernel.Budget
   ( BudgetCycle
   , BudgetCycleError(..)
@@ -34,16 +32,20 @@ module HKernel.Budget
   , budgetChangeNote
   ) where
 
-import Data.Char (isControl, isSpace)
 import Data.Text (Text)
-import qualified Data.Text as T
 import Data.Time.Calendar (Day)
+import HKernel.Envelope.Identity
+  ( EnvelopeId
+  , EnvelopeIdError(..)
+  , envelopeIdText
+  , mkEnvelopeId
+  )
 import HKernel.Money (Amount)
 
 -- | One budget period represented as @[start, endExclusive)@.
 --
 -- The constructor is hidden so an empty or backwards cycle cannot enter the
--- budget model.
+-- compatibility model.
 data BudgetCycle = BudgetCycle
   { budgetCycleStart        :: Day
   , budgetCycleEndExclusive :: Day
@@ -65,10 +67,6 @@ budgetCycleContains cycle day =
     && day < budgetCycleEndExclusive cycle
 
 -- | One point-in-time observation inside a budget cycle.
---
--- @observedThrough@ is inclusive. The hidden constructor guarantees that the
--- observation day belongs to the selected half-open cycle, so Entitlement,
--- Consumption, Remaining, and later Backing calculations can share one horizon.
 data BudgetObservation = BudgetObservation
   { budgetObservationCycle           :: BudgetCycle
   , budgetObservationObservedThrough :: Day
@@ -89,52 +87,18 @@ mkBudgetObservation cycle observedThrough
   | otherwise =
       Left (BudgetObservationOutsideCycle observedThrough cycle)
 
--- | Whether one date is visible in this inclusive point-in-time observation.
 budgetObservationContains :: BudgetObservation -> Day -> Bool
 budgetObservationContains observation day =
   budgetCycleContains (budgetObservationCycle observation) day
     && day <= budgetObservationObservedThrough observation
 
--- | Stable machine identity for one spendable envelope.
---
--- Human-facing labels belong to budget policy. The reserved identity
--- @unallocated@ is deliberately rejected because Unallocated is a derived
--- backing remainder, not a spendable envelope or allocation destination.
-newtype EnvelopeId = EnvelopeId { envelopeIdText :: Text }
-  deriving (Eq, Ord, Show)
-
-data EnvelopeIdError
-  = EmptyEnvelopeId
-  | EnvelopeIdHasSurroundingWhitespace Text
-  | EnvelopeIdContainsControlCharacter Text
-  | EnvelopeIdContainsWhitespace Text
-  | ReservedEnvelopeId Text
-  deriving (Eq, Show)
-
-mkEnvelopeId :: Text -> Either EnvelopeIdError EnvelopeId
-mkEnvelopeId value
-  | T.null value = Left EmptyEnvelopeId
-  | T.strip value /= value =
-      Left (EnvelopeIdHasSurroundingWhitespace value)
-  | T.any isControl value =
-      Left (EnvelopeIdContainsControlCharacter value)
-  | T.any isSpace value = Left (EnvelopeIdContainsWhitespace value)
-  | T.toCaseFold value == "unallocated" = Left (ReservedEnvelopeId value)
-  | otherwise = Right (EnvelopeId value)
-
--- | How one spendable envelope participates in pace reporting.
---
--- Daily envelopes are divided over remaining cycle days. Flex envelopes retain
--- a cycle balance without contributing to the daily allowance.
+-- | Retained Daily/Flex vocabulary until policy consumers move to EnvelopeMode.
 data Pacing
   = Daily
   | Flex
   deriving (Eq, Ord, Show)
 
--- | One irreducible dated entitlement change.
---
--- Positive and negative exact 'Amount' values use the same shape, so an initial
--- allocation and a later adjustment are not separate event types.
+-- | Retained signed entitlement-change value used by the existing Budget path.
 data BudgetChange = BudgetChange
   { budgetChangeDate     :: Day
   , budgetChangeCycle    :: BudgetCycle
