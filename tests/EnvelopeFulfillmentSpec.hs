@@ -5,13 +5,13 @@ module Main (main) where
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, fromGregorian)
-import HKernel.Account (Account, mkAccount)
 import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.Envelope.Fulfillment
 import HKernel.Envelope.FulfillmentRouting
 import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
 import HKernel.Money
 import HKernel.Period (Period, mkPeriod)
+import HKernel.Plan (PlanId, mkPlanId)
 import HKernel.Plan.CompletionShape (PlanCompletionShapeError(..))
 import HKernel.Plan.Journal (PlanJournal, parsePlanJournal)
 import System.Exit (exitFailure)
@@ -20,6 +20,7 @@ main :: IO ()
 main = do
   fulfillmentLaws
   historicalRoutingLaw
+  sharedAccountLaw
   unrelatedTargetMovementLaw
   completionShapeLaw
   routingAdmissionLaw
@@ -46,13 +47,13 @@ fulfillmentLaws = do
   equal "ordinary withdrawal and its reversal do not manufacture fulfillment"
     (one jpy 100)
     (fulfillmentNet oldAmounts)
-  equal "later completed Plan follows target intent effective on its Actual day"
+  equal "later completed Plan follows its own PlanId intent"
     (one jpy 30)
     (fulfillmentNet (envelopeFulfillmentFor newSavings fulfillment))
   equal "another explicit completed target can fulfill another Envelope"
     (one jpy 40)
     (fulfillmentNet (envelopeFulfillmentFor investing fulfillment))
-  equal "Expense Plan remains owned by Expense Consumption even if mis-routed here"
+  equal "Expense Plan remains owned by Expense Consumption even if PlanId-routed here"
     emptyBalance
     (fulfillmentNet (envelopeFulfillmentFor (envelope "should-not-count") fulfillment))
 
@@ -60,17 +61,28 @@ historicalRoutingLaw :: IO ()
 historicalRoutingLaw = do
   let fulfillment = fulfillmentThrough (day 5) actualSource
       jpy = commodity "JPY"
-  equal "future route changes do not rewrite earlier completed target fulfillment"
+  equal "future PlanId route changes do not rewrite earlier completed fulfillment"
     (one jpy 100)
     (fulfillmentNet (envelopeFulfillmentFor (envelope "savings-old") fulfillment))
-  equal "future target route is absent from the earlier observation"
+  equal "future route is absent from the earlier observation"
     emptyBalance
+    (fulfillmentNet (envelopeFulfillmentFor (envelope "savings-new") fulfillment))
+
+sharedAccountLaw :: IO ()
+sharedAccountLaw = do
+  let fulfillment = fulfillmentThrough observedDay actualSource
+      jpy = commodity "JPY"
+  equal "unrouted Plan sharing the savings Account does not inherit Envelope meaning"
+    (one jpy 100)
+    (fulfillmentNet (envelopeFulfillmentFor (envelope "savings-old") fulfillment))
+  equal "shared Account completion does not leak into the later savings Envelope"
+    (one jpy 30)
     (fulfillmentNet (envelopeFulfillmentFor (envelope "savings-new") fulfillment))
 
 unrelatedTargetMovementLaw :: IO ()
 unrelatedTargetMovementLaw = do
   let fulfillment = fulfillmentThrough observedDay actualSource
-  equal "ordinary positive movement to a target account is not Plan fulfillment"
+  equal "ordinary positive movement to an Account is not Plan fulfillment"
     emptyBalance
     (fulfillmentNet (envelopeFulfillmentFor (envelope "unrelated") fulfillment))
 
@@ -94,17 +106,17 @@ completionShapeLaw =
 routingAdmissionLaw :: IO ()
 routingAdmissionLaw = do
   let duplicate =
-        [ decision (day 1) "assets:savings" (FulfillsEnvelope (envelope "a"))
-        , decision (day 1) "assets:savings" (FulfillsEnvelope (envelope "b"))
+        [ decision (day 1) "p-save-original" (FulfillsEnvelope (envelope "a"))
+        , decision (day 1) "p-save-original" (FulfillsEnvelope (envelope "b"))
         ]
   leftSatisfies
-    "two target-routing decisions on one Account/day fail closed"
+    "two fulfillment-routing decisions on one PlanId/day fail closed"
     (any isDuplicate . NonEmpty.toList)
     (mkFulfillmentRoutingHistory duplicate)
   where
     isDuplicate err = case err of
-      DuplicateFulfillmentRoutingDecision accountName effectiveFrom ->
-        accountName == account "assets:savings" && effectiveFrom == day 1
+      DuplicateFulfillmentRoutingDecision routedPlanId effectiveFrom ->
+        routedPlanId == planId "p-save-original" && effectiveFrom == day 1
 
 observationLaw :: IO ()
 observationLaw =
@@ -133,11 +145,11 @@ actual = mustRight (parseActualJournal actualSource)
 
 routing :: FulfillmentRoutingHistory
 routing = mustRight (mkFulfillmentRoutingHistory
-  [ decision (day 1) "assets:savings" (FulfillsEnvelope (envelope "savings-old"))
-  , decision (day 6) "assets:savings" (FulfillsEnvelope (envelope "savings-new"))
-  , decision (day 1) "assets:investment" (FulfillsEnvelope (envelope "investing"))
-  , decision (day 1) "assets:unrelated" (FulfillsEnvelope (envelope "unrelated"))
-  , decision (day 1) "expenses:fee" (FulfillsEnvelope (envelope "should-not-count"))
+  [ decision (day 1) "p-save-original" (FulfillsEnvelope (envelope "savings-old"))
+  , decision (day 6) "p-save-original" (FulfillsEnvelope (envelope "savings-new"))
+  , decision (day 1) "p-save-new" (FulfillsEnvelope (envelope "savings-new"))
+  , decision (day 1) "p-invest" (FulfillsEnvelope (envelope "investing"))
+  , decision (day 1) "p-fee" (FulfillsEnvelope (envelope "should-not-count"))
   ])
 
 planSource :: T.Text
@@ -156,6 +168,11 @@ planSource = declarations <> T.unlines
   , "  ; plan-id: p-invest"
   , "  assets:investment    40 JPY"
   , "  assets:cash         -40 JPY"
+  , ""
+  , "2026-08-10 * unrelated Plan sharing savings Account"
+  , "  ; plan-id: p-shared-unrouted"
+  , "  assets:savings      70 JPY"
+  , "  assets:cash        -70 JPY"
   , ""
   , "2026-08-10 * planned expense"
   , "  ; plan-id: p-fee"
@@ -205,6 +222,12 @@ actualSource = declarations <> T.unlines
   , "  ; plan-id: p-invest"
   , "  assets:investment    40 JPY"
   , "  assets:cash         -40 JPY"
+  , ""
+  , "2026-08-10 * completed unrelated Plan on shared savings Account"
+  , "  ; event-id: shared-unrouted"
+  , "  ; plan-id: p-shared-unrouted"
+  , "  assets:savings      70 JPY"
+  , "  assets:cash        -70 JPY"
   , ""
   , "2026-08-10 * unrelated target deposit"
   , "  assets:unrelated      50 JPY"
@@ -260,8 +283,8 @@ observedDay = day 10
 day :: Int -> Day
 day = fromGregorian 2026 8
 
-account :: T.Text -> Account
-account = mustRight . mkAccount
+planId :: T.Text -> PlanId
+planId = mustRight . mkPlanId
 
 envelope :: T.Text -> EnvelopeId
 envelope = mustRight . mkEnvelopeId
@@ -270,9 +293,9 @@ commodity :: T.Text -> Commodity
 commodity = mustRight . mkCommodity
 
 decision :: Day -> T.Text -> FulfillmentRoute -> FulfillmentRoutingDecision
-decision effectiveFrom accountName routeValue = FulfillmentRoutingDecision
+decision effectiveFrom planIdTextValue routeValue = FulfillmentRoutingDecision
   { fulfillmentRoutingEffectiveFrom = effectiveFrom
-  , fulfillmentRoutingAccount = account accountName
+  , fulfillmentRoutingPlanId = planId planIdTextValue
   , fulfillmentRoutingRoute = routeValue
   , fulfillmentRoutingNote = "test"
   }
