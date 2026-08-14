@@ -13,7 +13,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
-import HKernel.Account (AccountError, mkAccount)
+import HKernel.Account (Account, AccountError, mkAccount)
 import HKernel.Envelope.ExpenseRouting
 import HKernel.Envelope.Identity (EnvelopeIdError, mkEnvelopeId)
 
@@ -30,8 +30,9 @@ data ExpenseRoutingTSVErrorReason
   | InvalidExpenseRoutingAccount AccountError
   | InvalidExpenseRoutingKind Text
   | InvalidExpenseRoutingEnvelope EnvelopeIdError
+  | ManagedExpenseRoutingTargetCannotBeDash
   | UnmanagedExpenseRoutingTargetMustBeDash Text
-  | DuplicateExpenseRoutingCoordinate HKernel.Account.Account Day
+  | DuplicateExpenseRoutingCoordinate Account Day
   deriving (Eq, Show)
 
 parseExpenseRoutingTSV
@@ -96,10 +97,13 @@ parseRoute
   -> Text
   -> Either ExpenseRoutingTSVError ExpenseRoute
 parseRoute lineNumber routeText targetText = case routeText of
-  "managed" ->
-    ManagedByEnvelope
-      <$> mapFieldError lineNumber InvalidExpenseRoutingEnvelope
-        (mkEnvelopeId targetText)
+  "managed"
+    | targetText == "-" -> Left
+        (ExpenseRoutingTSVError lineNumber ManagedExpenseRoutingTargetCannotBeDash)
+    | otherwise ->
+        ManagedByEnvelope
+          <$> mapFieldError lineNumber InvalidExpenseRoutingEnvelope
+            (mkEnvelopeId targetText)
   "unmanaged"
     | targetText == "-" -> Right NotEnvelopeManaged
     | otherwise -> Left (ExpenseRoutingTSVError lineNumber
