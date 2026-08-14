@@ -26,7 +26,6 @@ import HKernel.Envelope.EntitlementHistory
   )
 import HKernel.Envelope.EntitlementTransfer
   ( EnvelopeEndpoint(..)
-  , EnvelopeEntitlementTransfer
   , EnvelopeEntitlementTransferError
   , mkEnvelopeEntitlementTransfer
   )
@@ -45,8 +44,7 @@ import HKernel.Household.Policy
   , householdUnassignedBudgetAccounts
   )
 import HKernel.Money
-  ( Amount
-  , amountQuantity
+  ( amountQuantity
   , negateAmount
   , zeroQuantity
   )
@@ -159,14 +157,20 @@ deriveHouseholdEnvelopeEntitlementHistory period policy accountPolicy movements 
 
     projectEndpoints transactionIndex movement amount fromEndpoint toEndpoint =
       case (fromEndpoint, toEndpoint) of
+        -- Legacy execution mirrors must not become entitlement deallocations or
+        -- refunds. Their native owner is Actual consumption / fulfillment.
         (LegacyEnvelope _, LegacySpent) -> Right Nothing
         (LegacySpent, LegacyEnvelope _) -> Right Nothing
-        _ -> case (nativeEndpoint fromEndpoint, nativeEndpoint toEndpoint) of
-          (Nothing, Nothing) -> Right Nothing
-          (Just fromNative, Just toNative) ->
-            makeTransfer fromNative toNative
-          (Nothing, Just toNative) -> makeTransfer Unallocated toNative
-          (Just fromNative, Nothing) -> makeTransfer fromNative Unallocated
+
+        -- If neither side names an Envelope this movement only changes retained
+        -- Budget capacity bookkeeping and has no entitlement coordinate.
+        (LegacyEnvelope _, _) -> makeTransfer
+          (nativeEnvelopeEndpoint fromEndpoint)
+          (nativeCounterpart toEndpoint)
+        (_, LegacyEnvelope _) -> makeTransfer
+          (nativeCounterpart fromEndpoint)
+          (nativeEnvelopeEndpoint toEndpoint)
+        _ -> Right Nothing
       where
         makeTransfer fromNative toNative =
           case mkEnvelopeEntitlementTransfer
@@ -182,11 +186,18 @@ deriveHouseholdEnvelopeEntitlementHistory period policy accountPolicy movements 
                   transactionIndex err
               ]
 
-    nativeEndpoint endpoint = case endpoint of
-      LegacyEnvelope envelope -> Just (Spendable envelope)
-      LegacyUnallocated -> Just Unallocated
-      LegacyOpening -> Nothing
-      LegacySpent -> Nothing
+    nativeEnvelopeEndpoint endpoint = case endpoint of
+      LegacyEnvelope envelope -> Spendable envelope
+      _ -> error "unreachable: nativeEnvelopeEndpoint requires LegacyEnvelope"
+
+    -- All non-spent counterparts of an Envelope allocation are a retained
+    -- representation of native Unallocated capacity. LegacySpent is handled by
+    -- the execution cases above before this helper is called.
+    nativeCounterpart endpoint = case endpoint of
+      LegacyEnvelope envelope -> Spendable envelope
+      LegacyUnallocated -> Unallocated
+      LegacyOpening -> Unallocated
+      LegacySpent -> error "unreachable: LegacySpent handled before counterpart"
 
     allocationByAccount = householdAllocationEnvelopes policy
     unassignedAccounts = householdUnassignedBudgetAccounts policy
