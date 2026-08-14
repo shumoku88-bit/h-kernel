@@ -4,6 +4,7 @@ module Main (main) where
 
 import Test.Support (assertEqual, assertTrue, mustRight)
 import Data.List (find)
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
@@ -28,12 +29,21 @@ import HKernel.Envelope.Consumption
   , envelopeConsumptionUnmanaged
   , envelopeConsumptionUnrouted
   )
+import HKernel.Envelope.Entitlement
+  ( envelopeEntitlementBalance
+  )
 import HKernel.Envelope.Identity (mkEnvelopeId)
+import HKernel.Household.AccountProfile
+  ( RetainedBudgetAccountKind(..)
+  , mkHouseholdAccountPolicy
+  )
 import HKernel.Household.BudgetMovement
   ( householdBudgetMovement
   )
 import HKernel.Household.BudgetObservation
-  ( deriveHouseholdBudgetObservation
+  ( HouseholdBudgetError(..)
+  , deriveHouseholdBudgetObservation
+  , deriveHouseholdEnvelopeEntitlement
   , householdBudgetRemaining
   , householdEnvelopeConsumption
   )
@@ -48,7 +58,10 @@ import HKernel.Money
 import HKernel.Period (mkPeriod)
 
 main :: IO ()
-main = characterizeNativeConsumptionOwnsHouseholdRemaining
+main = do
+  characterizeNativeConsumptionOwnsHouseholdRemaining
+  characterizeCanonicalBudgetMovementsProjectNativeEntitlement
+  characterizeNativeEntitlementCoordinateMismatchFailsClosed
 
 characterizeNativeConsumptionOwnsHouseholdRemaining :: IO ()
 characterizeNativeConsumptionOwnsHouseholdRemaining = do
@@ -122,6 +135,131 @@ characterizeNativeConsumptionOwnsHouseholdRemaining = do
     "static compatibility routing never invents explicit unmanaged evidence"
     (Map.null (envelopeConsumptionUnmanaged consumption))
 
+characterizeCanonicalBudgetMovementsProjectNativeEntitlement :: IO ()
+characterizeCanonicalBudgetMovementsProjectNativeEntitlement = do
+  let jpy = mustRight (mkCommodity "JPY")
+      period = mustRight
+        (mkPeriod (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
+      observedThrough = fromGregorian 2026 8 20
+      foodId = mustRight (mkEnvelopeId "food")
+      travelId = mustRight (mkEnvelopeId "travel")
+      operating = mustRight (mkBackingPoolId "operating")
+      cash = mustRight (mkAccount "assets:cash")
+      income = mustRight (mkAccount "income:salary")
+      opening = mustRight (mkAccount "budget:opening")
+      unassigned = mustRight (mkAccount "budget:unassigned")
+      spent = mustRight (mkAccount "budget:spent")
+      food = mustRight (mkAccount "budget:food")
+      travel = mustRight (mkAccount "budget:travel")
+      foodLabel = mustRight (Budget.mkEnvelopeLabel "Food")
+      travelLabel = mustRight (Budget.mkEnvelopeLabel "Travel")
+      budgetPolicy = mustRight
+        (Budget.mkBudgetPolicy
+          [ Budget.defineEnvelope foodId foodLabel Daily operating []
+          , Budget.defineEnvelope travelId travelLabel Flex operating []
+          ]
+          [Budget.defineBackingPool operating [cash]])
+      householdPolicy = mustRight
+        (mkHouseholdPolicy
+          (incomeAnchorCyclePolicy income)
+          budgetPolicy
+          [ defineHouseholdEnvelopeCoordinates foodId food []
+          , defineHouseholdEnvelopeCoordinates travelId travel []
+          ]
+          [unassigned])
+      accountPolicy = mustRight
+        (mkHouseholdAccountPolicy
+          []
+          [ (opening, RetainedOpeningBudgetAccount)
+          , (unassigned, RetainedUnassignedBudgetAccount)
+          , (spent, RetainedSpentBudgetAccount)
+          , (food, RetainedEnvelopeBudgetAccount)
+          , (travel, RetainedEnvelopeBudgetAccount)
+          ]
+          [] [] [])
+      movements =
+        [ movement jpy (fromGregorian 2026 8 1)
+            opening unassigned 100 "capacity seed"
+        , movement jpy (fromGregorian 2026 8 2)
+            unassigned food 60 "allocate food"
+        , movement jpy (fromGregorian 2026 8 2)
+            unassigned travel 40 "allocate travel"
+        , movement jpy (fromGregorian 2026 8 3)
+            food travel 10 "rebalance"
+        , movement jpy (fromGregorian 2026 8 4)
+            food spent 20 "legacy execution"
+        , movement jpy (fromGregorian 2026 8 5)
+            spent food 5 "legacy execution reversal"
+        , movement jpy (fromGregorian 2026 8 6)
+            food unassigned 5 "release"
+        , movement jpy (fromGregorian 2026 8 7)
+            unassigned food (-5) "signed reverse release"
+        , movement jpy (fromGregorian 2026 9 2)
+            unassigned food 100 "outside period"
+        , movement jpy (fromGregorian 2026 8 8)
+            unassigned food 0 "zero movement"
+        ]
+      entitlement = mustRight
+        (deriveHouseholdEnvelopeEntitlement
+          observedThrough period householdPolicy accountPolicy movements)
+
+  assertEqual
+    "native food entitlement admits allocation/release and excludes spent execution"
+    (one jpy 40)
+    (envelopeEntitlementBalance foodId entitlement)
+  assertEqual
+    "native travel entitlement admits allocation and Envelope rebalance"
+    (one jpy 50)
+    (envelopeEntitlementBalance travelId entitlement)
+
+characterizeNativeEntitlementCoordinateMismatchFailsClosed :: IO ()
+characterizeNativeEntitlementCoordinateMismatchFailsClosed = do
+  let jpy = mustRight (mkCommodity "JPY")
+      period = mustRight
+        (mkPeriod (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
+      observedThrough = fromGregorian 2026 8 20
+      foodId = mustRight (mkEnvelopeId "food")
+      operating = mustRight (mkBackingPoolId "operating")
+      cash = mustRight (mkAccount "assets:cash")
+      income = mustRight (mkAccount "income:salary")
+      unassigned = mustRight (mkAccount "budget:unassigned")
+      food = mustRight (mkAccount "budget:food")
+      orphan = mustRight (mkAccount "budget:orphan")
+      foodLabel = mustRight (Budget.mkEnvelopeLabel "Food")
+      budgetPolicy = mustRight
+        (Budget.mkBudgetPolicy
+          [Budget.defineEnvelope foodId foodLabel Daily operating []]
+          [Budget.defineBackingPool operating [cash]])
+      householdPolicy = mustRight
+        (mkHouseholdPolicy
+          (incomeAnchorCyclePolicy income)
+          budgetPolicy
+          [defineHouseholdEnvelopeCoordinates foodId food []]
+          [unassigned])
+      accountPolicy = mustRight
+        (mkHouseholdAccountPolicy
+          []
+          [ (unassigned, RetainedUnassignedBudgetAccount)
+          , (food, RetainedEnvelopeBudgetAccount)
+          , (orphan, RetainedEnvelopeBudgetAccount)
+          ]
+          [] [] [])
+      result = deriveHouseholdEnvelopeEntitlement
+        observedThrough
+        period
+        householdPolicy
+        accountPolicy
+        [movement jpy (fromGregorian 2026 8 2)
+          unassigned orphan 10 "orphan"]
+
+  assertTrue
+    "Budget Envelope kind without Household Envelope coordinate fails closed"
+    (case result of
+      Left errors ->
+        HouseholdEnvelopeEntitlementCoordinateMismatch 1 2
+          `elem` NonEmpty.toList errors
+      Right _ -> False)
+
 actualSource :: T.Text
 actualSource = T.unlines
   [ "account assets:cash"
@@ -153,6 +291,11 @@ actualSource = T.unlines
   , "  expenses:unrouted  20 JPY"
   , "  assets:cash  -20 JPY"
   ]
+
+movement commodity day fromAccount toAccount quantity note =
+  householdBudgetMovement
+    day note fromAccount toAccount
+    (mkAmount commodity (quantityFromInteger quantity))
 
 mustFindRemaining envelope remaining =
   case find ((== envelope) . envelopeRemainingEnvelope)
