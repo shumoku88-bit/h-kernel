@@ -27,6 +27,8 @@ library
                     , HKernel.Account.Journal
                     , HKernel.Actual.Journal
                     , HKernel.Application.Config
+                    , HKernel.Backing
+                    , HKernel.Backing.Identity
                     , HKernel.Budget
                     , HKernel.Budget.Config
                     , HKernel.Budget.Consumption
@@ -243,6 +245,14 @@ test-suite h-kernel-account-profile-tsv-test
                     , containers >= 0.6 && < 0.8
                     , h-kernel
                     , h-kernel-household
+                    , text
+
+test-suite h-kernel-backing-test
+    import:           test-defaults
+    type:             exitcode-stdio-1.0
+    main-is:          BackingSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
                     , text
 
 test-suite h-kernel-balance-law-test
