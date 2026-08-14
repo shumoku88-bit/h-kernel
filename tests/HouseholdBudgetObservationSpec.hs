@@ -2,17 +2,13 @@
 
 module Main (main) where
 
-import Test.Support (assertEqual, assertTrue, mustRight)
 import Data.List (find)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Account (mkAccount)
-import HKernel.Actual.Journal
-  ( actualJournalValue
-  , parseActualJournal
-  )
+import HKernel.Actual.Journal (actualJournalValue, parseActualJournal)
 import HKernel.Backing.Identity (mkBackingPoolId)
 import HKernel.Budget (Pacing(..))
 import HKernel.Budget.Config (parseBudgetPolicy)
@@ -30,11 +26,10 @@ import HKernel.Envelope.Consumption
   , envelopeConsumptionUnmanaged
   , envelopeConsumptionUnrouted
   )
-import HKernel.Envelope.Entitlement
-  ( envelopeEntitlementBalance
-  )
+import HKernel.Envelope.Entitlement (envelopeEntitlementBalance)
 import HKernel.Envelope.ExpenseRouting
   ( ExpenseRoute(..)
+  , ExpenseRouteResolver(..)
   , expenseRouteAt
   )
 import HKernel.Envelope.Identity
@@ -45,9 +40,7 @@ import HKernel.Household.AccountProfile
   ( RetainedBudgetAccountKind(..)
   , mkHouseholdAccountPolicy
   )
-import HKernel.Household.BudgetMovement
-  ( householdBudgetMovement
-  )
+import HKernel.Household.BudgetMovement (householdBudgetMovement)
 import HKernel.Household.BudgetObservation
   ( HouseholdBudgetError(..)
   , deriveHouseholdBudgetObservation
@@ -71,16 +64,17 @@ import HKernel.Household.Policy
 import HKernel.Journal (journalAccountRegistry)
 import HKernel.Money
 import HKernel.Period (mkPeriod)
+import Test.Support (assertEqual, assertTrue, mustRight)
 
 main :: IO ()
 main = do
-  characterizeNativeConsumptionOwnsHouseholdRemaining
+  characterizeAdmittedResolverOwnsHouseholdConsumption
   characterizeCanonicalBudgetMovementsProjectNativeEntitlement
   characterizeNativeEntitlementCoordinateMismatchFailsClosed
   characterizeHistoricalEnvelopeSourceAdmission
 
-characterizeNativeConsumptionOwnsHouseholdRemaining :: IO ()
-characterizeNativeConsumptionOwnsHouseholdRemaining = do
+characterizeAdmittedResolverOwnsHouseholdConsumption :: IO ()
+characterizeAdmittedResolverOwnsHouseholdConsumption = do
   let jpy = mustRight (mkCommodity "JPY")
       period = mustRight
         (mkPeriod (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
@@ -96,8 +90,7 @@ characterizeNativeConsumptionOwnsHouseholdRemaining = do
       foodLabel = mustRight (Budget.mkEnvelopeLabel "Food")
       budgetPolicy = mustRight
         (Budget.mkBudgetPolicy
-          [Budget.defineEnvelope
-            foodId foodLabel Daily operating [foodExpense]]
+          [Budget.defineEnvelope foodId foodLabel Daily operating [foodExpense]]
           [Budget.defineBackingPool operating [cash]])
       householdPolicy = mustRight
         (mkHouseholdPolicy
@@ -110,6 +103,10 @@ characterizeNativeConsumptionOwnsHouseholdRemaining = do
         (validateHouseholdPolicyAccounts
           (journalAccountRegistry (actualJournalValue actualJournal))
           householdPolicy)
+      routeResolver = ExpenseRouteResolver (\_day account ->
+        if account == foodExpense
+          then Just (ManagedByEnvelope foodId)
+          else Nothing)
       movements =
         [ householdBudgetMovement
             (fromGregorian 2026 8 1)
@@ -120,35 +117,25 @@ characterizeNativeConsumptionOwnsHouseholdRemaining = do
         ]
       observation = mustRight
         (deriveHouseholdBudgetObservation
-          observedThrough period actualJournal validatedPolicy movements)
+          observedThrough period actualJournal validatedPolicy routeResolver movements)
       consumption = householdEnvelopeConsumption observation
       foodConsumption = envelopeConsumptionFor foodId consumption
       remaining = householdBudgetRemaining observation
       foodRemaining = mustFindRemaining foodId remaining
 
-  assertEqual
-    "native managed charge is retained"
-    (one jpy 50)
-    (consumptionCharges foodConsumption)
-  assertEqual
-    "native managed refund is retained"
-    (one jpy 10)
-    (consumptionRefunds foodConsumption)
-  assertEqual
-    "native managed net is exact"
-    (one jpy 40)
-    (consumptionNet foodConsumption)
-  assertEqual
-    "BudgetRemaining compatibility surface subtracts native managed net"
-    (one jpy 110)
-    (envelopeRemainingBalance foodRemaining)
-  assertEqual
-    "unrouted Expense stays attention evidence rather than reducing an Envelope"
+  assertEqual "admitted resolver routes managed charge"
+    (one jpy 50) (consumptionCharges foodConsumption)
+  assertEqual "admitted resolver routes managed refund"
+    (one jpy 10) (consumptionRefunds foodConsumption)
+  assertEqual "managed net remains exact"
+    (one jpy 40) (consumptionNet foodConsumption)
+  assertEqual "compatibility Remaining subtracts native managed net"
+    (one jpy 110) (envelopeRemainingBalance foodRemaining)
+  assertEqual "missing route stays unrouted attention evidence"
     (Just (one jpy 20))
     (consumptionNet <$> Map.lookup unroutedExpense
       (envelopeConsumptionUnrouted consumption))
-  assertTrue
-    "static compatibility routing never invents explicit unmanaged evidence"
+  assertTrue "semantic resolver does not invent explicit unmanaged evidence"
     (Map.null (envelopeConsumptionUnmanaged consumption))
 
 characterizeCanonicalBudgetMovementsProjectNativeEntitlement :: IO ()
@@ -219,21 +206,16 @@ characterizeCanonicalBudgetMovementsProjectNativeEntitlement = do
         (deriveHouseholdEnvelopeEntitlement
           observedThrough period householdPolicy accountPolicy movements)
 
-  assertEqual
-    "native food entitlement admits allocation/release and excludes spent execution"
-    (one jpy 40)
-    (envelopeEntitlementBalance foodId entitlement)
-  assertEqual
-    "native travel entitlement admits allocation and Envelope rebalance"
-    (one jpy 50)
-    (envelopeEntitlementBalance travelId entitlement)
+  assertEqual "native food entitlement excludes spent execution"
+    (one jpy 40) (envelopeEntitlementBalance foodId entitlement)
+  assertEqual "native travel entitlement admits Envelope rebalance"
+    (one jpy 50) (envelopeEntitlementBalance travelId entitlement)
 
 characterizeNativeEntitlementCoordinateMismatchFailsClosed :: IO ()
 characterizeNativeEntitlementCoordinateMismatchFailsClosed = do
   let jpy = mustRight (mkCommodity "JPY")
       period = mustRight
         (mkPeriod (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
-      observedThrough = fromGregorian 2026 8 20
       foodId = mustRight (mkEnvelopeId "food")
       operating = mustRight (mkBackingPoolId "operating")
       cash = mustRight (mkAccount "assets:cash")
@@ -261,15 +243,14 @@ characterizeNativeEntitlementCoordinateMismatchFailsClosed = do
           ]
           [] [] [])
       result = deriveHouseholdEnvelopeEntitlement
-        observedThrough
+        (fromGregorian 2026 8 20)
         period
         householdPolicy
         accountPolicy
         [movement jpy (fromGregorian 2026 8 2)
           unassigned orphan 10 "orphan"]
 
-  assertTrue
-    "Budget Envelope kind without Household Envelope coordinate fails closed"
+  assertTrue "Budget Envelope kind without Household coordinate fails closed"
     (case result of
       Left errors ->
         HouseholdEnvelopeEntitlementCoordinateMismatch 1 2
@@ -293,29 +274,23 @@ characterizeHistoricalEnvelopeSourceAdmission = do
       foodExpense = mustRight (mkAccount "expenses:food")
       retiredExpense = mustRight (mkAccount "expenses:unrouted")
 
-  assertTrue
-    "stable Registry contains current policy Envelope"
+  assertTrue "stable Registry contains current policy Envelope"
     (envelopeRegistryContains foodId (householdEnvelopeRegistry admitted))
-  assertTrue
-    "stable Registry retains historical Envelope absent from current policy"
+  assertTrue "stable Registry retains historical retired Envelope"
     (envelopeRegistryContains retiredId (householdEnvelopeRegistry admitted))
-  assertEqual
-    "initial routing applies without inventing an effective date"
+  assertEqual "initial routing needs no invented effective date"
     (Just (ManagedByEnvelope foodId))
     (expenseRouteAt
       (fromGregorian 2020 1 1)
       foodExpense
       (householdExpenseRoutingHistory admitted))
-  assertEqual
-    "dated historical routing validates target through stable Registry, not current policy"
+  assertEqual "dated route may target stable retired Envelope"
     (Just (ManagedByEnvelope retiredId))
     (expenseRouteAt
       (fromGregorian 2026 8 10)
       retiredExpense
       (householdExpenseRoutingHistory admitted))
-
-  assertTrue
-    "current policy Envelope missing from stable Registry fails closed"
+  assertTrue "current policy Envelope missing from stable Registry fails closed"
     (case admitHouseholdEnvelopeHistoryReferences
         accountRegistry budgetPolicy missingHistory of
       Left errors ->
