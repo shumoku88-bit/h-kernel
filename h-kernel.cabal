@@ -297,6 +297,14 @@ test-suite h-kernel-actual-journal-test
                     , text
                     , time
 
+test-suite h-kernel-actual-reversal-integrity-test
+    import:           test-defaults
+    type:             exitcode-stdio-1.0
+    main-is:          ActualReversalIntegritySpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+
 test-suite h-kernel-balance-sheet-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
