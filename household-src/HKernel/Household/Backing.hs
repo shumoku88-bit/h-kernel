@@ -22,6 +22,7 @@ module HKernel.Household.Backing
   , deriveHouseholdBacking
   ) where
 
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
