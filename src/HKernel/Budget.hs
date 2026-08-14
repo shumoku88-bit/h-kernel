@@ -1,11 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Pure identities and boundaries for the household budget model.
---
--- This module does not parse files, inspect a 'Journal', calculate envelope
--- balances, or render a report. It gives later adapters and calculations one
--- small typed vocabulary for half-open cycles, point-in-time observation,
--- spendable envelope identity, pacing, and exact dated entitlement changes.
 module HKernel.Budget
   ( BudgetCycle
   , BudgetCycleError(..)
@@ -99,20 +94,15 @@ data EnvelopeIdError
 mkEnvelopeId :: Text -> Either EnvelopeIdError EnvelopeId
 mkEnvelopeId value
   | T.null value = Left EmptyEnvelopeId
-  | T.strip value /= value =
-      Left (EnvelopeIdHasSurroundingWhitespace value)
-  | T.any isControl value =
-      Left (EnvelopeIdContainsControlCharacter value)
+  | T.strip value /= value = Left (EnvelopeIdHasSurroundingWhitespace value)
+  | T.any isControl value = Left (EnvelopeIdContainsControlCharacter value)
   | T.any isSpace value = Left (EnvelopeIdContainsWhitespace value)
   | T.toCaseFold value == "unallocated" = Left (ReservedEnvelopeId value)
   | otherwise = Right (EnvelopeId value)
 
--- | Retained compatibility vocabulary while callers move to EnvelopeMode.
--- New policy state is owned by HKernel.Envelope.Mode.
 data Pacing
   = Daily
   | Flex
-  | Reserve
   deriving (Eq, Ord, Show)
 
 data BudgetChange = BudgetChange
