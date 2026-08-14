@@ -9,46 +9,90 @@ on:
 permissions:
   contents: read
 
+# A new push supersedes older qualification for the same PR or branch.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     name: GHC ${{ matrix.ghc }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        ghc:
-          - "9.10.3"
-          - "9.12.4"
-          - "9.14.1"
+        # Pull requests need one fast, complete semantic gate. The full
+        # compatibility matrix still qualifies every commit that reaches main.
+        ghc: ${{ fromJSON(github.event_name == 'pull_request' && '["9.14.1"]' || '["9.10.3","9.12.4","9.14.1"]') }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Haskell
-        uses: haskell-actions/setup@v2
-        with:
-          ghc-version: ${{ matrix.ghc }}
-          cabal-version: latest
-
+      # Keep the cheapest failures ahead of Haskell setup and compilation.
       - name: Check report scripts
         run: |
           sh -n report report-build report-benchmark report-verify report-snapshot report-real-snapshot tools/hk
           python3 -m py_compile tools/report_sections.py tools/verify_report_corpus.py tools/verify_daily_command_hub.py tools/verify_household_report_config_resolution.py
           python3 tools/verify_daily_command_hub.py
 
+      - name: Set up Haskell
+        id: setup
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: ${{ matrix.ghc }}
+          cabal-version: latest
+
+      - name: Configure build
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # CI correctness does not depend on optimizer output. Avoid paying
+            # the optimization compile cost on the interactive PR path.
+            cabal configure --enable-tests --disable-optimization --disable-documentation
+          else
+            cabal configure --enable-tests --disable-documentation
+          fi
+          cabal build all --dry-run
+
+      - name: Restore cached dependencies
+        uses: actions/cache/restore@v4
+        id: cache
+        env:
+          key: ${{ runner.os }}-ghc-${{ steps.setup.outputs.ghc-version }}-cabal-${{ steps.setup.outputs.cabal-version }}
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: ${{ env.key }}-plan-${{ hashFiles('dist-newstyle/cache/plan.json') }}
+          restore-keys: |
+            ${{ env.key }}-
+
+      - name: Install dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cabal build all --only-dependencies -j
+
+      # Save dependency work before compiling the repository itself, so a later
+      # project failure does not throw away an otherwise useful cache.
+      - name: Save cached dependencies
+        uses: actions/cache/save@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
       - name: Build
-        run: cabal build all
+        run: cabal build all -j
 
       - name: Test
-        run: cabal test all
+        run: cabal test all -j
 
+      # These checks are cheap once the executable is built, so retain them on
+      # the PR gate as well as the canonical full qualification on main.
       - name: Audit repository ownership
-        if: matrix.ghc == '9.10.3'
+        if: github.event_name == 'pull_request' || matrix.ghc == '9.10.3'
         run: cabal run exe:repository-audit
 
       - name: Verify complete report contracts
-        if: matrix.ghc == '9.10.3'
+        if: github.event_name == 'pull_request' || matrix.ghc == '9.10.3'
         run: |
           mkdir -p .report-bin-ci
           cp "$(cabal list-bin exe:h-kernel)" .report-bin-ci/h-kernel
