@@ -49,6 +49,7 @@ import HKernel.Plan.Journal
   ( PlanClassificationError
   , PlanJournal
   , PlanLifecycleError
+  , identifiedPlanId
   , identifiedPlanTransaction
   , planJournalValue
   )
@@ -60,10 +61,10 @@ import HKernel.Plan.Open
 -- | Open Plan commitments against Envelope headroom at one resolved period/day
 -- observation.
 --
--- Expense destinations use Expense routing. Explicit non-Expense fulfillment
--- targets such as savings, investment, or debt destinations use their own
--- routing history. Ordinary non-Expense postings with no fulfillment route do
--- not invent Envelope claims.
+-- Expense destinations use Account routing. Explicit non-Expense fulfillment
+-- intent such as savings, investment, or debt goals belongs to stable PlanId.
+-- Ordinary non-Expense postings in unrelated Plans therefore do not inherit
+-- Envelope meaning from a shared Account coordinate.
 data EnvelopeCommitment = EnvelopeCommitment
   { envelopeCommitmentPeriod          :: Period
   , envelopeCommitmentObservedThrough :: Day
@@ -122,11 +123,14 @@ observeEnvelopeCommitment period observedThrough plans actual expenseRouting ful
     registry = journalAccountRegistry (planJournalValue plans)
 
     collectPlan totals identified =
-      foldl collectPosting totals
+      foldl (collectPosting planFulfillmentRoute) totals
         (NonEmpty.toList
           (transactionPostings (identifiedPlanTransaction identified)))
+      where
+        planFulfillmentRoute =
+          fulfillmentRouteAt observedThrough (identifiedPlanId identified) fulfillmentRouting
 
-    collectPosting totals posting
+    collectPosting planFulfillmentRoute totals posting
       | amountQuantity amount <= zeroQuantity = totals
       | accountTypeFor account registry == Just Expense =
           case expenseRouteAt observedThrough account expenseRouting of
@@ -136,7 +140,7 @@ observeEnvelopeCommitment period observedThrough plans actual expenseRouting ful
               secondMap (addAt account amount) totals
             Nothing ->
               thirdMap (addAt account amount) totals
-      | otherwise = case fulfillmentRouteAt observedThrough account fulfillmentRouting of
+      | otherwise = case planFulfillmentRoute of
           Just (FulfillsEnvelope envelope) ->
             firstMap (addAt envelope amount) totals
           Just NotFulfillmentTarget -> totals
