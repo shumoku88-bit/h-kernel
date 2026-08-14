@@ -8,6 +8,11 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, fromGregorian)
 import HKernel.Application.Config (mkHouseholdRoot)
+import HKernel.Backing
+  ( backingPoolAvailableSurplus
+  , backingPoolFundingCommitment
+  , backingPoolGrossSurplus
+  )
 import HKernel.Household.Application
   ( admitCanonicalHousehold
   , buildHouseholdReportSurfaceFromHousehold
@@ -30,6 +35,7 @@ main = do
       currentCycle = householdCurrentCycleAccounts surface
       currentPeriod = currentCycleAccountsPeriod currentCycle
       backing = householdEnvelopeBacking surface
+      pool = exactlyOne (envelopeBackingPools backing)
       target = householdDailyTarget surface
       foodLine = exactlyOne (envelopeBackingLines backing)
       openPlans = householdPlannedTransactions surface
@@ -154,12 +160,18 @@ main = do
   assertEqual "Actual Expense movement becomes exact consumption"
     (one jpy 100)
     (envelopeActualConsumption foodLine)
-  assertEqual "only current-cycle open mapped Plans become reserve and derived headroom"
-    (one jpy 600)
+  assertEqual "overdue and current open Plans remain reserved until the next cycle boundary"
+    (one jpy 550)
     (envelopePostPlanHeadroom foodLine)
   assertEqual "liquid Asset backing is selected by explicit Budget policy"
     (one jpy 1900)
     (envelopeFundingBalance backing)
+  assertEqual "Plan source Asset reserves the same BackingPool funding horizon"
+    (one jpy 350)
+    (backingPoolFundingCommitment pool)
+  assertEqual "matching funding and Envelope commitments are not double-counted in pool surplus"
+    (one jpy 1000, one jpy 1000)
+    (backingPoolGrossSurplus pool, backingPoolAvailableSurplus pool)
   assertEqual "Daily Target Asset selection is owned by household.toml"
     (one jpy 1900)
     (dailyTargetEligibleAssets target)
