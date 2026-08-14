@@ -52,6 +52,7 @@ library
                     , HKernel.Envelope.ExpenseRouting.TSV
                     , HKernel.Envelope.Fulfillment
                     , HKernel.Envelope.FulfillmentRouting
+                    , HKernel.Envelope.FulfillmentRouting.TSV
                     , HKernel.Envelope.Headroom
                     , HKernel.Envelope.Identity
                     , HKernel.Envelope.Mode
@@ -527,6 +528,15 @@ test-suite h-kernel-envelope-fulfillment-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EnvelopeFulfillmentSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+
+test-suite h-kernel-envelope-fulfillment-routing-tsv-test
+    import:           test-defaults
+    type:             exitcode-stdio-1.0
+    main-is:          EnvelopeFulfillmentRoutingTSVSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
