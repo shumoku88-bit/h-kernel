@@ -416,6 +416,16 @@ testFirstFailurePrecedence = do
         , "[account-policy.expenses]"
         , "fixed = []"
         , "variable = [\"Expenses:Groceries\", \"Expenses:UndeclaredAccount\"]"
+        , ""
+        , "[envelope-history]"
+        , "identities = [\"Daily\"]"
+        , ""
+        , "[[envelope-history.expense-routing]]"
+        , "effective-from = \"initial\""
+        , "expense-account = \"Expenses:Groceries\""
+        , "route = \"managed\""
+        , "target = \"Daily\""
+        , "note = \"synthetic precedence fixture routing\""
         ]
       invalidReportToml = "[reports.trial-balance\n"
 
