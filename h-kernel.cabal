@@ -104,6 +104,7 @@ library h-kernel-household
                     , HKernel.Household.Config
                     , HKernel.Household.DailyTarget
                     , HKernel.Household.DailyTarget.TSV
+                    , HKernel.Household.EnvelopeHistory
                     , HKernel.Household.Issue.Relation.TSV
                     , HKernel.Household.Issue.TSV
                     , HKernel.Household.Policy

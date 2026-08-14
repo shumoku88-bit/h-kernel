@@ -15,6 +15,7 @@ import HKernel.Actual.Journal
   )
 import HKernel.Backing.Identity (mkBackingPoolId)
 import HKernel.Budget (Pacing(..))
+import HKernel.Budget.Config (parseBudgetPolicy)
 import qualified HKernel.Budget.Policy as Budget
 import HKernel.Budget.Remaining
   ( budgetRemainingEnvelopes
@@ -32,7 +33,14 @@ import HKernel.Envelope.Consumption
 import HKernel.Envelope.Entitlement
   ( envelopeEntitlementBalance
   )
-import HKernel.Envelope.Identity (mkEnvelopeId)
+import HKernel.Envelope.ExpenseRouting
+  ( ExpenseRoute(..)
+  , expenseRouteAt
+  )
+import HKernel.Envelope.Identity
+  ( envelopeRegistryContains
+  , mkEnvelopeId
+  )
 import HKernel.Household.AccountProfile
   ( RetainedBudgetAccountKind(..)
   , mkHouseholdAccountPolicy
@@ -46,6 +54,13 @@ import HKernel.Household.BudgetObservation
   , deriveHouseholdEnvelopeEntitlement
   , householdBudgetRemaining
   , householdEnvelopeConsumption
+  )
+import HKernel.Household.EnvelopeHistory
+  ( HouseholdEnvelopeHistoryReferenceError(..)
+  , admitHouseholdEnvelopeHistoryReferences
+  , householdEnvelopeRegistry
+  , householdExpenseRoutingHistory
+  , parseHouseholdEnvelopeHistory
   )
 import HKernel.Household.Policy
   ( defineHouseholdEnvelopeCoordinates
@@ -62,6 +77,7 @@ main = do
   characterizeNativeConsumptionOwnsHouseholdRemaining
   characterizeCanonicalBudgetMovementsProjectNativeEntitlement
   characterizeNativeEntitlementCoordinateMismatchFailsClosed
+  characterizeHistoricalEnvelopeSourceAdmission
 
 characterizeNativeConsumptionOwnsHouseholdRemaining :: IO ()
 characterizeNativeConsumptionOwnsHouseholdRemaining = do
@@ -260,6 +276,53 @@ characterizeNativeEntitlementCoordinateMismatchFailsClosed = do
           `elem` NonEmpty.toList errors
       Right _ -> False)
 
+characterizeHistoricalEnvelopeSourceAdmission :: IO ()
+characterizeHistoricalEnvelopeSourceAdmission = do
+  let budgetPolicy = mustRight (parseBudgetPolicy historicalBudgetConfig)
+      history = mustJust "historical Envelope source"
+        (mustRight (parseHouseholdEnvelopeHistory historicalHouseholdConfig))
+      missingHistory = mustJust "missing-registry Envelope source"
+        (mustRight (parseHouseholdEnvelopeHistory historicalMissingRegistryConfig))
+      actualJournal = mustRight (parseActualJournal actualSource)
+      accountRegistry = journalAccountRegistry (actualJournalValue actualJournal)
+      admitted = mustRight
+        (admitHouseholdEnvelopeHistoryReferences
+          accountRegistry budgetPolicy history)
+      foodId = mustRight (mkEnvelopeId "food")
+      retiredId = mustRight (mkEnvelopeId "retired")
+      foodExpense = mustRight (mkAccount "expenses:food")
+      retiredExpense = mustRight (mkAccount "expenses:unrouted")
+
+  assertTrue
+    "stable Registry contains current policy Envelope"
+    (envelopeRegistryContains foodId (householdEnvelopeRegistry admitted))
+  assertTrue
+    "stable Registry retains historical Envelope absent from current policy"
+    (envelopeRegistryContains retiredId (householdEnvelopeRegistry admitted))
+  assertEqual
+    "initial routing applies without inventing an effective date"
+    (Just (ManagedByEnvelope foodId))
+    (expenseRouteAt
+      (fromGregorian 2020 1 1)
+      foodExpense
+      (householdExpenseRoutingHistory admitted))
+  assertEqual
+    "dated historical routing validates target through stable Registry, not current policy"
+    (Just (ManagedByEnvelope retiredId))
+    (expenseRouteAt
+      (fromGregorian 2026 8 10)
+      retiredExpense
+      (householdExpenseRoutingHistory admitted))
+
+  assertTrue
+    "current policy Envelope missing from stable Registry fails closed"
+    (case admitHouseholdEnvelopeHistoryReferences
+        accountRegistry budgetPolicy missingHistory of
+      Left errors ->
+        CurrentPolicyEnvelopeMissingFromRegistry foodId
+          `elem` NonEmpty.toList errors
+      Right _ -> False)
+
 actualSource :: T.Text
 actualSource = T.unlines
   [ "account assets:cash"
@@ -292,6 +355,59 @@ actualSource = T.unlines
   , "  assets:cash  -20 JPY"
   ]
 
+historicalBudgetConfig :: T.Text
+historicalBudgetConfig = T.unlines
+  [ "[[backing-pools]]"
+  , "id = \"operating\""
+  , "asset-accounts = [\"assets:cash\"]"
+  , ""
+  , "[[envelopes]]"
+  , "id = \"food\""
+  , "label = \"Food\""
+  , "pacing = \"daily\""
+  , "backing-pool = \"operating\""
+  , "expense-accounts = [\"expenses:food\"]"
+  ]
+
+historicalHouseholdConfig :: T.Text
+historicalHouseholdConfig = historicalHouseholdConfigWithIdentities
+  "[\"food\", \"retired\"]"
+
+historicalMissingRegistryConfig :: T.Text
+historicalMissingRegistryConfig = historicalHouseholdConfigWithIdentities
+  "[\"retired\"]"
+
+historicalHouseholdConfigWithIdentities :: T.Text -> T.Text
+historicalHouseholdConfigWithIdentities identities = T.unlines
+  [ "[cycle]"
+  , "mode = \"income-anchor\""
+  , "income-account = \"income:salary\""
+  , ""
+  , "[budget]"
+  , "unassigned-accounts = [\"budget:unassigned\"]"
+  , ""
+  , "[[budget.envelopes]]"
+  , "id = \"food\""
+  , "allocation-account = \"budget:food\""
+  , ""
+  , "[envelope-history]"
+  , "identities = " <> identities
+  , ""
+  , "[[envelope-history.expense-routing]]"
+  , "effective-from = \"initial\""
+  , "expense-account = \"expenses:food\""
+  , "route = \"managed\""
+  , "target = \"food\""
+  , "note = \"opening static policy\""
+  , ""
+  , "[[envelope-history.expense-routing]]"
+  , "effective-from = \"2026-08-02\""
+  , "expense-account = \"expenses:unrouted\""
+  , "route = \"managed\""
+  , "target = \"retired\""
+  , "note = \"historical route\""
+  ]
+
 movement commodity day fromAccount toAccount quantity note =
   householdBudgetMovement
     day note fromAccount toAccount
@@ -302,6 +418,10 @@ mustFindRemaining envelope remaining =
       (budgetRemainingEnvelopes remaining) of
     Just value -> value
     Nothing -> error "invalid test fixture: expected Envelope remaining"
+
+mustJust :: String -> Maybe value -> value
+mustJust _ (Just value) = value
+mustJust label Nothing = error ("invalid test fixture: expected " ++ label)
 
 one :: Commodity -> Integer -> Balance
 one commodity value =
