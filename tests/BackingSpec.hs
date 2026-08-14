@@ -4,9 +4,15 @@ module Main (main) where
 
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
+import HKernel.Account
 import HKernel.Backing
 import HKernel.Backing.Identity
-import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
+import HKernel.Backing.Policy
+import HKernel.Envelope.Identity
+  ( EnvelopeId
+  , mkEnvelopeId
+  , mkEnvelopeRegistry
+  )
 import HKernel.Money
 import System.Exit (exitFailure)
 
@@ -18,6 +24,9 @@ main = do
   preserveCommodityCoordinates
   rejectDuplicateEnvelopeClaim
   characterizePoolIdentity
+  characterizeBackingPolicy
+  characterizeBackingPolicyReferences
+  characterizeBackingPolicyAccounts
 
 characterizeMatchingEnvelopeCommitment :: IO ()
 characterizeMatchingEnvelopeCommitment = do
@@ -124,12 +133,158 @@ characterizePoolIdentity = do
     "living"
     (backingPoolIdText (pool "living"))
 
+characterizeBackingPolicy :: IO ()
+characterizeBackingPolicy = do
+  let operating = pool "operating"
+      reserve = pool "reserve"
+      food = envelope "food"
+      savings = envelope "savings"
+      cash = account "assets:cash"
+      bank = account "assets:bank"
+      pools =
+        [ defineBackingPool operating [cash]
+        , defineBackingPool reserve [bank]
+        ]
+      assignments =
+        [ assignEnvelopeBackingPool food operating
+        , assignEnvelopeBackingPool savings reserve
+        ]
+      policy = mustRight (mkBackingPolicy pools assignments)
+
+  equal "Envelope backing lookup is owned by Backing policy"
+    (Just operating)
+    (backingPolicyPoolForEnvelope food policy)
+  equal "Asset membership lookup is owned by Backing policy"
+    (Just reserve)
+    (backingPolicyPoolForAsset bank policy)
+  equal "source-order pool definitions remain available"
+    pools
+    (backingPolicyPoolDefinitions policy)
+  equal "source-order Envelope assignments remain available"
+    assignments
+    (backingPolicyEnvelopeAssignments policy)
+
+  right "empty Backing policy is valid before household policy requires funding"
+    (mkBackingPolicy [] [])
+
+  leftSatisfies "duplicate pool definition fails closed"
+    (any isDuplicatePool . NonEmpty.toList)
+    (mkBackingPolicy
+      [ defineBackingPool operating [cash]
+      , defineBackingPool operating [bank]
+      ]
+      [])
+
+  leftSatisfies "declared pool without Asset members fails closed"
+    (any isEmptyPool . NonEmpty.toList)
+    (mkBackingPolicy [defineBackingPool operating []] [])
+
+  leftSatisfies "one Asset cannot silently belong to two pools"
+    (any isDuplicateAsset . NonEmpty.toList)
+    (mkBackingPolicy
+      [ defineBackingPool operating [cash]
+      , defineBackingPool reserve [cash]
+      ]
+      [])
+
+  leftSatisfies "one Envelope cannot silently receive two current backing pools"
+    (any isDuplicateEnvelope . NonEmpty.toList)
+    (mkBackingPolicy
+      pools
+      [ assignEnvelopeBackingPool food operating
+      , assignEnvelopeBackingPool food reserve
+      ])
+
+  leftSatisfies "Envelope assignment to unknown pool fails locally"
+    (any isUnknownPool . NonEmpty.toList)
+    (mkBackingPolicy
+      [defineBackingPool operating [cash]]
+      [assignEnvelopeBackingPool food reserve])
+  where
+    isDuplicatePool err = case err of
+      DuplicateBackingPoolDefinition actual -> actual == pool "operating"
+      _ -> False
+    isEmptyPool err = case err of
+      BackingPoolHasNoAssetAccounts actual -> actual == pool "operating"
+      _ -> False
+    isDuplicateAsset err = case err of
+      DuplicateAssetAccountMembership actualAccount firstPool repeatedPool ->
+        actualAccount == account "assets:cash"
+          && firstPool == pool "operating"
+          && repeatedPool == pool "reserve"
+      _ -> False
+    isDuplicateEnvelope err = case err of
+      DuplicateEnvelopeBackingAssignment actualEnvelope firstPool repeatedPool ->
+        actualEnvelope == envelope "food"
+          && firstPool == pool "operating"
+          && repeatedPool == pool "reserve"
+      _ -> False
+    isUnknownPool err = case err of
+      EnvelopeReferencesUnknownBackingPool actualEnvelope actualPool ->
+        actualEnvelope == envelope "food" && actualPool == pool "reserve"
+      _ -> False
+
+characterizeBackingPolicyReferences :: IO ()
+characterizeBackingPolicyReferences = do
+  let operating = pool "operating"
+      historical = envelope "historical"
+      missing = envelope "missing"
+      cash = account "assets:cash"
+      registry = mustRight (mkEnvelopeRegistry [historical])
+      knownPolicy = mustRight (mkBackingPolicy
+        [defineBackingPool operating [cash]]
+        [assignEnvelopeBackingPool historical operating])
+      missingPolicy = mustRight (mkBackingPolicy
+        [defineBackingPool operating [cash]]
+        [assignEnvelopeBackingPool missing operating])
+
+  right "registered historical Envelope remains a valid Backing coordinate"
+    (validateBackingPolicyEnvelopeReferences registry knownPolicy)
+  equal "unknown Envelope assignment is rejected by stable Registry"
+    (Left (UnknownBackingPolicyEnvelope missing operating NonEmpty.:| []))
+    (validateBackingPolicyEnvelopeReferences registry missingPolicy)
+
+characterizeBackingPolicyAccounts :: IO ()
+characterizeBackingPolicyAccounts = do
+  let operating = pool "operating"
+      cash = account "assets:cash"
+      foodExpense = account "expenses:food"
+      missing = account "assets:missing"
+      validPolicy = mustRight (mkBackingPolicy
+        [defineBackingPool operating [cash]] [])
+      wrongRolePolicy = mustRight (mkBackingPolicy
+        [defineBackingPool operating [foodExpense]] [])
+      missingPolicy = mustRight (mkBackingPolicy
+        [defineBackingPool operating [missing]] [])
+      registry = mustRight
+        ( registerAccount (declareAccount foodExpense Expense)
+        =<< registerAccount (declareAccount cash Asset) emptyAccountRegistry
+        )
+
+  right "declared Asset member qualifies Backing policy"
+    (validateBackingPolicyAccounts registry validPolicy)
+  equal "declared non-Asset member fails with its actual role"
+    (Left
+      ( BackingPolicyAssetAccountNotAsset operating foodExpense Expense
+        NonEmpty.:| []
+      ))
+    (validateBackingPolicyAccounts registry wrongRolePolicy)
+  equal "undeclared funding Account fails closed"
+    (Left
+      ( BackingPolicyAssetAccountUndeclared operating missing
+        NonEmpty.:| []
+      ))
+    (validateBackingPolicyAccounts registry missingPolicy)
+
 claim :: Text -> Balance -> Balance -> BackedEnvelopeClaim
 claim name remaining headroom = BackedEnvelopeClaim
   { backedEnvelopeId = envelope name
   , backedEnvelopeRemaining = remaining
   , backedEnvelopeHeadroom = headroom
   }
+
+account :: Text -> Account
+account = mustRight . mkAccount
 
 pool :: Text -> BackingPoolId
 pool = mustRight . mkBackingPoolId
@@ -164,6 +319,11 @@ leftSatisfies label predicate result = case result of
     | predicate err -> pass label
     | otherwise -> failTest label "rejected for the wrong reason"
   Right value -> failTest label ("unexpectedly accepted: " ++ show value)
+
+right :: Show error => String -> Either error value -> IO ()
+right label result = case result of
+  Right _ -> pass label
+  Left err -> failTest label ("unexpectedly rejected: " ++ show err)
 
 equal :: (Eq value, Show value) => String -> value -> value -> IO ()
 equal label expected actual
