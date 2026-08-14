@@ -4,7 +4,8 @@
 --
 -- This module owns only the six-coordinate source syntax for typed historical
 -- relations. It is deliberately not wired into canonical Household paths,
--- snapshots, writer authority, or TUI publication yet.
+-- snapshots, writer authority, or TUI publication yet. Cross-source identity
+-- integrity belongs to 'HKernel.HouseholdIssue.admitIssueRelationReferences'.
 module HKernel.Household.Issue.Relation.TSV
   ( IssueRelationTSVError(..)
   , issueRelationHeader
