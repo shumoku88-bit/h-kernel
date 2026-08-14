@@ -89,6 +89,10 @@ resolveOpenOutgoingPlanTransactionsAt observedThrough plans actual = do
 -- an explicit admitted Actual remains historical completion evidence even if the
 -- Plan later acquires lifecycle metadata. Callers decide what the completion
 -- means for their own projection.
+--
+-- One Actual may complete several Plans, matching the generic completion owner.
+-- Domain projections that cannot interpret that relation without inventing an
+-- allocation rule must reject the ambiguity at their own boundary.
 resolveCompletedOutgoingPlanTransactionsAt
   :: Day
   -> PlanJournal
@@ -159,12 +163,6 @@ completionActualsThrough observedThrough plans actual =
         )
       | declaration <- validDeclarations
       ]
-    planIdsByActual = Map.fromListWith Set.union
-      [ ( declaredCompletionActualId declaration
-        , Set.singleton (declaredCompletionPlanId declaration)
-        )
-      | declaration <- validDeclarations
-      ]
 
     multipleActualErrors =
       [ OpenOutgoingPlanCompletionError
@@ -172,13 +170,6 @@ completionActualsThrough observedThrough plans actual =
       | (planId, actualIdSet) <- Map.toAscList actualIdsByPlan
       , Just actualIds <- [NonEmpty.nonEmpty (Set.toAscList actualIdSet)]
       , NonEmpty.length actualIds > 1
-      ]
-    multiplePlanErrors =
-      [ OpenOutgoingPlanCompletionError
-          (ActualReferencesMultiplePlans actualId planIds)
-      | (actualId, planIdSet) <- Map.toAscList planIdsByActual
-      , Just planIds <- [NonEmpty.nonEmpty (Set.toAscList planIdSet)]
-      , NonEmpty.length planIds > 1
       ]
 
     visibleCompleted =
@@ -194,7 +185,6 @@ completionActualsThrough observedThrough plans actual =
       unknownPlanErrors
         ++ unknownActualErrors
         ++ multipleActualErrors
-        ++ multiplePlanErrors
 
 mapErrors
   :: (left -> right)
