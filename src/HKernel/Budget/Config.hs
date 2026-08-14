@@ -24,11 +24,11 @@ import HKernel.Account
   )
 import HKernel.Budget
   ( EnvelopeIdError(..)
-  , Pacing(..)
   , envelopeIdText
   , mkEnvelopeId
   )
 import HKernel.Budget.Policy
+import HKernel.Envelope.Mode (EnvelopeMode(..))
 import Toml (decode)
 import Toml.Schema
   ( FromValue(..)
@@ -109,16 +109,17 @@ renderEnvelopeDefinition definition = T.unlines
   , "label = " <> tomlString
       (envelopeLabelText (envelopeDefinitionLabel definition))
   , "pacing = " <> tomlString
-      (renderPacing (envelopeDefinitionPacing definition))
+      (renderEnvelopeMode (envelopeDefinitionMode definition))
   , "backing-pool = " <> tomlString
       (backingPoolIdText (envelopeDefinitionBackingPool definition))
   , "expense-accounts = " <> renderAccountArray
       (envelopeDefinitionExpenseAccounts definition)
   ]
 
-renderPacing :: Pacing -> Text
-renderPacing Daily = "daily"
-renderPacing Flex = "flex"
+renderEnvelopeMode :: EnvelopeMode -> Text
+renderEnvelopeMode Daily = "daily"
+renderEnvelopeMode Flex = "flex"
+renderEnvelopeMode Reserve = "reserve"
 
 renderAccountArray :: [Account] -> Text
 renderAccountArray accounts =
@@ -172,16 +173,16 @@ parseRawEnvelope
   :: Int
   -> RawEnvelope
   -> Either [Text] EnvelopeDefinition
-parseRawEnvelope index (RawEnvelope rawId rawLabel rawPacing rawPool rawAccounts) =
-  case (envelopeIdResult, labelResult, pacingResult, poolResult, errors) of
-    (Right envelopeId, Right label, Right pacing, Right poolId, []) ->
-      Right (defineEnvelope envelopeId label pacing poolId accounts)
+parseRawEnvelope index (RawEnvelope rawId rawLabel rawMode rawPool rawAccounts) =
+  case (envelopeIdResult, labelResult, modeResult, poolResult, errors) of
+    (Right envelopeId, Right label, Right mode, Right poolId, []) ->
+      Right (defineEnvelopeWithMode envelopeId label mode poolId accounts)
     _ -> Left errors
   where
     path = indexedPath "envelopes" index
     envelopeIdResult = mkEnvelopeId rawId
     labelResult = mkEnvelopeLabel rawLabel
-    pacingResult = parsePacing (path <> ".pacing") rawPacing
+    modeResult = parseEnvelopeMode (path <> ".pacing") rawMode
     poolResult = mkBackingPoolId rawPool
     (accountErrors, accounts) = parseAccounts
       (path <> ".expense-accounts")
@@ -195,18 +196,19 @@ parseRawEnvelope index (RawEnvelope rawId rawLabel rawPacing rawPool rawAccounts
           (pure . renderEnvelopeLabelError (path <> ".label"))
           (const [])
           labelResult
-        ++ either id (const []) pacingResult
+        ++ either id (const []) modeResult
         ++ either
           (pure . renderBackingPoolIdError (path <> ".backing-pool"))
           (const [])
           poolResult
         ++ accountErrors
 
-parsePacing :: Text -> Text -> Either [Text] Pacing
-parsePacing _ "daily" = Right Daily
-parsePacing _ "flex" = Right Flex
-parsePacing path value = Left
-  [ path <> ": expected daily or flex; got " <> quoted value ]
+parseEnvelopeMode :: Text -> Text -> Either [Text] EnvelopeMode
+parseEnvelopeMode _ "daily" = Right Daily
+parseEnvelopeMode _ "flex" = Right Flex
+parseEnvelopeMode _ "reserve" = Right Reserve
+parseEnvelopeMode path value = Left
+  [ path <> ": expected daily, flex, or reserve; got " <> quoted value ]
 
 parseAccounts :: Text -> [Text] -> ([Text], [Account])
 parseAccounts path = finish . foldl' add ([], []) . zip [0..]
