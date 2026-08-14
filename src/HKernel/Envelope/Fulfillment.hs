@@ -63,11 +63,11 @@ import HKernel.Plan.Journal
   , planJournalValue
   )
 import HKernel.Plan.Open
-  ( CompletedOutgoingPlanTransaction
-  , OpenOutgoingPlanError
-  , completedOutgoingActual
-  , completedOutgoingPlan
-  , resolveCompletedOutgoingPlanTransactionsAt
+  ( CompletedPlanTransaction
+  , PlanObservationError
+  , completedActual
+  , completedPlan
+  , resolveCompletedPlanTransactionsAt
   )
 
 -- | Gross fulfillment/reversal evidence for one Envelope.
@@ -105,7 +105,7 @@ data EnvelopeFulfillment = EnvelopeFulfillment
 
 data EnvelopeFulfillmentError
   = EnvelopeFulfillmentObservationOutsidePeriod Day Period
-  | EnvelopeFulfillmentPlanObservationError OpenOutgoingPlanError
+  | EnvelopeFulfillmentPlanObservationError PlanObservationError
   | EnvelopeFulfillmentCompletionShapeError PlanCompletionShapeError
   | EnvelopeFulfillmentActualFulfillsMultiplePlans
       ActualTransactionId
@@ -115,10 +115,13 @@ data EnvelopeFulfillmentError
 -- | Observe completed non-Expense target Plans and their typed reversal chains
 -- through one inclusive day.
 --
--- Fulfillment intent is selected by stable PlanId, never by Account. Once a
--- routed Plan completes, its root Plan/Actual shape identifies target posting
--- positions. Actual quantities at those positions are authoritative.
+-- Fulfillment intent is selected by stable PlanId, never by Account or by the
+-- generic Income/outgoing classifier. This matters for Asset-to-Asset savings
+-- and investment Plans, whose Envelope meaning is explicit household intent
+-- rather than an accounting role inferred from Account types.
 --
+-- Once a routed Plan completes, its root Plan/Actual shape identifies target
+-- posting positions. Actual quantities at those positions are authoritative.
 -- Reversal chains then reverse or restore that whole root fulfillment evidence.
 -- They do not re-derive target meaning from the reversal transaction's Account
 -- aggregate, so repeated target postings remain positionally well-defined.
@@ -139,14 +142,14 @@ observeEnvelopeFulfillment period observedThrough plans actual routing
       Left (EnvelopeFulfillmentObservationOutsidePeriod observedThrough period NonEmpty.:| [])
   | otherwise = do
       completed <- mapErrors EnvelopeFulfillmentPlanObservationError
-        (resolveCompletedOutgoingPlanTransactionsAt observedThrough plans actual)
+        (resolveCompletedPlanTransactionsAt observedThrough plans actual)
       let routed = routedCompleted completed
       rejectAmbiguousRoutedActuals routed
       validated <- validateCompleted routed
       let fulfillmentByRoot = Map.fromList
             [ (actualId, (envelope, balance))
             | (pair, envelope) <- validated
-            , let actualId = identifiedActualId (completedOutgoingActual pair)
+            , let actualId = identifiedActualId (completedActual pair)
                   balance = targetBalance pair
             , balance /= emptyBalance
             ]
@@ -175,8 +178,8 @@ observeEnvelopeFulfillment period observedThrough plans actual routing
     routedCompleted completed =
       [ (pair, envelope)
       | pair <- completed
-      , let identifiedPlan = completedOutgoingPlan pair
-            identifiedActual = completedOutgoingActual pair
+      , let identifiedPlan = completedPlan pair
+            identifiedActual = completedActual pair
             routeDay = transactionDate (identifiedActualTransaction identifiedActual)
             planId = identifiedPlanId identifiedPlan
       , Just (FulfillsEnvelope envelope) <-
@@ -189,8 +192,8 @@ observeEnvelopeFulfillment period observedThrough plans actual routing
         Just found -> Left found
       where
         plansByActual = Map.fromListWith (++)
-          [ ( identifiedActualId (completedOutgoingActual pair)
-            , [identifiedPlanId (completedOutgoingPlan pair)]
+          [ ( identifiedActualId (completedActual pair)
+            , [identifiedPlanId (completedPlan pair)]
             )
           | (pair, _) <- routed
           ]
@@ -207,8 +210,8 @@ observeEnvelopeFulfillment period observedThrough plans actual routing
         Right values -> Right values
 
     validateOne routedPair@(pair, _) = do
-      let identifiedPlan = completedOutgoingPlan pair
-          identifiedActual = completedOutgoingActual pair
+      let identifiedPlan = completedPlan pair
+          identifiedActual = completedActual pair
       validatePlanCompletionShape
         (identifiedPlanId identifiedPlan)
         (identifiedPlanTransaction identifiedPlan)
@@ -225,10 +228,10 @@ observeEnvelopeFulfillment period observedThrough plans actual routing
       where
         planPostings = NonEmpty.toList
           (transactionPostings
-            (identifiedPlanTransaction (completedOutgoingPlan pair)))
+            (identifiedPlanTransaction (completedPlan pair)))
         actualPostings = NonEmpty.toList
           (transactionPostings
-            (identifiedActualTransaction (completedOutgoingActual pair)))
+            (identifiedActualTransaction (completedActual pair)))
 
     observeEntry fulfillmentByRoot entry accum =
       case actualTransactionEntryIdentity entry of
