@@ -35,6 +35,13 @@ data ExpenseRoutingTSVErrorReason
   | DuplicateExpenseRoutingCoordinate Account Day
   deriving (Eq, Show)
 
+-- | Admit one source-local effective-dated Expense routing history.
+--
+-- This parser owns syntax only. It does not prove stable cross-source identity
+-- existence or Account role correctness; callers apply
+-- 'admitExpenseRoutingReferences' after source admission with the admitted
+-- AccountRegistry and EnvelopeRegistry. It therefore never reinterprets
+-- historical Expense routing targets through current TOML.
 parseExpenseRoutingTSV
   :: Text
   -> Either (NonEmpty ExpenseRoutingTSVError) ExpenseRoutingHistory

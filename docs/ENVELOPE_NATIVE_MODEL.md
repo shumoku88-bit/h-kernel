@@ -141,6 +141,22 @@ and conflicting routing decisions fail closed.
 Refunds and typed Actual reversals change consumption through Actual evidence.
 They do not require compensating Envelope-history writes.
 
+A source-local TSV admission exists for the effective-dated Expense routing
+history with the coordinate shape:
+
+```text
+effective_from / expense_account / route / target / note
+```
+
+That admission establishes physical syntax only. The canonical Household path,
+writer authority, and snapshot participation are still deliberately unfixed.
+Cross-source admission proves that the routed Account exists in the admitted
+AccountRegistry, that its declared type is `Expense`, and that a
+`ManagedByEnvelope` target belongs to the stable EnvelopeRegistry. An explicit
+`NotEnvelopeManaged` decision requires an admitted Expense Account but performs
+no Envelope target check. Historical targets are never validated by replaying
+current TOML, because that would silently rewrite old intent.
+
 ## Non-Expense target fulfillment
 
 Savings, investment, and similar goals are not Expense consumption. A completed
