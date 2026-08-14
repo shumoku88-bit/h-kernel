@@ -49,11 +49,15 @@ parseEnvelopeEntitlementTSV
   -> Either (NonEmpty EnvelopeEntitlementTSVError) EnvelopeEntitlementHistory
 parseEnvelopeEntitlementTSV input =
   case meaningfulLines of
-    [] -> Left (EnvelopeEntitlementTSVError 1 MissingEnvelopeEntitlementHeader :| [])
+    [] -> Left
+      (EnvelopeEntitlementTSVError 1 MissingEnvelopeEntitlementHeader
+        NonEmpty.:| [])
     (headerLine, header) : rows
       | header /= expectedHeader ->
-          Left (EnvelopeEntitlementTSVError headerLine
-            (InvalidEnvelopeEntitlementHeader header) :| [])
+          Left
+            (EnvelopeEntitlementTSVError headerLine
+              (InvalidEnvelopeEntitlementHeader header)
+              NonEmpty.:| [])
       | otherwise ->
           case partitionEithers (map parseLocatedRow rows) of
             ([], locatedTransfers) -> admitHistory locatedTransfers
