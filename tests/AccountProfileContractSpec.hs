@@ -162,7 +162,7 @@ characterizeNativeAccountPolicy jpy profileWithUnknownMetadata = do
         (parseHouseholdConfiguration budgetPolicy nativeHouseholdConfig)
 
   assertEqual
-    "semantic TOML axes reproduce retained Account household policy"
+    "semantic TOML axes reproduce retained Account household policy while historical Envelope section stays opaque"
     (Just projected)
     (householdConfigurationAccountPolicy nativeConfiguration)
 
@@ -252,6 +252,16 @@ nativeHouseholdConfig = T.unlines
   , "[account-policy.expenses]"
   , "fixed = [\"expenses:food\"]"
   , "variable = []"
+  , ""
+  , "[envelope-history]"
+  , "identities = [\"Daily\"]"
+  , ""
+  , "[[envelope-history.expense-routing]]"
+  , "effective-from = \"initial\""
+  , "expense-account = \"expenses:food\""
+  , "route = \"managed\""
+  , "target = \"Daily\""
+  , "note = \"owned by Household.EnvelopeHistory, opaque here\""
   ]
 
 declaration :: Text -> AccountType -> Commodity -> AccountDeclaration
@@ -260,8 +270,6 @@ declaration name accountType commodity =
     (mustRight (mkAccount name))
     accountType
     commodity
-
-
 
 assertLeftEqual
   :: (Eq error, Show error)
