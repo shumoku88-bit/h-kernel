@@ -1,6 +1,10 @@
 module HKernel.Plan.Open
   ( OpenOutgoingPlanError(..)
+  , CompletedOutgoingPlanTransaction
+  , completedOutgoingPlan
+  , completedOutgoingActual
   , resolveOpenOutgoingPlanTransactionsAt
+  , resolveCompletedOutgoingPlanTransactionsAt
   ) where
 
 import Data.List.NonEmpty (NonEmpty)
@@ -16,7 +20,8 @@ import HKernel.Actual.Journal
 import HKernel.Ledger (transactionDate)
 import HKernel.Plan (PlanId)
 import HKernel.Plan.Completion
-  ( PlanCompletionError(..)
+  ( IdentifiedActualTransaction
+  , PlanCompletionError(..)
   , declaredCompletionActualId
   , declaredCompletionPlanId
   , identifiedActualId
@@ -41,6 +46,13 @@ data OpenOutgoingPlanError
   | OpenOutgoingPlanCompletionError PlanCompletionError
   deriving (Eq, Show)
 
+-- | One whole outgoing Plan paired with the admitted Actual that explicitly
+-- completes it, visible as of one observation day.
+data CompletedOutgoingPlanTransaction = CompletedOutgoingPlanTransaction
+  { completedOutgoingPlan   :: IdentifiedPlanTransaction
+  , completedOutgoingActual :: IdentifiedActualTransaction
+  } deriving (Eq, Show)
+
 -- | Resolve whole outgoing Plan transactions that are still active at one
 -- inclusive observation day.
 --
@@ -60,8 +72,9 @@ resolveOpenOutgoingPlanTransactionsAt observedThrough plans actual = do
     (admitPlanRetirements plans)
   classified <- mapErrors OpenOutgoingPlanClassificationError
     (classifyPlanJournal plans)
-  completed <- completedPlanIdsThrough observedThrough plans actual
+  visibleCompletions <- completionActualsThrough observedThrough plans actual
   let retired = retiredPlanIdsAt observedThrough retirements
+      completed = Set.fromList (map fst visibleCompletions)
   pure
     [ identified
     | identified <- classifiedOutgoingPlanTransactions classified
@@ -69,15 +82,43 @@ resolveOpenOutgoingPlanTransactionsAt observedThrough plans actual = do
     , identifiedPlanId identified `Set.notMember` completed
     ]
 
-completedPlanIdsThrough
+-- | Resolve whole outgoing Plan/Actual completion pairs visible at one inclusive
+-- observation day.
+--
+-- Output follows outgoing Plan source order. Retirement is not a filter here:
+-- an explicit admitted Actual remains historical completion evidence even if the
+-- Plan later acquires lifecycle metadata. Callers decide what the completion
+-- means for their own projection.
+resolveCompletedOutgoingPlanTransactionsAt
   :: Day
   -> PlanJournal
   -> ActualJournal
-  -> Either (NonEmpty OpenOutgoingPlanError) (Set.Set PlanId)
-completedPlanIdsThrough observedThrough plans actual =
+  -> Either (NonEmpty OpenOutgoingPlanError) [CompletedOutgoingPlanTransaction]
+resolveCompletedOutgoingPlanTransactionsAt observedThrough plans actual = do
+  classified <- mapErrors OpenOutgoingPlanClassificationError
+    (classifyPlanJournal plans)
+  visibleCompletions <- completionActualsThrough observedThrough plans actual
+  let actualByPlan = Map.fromList visibleCompletions
+  pure
+    [ CompletedOutgoingPlanTransaction
+        { completedOutgoingPlan = identified
+        , completedOutgoingActual = completedActual
+        }
+    | identified <- classifiedOutgoingPlanTransactions classified
+    , Just completedActual <- [Map.lookup (identifiedPlanId identified) actualByPlan]
+    ]
+
+completionActualsThrough
+  :: Day
+  -> PlanJournal
+  -> ActualJournal
+  -> Either
+       (NonEmpty OpenOutgoingPlanError)
+       [(PlanId, IdentifiedActualTransaction)]
+completionActualsThrough observedThrough plans actual =
   case NonEmpty.nonEmpty errors of
     Just found -> Left found
-    Nothing -> Right (Set.fromList visibleCompleted)
+    Nothing -> Right visibleCompleted
   where
     knownPlans = Set.fromList (map identifiedPlanId (planJournalTransactions plans))
     actualById = Map.fromList
@@ -121,7 +162,7 @@ completedPlanIdsThrough observedThrough plans actual =
       ]
 
     visibleCompleted =
-      [ planId
+      [ (planId, identified)
       | declaration <- declarations
       , let planId = declaredCompletionPlanId declaration
             actualId = declaredCompletionActualId declaration
