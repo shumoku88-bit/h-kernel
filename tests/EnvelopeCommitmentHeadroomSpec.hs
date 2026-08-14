@@ -11,7 +11,10 @@ import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.Envelope.Commitment
 import HKernel.Envelope.Consumption (observeEnvelopeConsumption)
 import HKernel.Envelope.Entitlement (observeEnvelopeEntitlement)
-import HKernel.Envelope.EntitlementHistory (mkEnvelopeEntitlementHistory)
+import HKernel.Envelope.EntitlementHistory
+  ( EnvelopeEntitlementHistory
+  , mkEnvelopeEntitlementHistory
+  )
 import HKernel.Envelope.EntitlementTransfer
 import HKernel.Envelope.ExpenseRouting
 import HKernel.Envelope.Headroom
@@ -20,7 +23,7 @@ import HKernel.Envelope.Remaining (calculateEnvelopeRemaining)
 import HKernel.Money
 import HKernel.Period (Period, mkPeriod, periodStart)
 import HKernel.Plan.Completion (PlanCompletionError(..))
-import HKernel.Plan.Journal (parsePlanJournal)
+import HKernel.Plan.Journal (PlanJournal, parsePlanJournal)
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -143,7 +146,7 @@ commitmentThrough observedThrough selectedPeriod actualText =
       (mustRight (parseActualJournal actualText))
       routing)
 
-planJournal :: HKernel.Plan.Journal.PlanJournal
+planJournal :: PlanJournal
 planJournal = mustRight (parsePlanJournal planSource)
 
 routing :: ExpenseRoutingHistory
