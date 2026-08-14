@@ -21,6 +21,11 @@ import HKernel.Envelope.ExpenseRouting
   , ExpenseRoutingHistory
   , expenseRouteAt
   )
+import HKernel.Envelope.FulfillmentRouting
+  ( FulfillmentRoute(..)
+  , FulfillmentRoutingHistory
+  , fulfillmentRouteAt
+  )
 import HKernel.Envelope.Identity (EnvelopeId)
 import HKernel.Journal (journalAccountRegistry)
 import HKernel.Ledger
@@ -52,12 +57,13 @@ import HKernel.Plan.Open
   , resolveOpenOutgoingPlanTransactionsAt
   )
 
--- | Open Plan Expense commitments at one resolved period/day observation.
+-- | Open Plan commitments against Envelope headroom at one resolved period/day
+-- observation.
 --
--- Managed Envelope claims, explicit non-Envelope Plans, and missing-route
--- attention remain separate. Only Expense postings enter this projection;
--- Liability settlement remains a funding commitment for Backing rather than an
--- Envelope consumption claim.
+-- Expense destinations use Expense routing. Explicit non-Expense fulfillment
+-- targets such as savings, investment, or debt destinations use their own
+-- routing history. Ordinary non-Expense postings with no fulfillment route do
+-- not invent Envelope claims.
 data EnvelopeCommitment = EnvelopeCommitment
   { envelopeCommitmentPeriod          :: Period
   , envelopeCommitmentObservedThrough :: Day
@@ -73,26 +79,25 @@ data EnvelopeCommitmentError
   | EnvelopeCommitmentCompletionError PlanCompletionError
   deriving (Eq, Show)
 
--- | Observe still-open outgoing Plan Expense postings through one inclusive
--- observation day.
+-- | Observe still-open outgoing Plan use through one inclusive observation day.
 --
 -- Plan lifecycle/completion meaning is owned by 'HKernel.Plan.Open'. This owner
--- applies only the Envelope horizon and routing meanings: overdue open Plans
--- remain binding, while Plans at or beyond the next Period boundary do not
--- consume current headroom.
+-- applies the Envelope horizon and route meanings: overdue open Plans remain
+-- binding, while Plans at or beyond the next Period boundary do not consume
+-- current headroom.
 --
--- Open Plans use the routing decision effective at the observation day: unlike
--- posted Actuals, they are still household intent and may move when current
--- Envelope policy changes. Whole multi-posting Plan transactions are retained;
--- each positive Expense posting is routed independently.
+-- Open Plans use routing effective at the observation day because they remain
+-- current household intent. Whole multi-posting Plan transactions are retained;
+-- each positive posting is classified independently without binary flattening.
 observeEnvelopeCommitment
   :: Period
   -> Day
   -> PlanJournal
   -> ActualJournal
   -> ExpenseRoutingHistory
+  -> FulfillmentRoutingHistory
   -> Either (NonEmpty EnvelopeCommitmentError) EnvelopeCommitment
-observeEnvelopeCommitment period observedThrough plans actual routing
+observeEnvelopeCommitment period observedThrough plans actual expenseRouting fulfillmentRouting
   | not (periodContains period observedThrough) =
       Left (EnvelopeCommitmentObservationOutsidePeriod observedThrough period NonEmpty.:| [])
   | otherwise = do
@@ -122,15 +127,20 @@ observeEnvelopeCommitment period observedThrough plans actual routing
           (transactionPostings (identifiedPlanTransaction identified)))
 
     collectPosting totals posting
-      | accountTypeFor account registry /= Just Expense = totals
       | amountQuantity amount <= zeroQuantity = totals
-      | otherwise = case expenseRouteAt observedThrough account routing of
-          Just (ManagedByEnvelope envelope) ->
+      | accountTypeFor account registry == Just Expense =
+          case expenseRouteAt observedThrough account expenseRouting of
+            Just (ManagedByEnvelope envelope) ->
+              firstMap (addAt envelope amount) totals
+            Just NotEnvelopeManaged ->
+              secondMap (addAt account amount) totals
+            Nothing ->
+              thirdMap (addAt account amount) totals
+      | otherwise = case fulfillmentRouteAt observedThrough account fulfillmentRouting of
+          Just (FulfillsEnvelope envelope) ->
             firstMap (addAt envelope amount) totals
-          Just NotEnvelopeManaged ->
-            secondMap (addAt account amount) totals
-          Nothing ->
-            thirdMap (addAt account amount) totals
+          Just NotFulfillmentTarget -> totals
+          Nothing -> totals
       where
         account = postingAccount posting
         amount = postingAmount posting
