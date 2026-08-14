@@ -38,9 +38,14 @@ module HKernel.HouseholdIssue
   , issueRelationIssueId
   , issueRelationMeaning
   , issueRelationDetails
+  , IssueRelationReferenceError(..)
+  , admitIssueRelationReferences
   ) where
 
 import Data.Char (isControl, isSpace)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -272,3 +277,69 @@ mkIssueRelationEvent eventId recordedOn issueId relation details
       , issueRelationMeaning = relation
       , issueRelationDetails = details
       }
+
+-- | Cross-source identity failures for an already source-admitted relation.
+--
+-- These errors are deliberately relation-event-local: the event identity says
+-- which historical assertion is dangling without retaining or echoing private
+-- source rows.
+data IssueRelationReferenceError
+  = UnknownIssueRelationIssue IssueRelationEventId IssueId
+  | UnknownIssueRelationPlanTarget IssueRelationEventId PlanId
+  | UnknownIssueRelationActualTarget IssueRelationEventId ActualTransactionId
+  deriving (Eq, Show)
+
+-- | Admit relation references against already admitted identity universes.
+--
+-- This operation owns existence only. It does not inspect Plan lifecycle or
+-- Issue status, so a historical or retired Plan remains a valid relation target
+-- and @planning-withdrawn@ does not require retirement metadata. Likewise it
+-- does not infer Actual identity from transaction resemblance.
+--
+-- The Actual identity collection must contain only source-durable identities
+-- chosen by the caller. In particular, rebuildable runtime identities created
+-- only to support Plan completion are not relation-target evidence unless a
+-- future source contract explicitly promotes them to durable source identity.
+--
+-- Errors accumulate in relation source order. A relation whose Issue and target
+-- are both missing contributes both errors rather than silently selecting one.
+admitIssueRelationReferences
+  :: [IssueId]
+  -> [PlanId]
+  -> [ActualTransactionId]
+  -> [IssueRelationEvent]
+  -> Either (NonEmpty IssueRelationReferenceError) [IssueRelationEvent]
+admitIssueRelationReferences knownIssues knownPlans durableActuals relations =
+  case NonEmpty.nonEmpty (concatMap referenceErrors relations) of
+    Nothing -> Right relations
+    Just errors -> Left errors
+  where
+    issueSet = Set.fromList knownIssues
+    planSet = Set.fromList knownPlans
+    actualSet = Set.fromList durableActuals
+
+    referenceErrors relation = issueErrors relation ++ targetErrors relation
+
+    issueErrors relation =
+      [ UnknownIssueRelationIssue
+          (issueRelationEventId relation)
+          (issueRelationIssueId relation)
+      | issueRelationIssueId relation `Set.notMember` issueSet
+      ]
+
+    targetErrors relation = case issueRelationMeaning relation of
+      IssueConcernsPlan planId -> planErrors relation planId
+      IssuePlannedAs planId -> planErrors relation planId
+      IssuePlanningWithdrawn planId -> planErrors relation planId
+      IssueRealizedAs actualId -> actualErrors relation actualId
+      IssueFundedBy actualId -> actualErrors relation actualId
+
+    planErrors relation planId =
+      [ UnknownIssueRelationPlanTarget (issueRelationEventId relation) planId
+      | planId `Set.notMember` planSet
+      ]
+
+    actualErrors relation actualId =
+      [ UnknownIssueRelationActualTarget (issueRelationEventId relation) actualId
+      | actualId `Set.notMember` actualSet
+      ]
