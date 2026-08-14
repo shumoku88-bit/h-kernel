@@ -32,16 +32,21 @@ data ExpenseRoutingTSVErrorReason
   | InvalidExpenseRoutingEnvelope EnvelopeIdError
   | ManagedExpenseRoutingTargetCannotBeDash
   | UnmanagedExpenseRoutingTargetMustBeDash Text
+  | DuplicateInitialExpenseRoutingCoordinate Account
   | DuplicateExpenseRoutingCoordinate Account Day
   deriving (Eq, Show)
 
--- | Admit one source-local effective-dated Expense routing history.
+data LocatedExpenseRoutingDecision
+  = LocatedInitial Int InitialExpenseRoutingDecision
+  | LocatedDated Int ExpenseRoutingDecision
+
+-- | Admit one source-local Expense routing history.
 --
--- This parser owns syntax only. It does not prove stable cross-source identity
--- existence or Account role correctness; callers apply
--- 'admitExpenseRoutingReferences' after source admission with the admitted
--- AccountRegistry and EnvelopeRegistry. It therefore never reinterprets
--- historical Expense routing targets through current TOML.
+-- @effective_from@ accepts either an ISO household day or the literal
+-- @initial@. The latter means the route is already effective before the bounded
+-- history being observed; it is deliberately not converted into an invented
+-- date. Cross-source Account/Envelope reference checks remain a separate
+-- admission step.
 parseExpenseRoutingTSV
   :: Text
   -> Either (NonEmpty ExpenseRoutingTSVError) ExpenseRoutingHistory
@@ -71,23 +76,29 @@ expectedHeader = "effective_from\texpense_account\troute\ttarget\tnote"
 
 parseLocatedDecision
   :: (Int, Text)
-  -> Either ExpenseRoutingTSVError (Int, ExpenseRoutingDecision)
+  -> Either ExpenseRoutingTSVError LocatedExpenseRoutingDecision
 parseLocatedDecision (lineNumber, line) =
   case T.splitOn "\t" line of
     [effectiveText, accountText, routeText, targetText, note] -> do
-      effectiveFrom <- parseDate lineNumber effectiveText
       account <- mapFieldError lineNumber InvalidExpenseRoutingAccount
         (mkAccount accountText)
       route <- parseRoute lineNumber routeText targetText
-      Right
-        ( lineNumber
-        , ExpenseRoutingDecision
-            { expenseRoutingEffectiveFrom = effectiveFrom
-            , expenseRoutingAccount = account
-            , expenseRoutingRoute = route
-            , expenseRoutingNote = note
-            }
-        )
+      if effectiveText == "initial"
+        then Right
+          (LocatedInitial lineNumber InitialExpenseRoutingDecision
+            { initialExpenseRoutingAccount = account
+            , initialExpenseRoutingRoute = route
+            , initialExpenseRoutingNote = note
+            })
+        else do
+          effectiveFrom <- parseDate lineNumber effectiveText
+          Right
+            (LocatedDated lineNumber ExpenseRoutingDecision
+              { expenseRoutingEffectiveFrom = effectiveFrom
+              , expenseRoutingAccount = account
+              , expenseRoutingRoute = route
+              , expenseRoutingNote = note
+              })
     _ -> Left (ExpenseRoutingTSVError lineNumber
       (InvalidExpenseRoutingRow line))
 
@@ -119,24 +130,45 @@ parseRoute lineNumber routeText targetText = case routeText of
     (InvalidExpenseRoutingKind routeText))
 
 admitHistory
-  :: [(Int, ExpenseRoutingDecision)]
+  :: [LocatedExpenseRoutingDecision]
   -> Either (NonEmpty ExpenseRoutingTSVError) ExpenseRoutingHistory
 admitHistory located =
-  case mkExpenseRoutingHistory (map snd located) of
+  case mkExpenseRoutingHistoryWithInitial initialDecisions datedDecisions of
     Right history -> Right history
     Left errors -> Left (fmap toSourceError errors)
   where
+    initialDecisions =
+      [ decision
+      | LocatedInitial _ decision <- located
+      ]
+    datedDecisions =
+      [ decision
+      | LocatedDated _ decision <- located
+      ]
+
     toSourceError historyError = case historyError of
+      DuplicateInitialExpenseRoutingDecision account ->
+        ExpenseRoutingTSVError
+          (duplicateInitialLine account located)
+          (DuplicateInitialExpenseRoutingCoordinate account)
       DuplicateExpenseRoutingDecision account effectiveFrom ->
         ExpenseRoutingTSVError
-          (duplicateLine account effectiveFrom located)
+          (duplicateDatedLine account effectiveFrom located)
           (DuplicateExpenseRoutingCoordinate account effectiveFrom)
 
-    duplicateLine account effectiveFrom values =
+    duplicateInitialLine account values =
       maximum
         (1 :
           [ lineNumber
-          | (lineNumber, decision) <- values
+          | LocatedInitial lineNumber decision <- values
+          , initialExpenseRoutingAccount decision == account
+          ])
+
+    duplicateDatedLine account effectiveFrom values =
+      maximum
+        (1 :
+          [ lineNumber
+          | LocatedDated lineNumber decision <- values
           , expenseRoutingAccount decision == account
           , expenseRoutingEffectiveFrom decision == effectiveFrom
           ])
