@@ -33,7 +33,7 @@ admittedShape = do
         , "# source order is provenance"
         , "2026-08-15\t2026-08-15\t2026-10-15\tunallocated\tfood\t10000\tJPY\tinitial"
         , ""
-        , "2026-08-16\t2026-08-15\t2026-10-15\tfood\tstock-food\t1000\tJPY\tmove\twith-tab"
+        , "2026-08-16\t2026-08-15\t2026-10-15\tfood\tstock-food\t1000\tJPY\tmove"
         ]
       history = mustRight (parseEnvelopeEntitlementTSV source)
       transfers = envelopeEntitlementHistoryTransfers history
@@ -52,8 +52,8 @@ admittedShape = do
       equal "Envelope-to-Envelope movement stays atomic"
         (Spendable food, Spendable stock)
         (entitlementTransferFrom moved, entitlementTransferTo moved)
-      equal "note remainder preserves interior tabs"
-        "move\twith-tab"
+      equal "note stays the eighth TSV coordinate"
+        "move"
         (entitlementTransferNote moved)
     unexpected -> failTest "admitted transfer shape" (show unexpected)
 
@@ -106,6 +106,26 @@ sourceDiagnostics = do
     (parseEnvelopeEntitlementTSV (T.unlines
       [ header
       , "2026-08-15\tbad\t2026-10-15\tunallocated\tfood\t1\tJPY\tbad period start"
+      ]))
+
+  assertSingleError "period-end error names its field"
+    (\err -> envelopeEntitlementTSVErrorLine err == 2
+      && case envelopeEntitlementTSVErrorReason err of
+        InvalidEnvelopeEntitlementDate EntitlementPeriodEndExclusive "bad" -> True
+        _ -> False)
+    (parseEnvelopeEntitlementTSV (T.unlines
+      [ header
+      , "2026-08-15\t2026-08-15\tbad\tunallocated\tfood\t1\tJPY\tbad period end"
+      ]))
+
+  assertSingleError "a physical TSV row has exactly eight coordinates"
+    (\err -> envelopeEntitlementTSVErrorLine err == 2
+      && case envelopeEntitlementTSVErrorReason err of
+        InvalidEnvelopeEntitlementRow _ -> True
+        _ -> False)
+    (parseEnvelopeEntitlementTSV (T.unlines
+      [ header
+      , "2026-08-15\t2026-08-15\t2026-10-15\tunallocated\tfood\t1\tJPY\tnote\textra"
       ]))
 
   assertSingleError "zero amount is rejected by native transfer law"
