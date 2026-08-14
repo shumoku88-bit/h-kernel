@@ -35,7 +35,8 @@ import HKernel.Ledger
   , transactionPostings
   )
 import HKernel.Money
-  ( Balance
+  ( Amount
+  , Balance
   , addBalance
   , amountQuantity
   , emptyBalance
@@ -45,8 +46,7 @@ import HKernel.Money
 import HKernel.Period (Period, periodContains, periodEndExclusive)
 import HKernel.Plan (PlanId)
 import HKernel.Plan.Completion
-  ( ActualTransactionId
-  , PlanCompletionError(..)
+  ( PlanCompletionError(..)
   , declaredCompletionActualId
   , declaredCompletionPlanId
   , identifiedActualId
@@ -208,7 +208,7 @@ completedPlanIdsThrough observedThrough plans actual =
 
     errors = unknownPlanErrors ++ multipleActualErrors
 
-addAt :: Ord key => key -> HKernel.Money.Amount -> Map.Map key Balance -> Map.Map key Balance
+addAt :: Ord key => key -> Amount -> Map.Map key Balance -> Map.Map key Balance
 addAt key amount = Map.insertWith addBalance key (singletonBalance amount)
 
 firstMap
