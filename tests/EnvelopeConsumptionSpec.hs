@@ -18,11 +18,12 @@ main :: IO ()
 main = do
   observationBoundary
   consumptionLaws
+  resolverBoundaryLaws
 
 observationBoundary :: IO ()
 observationBoundary = do
   let actual = mustRight (parseActualJournal actualSource)
-      routing = routingHistory
+      routing = expenseRoutingResolver routingHistory
   left "observation before Period is rejected"
     (observeEnvelopeConsumption period (fromGregorian 2026 7 31) actual routing)
   left "Period end stays exclusive"
@@ -31,7 +32,7 @@ observationBoundary = do
 consumptionLaws :: IO ()
 consumptionLaws = do
   let actual = mustRight (parseActualJournal actualSource)
-      routing = routingHistory
+      routing = expenseRoutingResolver routingHistory
       fixed = envelope "fixed"
       general = envelope "general"
       jpy = commodity "JPY"
@@ -94,6 +95,35 @@ consumptionLaws = do
     hasGrossEvidence amounts =
       not (isZeroBalance (consumptionCharges amounts)
         && isZeroBalance (consumptionRefunds amounts))
+
+resolverBoundaryLaws :: IO ()
+resolverBoundaryLaws = do
+  let actual = mustRight (parseActualJournal actualSource)
+      customResolver = ExpenseRouteResolver
+        (\_day accountName ->
+          if accountName == account "expenses:wifi"
+            then Just (ManagedByEnvelope (envelope "general"))
+            else if accountName == account "expenses:travel"
+              then Just NotEnvelopeManaged
+              else Nothing)
+      observed = mustRight
+        (observeEnvelopeConsumption period (day 11) actual customResolver)
+      generalAmounts = envelopeConsumptionFor (envelope "general") observed
+      jpy = commodity "JPY"
+      usd = commodity "USD"
+
+  equal "custom resolver routes all wifi to general regardless of date"
+    (one jpy 220 <> one usd 3)
+    (consumptionCharges generalAmounts)
+  equal "custom resolver refunds wifi to general"
+    (one jpy 110)
+    (consumptionRefunds generalAmounts)
+  equal "custom resolver respects NotEnvelopeManaged"
+    (Just (ConsumptionAmounts (one jpy 50) emptyBalance))
+    (Map.lookup (account "expenses:travel") (envelopeConsumptionUnmanaged observed))
+  equal "custom resolver leaves other expenses unrouted"
+    (Just (ConsumptionAmounts (one jpy 30) (one jpy 30)))
+    (Map.lookup (account "expenses:new") (envelopeConsumptionUnrouted observed))
 
 routingHistory :: ExpenseRoutingHistory
 routingHistory = mustRight (mkExpenseRoutingHistory

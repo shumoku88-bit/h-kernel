@@ -29,8 +29,8 @@ import HKernel.Actual.Journal
   )
 import HKernel.Envelope.ExpenseRouting
   ( ExpenseRoute(..)
-  , ExpenseRoutingHistory
-  , expenseRouteAt
+  , ExpenseRouteResolver
+  , resolveExpenseRoute
   )
 import HKernel.Envelope.Identity (EnvelopeId)
 import HKernel.Journal (journalAccountRegistry)
@@ -107,9 +107,9 @@ observeEnvelopeConsumption
   :: Period
   -> Day
   -> ActualJournal
-  -> ExpenseRoutingHistory
+  -> ExpenseRouteResolver
   -> Either EnvelopeConsumptionError EnvelopeConsumption
-observeEnvelopeConsumption period observedThrough actual routing
+observeEnvelopeConsumption period observedThrough actual routingResolver
   | not (periodContains period observedThrough) =
       Left (EnvelopeConsumptionObservationOutsidePeriod observedThrough period)
   | otherwise = Right EnvelopeConsumption
@@ -157,7 +157,7 @@ observeEnvelopeConsumption period observedThrough actual routing
     observePosting routeDay posting accum@(managedAcc, unmanagedAcc, unroutedAcc)
       | accountTypeFor account registry /= Just Expense = accum
       | quantity == zeroQuantity = accum
-      | otherwise = case expenseRouteAt routeDay account routing of
+      | otherwise = case resolveExpenseRoute routingResolver routeDay account of
           Just (ManagedByEnvelope envelope) ->
             ( Map.insertWith (<>) envelope amounts managedAcc
             , unmanagedAcc

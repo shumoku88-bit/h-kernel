@@ -9,6 +9,8 @@ module HKernel.Envelope.ExpenseRouting
   , expenseRoutingHistoryDecisions
   , expenseRoutingDecisionAt
   , expenseRouteAt
+  , ExpenseRouteResolver(..)
+  , expenseRoutingResolver
   ) where
 
 import Data.List.NonEmpty (NonEmpty)
@@ -181,3 +183,23 @@ expenseRouteAt
   -> Maybe ExpenseRoute
 expenseRouteAt observedOn account =
   fmap expenseRoutingRoute . expenseRoutingDecisionAt observedOn account
+
+-- | Semantic query boundary for resolving an Expense account route at one
+-- observation date.
+--
+-- This is a pure query projection rather than historical evidence itself.
+-- 'ExpenseRoutingHistory' owns effective-dated policy facts; 'ExpenseRouteResolver'
+-- isolates consumers (such as Consumption) from concrete policy history storage.
+newtype ExpenseRouteResolver = ExpenseRouteResolver
+  { resolveExpenseRoute :: Day -> Account -> Maybe ExpenseRoute
+  }
+
+-- | Project effective-dated historical evidence into semantic query semantics.
+--
+-- Routing lookup follows the latest decision effective on or before the given
+-- day.
+expenseRoutingResolver
+  :: ExpenseRoutingHistory
+  -> ExpenseRouteResolver
+expenseRoutingResolver history =
+  ExpenseRouteResolver (\day account -> expenseRouteAt day account history)

@@ -26,6 +26,7 @@ import System.Exit (exitFailure)
 main :: IO ()
 main = do
   historyLaws
+  resolverLaws
   tsvLaws
   referenceAdmissionLaws
 
@@ -70,6 +71,35 @@ historyLaws = do
       [ initial
       , decision (day 2) foodAccount (ManagedByEnvelope food) "reaffirm"
       ])
+
+resolverLaws :: IO ()
+resolverLaws = do
+  let foodAccount = account "expenses:食費"
+      travelAccount = account "expenses:travel-jpy"
+      food = envelope "食費"
+      general = envelope "一般生活"
+      initial = decision (day 1) foodAccount (ManagedByEnvelope food) "initial"
+      moved = decision (day 10) foodAccount (ManagedByEnvelope general) "changed intent"
+      unmanaged = decision (day 20) foodAccount NotEnvelopeManaged "stop envelope management"
+      travel = decision (day 10) travelAccount NotEnvelopeManaged "explicitly outside"
+      history = mustRight (mkExpenseRoutingHistory [unmanaged, initial, travel, moved])
+      resolver = expenseRoutingResolver history
+
+  equal "resolver projects missing history before first decision"
+    Nothing
+    (resolveExpenseRoute resolver (fromGregorian 2026 7 31) foodAccount)
+  equal "resolver projects initial effective route"
+    (Just (ManagedByEnvelope food))
+    (resolveExpenseRoute resolver (day 1) foodAccount)
+  equal "resolver projects changed intent route"
+    (Just (ManagedByEnvelope general))
+    (resolveExpenseRoute resolver (day 15) foodAccount)
+  equal "resolver projects explicit unmanaged route"
+    (Just NotEnvelopeManaged)
+    (resolveExpenseRoute resolver (day 20) foodAccount)
+  equal "resolver projects independent account route"
+    (Just NotEnvelopeManaged)
+    (resolveExpenseRoute resolver (day 10) travelAccount)
 
 tsvLaws :: IO ()
 tsvLaws = do
