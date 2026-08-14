@@ -46,7 +46,7 @@ import HKernel.Money
 import HKernel.Period (Period, periodContains, periodEndExclusive)
 import HKernel.Plan.Completion (PlanCompletionError)
 import HKernel.Plan.Journal
-  ( PlanClassificationError
+  ( PlanClassificationError(..)
   , PlanJournal
   , PlanLifecycleError
   , identifiedPlanId
@@ -54,8 +54,8 @@ import HKernel.Plan.Journal
   , planJournalValue
   )
 import HKernel.Plan.Open
-  ( OpenOutgoingPlanError(..)
-  , resolveOpenOutgoingPlanTransactionsAt
+  ( PlanObservationError(..)
+  , resolveOpenPlanTransactionsAt
   )
 
 -- | Open Plan commitments against Envelope headroom at one resolved period/day
@@ -80,16 +80,18 @@ data EnvelopeCommitmentError
   | EnvelopeCommitmentCompletionError PlanCompletionError
   deriving (Eq, Show)
 
--- | Observe still-open outgoing Plan use through one inclusive observation day.
+-- | Observe still-open Plan use through one inclusive observation day.
 --
--- Plan lifecycle/completion meaning is owned by 'HKernel.Plan.Open'. This owner
--- applies the Envelope horizon and route meanings: overdue open Plans remain
--- binding, while Plans at or beyond the next Period boundary do not consume
--- current headroom.
+-- Plan lifecycle/completion meaning is owned by the role-neutral observer in
+-- 'HKernel.Plan.Open'. This matters because an Asset-to-Asset target Plan is a
+-- valid Envelope commitment even though generic accounting role classification
+-- does not call it an outgoing Expense/Liability payment.
 --
--- Open Plans use routing effective at the observation day because they remain
--- current household intent. Whole multi-posting Plan transactions are retained;
--- each positive posting is classified independently without binary flattening.
+-- Expense postings remain conservative: a Plan that claims positive Expense
+-- use must contain an Asset funding source. Non-Expense positive postings never
+-- claim Envelope headroom from their Account alone; they require an explicit
+-- PlanId fulfillment route. Open routed Plans use the route effective at the
+-- observation day because they remain current household intent.
 observeEnvelopeCommitment
   :: Period
   -> Day
@@ -102,16 +104,19 @@ observeEnvelopeCommitment period observedThrough plans actual expenseRouting ful
   | not (periodContains period observedThrough) =
       Left (EnvelopeCommitmentObservationOutsidePeriod observedThrough period NonEmpty.:| [])
   | otherwise = do
-      openPlans <- mapErrors mapOpenPlanError
-        (resolveOpenOutgoingPlanTransactionsAt observedThrough plans actual)
+      openPlans <- mapErrors mapPlanObservationError
+        (resolveOpenPlanTransactionsAt observedThrough plans actual)
       let openInHorizon =
             [ identified
             | identified <- openPlans
             , transactionDate (identifiedPlanTransaction identified)
                 < periodEndExclusive period
             ]
-          (managed, unmanaged, unrouted) =
-            foldl collectPlan (Map.empty, Map.empty, Map.empty) openInHorizon
+      validated <- case traverse validateRelevantPlan openInHorizon of
+        Left err -> Left (err NonEmpty.:| [])
+        Right values -> Right values
+      let (managed, unmanaged, unrouted) =
+            foldl collectPlan (Map.empty, Map.empty, Map.empty) validated
       Right EnvelopeCommitment
         { envelopeCommitmentPeriod = period
         , envelopeCommitmentObservedThrough = observedThrough
@@ -121,6 +126,23 @@ observeEnvelopeCommitment period observedThrough plans actual expenseRouting ful
         }
   where
     registry = journalAccountRegistry (planJournalValue plans)
+
+    validateRelevantPlan identified
+      | hasPositiveExpense && not hasNegativeAsset =
+          Left (EnvelopeCommitmentPlanClassificationError
+            (UnsupportedPlanRoleFlow (identifiedPlanId identified)))
+      | otherwise = Right identified
+      where
+        postings = NonEmpty.toList
+          (transactionPostings (identifiedPlanTransaction identified))
+        hasPositiveExpense = any isPositiveExpense postings
+        hasNegativeAsset = any isNegativeAsset postings
+        isPositiveExpense posting =
+          accountTypeFor (postingAccount posting) registry == Just Expense
+            && amountQuantity (postingAmount posting) > zeroQuantity
+        isNegativeAsset posting =
+          accountTypeFor (postingAccount posting) registry == Just Asset
+            && amountQuantity (postingAmount posting) < zeroQuantity
 
     collectPlan totals identified =
       foldl (collectPosting planFulfillmentRoute) totals
@@ -149,13 +171,11 @@ observeEnvelopeCommitment period observedThrough plans actual expenseRouting ful
         account = postingAccount posting
         amount = postingAmount posting
 
-mapOpenPlanError :: OpenOutgoingPlanError -> EnvelopeCommitmentError
-mapOpenPlanError err = case err of
-  OpenOutgoingPlanLifecycleError lifecycleError ->
+mapPlanObservationError :: PlanObservationError -> EnvelopeCommitmentError
+mapPlanObservationError err = case err of
+  PlanObservationLifecycleError lifecycleError ->
     EnvelopeCommitmentPlanLifecycleError lifecycleError
-  OpenOutgoingPlanClassificationError classificationError ->
-    EnvelopeCommitmentPlanClassificationError classificationError
-  OpenOutgoingPlanCompletionError completionError ->
+  PlanObservationCompletionError completionError ->
     EnvelopeCommitmentCompletionError completionError
 
 addAt :: Ord key => key -> Amount -> Map.Map key Balance -> Map.Map key Balance
