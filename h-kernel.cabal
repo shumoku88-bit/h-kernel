@@ -49,6 +49,7 @@ library
                     , HKernel.Envelope.ExpenseRouting.TSV
                     , HKernel.Envelope.Identity
                     , HKernel.Envelope.Mode
+                    , HKernel.Envelope.Remaining
                     , HKernel.Envelope.Render
                     , HKernel.HouseholdIssue
                     , HKernel.HouseholdIssue.Render
@@ -522,6 +523,15 @@ test-suite h-kernel-envelope-entitlement-tsv-test
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
+
+test-suite h-kernel-envelope-remaining-test
+    import:           test-defaults
+    type:             exitcode-stdio-1.0
+    main-is:          EnvelopeRemainingSpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
 
 test-suite h-kernel-budget-entitlement-test
     import:           test-defaults
