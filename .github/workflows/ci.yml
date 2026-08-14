@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # Keep the cheapest failures ahead of Haskell setup and compilation.
       - name: Check report scripts
