@@ -19,6 +19,7 @@ module HKernel.Envelope.Identity
   ) where
 
 import Data.Char (isControl, isSpace)
+import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Set as Set
@@ -79,10 +80,13 @@ mkEnvelopeRegistry identities =
       , envelopeRegistrySet = Set.fromList identities
       }
   where
-    (_, duplicateErrors) = foldl observe (Set.empty, []) identities
+    (_, reversedDuplicateErrors) =
+      foldl' observe (Set.empty, []) identities
+    duplicateErrors = reverse reversedDuplicateErrors
+
     observe (seen, errors) envelope
       | envelope `Set.member` seen =
-          (seen, errors ++ [DuplicateEnvelopeRegistryIdentity envelope])
+          (seen, DuplicateEnvelopeRegistryIdentity envelope : errors)
       | otherwise = (Set.insert envelope seen, errors)
 
 envelopeRegistryContains :: EnvelopeId -> EnvelopeRegistry -> Bool
