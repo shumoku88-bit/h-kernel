@@ -68,7 +68,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.cache.outputs.cache-hit != 'true'
-        run: cabal build all --only-dependencies -j
+        run: cabal build all --only-dependencies -j --semaphore
 
       # Save dependency work before compiling the repository itself, so a later
       # project failure does not throw away an otherwise useful cache.
@@ -80,7 +80,7 @@ jobs:
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Build
-        run: cabal build all -j
+        run: cabal build all -j --semaphore
 
       - name: Test
         run: cabal test all -j
