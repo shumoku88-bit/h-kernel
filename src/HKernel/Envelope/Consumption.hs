@@ -19,8 +19,6 @@ import Data.Time.Calendar (Day)
 import HKernel.Account (Account, AccountType(..), accountTypeFor)
 import HKernel.Actual.Journal
   ( ActualJournal
-  , ActualReversalDeclaration
-  , ActualTransactionEntry
   , actualJournalReversalDeclarations
   , actualJournalTransactionEntries
   , actualJournalValue
@@ -37,8 +35,7 @@ import HKernel.Envelope.ExpenseRouting
 import HKernel.Envelope.Identity (EnvelopeId)
 import HKernel.Journal (journalAccountRegistry)
 import HKernel.Ledger
-  ( Transaction
-  , postingAccount
+  ( postingAccount
   , postingAmount
   , transactionDate
   , transactionPostings
