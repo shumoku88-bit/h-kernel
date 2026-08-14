@@ -40,6 +40,9 @@ library
                     , HKernel.CLI
                     , HKernel.Engine
                     , HKernel.Envelope
+                    , HKernel.Envelope.EntitlementHistory
+                    , HKernel.Envelope.EntitlementTransfer
+                    , HKernel.Envelope.Identity
                     , HKernel.Envelope.Mode
                     , HKernel.Envelope.Render
                     , HKernel.HouseholdIssue
