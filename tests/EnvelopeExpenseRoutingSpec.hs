@@ -35,7 +35,7 @@ historyLaws = do
     (expenseRoutingHistoryDecisions history)
   equal "missing history remains attention before first decision"
     Nothing
-    (expenseRouteAt (day 0) foodAccount history)
+    (expenseRouteAt (fromGregorian 2026 7 31) foodAccount history)
   equal "first effective route applies on its day"
     (Just (ManagedByEnvelope food))
     (expenseRouteAt (day 1) foodAccount history)
