@@ -11,6 +11,8 @@ import HKernel.Envelope.Entitlement
 import HKernel.Envelope.EntitlementHistory (mkEnvelopeEntitlementHistory)
 import HKernel.Envelope.EntitlementTransfer
 import HKernel.Envelope.ExpenseRouting
+import HKernel.Envelope.Fulfillment
+import HKernel.Envelope.FulfillmentRouting
 import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
 import HKernel.Envelope.Remaining
 import HKernel.Money
@@ -26,10 +28,13 @@ remainingLaws :: IO ()
 remainingLaws = do
   let entitlement = entitlementThrough observedDay period
       consumption = consumptionThrough observedDay period
-      remaining = mustRight (calculateEnvelopeRemaining entitlement consumption)
+      fulfillment = fulfillmentThrough observedDay period
+      remaining = mustRight
+        (calculateEnvelopeRemaining entitlement consumption fulfillment)
       jpy = commodity "JPY"
       food = envelope "food"
       stock = envelope "stock"
+      savings = envelope "savings"
       legacy = envelope "legacy"
       temporary = envelope "temporary"
       unused = envelope "unused"
@@ -40,9 +45,12 @@ remainingLaws = do
   equal "Remaining keeps the aligned observation day"
     observedDay
     (envelopeRemainingObservedThrough remaining)
-  equal "Actual net consumption subtracts from entitlement"
+  equal "Actual net Expense consumption subtracts from entitlement"
     (one jpy 70)
     (envelopeRemainingFor food remaining)
+  equal "explicit non-Expense target fulfillment also subtracts from entitlement"
+    (one jpy 4)
+    (envelopeRemainingFor savings remaining)
   equal "overspending remains negative evidence"
     (one jpy (-30))
     (envelopeRemainingFor stock remaining)
@@ -58,24 +66,33 @@ remainingLaws = do
   assert "zero coordinate is omitted from sparse entries"
     (all ((/= temporary) . fst) (envelopeRemainingEntries remaining))
   equal "unmanaged and unrouted Actual activity do not invent Envelope coordinates"
-    4
+    5
     (length (envelopeRemainingEntries remaining))
 
 alignmentLaws :: IO ()
 alignmentLaws = do
   let entitlement = entitlementThrough observedDay period
+      consumption = consumptionThrough observedDay period
+      fulfillment = fulfillmentThrough observedDay period
       earlierConsumption = consumptionThrough (day 9) period
+      earlierFulfillment = fulfillmentThrough (day 9) period
       otherPeriod = mustRight
         (mkPeriod (fromGregorian 2026 9 1) (fromGregorian 2026 10 1))
       otherEntitlement = entitlementThrough (fromGregorian 2026 9 1) otherPeriod
       otherConsumption = consumptionThrough (fromGregorian 2026 9 1) otherPeriod
+      otherFulfillment = fulfillmentThrough (fromGregorian 2026 9 1) otherPeriod
 
-  left "different observation days fail closed"
-    (calculateEnvelopeRemaining entitlement earlierConsumption)
+  left "different Consumption observation day fails closed"
+    (calculateEnvelopeRemaining entitlement earlierConsumption fulfillment)
+  left "different Fulfillment observation day fails closed"
+    (calculateEnvelopeRemaining entitlement consumption earlierFulfillment)
   left "different Periods fail closed"
-    (calculateEnvelopeRemaining entitlement otherConsumption)
+    (calculateEnvelopeRemaining entitlement otherConsumption otherFulfillment)
   right "independently derived observations align when coordinates match"
-    (calculateEnvelopeRemaining otherEntitlement otherConsumption)
+    (calculateEnvelopeRemaining
+      otherEntitlement
+      otherConsumption
+      otherFulfillment)
 
 entitlementThrough :: Day -> Period -> EnvelopeEntitlement
 entitlementThrough observedThrough selectedPeriod =
@@ -86,6 +103,7 @@ entitlementThrough observedThrough selectedPeriod =
     history = mustRight (mkEnvelopeEntitlementHistory
       [ grant selectedPeriod start (envelope "food") jpy 100
       , grant selectedPeriod start (envelope "stock") jpy 50
+      , grant selectedPeriod start (envelope "savings") jpy 10
       , grant selectedPeriod start (envelope "temporary") jpy 20
       , grant selectedPeriod start (envelope "unused") jpy 10
       ])
@@ -93,20 +111,43 @@ entitlementThrough observedThrough selectedPeriod =
 consumptionThrough :: Day -> Period -> EnvelopeConsumption
 consumptionThrough observedThrough selectedPeriod =
   mustRight
-    (observeEnvelopeConsumption selectedPeriod observedThrough actual routing)
+    (observeEnvelopeConsumption selectedPeriod observedThrough actual expenseRouting)
   where
     actual = mustRight (parseActualJournal actualSource)
-    routing = mustRight (mkExpenseRoutingHistory
-      [ route (day 1) "expenses:food" (ManagedByEnvelope (envelope "food"))
-      , route (day 1) "expenses:stock" (ManagedByEnvelope (envelope "stock"))
-      , route (day 1) "expenses:legacy" (ManagedByEnvelope (envelope "legacy"))
-      , route (day 1) "expenses:temporary" (ManagedByEnvelope (envelope "temporary"))
-      , route (day 1) "expenses:unmanaged" NotEnvelopeManaged
-      ])
+
+fulfillmentThrough :: Day -> Period -> EnvelopeFulfillment
+fulfillmentThrough observedThrough selectedPeriod =
+  mustRight
+    (observeEnvelopeFulfillment selectedPeriod observedThrough actual fulfillmentRouting)
+  where
+    actual = mustRight (parseActualJournal actualSource)
+
+expenseRouting :: ExpenseRoutingHistory
+expenseRouting = mustRight (mkExpenseRoutingHistory
+  [ expenseRoute (day 1) "expenses:food" (ManagedByEnvelope (envelope "food"))
+  , expenseRoute (day 1) "expenses:stock" (ManagedByEnvelope (envelope "stock"))
+  , expenseRoute (day 1) "expenses:legacy" (ManagedByEnvelope (envelope "legacy"))
+  , expenseRoute (day 1) "expenses:temporary" (ManagedByEnvelope (envelope "temporary"))
+  , expenseRoute (day 1) "expenses:unmanaged" NotEnvelopeManaged
+  ])
+
+fulfillmentRouting :: FulfillmentRoutingHistory
+fulfillmentRouting = mustRight (mkFulfillmentRoutingHistory
+  [ FulfillmentRoutingDecision
+      { fulfillmentRoutingEffectiveFrom = day 1
+      , fulfillmentRoutingAccount = account "assets:savings"
+      , fulfillmentRoutingRoute = FulfillsEnvelope (envelope "savings")
+      , fulfillmentRoutingNote = "test"
+      }
+  ])
 
 actualSource :: T.Text
 actualSource = T.unlines
   [ "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , ""
+  , "account assets:savings"
   , "  type: Asset"
   , "  commodity: JPY"
   , ""
@@ -161,6 +202,10 @@ actualSource = T.unlines
   , "2026-08-08 * missing route attention"
   , "  assets:cash            -8 JPY"
   , "  expenses:unrouted       8 JPY"
+  , ""
+  , "2026-08-09 * fulfill savings target"
+  , "  assets:cash       -6 JPY"
+  , "  assets:savings     6 JPY"
   ]
 
 period :: Period
@@ -182,8 +227,8 @@ envelope = mustRight . mkEnvelopeId
 commodity :: T.Text -> Commodity
 commodity = mustRight . mkCommodity
 
-route :: Day -> T.Text -> ExpenseRoute -> ExpenseRoutingDecision
-route effectiveFrom accountName routeValue = ExpenseRoutingDecision
+expenseRoute :: Day -> T.Text -> ExpenseRoute -> ExpenseRoutingDecision
+expenseRoute effectiveFrom accountName routeValue = ExpenseRoutingDecision
   { expenseRoutingEffectiveFrom = effectiveFrom
   , expenseRoutingAccount = account accountName
   , expenseRoutingRoute = routeValue
