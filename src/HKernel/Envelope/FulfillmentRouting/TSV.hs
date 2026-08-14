@@ -37,10 +37,10 @@ data FulfillmentRoutingTSVErrorReason
 
 -- | Admit one source-local effective-dated PlanId fulfillment history.
 --
--- This parser owns syntax only. It does not prove that a PlanId exists across
--- the Plan source boundary; callers apply
--- 'admitFulfillmentRoutingPlanReferences' after source admission. Likewise it
--- does not reinterpret historical Envelope targets through current TOML.
+-- This parser owns syntax only. It does not prove stable cross-source identity
+-- existence; callers apply 'admitFulfillmentRoutingReferences' after source
+-- admission with the admitted Plan universe and EnvelopeRegistry. It therefore
+-- never reinterprets historical Envelope targets through current TOML.
 parseFulfillmentRoutingTSV
   :: Text
   -> Either (NonEmpty FulfillmentRoutingTSVError) FulfillmentRoutingHistory
