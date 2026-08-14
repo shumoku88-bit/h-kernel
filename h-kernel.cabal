@@ -40,6 +40,7 @@ library
                     , HKernel.CLI
                     , HKernel.Engine
                     , HKernel.Envelope
+                    , HKernel.Envelope.Entitlement
                     , HKernel.Envelope.EntitlementHistory
                     , HKernel.Envelope.EntitlementTSV
                     , HKernel.Envelope.EntitlementTransfer
@@ -461,6 +462,15 @@ test-suite h-kernel-budget-history-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          BudgetHistorySpec.hs
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , text
+                    , time
+
+test-suite h-kernel-envelope-entitlement-test
+    import:           test-defaults
+    type:             exitcode-stdio-1.0
+    main-is:          EnvelopeEntitlementSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
