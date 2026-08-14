@@ -29,6 +29,7 @@ library
                     , HKernel.Application.Config
                     , HKernel.Backing
                     , HKernel.Backing.Identity
+                    , HKernel.Backing.Policy
                     , HKernel.Budget
                     , HKernel.Budget.Config
                     , HKernel.Budget.Consumption
