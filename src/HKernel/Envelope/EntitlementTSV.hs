@@ -78,42 +78,39 @@ expectedHeader =
 parseLocatedRow
   :: (Int, Text)
   -> Either EnvelopeEntitlementTSVError (Int, EnvelopeEntitlementTransfer)
-parseLocatedRow (lineNumber, line) = do
-  (fields, note) <- mapRowError lineNumber (splitTransferRow line)
-  case fields of
-    [dateText, startText, endText, fromText, toText, quantityText, commodityText] -> do
-      effectiveDay <- parseDate lineNumber EntitlementDate dateText
-      periodStartDay <- parseDate lineNumber EntitlementPeriodStart startText
-      periodEndDay <- parseDate lineNumber EntitlementPeriodEndExclusive endText
-      period <- mapFieldError lineNumber InvalidEnvelopeEntitlementPeriod
-        (mkPeriod periodStartDay periodEndDay)
-      fromEndpoint <- parseEndpoint lineNumber fromText
-      toEndpoint <- parseEndpoint lineNumber toText
-      quantity <- mapFieldError lineNumber InvalidEnvelopeEntitlementQuantity
-        (parseQuantity quantityText)
-      commodity <- mapFieldError lineNumber InvalidEnvelopeEntitlementCommodity
-        (mkCommodity commodityText)
-      transfer <- mapFieldError lineNumber InvalidEnvelopeEntitlementTransfer
-        (mkEnvelopeEntitlementTransfer
-          effectiveDay
-          period
-          fromEndpoint
-          toEndpoint
-          (mkAmount commodity quantity)
-          note)
-      Right (lineNumber, transfer)
+parseLocatedRow (lineNumber, line) =
+  case T.splitOn "\t" line of
+    [ dateText
+      , startText
+      , endText
+      , fromText
+      , toText
+      , quantityText
+      , commodityText
+      , note
+      ] -> do
+        effectiveDay <- parseDate lineNumber EntitlementDate dateText
+        periodStartDay <- parseDate lineNumber EntitlementPeriodStart startText
+        periodEndDay <- parseDate lineNumber EntitlementPeriodEndExclusive endText
+        period <- mapFieldError lineNumber InvalidEnvelopeEntitlementPeriod
+          (mkPeriod periodStartDay periodEndDay)
+        fromEndpoint <- parseEndpoint lineNumber fromText
+        toEndpoint <- parseEndpoint lineNumber toText
+        quantity <- mapFieldError lineNumber InvalidEnvelopeEntitlementQuantity
+          (parseQuantity quantityText)
+        commodity <- mapFieldError lineNumber InvalidEnvelopeEntitlementCommodity
+          (mkCommodity commodityText)
+        transfer <- mapFieldError lineNumber InvalidEnvelopeEntitlementTransfer
+          (mkEnvelopeEntitlementTransfer
+            effectiveDay
+            period
+            fromEndpoint
+            toEndpoint
+            (mkAmount commodity quantity)
+            note)
+        Right (lineNumber, transfer)
     _ -> Left (EnvelopeEntitlementTSVError lineNumber
       (InvalidEnvelopeEntitlementRow line))
-
-splitTransferRow :: Text -> Either Text ([Text], Text)
-splitTransferRow = go 7 []
-  where
-    go 0 fields rest = Right (reverse fields, rest)
-    go remaining fields rest =
-      case T.breakOn "\t" rest of
-        (_, suffix) | T.null suffix -> Left rest
-        (field, suffix) ->
-          go (remaining - 1) (field : fields) (T.drop 1 suffix)
 
 parseDate
   :: Int
@@ -171,15 +168,6 @@ endpointNames :: EnvelopeId -> EnvelopeEndpoint -> Bool
 endpointNames expected endpoint = case endpoint of
   Unallocated -> False
   Spendable actual -> actual == expected
-
-mapRowError
-  :: Int
-  -> Either Text value
-  -> Either EnvelopeEntitlementTSVError value
-mapRowError lineNumber result = case result of
-  Left raw -> Left (EnvelopeEntitlementTSVError lineNumber
-    (InvalidEnvelopeEntitlementRow raw))
-  Right value -> Right value
 
 mapFieldError
   :: Int
