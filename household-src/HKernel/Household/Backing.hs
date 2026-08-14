@@ -1,30 +1,42 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Stable household Backing projection.
+-- | Household composition of native BackingPool arithmetic from already
+-- admitted policy, ledger, Budget-compatibility, and open Plan facts.
 --
--- Backing asks which admitted Asset balances support the household's remaining
--- envelope claims at one observation. Current source admission is outside this
--- module; the calculation receives typed policy, budget results, movements,
--- and open Plan evidence.
+-- The pool-local arithmetic itself is owned by 'HKernel.Backing'. This module
+-- resolves current Household policy coordinates and retains the legacy
+-- destination-Account Envelope reserve only as a compatibility bridge while the
+-- canonical Household migrates to PlanId fulfillment routing.
 module HKernel.Household.Backing
   ( HouseholdBackingPlan(..)
   , EnvelopeBackingLine(..)
   , envelopeLedgerRemaining
   , envelopePostPlanHeadroom
   , EnvelopeBacking(..)
+  , envelopeFundingBalance
   , envelopeSignedTotal
   , envelopeBackingRequired
   , envelopeBackingSurplus
+  , envelopeAvailableBackingSurplus
   , envelopeReconciliationDelta
   , deriveHouseholdBacking
   ) where
 
 import qualified Data.Map.Strict as Map
-import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time.Calendar (Day)
 import HKernel.Account (Account)
+import HKernel.Backing
+  ( BackedEnvelopeClaim(..)
+  , BackingPoolError
+  , BackingPoolPosition
+  , backingPoolAvailableSurplus
+  , backingPoolFundingBalance
+  , backingPoolGrossEnvelopeRequired
+  , backingPoolGrossSurplus
+  , deriveBackingPoolPosition
+  )
 import HKernel.Budget (envelopeIdText)
 import HKernel.Budget.Consumption
   ( BudgetConsumption
@@ -44,7 +56,12 @@ import HKernel.Budget.Entitlement
   )
 import HKernel.Budget.Policy
   ( backingPoolDefinitionAssetAccounts
+  , backingPoolDefinitionId
   , budgetPolicyBackingPoolDefinitions
+  , budgetPolicyBackingPoolForAsset
+  , budgetPolicyEnvelopeDefinitions
+  , envelopeDefinitionBackingPool
+  , envelopeDefinitionId
   )
 import HKernel.Budget.Remaining
   ( BudgetRemaining
@@ -66,15 +83,20 @@ import HKernel.Money
 import HKernel.Period (Period, periodEndExclusive)
 import HKernel.Plan (PositiveAmount, positiveAmountValue)
 
--- | One open outgoing Plan after lifecycle and period selection. Its amount
--- remains proven positive by the Plan owner.
+-- | One still-open outgoing Plan inside the current funding horizon.
+--
+-- Source and destination remain separate evidence. The source Asset may reserve
+-- funding in one BackingPool. During the Budget compatibility window only, the
+-- destination Account may also feed the old Envelope reserve lookup. Native
+-- Envelope commitment does not infer that intent from Account.
 data HouseholdBackingPlan = HouseholdBackingPlan
-  { householdBackingPlanDestination :: Account
+  { householdBackingPlanSource      :: Account
+  , householdBackingPlanDestination :: Account
   , householdBackingPlanAmount      :: PositiveAmount
   } deriving (Eq, Show)
 
--- | Evidence for one spendable envelope. The ledger result and the open Plan
--- reserve remain separate so the report can explain post-Plan headroom.
+-- | Compatibility-facing Envelope detail retained while Household Report still
+-- publishes the old Budget observation beside native BackingPool coordinates.
 data EnvelopeBackingLine = EnvelopeBackingLine
   { envelopeBackingName        :: Text
   , envelopeEntitlement        :: Balance
@@ -92,47 +114,67 @@ envelopePostPlanHeadroom line =
   envelopeLedgerRemaining line
     `subtractBalance` envelopeOpenPlanReserve line
 
--- | One point-in-time Backing observation. Funding, envelope claims,
--- unassigned Budget balance, and unassigned Expense evidence are retained as
--- distinct coordinates rather than collapsed into one verdict.
+-- | One Household Backing observation.
+--
+-- Pool positions are retained before any Household aggregate is calculated so a
+-- shortage in one funding pool cannot disappear merely because another pool has
+-- surplus. Aggregate helpers remain compatibility/report summaries only.
 data EnvelopeBacking = EnvelopeBacking
   { envelopeBackingPeriod       :: Period
   , envelopeBackingObservedOn   :: Day
   , envelopeBackingLines        :: [EnvelopeBackingLine]
-  , envelopeFundingBalance      :: Balance
+  , envelopeBackingPools        :: [BackingPoolPosition]
   , envelopeLedgerUnassigned    :: Balance
   , envelopeUnassignedExpenses  :: [(Account, Balance)]
   } deriving (Eq, Show)
 
--- | Signed total of every envelope's ledger remaining. Overspent envelopes
--- remain negative evidence here.
+-- | Summary only. Pool-local adequacy must be read from
+-- 'envelopeBackingPools'.
+envelopeFundingBalance :: EnvelopeBacking -> Balance
+envelopeFundingBalance =
+  foldMap backingPoolFundingBalance . envelopeBackingPools
+
+-- | Signed total of every Envelope's ledger remaining. Overspent Envelopes stay
+-- negative evidence here.
 envelopeSignedTotal :: EnvelopeBacking -> Balance
 envelopeSignedTotal =
   foldMap envelopeLedgerRemaining . envelopeBackingLines
 
--- | Funding required to support positive envelope claims. Negative remaining
--- does not cancel another envelope's positive claim.
+-- | Gross positive Envelope claim across all pools. This is a Household summary;
+-- it does not erase the retained pool coordinates.
 envelopeBackingRequired :: EnvelopeBacking -> Balance
 envelopeBackingRequired =
-  foldMap (positiveBalance . envelopeLedgerRemaining)
-    . envelopeBackingLines
+  foldMap backingPoolGrossEnvelopeRequired . envelopeBackingPools
 
--- | Funding not required by positive envelope claims. A negative value is a
--- Backing shortfall, retained independently per Commodity.
+-- | Gross Household Backing surplus. A zero aggregate may still contain a
+-- pool-local shortage and surplus, which remain visible in the pool positions.
 envelopeBackingSurplus :: EnvelopeBacking -> Balance
-envelopeBackingSurplus report =
-  envelopeFundingBalance report
-    `subtractBalance` envelopeBackingRequired report
+envelopeBackingSurplus =
+  foldMap backingPoolGrossSurplus . envelopeBackingPools
 
--- | Difference after also accounting for the unassigned Budget ledger balance.
--- This is reconciliation evidence, not an instruction to move money.
+-- | Household summary after both source-funding and Envelope commitments.
+envelopeAvailableBackingSurplus :: EnvelopeBacking -> Balance
+envelopeAvailableBackingSurplus =
+  foldMap backingPoolAvailableSurplus . envelopeBackingPools
+
+-- | Gross reconciliation against the retained unassigned Budget ledger
+-- coordinate. This remains compatibility evidence, not a movement instruction.
 envelopeReconciliationDelta :: EnvelopeBacking -> Balance
 envelopeReconciliationDelta report =
   envelopeBackingSurplus report
     `subtractBalance` envelopeLedgerUnassigned report
 
--- | Calculate Backing from one admitted Household policy and aligned Budget
--- results produced from that same policy.
+-- | Compose pool-local native Backing from one admitted Household observation.
+--
+-- Source Asset -> BackingPool uses policy membership. The caller is responsible
+-- for selecting still-open Plans inside the funding horizon; overdue open Plans
+-- therefore remain commitments until lifecycle/completion evidence releases
+-- them.
+--
+-- Envelope headroom still uses the old destination-Account lookup in this
+-- compatibility surface. That lookup is deliberately isolated here and must be
+-- removed when canonical Household composition adopts native PlanId Envelope
+-- commitment. It is not used to derive funding-pool membership.
 deriveHouseholdBacking
   :: Day
   -> Period
@@ -143,13 +185,14 @@ deriveHouseholdBacking
   -> BudgetConsumption
   -> BudgetRemaining
   -> [HouseholdBackingPlan]
-  -> EnvelopeBacking
-deriveHouseholdBacking observation period journal policy movements entitlement consumption remaining plans =
-  EnvelopeBacking
+  -> Either (NonEmpty BackingPoolError) EnvelopeBacking
+deriveHouseholdBacking observation period journal policy movements entitlement consumption remaining plans = do
+  pools <- traverse poolFor poolDefinitions
+  pure EnvelopeBacking
     { envelopeBackingPeriod = period
     , envelopeBackingObservedOn = observation
     , envelopeBackingLines = map lineFor envelopes
-    , envelopeFundingBalance = accountScopeBalance fundingAssets
+    , envelopeBackingPools = pools
     , envelopeLedgerUnassigned = budgetClosing unassignedAccounts
     , envelopeUnassignedExpenses =
         [ (unassignedExpenseAccount entry, unassignedExpenseBalance entry)
@@ -158,8 +201,8 @@ deriveHouseholdBacking observation period journal policy movements entitlement c
     }
   where
     budgetPolicy = householdBudgetPolicy policy
-    fundingAssets = concatMap backingPoolDefinitionAssetAccounts
-      (budgetPolicyBackingPoolDefinitions budgetPolicy)
+    poolDefinitions = budgetPolicyBackingPoolDefinitions budgetPolicy
+    envelopeDefinitions = budgetPolicyEnvelopeDefinitions budgetPolicy
     envelopes = householdEnvelopeOrder policy
     unassignedAccounts = householdUnassignedBudgetAccounts policy
     entitlementByEnvelope = Map.fromList
@@ -174,6 +217,7 @@ deriveHouseholdBacking observation period journal policy movements entitlement c
       [ (envelopeRemainingEnvelope entry, entry)
       | entry <- budgetRemainingEnvelopes remaining
       ]
+
     lineFor envelope = EnvelopeBackingLine
       { envelopeBackingName = envelopeIdText envelope
       , envelopeEntitlement = maybe mempty
@@ -185,18 +229,50 @@ deriveHouseholdBacking observation period journal policy movements entitlement c
       , envelopeActualRefunds = maybe mempty
           envelopeConsumptionRefunds
           (Map.lookup envelope consumptionByEnvelope)
-      , envelopeBudgetRemaining = maybe mempty
-          envelopeRemainingBalance
-          (Map.lookup envelope remainingByEnvelope)
-      , envelopeOpenPlanReserve = foldMap
+      , envelopeBudgetRemaining = remainingFor envelope
+      , envelopeOpenPlanReserve = reserveFor envelope
+      }
+
+    remainingFor envelope = maybe mempty
+      envelopeRemainingBalance
+      (Map.lookup envelope remainingByEnvelope)
+
+    -- Legacy compatibility only. Native Envelope commitment is PlanId-routed.
+    reserveFor envelope = foldMap
+      (singletonBalance . positiveAmountValue . householdBackingPlanAmount)
+      [ plan
+      | plan <- plans
+      , householdEnvelopeForPlanDestination
+          (householdBackingPlanDestination plan) policy == Just envelope
+      ]
+
+    poolFor definition =
+      deriveBackingPoolPosition
+        poolId
+        (accountScopeBalance (backingPoolDefinitionAssetAccounts definition))
+        poolCommitment
+        claims
+      where
+        poolId = backingPoolDefinitionId definition
+        poolCommitment = foldMap
           (singletonBalance . positiveAmountValue . householdBackingPlanAmount)
           [ plan
           | plan <- plans
-          , householdEnvelopeForPlanDestination
-              (householdBackingPlanDestination plan)
-              policy == Just envelope
+          , budgetPolicyBackingPoolForAsset
+              (householdBackingPlanSource plan) budgetPolicy == Just poolId
           ]
-      }
+        claims =
+          [ BackedEnvelopeClaim
+              { backedEnvelopeId = envelope
+              , backedEnvelopeRemaining = remainingFor envelope
+              , backedEnvelopeHeadroom =
+                  remainingFor envelope `subtractBalance` reserveFor envelope
+              }
+          | definition' <- envelopeDefinitions
+          , envelopeDefinitionBackingPool definition' == poolId
+          , let envelope = envelopeDefinitionId definition'
+          ]
+
     budgetClosing selected = foldMap
       (singletonBalance . signedBudgetAmountFor selected)
       [ movement
@@ -205,18 +281,12 @@ deriveHouseholdBacking observation period journal policy movements entitlement c
       , Set.member (householdBudgetMovementFrom movement) selected
           || Set.member (householdBudgetMovementTo movement) selected
       ]
+
     signedBudgetAmountFor selected movement
       | Set.member (householdBudgetMovementTo movement) selected =
           householdBudgetMovementAmount movement
       | otherwise = negateAmount (householdBudgetMovementAmount movement)
-    accountScopeBalance selected = foldMap
-      (`accountBalance` balances)
-      selected
-    balances = accountBalancesThrough observation journal
 
-positiveBalance :: Balance -> Balance
-positiveBalance = balanceFromAmounts . mapMaybe positiveAmount . balanceEntries
-  where
-    positiveAmount (commodity, quantity)
-      | quantity > zeroQuantity = Just (mkAmount commodity quantity)
-      | otherwise = Nothing
+    accountScopeBalance selected = foldMap
+      (`accountBalance` balances) selected
+    balances = accountBalancesThrough observation journal
