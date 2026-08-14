@@ -20,6 +20,7 @@ main = do
   fulfillmentLaws
   historicalRoutingLaw
   sharedAccountLaw
+  repeatedTargetPositionLaw
   unrelatedTargetMovementLaw
   completionShapeLaw
   routingAdmissionLaw
@@ -77,6 +78,14 @@ sharedAccountLaw = do
   equal "shared Account completion does not leak into the later savings Envelope"
     (one jpy 30)
     (fulfillmentNet (envelopeFulfillmentFor (envelope "savings-new") fulfillment))
+
+repeatedTargetPositionLaw :: IO ()
+repeatedTargetPositionLaw = do
+  let fulfillment = fulfillmentThrough observedDay actualSource
+      jpy = commodity "JPY"
+  equal "repeated target Account uses the positive Plan position, not whole-Account net"
+    (one jpy 110)
+    (fulfillmentNet (envelopeFulfillmentFor (envelope "repeated") fulfillment))
 
 unrelatedTargetMovementLaw :: IO ()
 unrelatedTargetMovementLaw = do
@@ -147,6 +156,7 @@ routing = mustRight (mkFulfillmentRoutingHistory
   , decision (day 6) "p-save-original" (FulfillsEnvelope (envelope "savings-new"))
   , decision (day 1) "p-save-new" (FulfillsEnvelope (envelope "savings-new"))
   , decision (day 1) "p-invest" (FulfillsEnvelope (envelope "investing"))
+  , decision (day 1) "p-repeated" (FulfillsEnvelope (envelope "repeated"))
   , decision (day 1) "p-fee" (FulfillsEnvelope (envelope "should-not-count"))
   ])
 
@@ -166,6 +176,12 @@ planSource = declarations <> T.unlines
   , "  ; plan-id: p-invest"
   , "  assets:investment    40 JPY"
   , "  assets:cash         -40 JPY"
+  , ""
+  , "2026-08-10 * repeated savings coordinate"
+  , "  ; plan-id: p-repeated"
+  , "  assets:savings     100 JPY"
+  , "  assets:savings     -40 JPY"
+  , "  assets:cash        -60 JPY"
   , ""
   , "2026-08-10 * unrelated Plan sharing savings Account"
   , "  ; plan-id: p-shared-unrouted"
@@ -220,6 +236,13 @@ actualSource = declarations <> T.unlines
   , "  ; plan-id: p-invest"
   , "  assets:investment    40 JPY"
   , "  assets:cash         -40 JPY"
+  , ""
+  , "2026-08-10 * complete repeated savings coordinate"
+  , "  ; event-id: repeated"
+  , "  ; plan-id: p-repeated"
+  , "  assets:savings     110 JPY"
+  , "  assets:savings     -40 JPY"
+  , "  assets:cash        -70 JPY"
   , ""
   , "2026-08-10 * completed unrelated Plan on shared savings Account"
   , "  ; event-id: shared-unrouted"
