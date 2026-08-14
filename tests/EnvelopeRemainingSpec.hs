@@ -17,6 +17,7 @@ import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
 import HKernel.Envelope.Remaining
 import HKernel.Money
 import HKernel.Period (Period, mkPeriod, periodStart)
+import HKernel.Plan.Journal (PlanJournal, parsePlanJournal)
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -48,7 +49,7 @@ remainingLaws = do
   equal "Actual net Expense consumption subtracts from entitlement"
     (one jpy 70)
     (envelopeRemainingFor food remaining)
-  equal "explicit non-Expense target fulfillment also subtracts from entitlement"
+  equal "Plan-linked non-Expense target fulfillment also subtracts from entitlement"
     (one jpy 4)
     (envelopeRemainingFor savings remaining)
   equal "overspending remains negative evidence"
@@ -118,9 +119,17 @@ consumptionThrough observedThrough selectedPeriod =
 fulfillmentThrough :: Day -> Period -> EnvelopeFulfillment
 fulfillmentThrough observedThrough selectedPeriod =
   mustRight
-    (observeEnvelopeFulfillment selectedPeriod observedThrough actual fulfillmentRouting)
+    (observeEnvelopeFulfillment
+      selectedPeriod
+      observedThrough
+      savingsPlanJournal
+      actual
+      fulfillmentRouting)
   where
     actual = mustRight (parseActualJournal actualSource)
+
+savingsPlanJournal :: PlanJournal
+savingsPlanJournal = mustRight (parsePlanJournal savingsPlanSource)
 
 expenseRouting :: ExpenseRoutingHistory
 expenseRouting = mustRight (mkExpenseRoutingHistory
@@ -140,6 +149,22 @@ fulfillmentRouting = mustRight (mkFulfillmentRoutingHistory
       , fulfillmentRoutingNote = "test"
       }
   ])
+
+savingsPlanSource :: T.Text
+savingsPlanSource = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , ""
+  , "account assets:savings"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , ""
+  , "2026-08-09 * planned savings target"
+  , "  ; plan-id: p-savings"
+  , "  assets:cash       -6 JPY"
+  , "  assets:savings     6 JPY"
+  ]
 
 actualSource :: T.Text
 actualSource = T.unlines
@@ -204,6 +229,8 @@ actualSource = T.unlines
   , "  expenses:unrouted       8 JPY"
   , ""
   , "2026-08-09 * fulfill savings target"
+  , "  ; event-id: actual-savings"
+  , "  ; plan-id: p-savings"
   , "  assets:cash       -6 JPY"
   , "  assets:savings     6 JPY"
   ]
