@@ -17,6 +17,7 @@ import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
 import HKernel.Envelope.Remaining
 import HKernel.Money
 import HKernel.Period (Period, mkPeriod, periodStart)
+import HKernel.Plan (PlanId, mkPlanId)
 import HKernel.Plan.Journal (PlanJournal, parsePlanJournal)
 import System.Exit (exitFailure)
 
@@ -144,7 +145,7 @@ fulfillmentRouting :: FulfillmentRoutingHistory
 fulfillmentRouting = mustRight (mkFulfillmentRoutingHistory
   [ FulfillmentRoutingDecision
       { fulfillmentRoutingEffectiveFrom = day 1
-      , fulfillmentRoutingAccount = account "assets:savings"
+      , fulfillmentRoutingPlanId = planId "p-savings"
       , fulfillmentRoutingRoute = FulfillsEnvelope (envelope "savings")
       , fulfillmentRoutingNote = "test"
       }
@@ -247,6 +248,9 @@ day = fromGregorian 2026 8
 
 account :: T.Text -> Account
 account = mustRight . mkAccount
+
+planId :: T.Text -> PlanId
+planId = mustRight . mkPlanId
 
 envelope :: T.Text -> EnvelopeId
 envelope = mustRight . mkEnvelopeId
