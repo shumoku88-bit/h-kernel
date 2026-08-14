@@ -68,13 +68,9 @@ calculateEnvelopeRemaining entitlement consumption
       { envelopeRemainingPeriod = entitlementPeriod
       , envelopeRemainingObservedThrough = entitlementDay
       , remainingBalances = Map.fromList
-          [ (envelope, balance)
+          [ (envelope, remainingFor envelope)
           | envelope <- Set.toAscList coordinates
-          , let balance =
-              envelopeEntitlementBalance envelope entitlement
-                `subtractBalance`
-                  consumptionNet (envelopeConsumptionFor envelope consumption)
-          , not (isZeroBalance balance)
+          , not (isZeroBalance (remainingFor envelope))
           ]
       }
   where
@@ -87,6 +83,10 @@ calculateEnvelopeRemaining entitlement consumption
       ( map fst (envelopeEntitlementEntries entitlement)
           ++ map fst (envelopeConsumptionEntries consumption)
       )
+    remainingFor envelope =
+      envelopeEntitlementBalance envelope entitlement
+        `subtractBalance`
+          consumptionNet (envelopeConsumptionFor envelope consumption)
 
 envelopeRemainingFor :: EnvelopeId -> EnvelopeRemaining -> Balance
 envelopeRemainingFor envelope =
