@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HKernel.Envelope.EntitlementTSV
-  ( EnvelopeEntitlementTSVError(..)
+  ( EnvelopeEntitlementDateField(..)
+  , EnvelopeEntitlementTSVError(..)
   , EnvelopeEntitlementTSVErrorReason(..)
   , parseEnvelopeEntitlementTSV
   ) where
@@ -12,12 +13,18 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
+import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import HKernel.Envelope.EntitlementHistory
 import HKernel.Envelope.EntitlementTransfer
 import HKernel.Envelope.Identity
 import HKernel.Money
 import HKernel.Period
-import Text.Read (readMaybe)
+
+data EnvelopeEntitlementDateField
+  = EntitlementDate
+  | EntitlementPeriodStart
+  | EntitlementPeriodEndExclusive
+  deriving (Eq, Ord, Show)
 
 data EnvelopeEntitlementTSVError = EnvelopeEntitlementTSVError
   { envelopeEntitlementTSVErrorLine :: Int
@@ -28,7 +35,7 @@ data EnvelopeEntitlementTSVErrorReason
   = MissingEnvelopeEntitlementHeader
   | InvalidEnvelopeEntitlementHeader Text
   | InvalidEnvelopeEntitlementRow Text
-  | InvalidEnvelopeEntitlementDate Text
+  | InvalidEnvelopeEntitlementDate EnvelopeEntitlementDateField Text
   | InvalidEnvelopeEntitlementPeriod PeriodError
   | InvalidEnvelopeEndpoint Text EnvelopeIdError
   | InvalidEnvelopeEntitlementQuantity QuantityError
@@ -49,10 +56,8 @@ parseEnvelopeEntitlementTSV input =
             (InvalidEnvelopeEntitlementHeader header) :| [])
       | otherwise ->
           case partitionEithers (map parseLocatedRow rows) of
-            ([], locatedTransfers) ->
-              admitHistory locatedTransfers
-            (errors, _) ->
-              Left (NonEmpty.fromList errors)
+            ([], locatedTransfers) -> admitHistory locatedTransfers
+            (errors, _) -> Left (NonEmpty.fromList errors)
   where
     meaningfulLines =
       [ (lineNumber, stripCarriageReturn line)
@@ -73,12 +78,9 @@ parseLocatedRow (lineNumber, line) = do
   (fields, note) <- mapRowError lineNumber (splitTransferRow line)
   case fields of
     [dateText, startText, endText, fromText, toText, quantityText, commodityText] -> do
-      effectiveDay <- mapFieldError lineNumber InvalidEnvelopeEntitlementDate
-        (parseDay dateText)
-      periodStartDay <- mapFieldError lineNumber InvalidEnvelopeEntitlementDate
-        (parseDay startText)
-      periodEndDay <- mapFieldError lineNumber InvalidEnvelopeEntitlementDate
-        (parseDay endText)
+      effectiveDay <- parseDate lineNumber EntitlementDate dateText
+      periodStartDay <- parseDate lineNumber EntitlementPeriodStart startText
+      periodEndDay <- parseDate lineNumber EntitlementPeriodEndExclusive endText
       period <- mapFieldError lineNumber InvalidEnvelopeEntitlementPeriod
         (mkPeriod periodStartDay periodEndDay)
       fromEndpoint <- parseEndpoint lineNumber fromText
@@ -108,6 +110,17 @@ splitTransferRow = go 7 []
         (_, suffix) | T.null suffix -> Left rest
         (field, suffix) ->
           go (remaining - 1) (field : fields) (T.drop 1 suffix)
+
+parseDate
+  :: Int
+  -> EnvelopeEntitlementDateField
+  -> Text
+  -> Either EnvelopeEntitlementTSVError Day
+parseDate lineNumber field value =
+  case parseTimeM True defaultTimeLocale "%F" (T.unpack value) :: Maybe Day of
+    Just day -> Right day
+    Nothing -> Left (EnvelopeEntitlementTSVError lineNumber
+      (InvalidEnvelopeEntitlementDate field value))
 
 parseEndpoint
   :: Int
@@ -154,11 +167,6 @@ endpointNames :: EnvelopeId -> EnvelopeEndpoint -> Bool
 endpointNames expected endpoint = case endpoint of
   Unallocated -> False
   Spendable actual -> actual == expected
-
-parseDay :: Text -> Either Text Day
-parseDay value = case readMaybe (T.unpack value) of
-  Just parsed -> Right parsed
-  Nothing -> Left value
 
 mapRowError
   :: Int
