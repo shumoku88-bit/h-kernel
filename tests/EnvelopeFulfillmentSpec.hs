@@ -74,7 +74,8 @@ unrelatedTargetMovementLaw = do
     emptyBalance
     (fulfillmentNet (envelopeFulfillmentFor (envelope "unrelated") fulfillment))
 
-completionShapeLaw :: IO () =
+completionShapeLaw :: IO ()
+completionShapeLaw =
   leftSatisfies
     "Plan-linked Actual with incompatible Account shape fails closed"
     (any isShapeMismatch . NonEmpty.toList)
@@ -105,7 +106,8 @@ routingAdmissionLaw = do
       DuplicateFulfillmentRoutingDecision accountName effectiveFrom ->
         accountName == account "assets:savings" && effectiveFrom == day 1
 
-observationLaw :: IO () =
+observationLaw :: IO ()
+observationLaw =
   left "observation outside the selected Period fails closed"
     (observeEnvelopeFulfillment
       period
