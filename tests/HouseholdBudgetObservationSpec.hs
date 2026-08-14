@@ -55,13 +55,12 @@ import HKernel.Household.BudgetObservation
   , householdBudgetRemaining
   , householdEnvelopeConsumption
   )
-import HKernel.Household.Config
+import HKernel.Household.EnvelopeHistory
   ( HouseholdEnvelopeHistoryReferenceError(..)
   , admitHouseholdEnvelopeHistoryReferences
-  , householdConfigurationEnvelopeHistory
   , householdEnvelopeRegistry
   , householdExpenseRoutingHistory
-  , parseHouseholdConfiguration
+  , parseHouseholdEnvelopeHistory
   )
 import HKernel.Household.Policy
   ( defineHouseholdEnvelopeCoordinates
@@ -280,14 +279,10 @@ characterizeNativeEntitlementCoordinateMismatchFailsClosed = do
 characterizeHistoricalEnvelopeSourceAdmission :: IO ()
 characterizeHistoricalEnvelopeSourceAdmission = do
   let budgetPolicy = mustRight (parseBudgetPolicy historicalBudgetConfig)
-      configuration = mustRight
-        (parseHouseholdConfiguration budgetPolicy historicalHouseholdConfig)
-      missingConfiguration = mustRight
-        (parseHouseholdConfiguration budgetPolicy historicalMissingRegistryConfig)
-      history = mustJust "historical Envelope source" 
-        (householdConfigurationEnvelopeHistory configuration)
+      history = mustJust "historical Envelope source"
+        (mustRight (parseHouseholdEnvelopeHistory historicalHouseholdConfig))
       missingHistory = mustJust "missing-registry Envelope source"
-        (householdConfigurationEnvelopeHistory missingConfiguration)
+        (mustRight (parseHouseholdEnvelopeHistory historicalMissingRegistryConfig))
       actualJournal = mustRight (parseActualJournal actualSource)
       accountRegistry = journalAccountRegistry (actualJournalValue actualJournal)
       admitted = mustRight
@@ -295,6 +290,7 @@ characterizeHistoricalEnvelopeSourceAdmission = do
           accountRegistry budgetPolicy history)
       foodId = mustRight (mkEnvelopeId "food")
       retiredId = mustRight (mkEnvelopeId "retired")
+      foodExpense = mustRight (mkAccount "expenses:food")
       retiredExpense = mustRight (mkAccount "expenses:unrouted")
 
   assertTrue
@@ -304,7 +300,14 @@ characterizeHistoricalEnvelopeSourceAdmission = do
     "stable Registry retains historical Envelope absent from current policy"
     (envelopeRegistryContains retiredId (householdEnvelopeRegistry admitted))
   assertEqual
-    "historical routing validates target through stable Registry, not current policy"
+    "initial routing applies without inventing an effective date"
+    (Just (ManagedByEnvelope foodId))
+    (expenseRouteAt
+      (fromGregorian 2020 1 1)
+      foodExpense
+      (householdExpenseRoutingHistory admitted))
+  assertEqual
+    "dated historical routing validates target through stable Registry, not current policy"
     (Just (ManagedByEnvelope retiredId))
     (expenseRouteAt
       (fromGregorian 2026 8 10)
@@ -391,11 +394,11 @@ historicalHouseholdConfigWithIdentities identities = T.unlines
   , "identities = " <> identities
   , ""
   , "[[envelope-history.expense-routing]]"
-  , "effective-from = \"2026-08-01\""
+  , "effective-from = \"initial\""
   , "expense-account = \"expenses:food\""
   , "route = \"managed\""
   , "target = \"food\""
-  , "note = \"current route\""
+  , "note = \"opening static policy\""
   , ""
   , "[[envelope-history.expense-routing]]"
   , "effective-from = \"2026-08-02\""
