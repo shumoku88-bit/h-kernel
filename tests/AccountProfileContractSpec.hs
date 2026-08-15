@@ -157,10 +157,11 @@ characterizeNativeAccountPolicy jpy profileWithUnknownMetadata = do
         | value <- [asset, opening, unassigned, envelope, expense]
         ]
       projected = mustRight (projectRetainedHouseholdAccountPolicy retained)
-      (envelopePolicy, backingPolicy) = mustRight
+      (envelopePolicy, backingPolicy, currentExpenses) = mustRight
         (parseCurrentEnvelopeConfiguration nativeEnvelopeConfig)
       nativeConfiguration = mustRight
-        (parseHouseholdConfiguration envelopePolicy backingPolicy nativeHouseholdConfig)
+        (parseHouseholdConfiguration
+          envelopePolicy backingPolicy currentExpenses nativeHouseholdConfig)
 
   assertEqual
     "semantic TOML axes reproduce retained Account household policy while historical Envelope section stays opaque"
