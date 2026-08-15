@@ -48,7 +48,6 @@ import HKernel.Envelope
   ( CurrentEnvelopePolicy
   , parseCurrentEnvelopeConfiguration
   )
-import HKernel.Envelope.ExpenseRouting (expenseRoutingResolver)
 import HKernel.Household.AccountProfile
   ( HouseholdAccountPolicy
   , householdAssetClassByAccount
@@ -86,6 +85,7 @@ import HKernel.Household.EnvelopeHistory
   , HouseholdEnvelopeHistoryReferenceError
   , admitHouseholdEnvelopeHistoryReferences
   , householdExpenseRoutingHistory
+  , householdFulfillmentRoutingHistory
   , parseHouseholdEnvelopeHistory
   )
 import HKernel.Household.Issue.TSV
@@ -122,11 +122,14 @@ import HKernel.Loader
   , journalRootObservationTransactionSources
   , loadJournalRootObservationFromSource
   )
+import HKernel.Plan (PlanId)
 import HKernel.Plan.Journal
   ( PlanJournal
   , PlanJournalError(..)
   , admitPlanJournalFromResolvedJournal
   , admitPlanJournalFromResolvedSources
+  , identifiedPlanId
+  , planJournalTransactions
   , planJournalValue
   )
 import HKernel.Report.Config
@@ -267,7 +270,7 @@ loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
     parseHouseholdConfiguration envelopePolicy householdPolicySource
   envelopeHistory <- liftEither $
     admitRequiredEnvelopeHistory
-      accountsRegistry envelopePolicy householdPolicySource
+      accountsRegistry (planIds planJournal) envelopePolicy householdPolicySource
 
   (policy, validatedPolicy) <- liftEither $
     validateHouseholdPolicyAndAccounts accountsRegistry configuration
@@ -316,17 +319,22 @@ validateAccountRegistryAgreement expected actual mkErr
 
 admitRequiredEnvelopeHistory
   :: AccountRegistry
+  -> [PlanId]
   -> CurrentEnvelopePolicy
   -> Text
   -> Either (NonEmpty HouseholdLoadError) HouseholdEnvelopeHistory
-admitRequiredEnvelopeHistory registry envelopePolicy source = do
+admitRequiredEnvelopeHistory registry knownPlans envelopePolicy source = do
   maybeHistory <- first (pure . HouseholdEnvelopeHistoryParseFailed)
     (parseHouseholdEnvelopeHistory source)
   history <- case maybeHistory of
     Nothing -> Left (pure HouseholdEnvelopeHistoryMissing)
     Just value -> Right value
   first (fmap HouseholdEnvelopeHistoryReferenceFailed)
-    (admitHouseholdEnvelopeHistoryReferences registry envelopePolicy history)
+    (admitHouseholdEnvelopeHistoryReferences
+      registry knownPlans envelopePolicy history)
+
+planIds :: PlanJournal -> [PlanId]
+planIds = map identifiedPlanId . planJournalTransactions
 
 validateHouseholdPolicyAndAccounts
   :: AccountRegistry
@@ -484,7 +492,7 @@ admitCanonicalHousehold root accountsText actualText planText budgetText envelop
   configuration <- first (pure . HouseholdPolicyParseFailed)
     (parseHouseholdConfiguration envelopePolicy householdPolicyText)
   envelopeHistory <- admitRequiredEnvelopeHistory
-    accountsRegistry envelopePolicy householdPolicyText
+    accountsRegistry (planIds planJournal) envelopePolicy householdPolicyText
   (policy, validatedPolicy) <- validateHouseholdPolicyAndAccounts
     accountsRegistry configuration
   reportConfig <- first (pure . HouseholdReportConfigParseFailed)
@@ -503,16 +511,16 @@ buildHouseholdReportSurfaceFromHousehold
 buildHouseholdReportSurfaceFromHousehold observation state = do
   admittedPlans <- first (pure . HouseholdPlanProjectionFailed)
     (admitPlanJournal (householdStatePlanJournal state))
-  let routeResolver = expenseRoutingResolver
-        (householdExpenseRoutingHistory
-          (householdStateEnvelopeHistory state))
+  let history = householdStateEnvelopeHistory state
   first (pure . HouseholdReportCalculationFailed)
     (buildHouseholdReportSurfaceFromAdmitted
       observation
       (householdStateActualJournal state)
+      (householdStatePlanJournal state)
       (householdStatePolicy state)
       (householdStateValidatedPolicy state)
-      routeResolver
+      (householdExpenseRoutingHistory history)
+      (householdFulfillmentRoutingHistory history)
       admittedPlans
       (householdStateBudgetMovements state)
       (householdStateIssues state)
