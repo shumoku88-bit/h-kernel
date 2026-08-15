@@ -8,7 +8,10 @@ import HKernel.Account (Account, mkAccount)
 import HKernel.Actual.Journal (parseActualJournal)
 import HKernel.Envelope.Consumption
 import HKernel.Envelope.Entitlement
-import HKernel.Envelope.EntitlementHistory (mkEnvelopeEntitlementHistory)
+import HKernel.Envelope.EntitlementHistory
+  ( EnvelopeEntitlementHistory
+  , mkEnvelopeEntitlementHistory
+  )
 import HKernel.Envelope.EntitlementTransfer
 import HKernel.Envelope.ExpenseRouting
 import HKernel.Envelope.Fulfillment
@@ -25,6 +28,7 @@ main :: IO ()
 main = do
   remainingLaws
   alignmentLaws
+  stockHorizonLaws
 
 remainingLaws :: IO ()
 remainingLaws = do
@@ -96,6 +100,62 @@ alignmentLaws = do
       otherConsumption
       otherFulfillment)
 
+-- | Stock terms do not reset when the presentation/report Period advances.
+-- Accounting history before the first native Entitlement transfer remains outside
+-- the Envelope world even when historical routing already existed there.
+stockHorizonLaws :: IO ()
+stockHorizonLaws = do
+  let jpy = commodity "JPY"
+      food = envelope "food-stock"
+      savings = envelope "savings-stock"
+      history = stockHistory
+      selectedPeriod = mustRight
+        (mkPeriod (fromGregorian 2026 9 1) (fromGregorian 2026 10 1))
+      observed = fromGregorian 2026 9 2
+      actual = mustRight (parseActualJournal stockActualSource)
+      plans = mustRight (parsePlanJournal stockPlanSource)
+      expenseResolver = expenseRoutingResolver stockExpenseRouting
+      boundedConsumption = mustRight
+        (observeEnvelopeConsumption selectedPeriod observed actual expenseResolver)
+      stockConsumption = mustRight
+        (observeEnvelopeStockConsumption
+          history selectedPeriod observed actual expenseResolver)
+      boundedFulfillment = mustRight
+        (observeEnvelopeFulfillment
+          selectedPeriod observed plans actual stockFulfillmentRouting)
+      stockFulfillment = mustRight
+        (observeEnvelopeStockFulfillment
+          history selectedPeriod observed plans actual stockFulfillmentRouting)
+      entitlement = mustRight
+        (observeEnvelopeEntitlement selectedPeriod observed history)
+      remaining = mustRight
+        (calculateEnvelopeRemaining entitlement stockConsumption stockFulfillment)
+
+  equal "bounded Period activity no longer sees previous-Period Consumption"
+    emptyBalance
+    (consumptionNet (envelopeConsumptionFor food boundedConsumption))
+  equal "stock Consumption carries previous-Period Actual use across the boundary"
+    (one jpy 40)
+    (consumptionNet (envelopeConsumptionFor food stockConsumption))
+  equal "pre-origin Actual remains outside Envelope stock despite older routing"
+    (one jpy 40)
+    (consumptionCharges (envelopeConsumptionFor food stockConsumption))
+  equal "bounded Period activity no longer sees previous-Period Fulfillment"
+    emptyBalance
+    (fulfillmentNet (envelopeFulfillmentFor savings boundedFulfillment))
+  equal "stock Fulfillment carries previous-Period completion evidence"
+    (one jpy 30)
+    (fulfillmentNet (envelopeFulfillmentFor savings stockFulfillment))
+  equal "Remaining keeps consumed capacity deducted after Period rollover"
+    (one jpy 60)
+    (envelopeRemainingFor food remaining)
+  equal "Remaining keeps fulfilled capacity deducted after Period rollover"
+    (one jpy 20)
+    (envelopeRemainingFor savings remaining)
+  equal "stock observation still reports the current presentation Period"
+    selectedPeriod
+    (envelopeRemainingPeriod remaining)
+
 entitlementThrough :: Day -> Period -> EnvelopeEntitlement
 entitlementThrough observedThrough selectedPeriod =
   mustRight (observeEnvelopeEntitlement selectedPeriod observedThrough history)
@@ -128,6 +188,71 @@ fulfillmentThrough observedThrough selectedPeriod =
       fulfillmentRouting)
   where
     actual = mustRight (parseActualJournal actualSource)
+
+stockHistory :: EnvelopeEntitlementHistory
+stockHistory = mustRight (mkEnvelopeEntitlementHistory
+  [ grant (fromGregorian 2026 8 1) (envelope "food-stock") (commodity "JPY") 100
+  , grant (fromGregorian 2026 8 1) (envelope "savings-stock") (commodity "JPY") 50
+  ])
+
+stockExpenseRouting :: ExpenseRoutingHistory
+stockExpenseRouting = mustRight (mkExpenseRoutingHistory
+  [ expenseRoute
+      (fromGregorian 2026 7 1)
+      "expenses:food-stock"
+      (ManagedByEnvelope (envelope "food-stock"))
+  ])
+
+stockFulfillmentRouting :: FulfillmentRoutingHistory
+stockFulfillmentRouting = mustRight (mkFulfillmentRoutingHistory
+  [ FulfillmentRoutingDecision
+      { fulfillmentRoutingEffectiveFrom = fromGregorian 2026 7 1
+      , fulfillmentRoutingPlanId = planId "p-stock-saving"
+      , fulfillmentRoutingRoute = FulfillsEnvelope (envelope "savings-stock")
+      , fulfillmentRoutingNote = "historical stock witness"
+      }
+  ])
+
+stockPlanSource :: T.Text
+stockPlanSource = stockDeclarations <> T.unlines
+  [ "2026-08-03 * planned stock saving"
+  , "  ; plan-id: p-stock-saving"
+  , "  assets:cash          -30 JPY"
+  , "  assets:savings-stock  30 JPY"
+  ]
+
+stockActualSource :: T.Text
+stockActualSource = stockDeclarations <> T.unlines
+  [ "2026-07-31 * routed accounting fact before Envelope inception"
+  , "  assets:cash              -9 JPY"
+  , "  expenses:food-stock       9 JPY"
+  , ""
+  , "2026-08-02 * previous Period food consumption"
+  , "  assets:cash             -40 JPY"
+  , "  expenses:food-stock      40 JPY"
+  , ""
+  , "2026-08-03 * previous Period completed saving"
+  , "  ; event-id: stock-saving"
+  , "  ; plan-id: p-stock-saving"
+  , "  assets:cash             -30 JPY"
+  , "  assets:savings-stock     30 JPY"
+  ]
+
+stockDeclarations :: T.Text
+stockDeclarations = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , ""
+  , "account assets:savings-stock"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , ""
+  , "account expenses:food-stock"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , ""
+  ]
 
 savingsPlanJournal :: PlanJournal
 savingsPlanJournal = mustRight (parsePlanJournal savingsPlanSource)

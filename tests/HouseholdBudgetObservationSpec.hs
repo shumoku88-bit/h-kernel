@@ -106,7 +106,10 @@ main = do
         , "account budget:food", "  type: Budget"
         ]
       actual = mustRight (parseActualJournal
-        (declarations <> "\n2026-08-03 food\n  expenses:food  40 JPY\n  assets:cash  -40 JPY\n\n2026-08-04 refund\n  expenses:food  -10 JPY\n  assets:cash  10 JPY\n"))
+        (declarations <>
+          "\n2026-06-20 pre-grant food\n  expenses:food  5 JPY\n  assets:cash  -5 JPY\n" <>
+          "\n2026-08-03 food\n  expenses:food  40 JPY\n  assets:cash  -40 JPY\n" <>
+          "\n2026-08-04 refund\n  expenses:food  -10 JPY\n  assets:cash  10 JPY\n"))
       savingsPlanId = mustRight (mkPlanId "plan-save")
       plans = mustRight (parsePlanJournal
         (declarations <>
@@ -115,7 +118,14 @@ main = do
       movements =
         [ HouseholdBudgetMovement
             { householdBudgetMovementDate = fromGregorian 2026 6 15
-            , householdBudgetMovementMemo = "June grant"
+            , householdBudgetMovementMemo = "Envelope source opening"
+            , householdBudgetMovementFrom = opening
+            , householdBudgetMovementTo = unassigned
+            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 50)
+            }
+        , HouseholdBudgetMovement
+            { householdBudgetMovementDate = fromGregorian 2026 7 1
+            , householdBudgetMovementMemo = "First food grant"
             , householdBudgetMovementFrom = unassigned
             , householdBudgetMovementTo = foodAllocation
             , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 50)
@@ -178,16 +188,16 @@ main = do
 
   assertEqual "role-neutral Plan stays out of narrow outgoing report subset"
     [] (admittedOutgoingPlanValues narrowPlans)
-  assertEqual "entitlement carries pre-period grant and release while inverting legacy spent and cutting off future"
+  assertEqual "entitlement carries pre-period grant and release while ignoring legacy spent and cutting off future"
     (one jpy 140) (envelopeEntitlementBalance foodId entitlement)
-  assertEqual "charges are native Actual evidence"
-    (one jpy 40) (consumptionCharges (envelopeConsumptionFor foodId consumption))
+  assertEqual "source opening makes routed pre-grant Actual part of live stock"
+    (one jpy 45) (consumptionCharges (envelopeConsumptionFor foodId consumption))
   assertEqual "refunds remain gross native evidence"
     (one jpy 10) (consumptionRefunds (envelopeConsumptionFor foodId consumption))
-  assertEqual "Remaining is entitlement minus net consumption and fulfillment"
-    (one jpy 110) (envelopeRemainingFor foodId remaining)
+  assertEqual "Remaining preserves pre-grant use after later Period rollover"
+    (one jpy 105) (envelopeRemainingFor foodId remaining)
   assertEqual "PlanId-routed Asset transfer reserves native Headroom"
-    (one jpy 90) (envelopeHeadroomFor foodId headroom)
+    (one jpy 85) (envelopeHeadroomFor foodId headroom)
 
 one :: Commodity -> Integer -> Balance
 one commodity value = singletonBalance (mkAmount commodity (quantityFromInteger value))

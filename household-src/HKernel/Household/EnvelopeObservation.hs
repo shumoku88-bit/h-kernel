@@ -29,7 +29,7 @@ import HKernel.Envelope.Commitment
 import HKernel.Envelope.Consumption
   ( EnvelopeConsumption
   , EnvelopeConsumptionError
-  , observeEnvelopeConsumption
+  , observeEnvelopeStockConsumption
   )
 import HKernel.Envelope.Entitlement
   ( EnvelopeEntitlement
@@ -39,7 +39,7 @@ import HKernel.Envelope.Entitlement
 import HKernel.Envelope.EntitlementHistory
   ( EnvelopeEntitlementHistory
   , EnvelopeEntitlementHistoryError
-  , mkEnvelopeEntitlementHistory
+  , mkEnvelopeEntitlementHistoryWithOrigins
   )
 import HKernel.Envelope.EntitlementTransfer
   ( EnvelopeEndpoint(..)
@@ -53,7 +53,7 @@ import HKernel.Envelope.ExpenseRouting
 import HKernel.Envelope.Fulfillment
   ( EnvelopeFulfillment
   , EnvelopeFulfillmentError
-  , observeEnvelopeFulfillment
+  , observeEnvelopeStockFulfillment
   )
 import HKernel.Envelope.FulfillmentRouting (FulfillmentRoutingHistory)
 import HKernel.Envelope.Headroom
@@ -78,7 +78,12 @@ import HKernel.Household.Policy
   , householdAllocationEnvelopes
   , householdUnassignedBudgetAccounts
   )
-import HKernel.Money (amountQuantity, negateAmount, zeroQuantity)
+import HKernel.Money
+  ( amountCommodity
+  , amountQuantity
+  , negateAmount
+  , zeroQuantity
+  )
 import HKernel.Period (Period)
 import HKernel.Plan.Journal (PlanJournal)
 
@@ -128,11 +133,11 @@ deriveHouseholdEnvelopeObservation observedThrough period actual plans policy ac
   entitlement <- singleLeft HouseholdEnvelopeEntitlementObservationError
     (observeEnvelopeEntitlement period observedThrough history)
   consumption <- singleLeft HouseholdEnvelopeConsumptionError
-    (observeEnvelopeConsumption
-      period observedThrough actual (expenseRoutingResolver expenseRouting))
+    (observeEnvelopeStockConsumption
+      history period observedThrough actual (expenseRoutingResolver expenseRouting))
   fulfillment <- mapLeft (fmap HouseholdEnvelopeFulfillmentError)
-    (observeEnvelopeFulfillment
-      period observedThrough plans actual fulfillmentRouting)
+    (observeEnvelopeStockFulfillment
+      history period observedThrough plans actual fulfillmentRouting)
   remaining <- valueLeft HouseholdEnvelopeRemainingError
     (calculateEnvelopeRemaining entitlement consumption fulfillment)
   commitment <- mapLeft (fmap HouseholdEnvelopeCommitmentError)
@@ -160,9 +165,24 @@ projectEntitlementHistory policy accountPolicy movements =
   case partitionEithers (zipWith projectMovement [1..] movements) of
     ([], maybeTransfers) ->
       mapLeft (fmap HouseholdEnvelopeEntitlementHistoryError)
-        (mkEnvelopeEntitlementHistory [transfer | Just transfer <- maybeTransfers])
+        (mkEnvelopeEntitlementHistoryWithOrigins
+          sourceOrigins
+          [transfer | Just transfer <- maybeTransfers])
     (errorGroups, _) -> Left (NonEmpty.fromList (concat errorGroups))
   where
+    -- The admitted Entitlement source itself establishes when each Commodity
+    -- enters the Envelope stock world. Opening -> unallocated movement evidence
+    -- therefore survives even though it is not a native Envelope transfer.
+    -- This lets routed Actual use after source inception remain visible as
+    -- negative Remaining before the first grant, without scanning older
+    -- accounting history from negative infinity.
+    sourceOrigins = Map.fromListWith min
+      [ ( amountCommodity (householdBudgetMovementAmount movement)
+        , householdBudgetMovementDate movement
+        )
+      | movement <- movements
+      ]
+
     allocationByAccount = householdAllocationEnvelopes policy
     unassignedAccounts = householdUnassignedBudgetAccounts policy
     kinds = householdBudgetKindByAccount accountPolicy
