@@ -46,6 +46,7 @@ import HKernel.Application.Config
   )
 import HKernel.Envelope
   ( CurrentEnvelopePolicy
+  , CurrentExpenseAssignments
   , parseCurrentEnvelopeConfiguration
   )
 import HKernel.Household.AccountProfile
@@ -138,20 +139,21 @@ import HKernel.Report.Config
   )
 
 data HouseholdState = HouseholdState
-  { householdStateRoot                  :: HouseholdRoot
-  , householdStatePaths                 :: HouseholdSourcePaths
-  , householdStateAccountsRegistry      :: AccountRegistry
-  , householdStateActualJournal         :: ActualJournal
-  , householdStatePlanJournal           :: PlanJournal
-  , householdStateBudgetMovementJournal :: HouseholdBudgetMovementJournal
-  , householdStateEnvelopePolicy        :: CurrentEnvelopePolicy
-  , householdStateConfiguration         :: HouseholdConfiguration
-  , householdStateEnvelopeHistory       :: HouseholdEnvelopeHistory
-  , householdStatePolicy                :: HouseholdPolicy
-  , householdStateValidatedPolicy       :: AccountValidatedHouseholdPolicy
-  , householdStateReportConfig          :: ReportConfiguration
-  , householdStateIssues                :: [HouseholdIssue]
-  , householdStateDailyScope            :: DailyTargetScope
+  { householdStateRoot                      :: HouseholdRoot
+  , householdStatePaths                     :: HouseholdSourcePaths
+  , householdStateAccountsRegistry          :: AccountRegistry
+  , householdStateActualJournal             :: ActualJournal
+  , householdStatePlanJournal               :: PlanJournal
+  , householdStateBudgetMovementJournal     :: HouseholdBudgetMovementJournal
+  , householdStateEnvelopePolicy            :: CurrentEnvelopePolicy
+  , householdStateCurrentExpenseAssignments :: CurrentExpenseAssignments
+  , householdStateConfiguration             :: HouseholdConfiguration
+  , householdStateEnvelopeHistory           :: HouseholdEnvelopeHistory
+  , householdStatePolicy                    :: HouseholdPolicy
+  , householdStateValidatedPolicy           :: AccountValidatedHouseholdPolicy
+  , householdStateReportConfig              :: ReportConfiguration
+  , householdStateIssues                    :: [HouseholdIssue]
+  , householdStateDailyScope                :: DailyTargetScope
   } deriving (Eq, Show)
 
 -- | Retained physical allocation-journal projection. The source has not yet been
@@ -262,12 +264,14 @@ loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
     admitHouseholdBudgetMovementJournalFromResolvedSources budgetJournal budgetSources
 
   envelopePolicySource <- readHouseholdSourceExcept (householdBudgetConfigPath paths)
-  (envelopePolicy, backingPolicy) <- liftEither . first (pure . HouseholdEnvelopePolicyParseFailed) $
-    parseCurrentEnvelopeConfiguration envelopePolicySource
+  (envelopePolicy, backingPolicy, currentExpenses) <-
+    liftEither . first (pure . HouseholdEnvelopePolicyParseFailed) $
+      parseCurrentEnvelopeConfiguration envelopePolicySource
 
   householdPolicySource <- readHouseholdSourceExcept (householdPolicyConfigPath paths)
   configuration <- liftEither . first (pure . HouseholdPolicyParseFailed) $
-    parseHouseholdConfiguration envelopePolicy backingPolicy householdPolicySource
+    parseHouseholdConfiguration
+      envelopePolicy backingPolicy currentExpenses householdPolicySource
   envelopeHistory <- liftEither $
     admitRequiredEnvelopeHistory
       accountsRegistry (planIds planJournal) envelopePolicy householdPolicySource
@@ -285,7 +289,8 @@ loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
 
   state <- liftEither $ assembleCanonicalHouseholdState
     root paths accountsRegistry actualJournal planJournal budgetMovementJournal
-    envelopePolicy configuration envelopeHistory policy validatedPolicy reportConfig issues
+    envelopePolicy currentExpenses configuration envelopeHistory policy validatedPolicy
+    reportConfig issues
 
   pure HouseholdWriteSnapshot
     { householdWriteSnapshotState = state
@@ -356,6 +361,7 @@ assembleCanonicalHouseholdState
   -> PlanJournal
   -> HouseholdBudgetMovementJournal
   -> CurrentEnvelopePolicy
+  -> CurrentExpenseAssignments
   -> HouseholdConfiguration
   -> HouseholdEnvelopeHistory
   -> HouseholdPolicy
@@ -363,7 +369,7 @@ assembleCanonicalHouseholdState
   -> ReportConfiguration
   -> [HouseholdIssue]
   -> Either (NonEmpty HouseholdLoadError) HouseholdState
-assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJournal budgetMovementJournal envelopePolicy configuration envelopeHistory policy validatedPolicy reportConfig issues = do
+assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJournal budgetMovementJournal envelopePolicy currentExpenses configuration envelopeHistory policy validatedPolicy reportConfig issues = do
   dailyScope <- assembleDailyScope
     accountsRegistry
     (householdConfigurationDailyTargetAssets configuration)
@@ -376,6 +382,7 @@ assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJo
     , householdStatePlanJournal = planJournal
     , householdStateBudgetMovementJournal = budgetMovementJournal
     , householdStateEnvelopePolicy = envelopePolicy
+    , householdStateCurrentExpenseAssignments = currentExpenses
     , householdStateConfiguration = configuration
     , householdStateEnvelopeHistory = envelopeHistory
     , householdStatePolicy = policy
@@ -487,10 +494,12 @@ admitCanonicalHousehold root accountsText actualText planText budgetText envelop
   budgetMovementJournal <- first (pure . HouseholdBudgetMovementAdmitFailed)
     (admitHouseholdBudgetMovementJournalFromResolvedJournal budgetJournal budgetText)
 
-  (envelopePolicy, backingPolicy) <- first (pure . HouseholdEnvelopePolicyParseFailed)
-    (parseCurrentEnvelopeConfiguration envelopePolicyText)
+  (envelopePolicy, backingPolicy, currentExpenses) <-
+    first (pure . HouseholdEnvelopePolicyParseFailed)
+      (parseCurrentEnvelopeConfiguration envelopePolicyText)
   configuration <- first (pure . HouseholdPolicyParseFailed)
-    (parseHouseholdConfiguration envelopePolicy backingPolicy householdPolicyText)
+    (parseHouseholdConfiguration
+      envelopePolicy backingPolicy currentExpenses householdPolicyText)
   envelopeHistory <- admitRequiredEnvelopeHistory
     accountsRegistry (planIds planJournal) envelopePolicy householdPolicyText
   (policy, validatedPolicy) <- validateHouseholdPolicyAndAccounts
@@ -502,7 +511,8 @@ admitCanonicalHousehold root accountsText actualText planText budgetText envelop
 
   assembleCanonicalHouseholdState
     root paths accountsRegistry actualJournal planJournal budgetMovementJournal
-    envelopePolicy configuration envelopeHistory policy validatedPolicy reportConfig issues
+    envelopePolicy currentExpenses configuration envelopeHistory policy validatedPolicy
+    reportConfig issues
 
 buildHouseholdReportSurfaceFromHousehold
   :: Day
