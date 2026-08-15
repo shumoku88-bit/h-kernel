@@ -73,7 +73,8 @@ A fact is written or admitted once and projected elsewhere.
 - Actual Expense use belongs to `ActualJournal`.
 - Plan intent belongs to `PlanJournal`.
 - Plan completion belongs to Plan/Actual relation evidence.
-- Envelope grant and reallocation belongs to `EnvelopeEntitlementHistory`.
+- Envelope grant, reallocation, and stock-opening boundary belong to
+  `EnvelopeEntitlementHistory`.
 - Expense-to-Envelope meaning belongs to `ExpenseRoutingHistory`.
 - non-Expense target intent belongs to `FulfillmentRoutingHistory` by stable
   `PlanId`.
@@ -143,6 +144,20 @@ Legacy `Envelope <-> spent` execution movements remain readable source-era
 records, but the Entitlement adapter deliberately ignores them. Plan completion
 no longer appends new execution movements to `budget.journal`.
 
+Entitlement history is globally admitted rather than reset by report Period.
+For each `(EnvelopeId, Commodity)`, same-day transfer deltas combine before an
+ascending cumulative scan, and any negative historical balance fails closed even
+when a later transfer restores it or the defect is after the requested
+observation day.
+
+`EnvelopeEntitlementHistory` also owns the stock opening boundary for each
+Commodity. A generic transfer-only constructor may infer that boundary from the
+first transfer, but Household production has stronger source evidence: the
+adapter derives the origin from the earliest admitted Entitlement-source movement
+for that Commodity, including opening or unallocated movement that creates no
+native Envelope transfer. This distinction keeps routed Actual use after source
+inception visible even when it predates the first grant.
+
 ## Expense routing and Consumption
 
 Expense consumption is derived from admitted Actual Expense postings plus
@@ -158,6 +173,13 @@ Historical routing is never reconstructed from current configuration.
 
 Refunds and typed Actual reversals affect Consumption through Actual evidence.
 No compensating Envelope movement is written.
+
+The bounded `observeEnvelopeConsumption` remains a Period activity observer.
+Production Remaining instead uses stock Consumption from the Commodity's
+`EnvelopeEntitlementHistory` origin through `observedThrough`. A Period rollover
+therefore cannot resurrect capacity already consumed. Reversal chains retain the
+root Actual routing date, so a later reversal of pre-origin accounting history
+cannot manufacture Envelope capacity after inception.
 
 ## Fulfillment routing and Fulfillment
 
@@ -177,6 +199,12 @@ configuration.
 A completed routed Plan produces `EnvelopeFulfillment` from Plan/Actual evidence.
 Actual quantities remain authoritative. Reversal chains cancel or restore root
 fulfillment evidence without re-inferring intent from Accounts.
+
+The bounded `observeEnvelopeFulfillment` remains a Period activity observer.
+Production Remaining uses stock Fulfillment from the same Commodity stock origin
+as Consumption. Completion evidence before Envelope-source inception remains
+outside stock together with its reversal chain; completed use after inception
+remains deducted across later report Periods.
 
 Plan completion does not publish a second Budget execution fact. Fulfillment is
 an observation of Plan/Actual evidence, not a `budget.journal` writer action.
@@ -198,16 +226,24 @@ For an open Plan, routing is observed at the current observation day because the
 Plan remains current intent. Completed Fulfillment freezes route meaning at the
 completing Actual evidence boundary.
 
+Commitment remains a current report/observation-horizon claim. It is not made
+cumulative merely because Consumption and Fulfillment are stock terms.
+
 ## Remaining and Headroom
 
-These are exact arithmetic projections with aligned `Period` and observation
-`Day`:
+These are exact arithmetic projections at an aligned report `Period` and
+observation `Day`, but the report Period is not the lower boundary of the stock
+terms:
 
 ```text
+stock horizon = Entitlement-source origin .. observedThrough
+
 Remaining
-  = Entitlement
-  - Consumption
-  - Fulfillment
+  = cumulative Entitlement
+  - cumulative Consumption
+  - cumulative Fulfillment
+
+current report/observation horizon
 
 Headroom
   = Remaining
@@ -234,13 +270,20 @@ HouseholdEnvelopeObservation
   headroom
 ```
 
+The outer Period remains the statement/presentation coordinate. It does not
+reset live Entitlement, Consumption, Fulfillment, or Remaining. Stock observers
+still retain that same Period coordinate so the six meanings compose at one
+report point without confusing the report window with the historical stock
+horizon.
+
 It does not store `HouseholdPolicy` as semantic state. Current policy is an input
 needed while adapting retained canonical source coordinates, not part of the
 resulting Envelope observation.
 
 The observation still accepts `HouseholdBudgetMovement` and
 `HouseholdAccountPolicy` to project the current canonical allocation source into
-native entitlement history. That is source migration infrastructure.
+native entitlement history. That adapter supplies both native transfers and the
+source-owned Commodity stock origins. This is source migration infrastructure.
 
 ## Backing
 
@@ -283,7 +326,7 @@ intent.
 Historical owners exist where history changes meaning:
 
 - stable Envelope identity,
-- entitlement transfers,
+- Entitlement-source stock origins and entitlement transfers,
 - Expense routing,
 - PlanId fulfillment routing.
 
