@@ -17,8 +17,6 @@ import HKernel.Application.Config
   )
 import HKernel.CLI
 import HKernel.Engine (DateRange, rangeEnd)
-import HKernel.Envelope
-import HKernel.Envelope.Render
 import HKernel.Household.Application
   ( HouseholdState(..)
   , buildHouseholdReportSurfaceFromHousehold
@@ -117,8 +115,6 @@ runJournalSourceCommand today journalPath householdDirectory command = do
           Left err -> dieText (renderReportPlanError err)
           Right resolvedPlan -> pure (applyReportPlanResolved resolvedPlan journalCommand)
       TIO.putStr (executeWithPresentation presentation resolvedCommand journal)
-    RunEnvelopeBudget policyPath dateRange ->
-      runEnvelopeBudget policyPath dateRange journal
 
 runCanonicalDefaultReportBook :: FilePath -> Day -> IO ()
 runCanonicalDefaultReportBook directory latest = do
@@ -294,25 +290,6 @@ renderReportPlanError :: ReportPlanError -> Text
 renderReportPlanError (InvalidReportRange reportName start end) =
   "invalid " <> reportName <> " range: start " <> tshow start
     <> " is after end " <> tshow end
-
-runEnvelopeBudget :: FilePath -> DateRange -> Journal -> IO ()
-runEnvelopeBudget policyPath dateRange journal = do
-  readResult <- tryIOError (TIO.readFile policyPath)
-  policyText <- case readResult of
-    Left err -> dieText
-      ("cannot read envelope policy ‘" <> T.pack policyPath <> "’: " <> tshow err)
-    Right value -> pure value
-  policy <- case parseEnvelopePolicy policyText of
-    Left errors -> dieText
-      ("envelope policy parsing failed in ‘" <> T.pack policyPath <> "’:\n"
-        <> renderEnvelopePolicyErrors errors)
-    Right value -> pure value
-  report <- case envelopeBudget dateRange policy journal of
-    Left errors -> dieText
-      ("envelope policy validation failed:\n"
-        <> renderEnvelopeBudgetErrors errors)
-    Right value -> pure value
-  TIO.putStr (renderEnvelopeBudget report)
 
 executeWithPresentation
   :: PresentationConfig

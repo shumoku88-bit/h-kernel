@@ -7,7 +7,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Account
-import HKernel.Budget.Config (parseBudgetPolicy)
+import HKernel.Envelope.Config (parseCurrentEnvelopeConfiguration)
 import HKernel.Household.Config
   ( householdConfigurationDailyTargetAssets
   , householdConfigurationPrimaryCommodity
@@ -84,11 +84,12 @@ characterizeNativeSourceParity
   -> DailyTargetScope
   -> IO ()
 characterizeNativeSourceParity registry plan retainedScope = do
-  let budgetPolicy = mustRight (parseBudgetPolicy nativeBudgetConfig)
+  let envelopePolicy = mustRight
+        (parseCurrentEnvelopeConfiguration nativeEnvelopeConfig)
       householdConfiguration = mustRight
-        (parseHouseholdConfiguration budgetPolicy nativeHouseholdConfig)
+        (parseHouseholdConfiguration envelopePolicy nativeHouseholdConfig)
       preCutoverConfiguration = mustRight
-        (parseHouseholdConfiguration budgetPolicy nativeHouseholdConfigWithoutMoney)
+        (parseHouseholdConfiguration envelopePolicy nativeHouseholdConfigWithoutMoney)
       planJournal = mustRight (parsePlanJournal nativePlanJournal)
       obligationSelections = mustRight
         (admitDailyTargetPlanJournalSelections planJournal)
@@ -232,8 +233,8 @@ header :: T.Text
 header =
   "kind\tscope_id\taccount_key\tplan_id\texcluded_amount\tcurrency\treservation_ref"
 
-nativeBudgetConfig :: T.Text
-nativeBudgetConfig = T.unlines
+nativeEnvelopeConfig :: T.Text
+nativeEnvelopeConfig = T.unlines
   [ "[[backing-pools]]"
   , "id = \"operating\""
   , "asset-accounts = [\"assets:cash\"]"

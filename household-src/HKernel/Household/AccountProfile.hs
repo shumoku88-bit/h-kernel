@@ -13,7 +13,7 @@ module HKernel.Household.AccountProfile
   , RetainedEnvelopeRole(..)
   , RetainedBudgetGroup(..)
   , RetainedSpendClass(..)
-  , AccountBudgetPolicyEvidence(..)
+  , AccountEnvelopePolicyEvidence(..)
   , AccountHouseholdPolicyEvidence(..)
   , RetainedAccountProfile(..)
   , AccountProfileError(..)
@@ -41,20 +41,18 @@ import HKernel.Account
   , AccountType(..)
   , declaredAccountType
   )
-import HKernel.Budget
+import HKernel.Envelope.Identity
   ( EnvelopeId
   , EnvelopeIdError
   , mkEnvelopeId
   )
 
--- | Retained household classification for an Asset Account.
 data RetainedAssetClass
   = RetainedLiquidAsset
   | RetainedSavingsAsset
   | RetainedInvestmentAsset
   deriving (Eq, Ord, Show)
 
--- | Retained structural role for a Budget Account.
 data RetainedBudgetAccountKind
   = RetainedOpeningBudgetAccount
   | RetainedUnassignedBudgetAccount
@@ -62,39 +60,30 @@ data RetainedBudgetAccountKind
   | RetainedEnvelopeBudgetAccount
   deriving (Eq, Ord, Show)
 
--- | Retained household execution role for an Envelope allocation Account.
 data RetainedEnvelopeRole
   = RetainedUnassignedEnvelopeRole
   | RetainedDynamicEnvelopeRole
   | RetainedExecutionEnvelopeRole
   deriving (Eq, Ord, Show)
 
--- | Retained household group evidence.
---
--- This is deliberately not 'HKernel.Budget.Pacing': @reserve@ is a separate
--- coordinate, so collapsing both values would lose evidence.
+-- | Retained household group evidence for existing Budget Accounts.
+-- @reserve@ is deliberately distinct from current Envelope pacing.
 data RetainedBudgetGroup
   = RetainedDailyBudgetGroup
   | RetainedFlexBudgetGroup
   | RetainedReserveBudgetGroup
   deriving (Eq, Ord, Show)
 
--- | Retained expense classification evidence.
 data RetainedSpendClass
   = RetainedFixedSpend
   | RetainedVariableSpend
   deriving (Eq, Ord, Show)
 
--- | Evidence whose stable semantic owner is the general 'BudgetPolicy'.
---
--- Currently this is the Expense Account to Envelope assignment. Backing pools,
--- pacing, and Envelope definitions remain owned by @budget.toml@.
-data AccountBudgetPolicyEvidence = AccountBudgetPolicyEvidence
+-- | Retained Expense Account to Envelope assignment evidence.
+data AccountEnvelopePolicyEvidence = AccountEnvelopePolicyEvidence
   { accountExpenseEnvelopeEvidence :: Maybe EnvelopeId
   } deriving (Eq, Show)
 
--- | Evidence whose stable semantic owner is household policy or a future named
--- household overlay.
 data AccountHouseholdPolicyEvidence = AccountHouseholdPolicyEvidence
   { accountAssetClassEvidence              :: Maybe RetainedAssetClass
   , accountPlanDestinationEnvelopeEvidence :: Maybe EnvelopeId
@@ -106,15 +95,13 @@ data AccountHouseholdPolicyEvidence = AccountHouseholdPolicyEvidence
   , accountSpendClassEvidence              :: Maybe RetainedSpendClass
   } deriving (Eq, Show)
 
--- | One retained Account profile after semantic separation.
 data RetainedAccountProfile = RetainedAccountProfile
   { retainedAccountDeclaration          :: AccountDeclaration
-  , retainedAccountBudgetEvidence       :: AccountBudgetPolicyEvidence
+  , retainedAccountEnvelopeEvidence     :: AccountEnvelopePolicyEvidence
   , retainedAccountHouseholdEvidence    :: AccountHouseholdPolicyEvidence
   , retainedAccountUnclassifiedMetadata :: Map Text Text
   } deriving (Eq, Show)
 
--- | Invalid values in coordinates whose owner is already classified.
 data AccountProfileError
   = UnsupportedRetainedAssetClass Text
   | UnsupportedRetainedBudgetAccountKind Text
@@ -125,12 +112,6 @@ data AccountProfileError
   | InvalidRetainedEnvelopeReference Text EnvelopeIdError
   deriving (Eq, Show)
 
--- | Separate retained metadata according to the already declared Account type.
---
--- The input map begins after physical syntax admission and after @role@ and
--- @currency@ have produced the supplied 'AccountDeclaration'. Unknown keys and
--- known keys used on a non-applicable Account type remain visible as
--- unclassified metadata.
 classifyRetainedAccountProfile
   :: AccountDeclaration
   -> Map Text Text
@@ -140,7 +121,7 @@ classifyRetainedAccountProfile declaration metadata =
     Just values -> Left values
     Nothing -> Right RetainedAccountProfile
       { retainedAccountDeclaration = declaration
-      , retainedAccountBudgetEvidence = AccountBudgetPolicyEvidence
+      , retainedAccountEnvelopeEvidence = AccountEnvelopePolicyEvidence
           { accountExpenseEnvelopeEvidence = case accountType of
               Expense -> valueOf envelopeReferenceResult
               _       -> Nothing
@@ -164,7 +145,6 @@ classifyRetainedAccountProfile declaration metadata =
       }
   where
     accountType = declaredAccountType declaration
-
     assetClassResult = parseWhen (accountType == Asset)
       "type" parseAssetClass metadata
     budgetKindResult = parseWhen (accountType == Budget)
@@ -181,7 +161,6 @@ classifyRetainedAccountProfile declaration metadata =
       | accountType `elem` [Asset, Expense, Budget] =
           parseOptional metadata "budget" parseEnvelopeReference
       | otherwise = Right Nothing
-
     errors = concat
       [ errorsOf assetClassResult
       , errorsOf budgetKindResult
@@ -191,19 +170,12 @@ classifyRetainedAccountProfile declaration metadata =
       , errorsOf spendClassResult
       , errorsOf envelopeReferenceResult
       ]
-
     consumedKeys = case accountType of
       Asset   -> ["type", "budget"]
       Expense -> ["budget", "fixed", "spend_class"]
       Budget  -> ["kind", "budget", "envelope_role", "budget_group"]
       _       -> []
 
--- | Native household policy axes formerly mixed into @accounts.tsv@ rows.
---
--- Account identity, AccountType, and default Commodity do not appear here;
--- those belong to @accounts.journal@. Expense-to-Envelope assignment and Plan
--- destination relations also remain in their already named Budget/Household
--- policy owners.
 data HouseholdAccountPolicy = HouseholdAccountPolicy
   { householdAssetClassByAccount    :: Map Account RetainedAssetClass
   , householdBudgetKindByAccount    :: Map Account RetainedBudgetAccountKind
@@ -212,8 +184,6 @@ data HouseholdAccountPolicy = HouseholdAccountPolicy
   , householdSpendClassByAccount    :: Map Account RetainedSpendClass
   } deriving (Eq, Show)
 
--- | Errors are deliberately coordinate-class only. They do not retain private
--- Account identities or metadata values.
 data HouseholdAccountPolicyError
   = DuplicateHouseholdAssetClassCoordinate
   | DuplicateHouseholdBudgetKindCoordinate
@@ -225,8 +195,6 @@ data HouseholdAccountPolicyError
   | RetainedAccountMetadataRemainsUnclassified
   deriving (Eq, Show)
 
--- | Build native policy from semantic axes rather than from a physical row
--- format. Independent duplicate axes are accumulated.
 mkHouseholdAccountPolicy
   :: [(Account, RetainedAssetClass)]
   -> [(Account, RetainedBudgetAccountKind)]
@@ -253,12 +221,6 @@ mkHouseholdAccountPolicy assetClasses budgetKinds envelopeRoles budgetGroups spe
       , duplicateError DuplicateHouseholdSpendClassCoordinate spendClasses
       ]
 
--- | Project admitted retained profiles into the native semantic axes.
---
--- The legacy @fixed@ marker is intentionally not a native axis. Migration is
--- allowed only when every retained marker agrees with the already explicit
--- spend class, proving it is duplicate compatibility evidence rather than a
--- second policy coordinate. Unknown metadata blocks projection entirely.
 projectRetainedHouseholdAccountPolicy
   :: Map Account RetainedAccountProfile
   -> Either (NonEmpty HouseholdAccountPolicyError) HouseholdAccountPolicy

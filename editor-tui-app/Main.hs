@@ -24,7 +24,6 @@ import System.FilePath (takeDirectory)
 
 import HKernel.Account (accountName)
 import HKernel.Application.Config (mkHouseholdRoot)
-import HKernel.Budget.Policy (budgetPolicyEnvelopeDefinitions)
 import qualified HKernel.Editor.TUI.Actual as Actual
 import qualified HKernel.Editor.TUI.Home as Home
 import qualified HKernel.Editor.TUI.Maintenance as Maintenance
@@ -47,6 +46,7 @@ import HKernel.Household.Application
 import HKernel.Household.Policy
   ( householdAllocationEnvelopes
   , householdCycleIncomeAccount
+  , householdEnvelopeOrder
   , householdPolicyCycle
   , householdUnassignedBudgetAccounts
   )
@@ -182,10 +182,10 @@ drawSettingsView context =
         (vLimit 18
           (viewport SettingsViewport Vertical
             (vBox
-              [ str "=== [budget.toml] Budget Policy ==="
+              [ str "=== [budget.toml] Envelope Policy ==="
               , str ("Envelopes count: "
-                  <> show (length (budgetPolicyEnvelopeDefinitions
-                    (householdStateBudgetPolicy state))))
+                  <> show (length (householdEnvelopeOrder
+                    (householdStatePolicy state))))
               , str " "
               , str "=== [household.toml] Household Policy ==="
               , txt ("Income Cycle Account: "

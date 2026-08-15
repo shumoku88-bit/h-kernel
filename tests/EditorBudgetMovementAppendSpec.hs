@@ -15,12 +15,17 @@ import System.Exit (exitFailure, exitSuccess)
 import HKernel.Account (Account, AccountRegistry, mkAccount)
 import HKernel.Account.Journal (parseAccountJournal)
 import HKernel.Actual.Journal (ActualJournal, parseActualJournal)
-import HKernel.Budget (Pacing(..), mkEnvelopeId)
-import HKernel.Budget.Policy
-  ( defineBackingPool
+import HKernel.Backing.Identity (mkBackingPoolId)
+import HKernel.Backing.Policy
+  ( assignEnvelopeBackingPool
+  , defineBackingPool
+  , mkBackingPolicy
+  )
+import HKernel.Envelope.Identity (mkEnvelopeId)
+import HKernel.Envelope.Policy
+  ( Pacing(..)
   , defineEnvelope
-  , mkBackingPoolId
-  , mkBudgetPolicy
+  , mkCurrentEnvelopePolicy
   , mkEnvelopeLabel
   )
 import HKernel.Editor.SourcePublication
@@ -327,18 +332,20 @@ syncHouseholdPolicy =
   let envelope = mustRight (mkEnvelopeId "daily")
       label = mustRight (mkEnvelopeLabel "Daily")
       backingPool = mustRight (mkBackingPoolId "liquid")
-      budgetPolicy = mustRight (mkBudgetPolicy
+      backingPolicy = mustRight (mkBackingPolicy
+        [defineBackingPool backingPool [account "assets:backing"]]
+        [assignEnvelopeBackingPool envelope backingPool])
+      envelopePolicy = mustRight (mkCurrentEnvelopePolicy
         [ defineEnvelope
             envelope
             label
             Daily
-            backingPool
             [account "expenses:fixed"]
         ]
-        [ defineBackingPool backingPool [account "assets:backing"] ])
+        backingPolicy)
   in mustRight (mkHouseholdPolicy
       (incomeAnchorCyclePolicy (account "income:pension"))
-      budgetPolicy
+      envelopePolicy
       [ defineHouseholdEnvelopeCoordinates
           envelope
           (account "budget:daily")

@@ -25,10 +25,8 @@ data DateOrigin
   | ExplicitDate
   deriving (Eq, Show)
 
--- | Every CLI request, including extensions that need an additional input.
-data Command
-  = RunJournal JournalCommand
-  | RunEnvelopeBudget FilePath DateRange
+-- | Every CLI request is backed by one validated Journal.
+newtype Command = RunJournal JournalCommand
   deriving (Eq, Show)
 
 -- | Commands whose complete input is one validated Journal.
@@ -160,11 +158,6 @@ parseArguments today arguments = case arguments of
         journalCycle defaultJournalPath
           previousStart previousEnd currentStart currentEnd
 
-  [journalPath, mode, policyPath, startText, endText]
-    | mode `elem` ["envelope-budget", "envelopes"] -> do
-        dateRange <- parseDateRange startText endText
-        Right (journalPath, RunEnvelopeBudget policyPath dateRange)
-
   [journalPath, mode, previousStart, previousEnd, currentStart, currentEnd]
     | mode `elem` ["cycle-accounts", "cycle"] ->
         journalCycle journalPath previousStart previousEnd currentStart currentEnd
@@ -222,7 +215,6 @@ usage = T.unlines
   , "  recent-transactions, recent [DATE]    Render the latest five transactions"
   , "  cycle-accounts, cycle PREV_START PREV_END_EXCL CURRENT_START CURRENT_END_EXCL"
   , "                                        Compare two explicit half-open cycles"
-  , "  envelope-budget, envelopes POLICY START END Render an external envelope policy"
   , "  check                                 Validate journal syntax and includes"
   , ""
   , "Defaults:"

@@ -2,11 +2,6 @@
 
 -- | Historical Envelope identity and Expense-routing admission from the shared
 -- canonical @household.toml@ source.
---
--- Current Household policy and historical relations intentionally have separate
--- semantic owners even though they share one physical TOML file. This prevents
--- the latest calculation/display configuration from becoming retrospective
--- identity or routing truth.
 module HKernel.Household.EnvelopeHistory
   ( HouseholdEnvelopeHistory(..)
   , HouseholdEnvelopeHistoryReferenceError(..)
@@ -21,13 +16,10 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
-import HKernel.Account
-  ( AccountRegistry
-  , mkAccount
-  )
-import HKernel.Budget.Policy
-  ( BudgetPolicy
-  , budgetPolicyEnvelopeDefinitions
+import HKernel.Account (AccountRegistry, mkAccount)
+import HKernel.Envelope
+  ( CurrentEnvelopePolicy
+  , currentEnvelopePolicyDefinitions
   , envelopeDefinitionId
   )
 import HKernel.Envelope.ExpenseRouting
@@ -58,8 +50,6 @@ import Toml.Schema
   , reqKey
   )
 
--- | Stable identity plus historical routing evidence from canonical Household
--- policy storage.
 data HouseholdEnvelopeHistory = HouseholdEnvelopeHistory
   { householdEnvelopeRegistry      :: EnvelopeRegistry
   , householdExpenseRoutingHistory :: ExpenseRoutingHistory
@@ -70,26 +60,15 @@ data HouseholdEnvelopeHistoryReferenceError
   | HouseholdExpenseRoutingReferenceError ExpenseRoutingReferenceError
   deriving (Eq, Show)
 
--- | Consume the current-policy sections as opaque values. Their schema remains
--- owned by 'HKernel.Household.Config'; this module types only envelope-history.
 data RawSharedHouseholdRoot = RawSharedHouseholdRoot
-  Value
-  Value
-  (Maybe Value)
-  (Maybe Value)
-  (Maybe Value)
-  (Maybe RawEnvelopeHistory)
+  Value Value (Maybe Value) (Maybe Value) (Maybe Value) (Maybe RawEnvelopeHistory)
 
 data RawEnvelopeHistory = RawEnvelopeHistory
   [Text]
   [RawExpenseRoutingDecision]
 
 data RawExpenseRoutingDecision = RawExpenseRoutingDecision
-  Text
-  Text
-  Text
-  (Maybe Text)
-  Text
+  Text Text Text (Maybe Text) Text
 
 data ParsedExpenseRoutingDecision
   = ParsedInitial InitialExpenseRoutingDecision
@@ -120,12 +99,6 @@ instance FromValue RawExpenseRoutingDecision where
       <*> optKey "target"
       <*> reqKey "note")
 
--- | Parse the historical section of canonical household.toml.
---
--- Absence is explicit during migration and never means "derive history from the
--- current BudgetPolicy". @effective-from = "initial"@ represents a policy that
--- is already in force before bounded journal history; ISO dates represent later
--- changes.
 parseHouseholdEnvelopeHistory
   :: Text
   -> Either [Text] (Maybe HouseholdEnvelopeHistory)
@@ -139,28 +112,23 @@ parseHouseholdEnvelopeHistory input =
 rawToEnvelopeHistory
   :: RawSharedHouseholdRoot
   -> Either [Text] (Maybe HouseholdEnvelopeHistory)
-rawToEnvelopeHistory
-    (RawSharedHouseholdRoot _ _ _ _ _ maybeRawHistory) =
+rawToEnvelopeHistory (RawSharedHouseholdRoot _ _ _ _ _ maybeRawHistory) =
   traverse parseRawEnvelopeHistory maybeRawHistory
 
 parseRawEnvelopeHistory
   :: RawEnvelopeHistory
   -> Either [Text] HouseholdEnvelopeHistory
 parseRawEnvelopeHistory (RawEnvelopeHistory rawIdentities rawDecisions) = do
-  identities <- collect
-    (zipWith parseIdentity [0 :: Int ..] rawIdentities)
-  parsedDecisions <- collect
-    (zipWith parseDecision [0 :: Int ..] rawDecisions)
+  identities <- collect (zipWith parseIdentity [0 :: Int ..] rawIdentities)
+  parsedDecisions <- collect (zipWith parseDecision [0 :: Int ..] rawDecisions)
   registry <- case mkEnvelopeRegistry identities of
     Right value -> Right value
-    Left errors -> Left
-      (map renderRegistryError (NonEmpty.toList errors))
+    Left errors -> Left (map renderRegistryError (NonEmpty.toList errors))
   routing <- case mkExpenseRoutingHistoryWithInitial
       [decision | ParsedInitial decision <- parsedDecisions]
       [decision | ParsedDated decision <- parsedDecisions] of
     Right value -> Right value
-    Left errors -> Left
-      (map renderRoutingHistoryError (NonEmpty.toList errors))
+    Left errors -> Left (map renderRoutingHistoryError (NonEmpty.toList errors))
   Right HouseholdEnvelopeHistory
     { householdEnvelopeRegistry = registry
     , householdExpenseRoutingHistory = routing
@@ -223,8 +191,7 @@ parseRoute path rawRoute rawTarget = case (rawRoute, rawTarget) of
   ("managed", Just target) ->
     case mkEnvelopeId target of
       Right envelope -> Right (ManagedByEnvelope envelope)
-      Left err -> Left
-        (path <> ".target: invalid EnvelopeId: " <> tshow err)
+      Left err -> Left (path <> ".target: invalid EnvelopeId: " <> tshow err)
   ("managed", Nothing) -> Left
     (path <> ".target: managed routing requires a target EnvelopeId")
   ("unmanaged", Nothing) -> Right NotEnvelopeManaged
@@ -233,21 +200,14 @@ parseRoute path rawRoute rawTarget = case (rawRoute, rawTarget) of
   _ -> Left
     (path <> ".route: expected managed or unmanaged; got " <> quoted rawRoute)
 
--- | Qualify stable references without using current routing maps as historical
--- truth.
---
--- Every current BudgetPolicy Envelope must belong to the stable registry, while
--- the registry may retain identities that are no longer in current policy.
--- Expense routing is checked against canonical Accounts plus that stable
--- registry.
 admitHouseholdEnvelopeHistoryReferences
   :: AccountRegistry
-  -> BudgetPolicy
+  -> CurrentEnvelopePolicy
   -> HouseholdEnvelopeHistory
   -> Either
       (NonEmpty HouseholdEnvelopeHistoryReferenceError)
       HouseholdEnvelopeHistory
-admitHouseholdEnvelopeHistoryReferences accountRegistry budgetPolicy history =
+admitHouseholdEnvelopeHistoryReferences accountRegistry envelopePolicy history =
   case NonEmpty.nonEmpty errors of
     Nothing -> Right history
     Just found -> Left found
@@ -255,7 +215,7 @@ admitHouseholdEnvelopeHistoryReferences accountRegistry budgetPolicy history =
     registry = householdEnvelopeRegistry history
     currentPolicyErrors =
       [ CurrentPolicyEnvelopeMissingFromRegistry envelope
-      | definition <- budgetPolicyEnvelopeDefinitions budgetPolicy
+      | definition <- currentEnvelopePolicyDefinitions envelopePolicy
       , let envelope = envelopeDefinitionId definition
       , not (envelopeRegistryContains envelope registry)
       ]

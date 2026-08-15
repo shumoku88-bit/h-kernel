@@ -1,11 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Pure admission and IO bootstrap for a canonical Household application state.
---
--- Delivery adapters (CLI, TUI, Report launchers) receive one 'HouseholdRoot',
--- resolve canonical file paths, and load the 8 canonical files into a typed
--- 'HouseholdState'. All domain operations and UI projections consume this
--- state without re-parsing raw files or invoking intermediate shell hubs.
 module HKernel.Household.Application
   ( HouseholdState(..)
   , householdStateBudgetJournal
@@ -49,8 +44,10 @@ import HKernel.Application.Config
   , HouseholdSourcePaths(..)
   , householdSourcePaths
   )
-import HKernel.Budget.Config (parseBudgetPolicy)
-import HKernel.Budget.Policy (BudgetPolicy)
+import HKernel.Envelope
+  ( CurrentEnvelopePolicy
+  , parseCurrentEnvelopeConfiguration
+  )
 import HKernel.Envelope.ExpenseRouting (expenseRoutingResolver)
 import HKernel.Household.AccountProfile
   ( HouseholdAccountPolicy
@@ -137,12 +134,6 @@ import HKernel.Report.Config
   , parseReportConfiguration
   )
 
--- | The canonical Household application state loaded from the 8 canonical paths.
---
--- Current Household configuration and historical Envelope routing share the
--- physical household.toml bytes, but enter the state through separate semantic
--- owners. Historical routing is already cross-source qualified here, so report
--- calculation never reparses or reinterprets current policy as historical truth.
 data HouseholdState = HouseholdState
   { householdStateRoot                  :: HouseholdRoot
   , householdStatePaths                 :: HouseholdSourcePaths
@@ -150,7 +141,7 @@ data HouseholdState = HouseholdState
   , householdStateActualJournal         :: ActualJournal
   , householdStatePlanJournal           :: PlanJournal
   , householdStateBudgetMovementJournal :: HouseholdBudgetMovementJournal
-  , householdStateBudgetPolicy          :: BudgetPolicy
+  , householdStateEnvelopePolicy        :: CurrentEnvelopePolicy
   , householdStateConfiguration         :: HouseholdConfiguration
   , householdStateEnvelopeHistory       :: HouseholdEnvelopeHistory
   , householdStatePolicy                :: HouseholdPolicy
@@ -160,26 +151,16 @@ data HouseholdState = HouseholdState
   , householdStateDailyScope            :: DailyTargetScope
   } deriving (Eq, Show)
 
--- | Compatibility/read projection for callers that need accounting Budget
--- Journal meaning but do not need root metadata evidence.
+-- | Retained physical allocation-journal projection. The source has not yet been
+-- renamed, but it no longer feeds a Budget calculation domain.
 householdStateBudgetJournal :: HouseholdState -> Journal
 householdStateBudgetJournal =
   householdBudgetMovementJournalValue . householdStateBudgetMovementJournal
 
--- | Compatibility/read projection for report and delivery callers that need
--- only ordered household Budget movement facts.
 householdStateBudgetMovements :: HouseholdState -> [HouseholdBudgetMovement]
 householdStateBudgetMovements =
   householdBudgetMovementJournalMovements . householdStateBudgetMovementJournal
 
--- | One admitted Household observation together with the exact root bytes used
--- by current coordinated Editor operations.
---
--- This is deliberately narrower than a repository/session abstraction.
--- Accounts, Actual, Plan, Budget, and Issues are retained because current
--- mutation paths need their exact roots and typed Household meaning to share
--- the same expected-old observation; other source families should join only
--- when a concrete operation needs the same ownership.
 data HouseholdWriteSnapshot = HouseholdWriteSnapshot
   { householdWriteSnapshotState          :: HouseholdState
   , householdWriteSnapshotAccountsSource :: Text
@@ -189,7 +170,6 @@ data HouseholdWriteSnapshot = HouseholdWriteSnapshot
   , householdWriteSnapshotIssuesSource   :: Text
   } deriving (Eq, Show)
 
--- | Errors during canonical Household loading.
 data HouseholdLoadError
   = HouseholdSourceReadFailed FilePath IOException
   | HouseholdAccountsParseFailed (NonEmpty AccountJournalError)
@@ -206,7 +186,7 @@ data HouseholdLoadError
   | HouseholdBudgetParseFailed (NonEmpty JournalError)
   | HouseholdBudgetMovementAdmitFailed (NonEmpty HouseholdBudgetMovementJournalError)
   | HouseholdBudgetRegistryDisagreement FilePath Text
-  | HouseholdBudgetPolicyParseFailed [Text]
+  | HouseholdEnvelopePolicyParseFailed [Text]
   | HouseholdPolicyParseFailed [Text]
   | HouseholdEnvelopeHistoryParseFailed [Text]
   | HouseholdEnvelopeHistoryMissing
@@ -221,10 +201,6 @@ data HouseholdLoadError
   | HouseholdReportCalculationFailed (NonEmpty HouseholdSourceError)
   deriving (Show)
 
--- | Load one canonical Household root from disk into a typed 'HouseholdState'.
---
--- The ordinary read-only API projects from the same snapshot loader used by
--- mutation delivery, so there is only one filesystem admission algorithm.
 loadCanonicalHousehold
   :: HouseholdRoot
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdState)
@@ -232,27 +208,16 @@ loadCanonicalHousehold root =
   fmap (fmap householdWriteSnapshotState)
     (loadCanonicalHouseholdWriteSnapshot root)
 
--- | Load one canonical Household observation and retain the exact mutable root
--- bytes from which its typed meaning was admitted.
---
--- Journal roots are read once here, then each exact root is parsed once into a
--- sealed Loader observation containing resolved accounting meaning and root-only
--- transaction source evidence. Issues are likewise parsed from the exact bytes
--- retained for publication. This prevents the invalid temporal shape
--- @HouseholdState from observation A / expected root bytes from observation B@
--- without restricting ordinary include graphs.
 loadCanonicalHouseholdWriteSnapshot
   :: HouseholdRoot
   -> IO (Either (NonEmpty HouseholdLoadError) HouseholdWriteSnapshot)
 loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
   let paths = householdSourcePaths root
 
-  -- 1. accounts.journal
   accountsSource <- readHouseholdSourceExcept (householdAccountsJournalPath paths)
   accountsRegistry <- liftEither . first (pure . HouseholdAccountsParseFailed) $
     parseAccountJournal accountsSource
 
-  -- 2. actual.journal
   actualSource <- readHouseholdSourceExcept (householdActualJournalPath paths)
   actualObservation <- ExceptT $ first (pure . HouseholdActualLoadFailed) <$>
     loadJournalRootObservationFromSource (householdActualJournalPath paths) actualSource
@@ -265,7 +230,6 @@ loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
     (journalAccountRegistry (actualJournalValue actualJournal))
     (HouseholdAccountRegistryDisagreement accountsRegistry)
 
-  -- 3. plan.journal
   planSource <- readHouseholdSourceExcept (householdPlanJournalPath paths)
   planObservation <- ExceptT $ first (pure . HouseholdPlanLoadFailed) <$>
     loadJournalRootObservationFromSource (householdPlanJournalPath paths) planSource
@@ -280,7 +244,6 @@ loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
       (householdPlanJournalPath paths)
       "Plan journal AccountRegistry does not exactly match accounts.journal AccountRegistry")
 
-  -- 4. budget.journal
   budgetSource <- readHouseholdSourceExcept (householdBudgetJournalPath paths)
   budgetObservation <- ExceptT $ first (pure . HouseholdBudgetLoadFailed) <$>
     loadJournalRootObservationFromSource (householdBudgetJournalPath paths) budgetSource
@@ -291,52 +254,35 @@ loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
     (journalAccountRegistry budgetJournal)
     (\_ -> HouseholdBudgetRegistryDisagreement
       (householdBudgetJournalPath paths)
-      "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry")
+      "allocation journal AccountRegistry does not exactly match accounts.journal AccountRegistry")
   budgetMovementJournal <- liftEither . first (pure . HouseholdBudgetMovementAdmitFailed) $
     admitHouseholdBudgetMovementJournalFromResolvedSources budgetJournal budgetSources
 
-  -- 5. budget.toml
-  budgetPolicySource <- readHouseholdSourceExcept (householdBudgetConfigPath paths)
-  budgetPolicy <- liftEither . first (pure . HouseholdBudgetPolicyParseFailed) $
-    parseBudgetPolicy budgetPolicySource
+  envelopePolicySource <- readHouseholdSourceExcept (householdBudgetConfigPath paths)
+  envelopePolicy <- liftEither . first (pure . HouseholdEnvelopePolicyParseFailed) $
+    parseCurrentEnvelopeConfiguration envelopePolicySource
 
-  -- 6. household.toml, two semantic owners over the same observed bytes
   householdPolicySource <- readHouseholdSourceExcept (householdPolicyConfigPath paths)
   configuration <- liftEither . first (pure . HouseholdPolicyParseFailed) $
-    parseHouseholdConfiguration budgetPolicy householdPolicySource
+    parseHouseholdConfiguration envelopePolicy householdPolicySource
   envelopeHistory <- liftEither $
     admitRequiredEnvelopeHistory
-      accountsRegistry budgetPolicy householdPolicySource
+      accountsRegistry envelopePolicy householdPolicySource
 
-  -- 7. Household policy Account validation & Household Account policy validation
   (policy, validatedPolicy) <- liftEither $
     validateHouseholdPolicyAndAccounts accountsRegistry configuration
 
-  -- 8. report.toml
   reportConfigSource <- readHouseholdSourceExcept (householdReportConfigPath paths)
   reportConfig <- liftEither . first (pure . HouseholdReportConfigParseFailed) $
     parseReportConfiguration reportConfigSource
 
-  -- 9. issues.tsv
   issuesSource <- readHouseholdSourceExcept (householdIssuesPath paths)
   issues <- liftEither . first (pure . HouseholdIssuesParseFailed) $
     parseHouseholdIssues issuesSource
 
-  -- 10. Post-admission validation & state assembly
   state <- liftEither $ assembleCanonicalHouseholdState
-    root
-    paths
-    accountsRegistry
-    actualJournal
-    planJournal
-    budgetMovementJournal
-    budgetPolicy
-    configuration
-    envelopeHistory
-    policy
-    validatedPolicy
-    reportConfig
-    issues
+    root paths accountsRegistry actualJournal planJournal budgetMovementJournal
+    envelopePolicy configuration envelopeHistory policy validatedPolicy reportConfig issues
 
   pure HouseholdWriteSnapshot
     { householdWriteSnapshotState = state
@@ -370,17 +316,17 @@ validateAccountRegistryAgreement expected actual mkErr
 
 admitRequiredEnvelopeHistory
   :: AccountRegistry
-  -> BudgetPolicy
+  -> CurrentEnvelopePolicy
   -> Text
   -> Either (NonEmpty HouseholdLoadError) HouseholdEnvelopeHistory
-admitRequiredEnvelopeHistory registry budgetPolicy source = do
+admitRequiredEnvelopeHistory registry envelopePolicy source = do
   maybeHistory <- first (pure . HouseholdEnvelopeHistoryParseFailed)
     (parseHouseholdEnvelopeHistory source)
   history <- case maybeHistory of
     Nothing -> Left (pure HouseholdEnvelopeHistoryMissing)
     Just value -> Right value
   first (fmap HouseholdEnvelopeHistoryReferenceFailed)
-    (admitHouseholdEnvelopeHistoryReferences registry budgetPolicy history)
+    (admitHouseholdEnvelopeHistoryReferences registry envelopePolicy history)
 
 validateHouseholdPolicyAndAccounts
   :: AccountRegistry
@@ -401,7 +347,7 @@ assembleCanonicalHouseholdState
   -> ActualJournal
   -> PlanJournal
   -> HouseholdBudgetMovementJournal
-  -> BudgetPolicy
+  -> CurrentEnvelopePolicy
   -> HouseholdConfiguration
   -> HouseholdEnvelopeHistory
   -> HouseholdPolicy
@@ -409,7 +355,7 @@ assembleCanonicalHouseholdState
   -> ReportConfiguration
   -> [HouseholdIssue]
   -> Either (NonEmpty HouseholdLoadError) HouseholdState
-assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJournal budgetMovementJournal budgetPolicy configuration envelopeHistory policy validatedPolicy reportConfig issues = do
+assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJournal budgetMovementJournal envelopePolicy configuration envelopeHistory policy validatedPolicy reportConfig issues = do
   dailyScope <- assembleDailyScope
     accountsRegistry
     (householdConfigurationDailyTargetAssets configuration)
@@ -421,7 +367,7 @@ assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJo
     , householdStateActualJournal = actualJournal
     , householdStatePlanJournal = planJournal
     , householdStateBudgetMovementJournal = budgetMovementJournal
-    , householdStateBudgetPolicy = budgetPolicy
+    , householdStateEnvelopePolicy = envelopePolicy
     , householdStateConfiguration = configuration
     , householdStateEnvelopeHistory = envelopeHistory
     , householdStatePolicy = policy
@@ -445,9 +391,9 @@ validateHouseholdAccountPolicy registry (Just policy) =
       all ((== Just expected) . (`accountTypeFor` registry)) accounts
     checks =
       [ ("asset classification", Asset, Map.keys (householdAssetClassByAccount policy))
-      , ("Budget kind classification", Budget, Map.keys (householdBudgetKindByAccount policy))
-      , ("Budget envelope-role classification", Budget, Map.keys (householdEnvelopeRoleByAccount policy))
-      , ("Budget group classification", Budget, Map.keys (householdBudgetGroupByAccount policy))
+      , ("retained allocation kind classification", Budget, Map.keys (householdBudgetKindByAccount policy))
+      , ("retained allocation envelope-role classification", Budget, Map.keys (householdEnvelopeRoleByAccount policy))
+      , ("retained allocation group classification", Budget, Map.keys (householdBudgetGroupByAccount policy))
       , ("Expense spend classification", Expense, Map.keys (householdSpendClassByAccount policy))
       ]
     mismatches =
@@ -486,19 +432,18 @@ resolveInMemoryJournal accountsText input = do
   resolved <- resolveJournalDocumentIncludes resolve document
   validateJournalDocument resolved
 
--- | Parse pure text of all 8 canonical Household files in memory.
 admitCanonicalHousehold
   :: HouseholdRoot
-  -> Text -- ^ accounts.journal
-  -> Text -- ^ actual.journal
-  -> Text -- ^ plan.journal
-  -> Text -- ^ budget.journal
-  -> Text -- ^ budget.toml
-  -> Text -- ^ household.toml
-  -> Text -- ^ report.toml
-  -> Text -- ^ issues.tsv
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Text
   -> Either (NonEmpty HouseholdLoadError) HouseholdState
-admitCanonicalHousehold root accountsText actualText planText budgetText budgetPolicyText householdPolicyText reportConfigText issuesText = do
+admitCanonicalHousehold root accountsText actualText planText budgetText envelopePolicyText householdPolicyText reportConfigText issuesText = do
   let paths = householdSourcePaths root
   accountsRegistry <- first (pure . HouseholdAccountsParseFailed)
     (parseAccountJournal accountsText)
@@ -530,40 +475,27 @@ admitCanonicalHousehold root accountsText actualText planText budgetText budgetP
     (journalAccountRegistry budgetJournal)
     (\_ -> HouseholdBudgetRegistryDisagreement
       (householdBudgetJournalPath paths)
-      "Budget journal AccountRegistry does not exactly match accounts.journal AccountRegistry")
+      "allocation journal AccountRegistry does not exactly match accounts.journal AccountRegistry")
   budgetMovementJournal <- first (pure . HouseholdBudgetMovementAdmitFailed)
     (admitHouseholdBudgetMovementJournalFromResolvedJournal budgetJournal budgetText)
 
-  budgetPolicy <- first (pure . HouseholdBudgetPolicyParseFailed)
-    (parseBudgetPolicy budgetPolicyText)
+  envelopePolicy <- first (pure . HouseholdEnvelopePolicyParseFailed)
+    (parseCurrentEnvelopeConfiguration envelopePolicyText)
   configuration <- first (pure . HouseholdPolicyParseFailed)
-    (parseHouseholdConfiguration budgetPolicy householdPolicyText)
+    (parseHouseholdConfiguration envelopePolicy householdPolicyText)
   envelopeHistory <- admitRequiredEnvelopeHistory
-    accountsRegistry budgetPolicy householdPolicyText
+    accountsRegistry envelopePolicy householdPolicyText
   (policy, validatedPolicy) <- validateHouseholdPolicyAndAccounts
-    accountsRegistry
-    configuration
+    accountsRegistry configuration
   reportConfig <- first (pure . HouseholdReportConfigParseFailed)
     (parseReportConfiguration reportConfigText)
   issues <- first (pure . HouseholdIssuesParseFailed)
     (parseHouseholdIssues issuesText)
 
   assembleCanonicalHouseholdState
-    root
-    paths
-    accountsRegistry
-    actualJournal
-    planJournal
-    budgetMovementJournal
-    budgetPolicy
-    configuration
-    envelopeHistory
-    policy
-    validatedPolicy
-    reportConfig
-    issues
+    root paths accountsRegistry actualJournal planJournal budgetMovementJournal
+    envelopePolicy configuration envelopeHistory policy validatedPolicy reportConfig issues
 
--- | Build the report surface using the shared typed calculation owner.
 buildHouseholdReportSurfaceFromHousehold
   :: Day
   -> HouseholdState

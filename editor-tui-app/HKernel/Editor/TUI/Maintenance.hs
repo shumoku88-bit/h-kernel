@@ -50,9 +50,9 @@ import HKernel.Account
   , mkAccount
   )
 import HKernel.Application.Config (HouseholdSourcePaths(..))
-import HKernel.Budget.Policy
+import HKernel.Envelope.Policy
   ( EnvelopeDefinition
-  , budgetPolicyEnvelopeDefinitions
+  , currentEnvelopePolicyDefinitions
   , envelopeDefinitionExpenseAccounts
   , envelopeDefinitionId
   )
@@ -352,7 +352,7 @@ zoomIssueCloseForm _ state = pure state
 drawBudgetWorkspace :: AppContext -> Widget Name
 drawBudgetWorkspace context =
   vBox
-    [ borderWithLabel (str "Budget Movements & Policy (budget.journal)")
+    [ borderWithLabel (str "Budget Movements & Envelopes (budget.journal)")
         (vLimit 18
           (viewport BudgetViewport Vertical
             (vBox
@@ -361,7 +361,7 @@ drawBudgetWorkspace context =
               , str " "
               , str "--- Spendable Envelopes ---"
               , vBox (map renderEnvelopeDef
-                  (budgetPolicyEnvelopeDefinitions (householdStateBudgetPolicy state)))
+                  (currentEnvelopePolicyDefinitions (householdStateEnvelopePolicy state)))
               ])))
     , str "[Enter/M] New movement   [1-7] Sections   [q] Quit"
     ]
