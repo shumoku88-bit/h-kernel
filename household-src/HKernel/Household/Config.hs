@@ -1,8 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | TOML admission for household coordinates layered on admitted current
--- Envelope and Backing policy. Physical @budget@ section names remain source
--- compatibility; no Budget domain value is constructed here.
+-- Envelope, current Expense assignment, and Backing policy. Physical @budget@
+-- section names remain source compatibility; no Budget domain value is
+-- constructed here.
 module HKernel.Household.Config
   ( HouseholdConfiguration
   , householdConfigurationPolicy
@@ -27,7 +28,10 @@ import HKernel.Account
   , mkAccount
   )
 import HKernel.Backing.Policy (BackingPolicy)
-import HKernel.Envelope (CurrentEnvelopePolicy)
+import HKernel.Envelope
+  ( CurrentEnvelopePolicy
+  , CurrentExpenseAssignments
+  )
 import HKernel.Envelope.Identity
   ( EnvelopeIdError(..)
   , envelopeIdText
@@ -211,23 +215,26 @@ instance FromValue RawExpensePolicy where
 parseHouseholdConfiguration
   :: CurrentEnvelopePolicy
   -> BackingPolicy
+  -> CurrentExpenseAssignments
   -> Text
   -> Either [Text] HouseholdConfiguration
-parseHouseholdConfiguration envelopePolicy backingPolicy input =
+parseHouseholdConfiguration envelopePolicy backingPolicy currentExpenses input =
   case (decode input :: Result String RawHouseholdPolicy) of
     Failure errors -> Left (map T.pack errors)
     Success warnings raw
-      | null warnings -> rawToHouseholdConfiguration envelopePolicy backingPolicy raw
+      | null warnings ->
+          rawToHouseholdConfiguration envelopePolicy backingPolicy currentExpenses raw
       | otherwise -> Left (map T.pack warnings)
 
 parseHouseholdPolicy
   :: CurrentEnvelopePolicy
   -> BackingPolicy
+  -> CurrentExpenseAssignments
   -> Text
   -> Either [Text] HouseholdPolicy
-parseHouseholdPolicy envelopePolicy backingPolicy =
+parseHouseholdPolicy envelopePolicy backingPolicy currentExpenses =
   fmap householdConfigurationPolicy
-    . parseHouseholdConfiguration envelopePolicy backingPolicy
+    . parseHouseholdConfiguration envelopePolicy backingPolicy currentExpenses
 
 renderHouseholdPolicyErrors :: [Text] -> Text
 renderHouseholdPolicyErrors = T.unlines . map ("  " <>)
@@ -235,11 +242,13 @@ renderHouseholdPolicyErrors = T.unlines . map ("  " <>)
 rawToHouseholdConfiguration
   :: CurrentEnvelopePolicy
   -> BackingPolicy
+  -> CurrentExpenseAssignments
   -> RawHouseholdPolicy
   -> Either [Text] HouseholdConfiguration
-rawToHouseholdConfiguration envelopePolicy backingPolicy
+rawToHouseholdConfiguration envelopePolicy backingPolicy currentExpenses
     (RawHouseholdPolicy rawCycle rawCoordinates rawMoney rawDailyTarget rawAccountPolicy _rawEnvelopeHistory) = do
-  policy <- rawToHouseholdPolicy envelopePolicy backingPolicy rawCycle rawCoordinates
+  policy <- rawToHouseholdPolicy
+    envelopePolicy backingPolicy currentExpenses rawCycle rawCoordinates
   primaryCommodity <- traverse parseRawMoney rawMoney
   dailyTargetAssets <- parseRawDailyTarget rawDailyTarget
   accountPolicy <- traverse parseRawAccountPolicy rawAccountPolicy
@@ -272,16 +281,18 @@ parseRawDailyTarget rawDailyTarget =
 rawToHouseholdPolicy
   :: CurrentEnvelopePolicy
   -> BackingPolicy
+  -> CurrentExpenseAssignments
   -> RawCycle
   -> RawHouseholdEnvelopeCoordinates
   -> Either [Text] HouseholdPolicy
-rawToHouseholdPolicy envelopePolicy backingPolicy rawCycle rawCoordinates = do
+rawToHouseholdPolicy envelopePolicy backingPolicy currentExpenses rawCycle rawCoordinates = do
   cyclePolicy <- parseRawCycle rawCycle
   case rawCoordinates of
     RawHouseholdEnvelopeCoordinates rawEnvelopes rawUnassigned ->
       case syntaxErrors of
         [] -> case mkHouseholdPolicy
-            cyclePolicy envelopePolicy backingPolicy envelopeCoordinates unassignedAccounts of
+            cyclePolicy envelopePolicy backingPolicy currentExpenses
+            envelopeCoordinates unassignedAccounts of
           Right policy -> Right policy
           Left errors -> Left
             (map renderHouseholdPolicyError (NonEmpty.toList errors))
