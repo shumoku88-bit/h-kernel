@@ -1,6 +1,8 @@
 module HKernel.Envelope.EntitlementHistory
   ( EnvelopeEntitlementHistory
   , envelopeEntitlementHistoryTransfers
+  , envelopeEntitlementHistoryOrigins
+  , envelopeEntitlementHistoryOriginFor
   , EnvelopeEntitlementHistoryError(..)
   , mkEnvelopeEntitlementHistory
   ) where
@@ -30,6 +32,31 @@ newtype EnvelopeEntitlementHistory = EnvelopeEntitlementHistory
 data EnvelopeEntitlementHistoryError
   = EnvelopeEntitlementBecameNegative EnvelopeId Commodity Day Quantity
   deriving (Eq, Show)
+
+-- | The first native Entitlement-transfer day for each Commodity.
+--
+-- This is the opening boundary of the Envelope stock world for that Commodity,
+-- not a report Period boundary. Actual/Fulfillment evidence before this day may
+-- belong to the accounting journal but cannot consume Envelope capacity that did
+-- not yet exist.
+envelopeEntitlementHistoryOrigins
+  :: EnvelopeEntitlementHistory
+  -> Map Commodity Day
+envelopeEntitlementHistoryOrigins history =
+  Map.fromListWith min
+    [ ( amountCommodity (entitlementTransferAmount transfer)
+      , entitlementTransferDate transfer
+      )
+    | transfer <- envelopeEntitlementHistoryTransfers history
+    ]
+
+-- | Lookup the native Envelope stock origin for one Commodity.
+envelopeEntitlementHistoryOriginFor
+  :: Commodity
+  -> EnvelopeEntitlementHistory
+  -> Maybe Day
+envelopeEntitlementHistoryOriginFor commodity =
+  Map.lookup commodity . envelopeEntitlementHistoryOrigins
 
 mkEnvelopeEntitlementHistory
   :: [EnvelopeEntitlementTransfer]
