@@ -18,24 +18,18 @@ import Lens.Micro (Traversal')
 import Lens.Micro.Mtl ()
 
 import qualified Data.Text as T
-import qualified Data.Vector as Vec
 
-import HKernel.Actual.Journal (actualJournalCompletionDeclarations)
 import HKernel.Editor.TUI.Model
   ( AppContext
   , AppEvent
   , Name(..)
-  , contextHouseholdState
   )
-import HKernel.Household.Application (HouseholdState(..))
 import HKernel.Ledger (transactionDate, transactionDescription)
 import HKernel.Plan (PlanId, planIdText)
-import HKernel.Plan.Completion (declaredCompletionPlanId)
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , identifiedPlanId
   , identifiedPlanTransaction
-  , planJournalTransactions
   )
 
 data State
@@ -50,18 +44,12 @@ data Action
   | QuitRequested
   | Retry PlanId
 
+-- | The execution sync writer is retired. Completed Plans are observed directly
+-- by Envelope Consumption/Fulfillment, so there is nothing to retry or publish
+-- into budget.journal.
 start :: AppContext -> Either T.Text State
-start context =
-  case completedPlans of
-    [] -> Left "No completed Plans are available for Budget sync retry."
-    _ -> Right (Picking (L.list PlanList (Vec.fromList completedPlans) 1))
-  where
-    household = contextHouseholdState context
-    completedIds = map declaredCompletionPlanId
-      (actualJournalCompletionDeclarations (householdStateActualJournal household))
-    completedPlans = filter
-      (\identified -> identifiedPlanId identified `elem` completedIds)
-      (planJournalTransactions (householdStatePlanJournal household))
+start _ = Left
+  "Budget sync is retired. Completed Plans are observed directly by Envelope semantics."
 
 action :: State -> Action
 action state = case state of
@@ -74,13 +62,14 @@ draw :: State -> Widget Name
 draw state = case state of
   Picking plans ->
     center
-      (borderWithLabel (str "Retry completed Plan Budget sync")
+      (borderWithLabel (str "Retired Plan Budget sync")
         (hLimit 86
           (vLimit 24
             (padAll 1
               ( L.renderList renderCompletedPlan True plans
                 <=> str " "
-                <=> str "[wheel/↑/↓ or j/k] Move   [Enter] Retry sync   [Esc] Back   [Q] Quit")))))
+                <=> str "This compatibility picker is no longer opened by start."
+                <=> str "[Esc] Back   [Q] Quit")))))
   PickerReturnRequested -> emptyWidget
   PickerQuitRequested -> emptyWidget
   PickerRetryRequested _ -> emptyWidget
