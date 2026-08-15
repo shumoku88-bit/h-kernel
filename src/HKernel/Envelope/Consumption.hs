@@ -4,6 +4,7 @@ module HKernel.Envelope.Consumption
   , EnvelopeConsumption
   , EnvelopeConsumptionError(..)
   , observeEnvelopeConsumption
+  , observeEnvelopeStockConsumption
   , envelopeConsumptionPeriod
   , envelopeConsumptionObservedThrough
   , envelopeConsumptionFor
@@ -27,6 +28,10 @@ import HKernel.Actual.Journal
   , reversedTransactionId
   , reversalTransactionId
   )
+import HKernel.Envelope.EntitlementHistory
+  ( EnvelopeEntitlementHistory
+  , envelopeEntitlementHistoryOriginFor
+  )
 import HKernel.Envelope.ExpenseRouting
   ( ExpenseRoute(..)
   , ExpenseRouteResolver
@@ -44,6 +49,7 @@ import HKernel.Money
   ( Amount
   , Balance
   , addBalance
+  , amountCommodity
   , amountQuantity
   , emptyBalance
   , negateAmount
@@ -95,21 +101,54 @@ data EnvelopeConsumptionError
   = EnvelopeConsumptionObservationOutsidePeriod Day Period
   deriving (Eq, Show)
 
--- | Observe Actual Expense activity through one inclusive day.
+-- | Observe bounded Actual Expense activity inside the selected Period.
 --
--- Event visibility uses each transaction's own date. Routing normally uses the
--- same date, but a typed Actual reversal inherits the route date of the root
--- transaction it ultimately negates. Actual admission proves reversal targets
--- exist, accounting effects are exact negations, and the reversal graph is
--- acyclic, so this traversal does not need to reconstruct or revalidate those
--- laws here.
+-- This remains useful as an activity observation. Household Envelope Remaining
+-- must use 'observeEnvelopeStockConsumption' instead, because a report Period is
+-- not the lower boundary of live Envelope capacity.
 observeEnvelopeConsumption
   :: Period
   -> Day
   -> ActualJournal
   -> ExpenseRouteResolver
   -> Either EnvelopeConsumptionError EnvelopeConsumption
-observeEnvelopeConsumption period observedThrough actual routingResolver
+observeEnvelopeConsumption period observedThrough actual routingResolver =
+  observeEnvelopeConsumptionWith
+    (\ownDay _routeDay _amount -> periodContains period ownDay)
+    period observedThrough actual routingResolver
+
+-- | Observe cumulative Expense use from the native Entitlement origin of each
+-- Commodity through the inclusive observation day.
+--
+-- A typed reversal inherits the root Actual route date. The same root date also
+-- decides stock-origin membership, so reversing a pre-Envelope accounting fact
+-- after Envelope inception cannot manufacture a refund in Envelope capacity.
+-- A Commodity with no admitted Entitlement history has no Envelope stock world
+-- and therefore contributes no managed, unmanaged, or unrouted stock evidence.
+observeEnvelopeStockConsumption
+  :: EnvelopeEntitlementHistory
+  -> Period
+  -> Day
+  -> ActualJournal
+  -> ExpenseRouteResolver
+  -> Either EnvelopeConsumptionError EnvelopeConsumption
+observeEnvelopeStockConsumption history period observedThrough actual routingResolver =
+  observeEnvelopeConsumptionWith included
+    period observedThrough actual routingResolver
+  where
+    included _ownDay routeDay amount =
+      case envelopeEntitlementHistoryOriginFor (amountCommodity amount) history of
+        Nothing -> False
+        Just origin -> routeDay >= origin
+
+observeEnvelopeConsumptionWith
+  :: (Day -> Day -> Amount -> Bool)
+  -> Period
+  -> Day
+  -> ActualJournal
+  -> ExpenseRouteResolver
+  -> Either EnvelopeConsumptionError EnvelopeConsumption
+observeEnvelopeConsumptionWith included period observedThrough actual routingResolver
   | not (periodContains period observedThrough) =
       Left (EnvelopeConsumptionObservationOutsidePeriod observedThrough period)
   | otherwise = Right EnvelopeConsumption
@@ -135,16 +174,14 @@ observeEnvelopeConsumption period observedThrough actual routingResolver
     visibleEntries =
       [ entry
       | entry <- entries
-      , let day = transactionDate (actualTransactionEntryTransaction entry)
-      , periodContains period day
-      , day <= observedThrough
+      , transactionDate (actualTransactionEntryTransaction entry) <= observedThrough
       ]
 
     (managed, unmanaged, unrouted) =
       foldr observeEntry (Map.empty, Map.empty, Map.empty) visibleEntries
 
     observeEntry entry accum =
-      foldr (observePosting routeDay) accum
+      foldr (observePosting ownDay routeDay) accum
         (NonEmpty.toList (transactionPostings transaction))
       where
         transaction = actualTransactionEntryTransaction entry
@@ -154,9 +191,10 @@ observeEnvelopeConsumption period observedThrough actual routingResolver
           Just actualId -> rootRoutingDate
             transactionDateById reversalTargetById ownDay actualId
 
-    observePosting routeDay posting accum@(managedAcc, unmanagedAcc, unroutedAcc)
+    observePosting ownDay routeDay posting accum@(managedAcc, unmanagedAcc, unroutedAcc)
       | accountTypeFor account registry /= Just Expense = accum
       | quantity == zeroQuantity = accum
+      | not (included ownDay routeDay amount) = accum
       | otherwise = case resolveExpenseRoute routingResolver routeDay account of
           Just (ManagedByEnvelope envelope) ->
             ( Map.insertWith (<>) envelope amounts managedAcc
