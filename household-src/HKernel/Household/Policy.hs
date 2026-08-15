@@ -85,6 +85,7 @@ data HouseholdPolicyError
   | HouseholdCoordinatesReferenceUnknownEnvelope EnvelopeId
   | HouseholdEnvelopeMissingCoordinates EnvelopeId
   | DuplicateAllocationAccount Account EnvelopeId EnvelopeId
+  | DuplicatePlanDestinationAccount Account EnvelopeId EnvelopeId
   | HouseholdPolicyHasNoUnassignedBudgetAccounts
   | DuplicateUnassignedBudgetAccount Account
   | AllocationAccountAlsoUnassigned Account EnvelopeId
