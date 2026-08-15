@@ -92,7 +92,6 @@ library h-kernel-household
                     , HKernel.Household.BudgetMovement
                     , HKernel.Household.Config
                     , HKernel.Household.DailyTarget
-                    , HKernel.Household.DailyTarget.TSV
                     , HKernel.Household.EnvelopeHistory
                     , HKernel.Household.EnvelopeObservation
                     , HKernel.Household.Issue.Relation.TSV

@@ -14,12 +14,12 @@ import HKernel.Household.Config
   , parseHouseholdConfiguration
   )
 import HKernel.Household.DailyTarget
-import HKernel.Household.DailyTarget.TSV
 import HKernel.Journal
 import HKernel.Money
 import HKernel.Period
 import HKernel.Plan
 import HKernel.Plan.Journal (parsePlanJournal)
+import HKernel.Plan.Reservation (PlanReservationError(..))
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -30,8 +30,23 @@ main = do
       cash = mustRight (mkAccount "assets:cash")
       wifi = mustRight (mkAccount "expenses:wifi")
       plan = outgoingPlan registry cash wifi jpy
+      (envelopePolicy, backingPolicy, currentExpenses) = mustRight
+        (parseCurrentEnvelopeConfiguration nativeEnvelopeConfig)
+      householdConfiguration = mustRight
+        (parseHouseholdConfiguration
+          envelopePolicy backingPolicy currentExpenses nativeHouseholdConfig)
+      preCutoverConfiguration = mustRight
+        (parseHouseholdConfiguration
+          envelopePolicy backingPolicy currentExpenses nativeHouseholdConfigWithoutMoney)
+      planJournal = mustRight (parsePlanJournal nativePlanJournal)
+      obligationSelections = mustRight
+        (admitDailyTargetPlanJournalSelections planJournal)
       scope = mustRight
-        (parseDailyTargetScope registry [plan] validScope)
+        (dailyTargetScopeFromSelections
+          registry
+          [plan]
+          (householdConfigurationDailyTargetAssets householdConfiguration)
+          obligationSelections)
       period = mustRight
         (mkPeriod (fromGregorian 2026 6 15) (fromGregorian 2026 8 14))
       target = deriveDailyTarget
@@ -40,6 +55,14 @@ main = do
         journal
         scope
         [plan]
+
+  assertEqual "household.toml admits an explicit primary Commodity"
+    (Just jpy)
+    (householdConfigurationPrimaryCommodity householdConfiguration)
+  assertEqual
+    "pre-cutover household.toml remains valid without inventing a Commodity fallback"
+    Nothing
+    (householdConfigurationPrimaryCommodity preCutoverConfiguration)
 
   assertEqual "eligible Asset policy is distinct from Plan obligations"
     (Set.singleton cash)
@@ -63,65 +86,58 @@ main = do
     [(jpy, 125)]
     (dailyTargetRate target)
 
-  assertLeftContaining "eligible policy rejects non-Asset Accounts"
-    "DailyTargetEligibleAccountNotAsset"
-    (parseDailyTargetScope registry [plan] nonAssetScope)
-  assertLeftContaining "obligation scope rejects unknown Plan references"
-    "UnknownDailyTargetObligation"
-    (parseDailyTargetScope registry [plan] unknownPlanScope)
-  assertLeftContaining "reservation evidence remains bounded by its Plan"
-    "ReservationExceedsPlanAmount"
-    (parseDailyTargetScope registry [plan] overReservedScope)
-  assertLeftContaining "physical scope identities remain unique"
-    "duplicate scope_id"
-    (parseDailyTargetScope registry [plan] duplicateScopeId)
-
-  characterizeNativeSourceParity registry plan scope
-
-characterizeNativeSourceParity
-  :: AccountRegistry
-  -> CommittedOutgoingPlan
-  -> DailyTargetScope
-  -> IO ()
-characterizeNativeSourceParity registry plan retainedScope = do
-  let (envelopePolicy, backingPolicy, currentExpenses) = mustRight
-        (parseCurrentEnvelopeConfiguration nativeEnvelopeConfig)
-      householdConfiguration = mustRight
-        (parseHouseholdConfiguration
-          envelopePolicy backingPolicy currentExpenses nativeHouseholdConfig)
-      preCutoverConfiguration = mustRight
-        (parseHouseholdConfiguration
-          envelopePolicy backingPolicy currentExpenses nativeHouseholdConfigWithoutMoney)
-      planJournal = mustRight (parsePlanJournal nativePlanJournal)
-      obligationSelections = mustRight
-        (admitDailyTargetPlanJournalSelections planJournal)
-      nativeScope = mustRight
-        (dailyTargetScopeFromSelections
-          registry
-          [plan]
-          (householdConfigurationDailyTargetAssets householdConfiguration)
-          obligationSelections)
-      jpy = mustRight (mkCommodity "JPY")
-
-  assertEqual
-    "household.toml admits an explicit primary Commodity"
-    (Just jpy)
-    (householdConfigurationPrimaryCommodity householdConfiguration)
-
-  assertEqual
-    "pre-cutover household.toml remains valid without inventing a Commodity fallback"
-    Nothing
-    (householdConfigurationPrimaryCommodity preCutoverConfiguration)
-
-  assertEqual
-    "household.toml + plan.journal reproduce retained Daily Target semantics"
-    retainedScope
-    nativeScope
-
   assertEqual
     "Plan Journal selection identity is retained outside core Plan identity"
     [mustRight (mkDailyTargetScopeId "wifi")]
     (map dailyTargetObligationSelectionId obligationSelections)
+
+  characterizeNativeFailures registry plan cash wifi
+
+characterizeNativeFailures
+  :: AccountRegistry
+  -> CommittedOutgoingPlan
+  -> Account
+  -> Account
+  -> IO ()
+characterizeNativeFailures registry plan cash wifi = do
+  let cashId = mustRight (mkDailyTargetScopeId "cash")
+      wifiId = mustRight (mkDailyTargetScopeId "wifi")
+      unknownId = mustRight (mkDailyTargetScopeId "unknown")
+      assetSelection = selectDailyTargetAsset cashId cash
+      nonAssetSelection = selectDailyTargetAsset wifiId wifi
+      unknownPlanId = mustRight (mkPlanId "plan-unknown")
+      unknownObligation = selectDailyTargetObligation unknownId
+        (declareDailyTargetObligation unknownPlanId Nothing)
+
+  assertLeftSatisfies
+    "eligible policy rejects non-Asset Accounts"
+    (isNonAsset wifi)
+    (dailyTargetScopeFromSelections registry [plan] [nonAssetSelection] [])
+
+  assertLeftSatisfies
+    "obligation scope rejects unknown Plan references"
+    (isUnknownPlan unknownPlanId)
+    (dailyTargetScopeFromSelections
+      registry [plan] [assetSelection] [unknownObligation])
+
+  let overReservedSelections = mustRight
+        (admitDailyTargetPlanJournalSelections
+          (mustRight (parsePlanJournal overReservedPlanJournal)))
+  assertLeftSatisfies
+    "reservation evidence remains bounded by its Plan"
+    (isOverReserved (committedPlanId plan))
+    (dailyTargetScopeFromSelections
+      registry [plan] [assetSelection] overReservedSelections)
+
+  let duplicateAsset = selectDailyTargetAsset wifiId cash
+      normalSelections = mustRight
+        (admitDailyTargetPlanJournalSelections
+          (mustRight (parsePlanJournal nativePlanJournal)))
+  assertLeftSatisfies
+    "cross-owner Daily Target identities remain unique"
+    (isDuplicateId wifiId)
+    (dailyTargetScopeFromSelections
+      registry [plan] [duplicateAsset] normalSelections)
 
   case admitDailyTargetPlanJournalSelections
       (mustRight (parsePlanJournal partialReservationPlanJournal)) of
@@ -142,21 +158,26 @@ characterizeNativeSourceParity registry plan retainedScope = do
     []
     (mustRight
       (admitDailyTargetPlanJournalSelections detachedJournal))
+  where
+    isNonAsset expected err = case err of
+      DailyTargetPolicySelectionError
+          (DailyTargetEligibleAccountNotAsset found Expense) -> found == expected
+      _ -> False
 
-  let duplicateId = mustRight (mkDailyTargetScopeId "wifi")
-      duplicateAsset = selectDailyTargetAsset duplicateId
-        (mustRight (mkAccount "assets:cash"))
-  case dailyTargetScopeFromSelections
-      registry [plan] [duplicateAsset] obligationSelections of
-    Left errors
-      | DuplicateDailyTargetScopeId duplicateId `elem` NonEmpty.toList errors ->
-          putStrLn "  [PASS] native sources preserve cross-owner selection identity uniqueness"
-      | otherwise -> failTest
-          "native sources preserve cross-owner selection identity uniqueness"
-          ("unexpected errors: " ++ show errors)
-    Right value -> failTest
-      "native sources preserve cross-owner selection identity uniqueness"
-      ("unexpectedly accepted: " ++ show value)
+    isUnknownPlan expected err = case err of
+      DailyTargetObligationSelectionError
+          (UnknownDailyTargetObligation found) -> found == expected
+      _ -> False
+
+    isOverReserved expected err = case err of
+      DailyTargetObligationSelectionError
+          (DailyTargetReservationError
+            (ReservationExceedsPlanAmount _ found _ _)) -> found == expected
+      _ -> False
+
+    isDuplicateId expected err = case err of
+      DuplicateDailyTargetScopeId found -> found == expected
+      _ -> False
 
 journalText :: T.Text
 journalText = T.unlines
@@ -195,45 +216,6 @@ outgoingPlan registry fromAccount toAccount commodity =
       (admitPaymentDirection registry localDirection)
     direction = mustRight
       (admitOutgoingPaymentDirection declaredDirection)
-
-validScope :: T.Text
-validScope = T.unlines
-  [ header
-  , "asset\tcash\tassets:cash\t\t\t\t"
-  , "obligation\twifi\t\tplan-wifi\t50\tJPY\treservation:wifi"
-  ]
-
-nonAssetScope :: T.Text
-nonAssetScope = T.unlines
-  [ header
-  , "asset\twifi-account\texpenses:wifi\t\t\t\t"
-  , "obligation\twifi\t\tplan-wifi\t\t\t"
-  ]
-
-unknownPlanScope :: T.Text
-unknownPlanScope = T.unlines
-  [ header
-  , "asset\tcash\tassets:cash\t\t\t\t"
-  , "obligation\tunknown\t\tplan-unknown\t\t\t"
-  ]
-
-overReservedScope :: T.Text
-overReservedScope = T.unlines
-  [ header
-  , "asset\tcash\tassets:cash\t\t\t\t"
-  , "obligation\twifi\t\tplan-wifi\t250\tJPY\treservation:wifi"
-  ]
-
-duplicateScopeId :: T.Text
-duplicateScopeId = T.unlines
-  [ header
-  , "asset\tshared\tassets:cash\t\t\t\t"
-  , "obligation\tshared\t\tplan-wifi\t\t\t"
-  ]
-
-header :: T.Text
-header =
-  "kind\tscope_id\taccount_key\tplan_id\texcluded_amount\tcurrency\treservation_ref"
 
 nativeEnvelopeConfig :: T.Text
 nativeEnvelopeConfig = T.unlines
@@ -290,6 +272,18 @@ nativePlanJournal = planDeclarations <> T.unlines
   , "    expenses:wifi   200 JPY"
   ]
 
+overReservedPlanJournal :: T.Text
+overReservedPlanJournal = planDeclarations <> T.unlines
+  [ "2026-08-08 Wi-Fi"
+  , "    ; plan-id: plan-wifi"
+  , "    ; daily-target-id: wifi-over"
+  , "    ; reservation-id: reservation:wifi-over"
+  , "    ; reservation-amount: 250"
+  , "    ; reservation-commodity: JPY"
+  , "    assets:cash    -200 JPY"
+  , "    expenses:wifi   200 JPY"
+  ]
+
 partialReservationPlanJournal :: T.Text
 partialReservationPlanJournal = planDeclarations <> T.unlines
   [ "2026-08-08 Wi-Fi"
@@ -336,22 +330,17 @@ assertEqual label expected actual
   | otherwise = failTest label
       ("expected: " ++ show expected ++ ", but got: " ++ show actual)
 
-assertLeftContaining
+assertLeftSatisfies
   :: Show success
   => String
-  -> T.Text
-  -> Either (NonEmpty.NonEmpty DailyTargetTSVError) success
+  -> (error -> Bool)
+  -> Either (NonEmpty.NonEmpty error) success
   -> IO ()
-assertLeftContaining label expected result = case result of
+assertLeftSatisfies label predicate result = case result of
   Left errors
-    | expected `T.isInfixOf` rendered ->
+    | any predicate (NonEmpty.toList errors) ->
         putStrLn ("  [PASS] " ++ label)
-    | otherwise -> failTest label
-        ("expected diagnostic containing: " ++ T.unpack expected
-          ++ ", but got: " ++ T.unpack rendered)
-    where
-      rendered = T.unlines
-        (map dailyTargetTSVErrorMessage (NonEmpty.toList errors))
+    | otherwise -> failTest label "expected typed error was not present"
   Right value -> failTest label ("accepted: " ++ show value)
 
 failTest :: String -> String -> IO ()
