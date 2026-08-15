@@ -74,8 +74,7 @@ import HKernel.Household.EnvelopeObservation
   , householdEnvelopeRemaining
   )
 import HKernel.Household.Policy
-  ( AccountValidatedHouseholdPolicy
-  , HouseholdPolicy
+  ( HouseholdPolicy
   , householdBackingPolicy
   , householdCycleIncomeAccount
   , householdEnvelopeOrder
@@ -172,7 +171,6 @@ buildHouseholdReportSurfaceFromAdmitted
   -> ActualJournal
   -> PlanJournal
   -> HouseholdPolicy
-  -> AccountValidatedHouseholdPolicy
   -> ExpenseRoutingHistory
   -> FulfillmentRoutingHistory
   -> AdmittedPlans
@@ -180,7 +178,7 @@ buildHouseholdReportSurfaceFromAdmitted
   -> [HouseholdIssue]
   -> DailyTargetScope
   -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
-buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal policy _validatedPolicy expenseRouting fulfillmentRouting admittedPlans movements issues dailyScope = do
+buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal policy expenseRouting fulfillmentRouting admittedPlans movements issues dailyScope = do
   accountPolicy <- case householdPolicyAccountPolicy policy of
     Just value -> Right value
     Nothing -> Left (sourceError "household.toml" 0
