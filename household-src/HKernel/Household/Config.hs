@@ -407,14 +407,16 @@ parseRawEnvelopeCoordinates index
     (RawEnvelopeCoordinates rawId rawAllocation rawPlanDestinations) =
   case (envelopeIdResult, allocationResult, errors) of
     (Right envelopeId, Right allocationAccount, []) -> Right
-      (defineHouseholdEnvelopeCoordinates
-        envelopeId allocationAccount planDestinationAccounts)
+      (defineHouseholdEnvelopeCoordinates envelopeId allocationAccount)
     _ -> Left errors
   where
     path = indexedPath "budget.envelopes" index
     envelopeIdResult = mkEnvelopeId rawId
     allocationResult = mkAccount rawAllocation
-    (planErrors, planDestinationAccounts) = parseAccounts
+    -- Shared canonical household.toml still carries this historical coordinate,
+    -- and bqn-ledger still admits it. h-kernel validates the physical Account
+    -- syntax here but deliberately does not retain it as Household policy state.
+    (planErrors, _planDestinationAccounts) = parseAccounts
       (path <> ".plan-destination-accounts")
       (fromMaybe [] rawPlanDestinations)
     errors =
@@ -481,10 +483,6 @@ renderHouseholdPolicyError err = case err of
     "budget.envelopes: allocation Account " <> quoted (accountName account)
       <> " belongs to both " <> quoted (envelopeIdText firstEnvelope)
       <> " and " <> quoted (envelopeIdText repeatedEnvelope)
-  DuplicatePlanDestinationAccount account firstEnvelope repeatedEnvelope ->
-    "budget.envelopes: Plan destination Account " <> quoted (accountName account)
-      <> " belongs to both " <> quoted (envelopeIdText firstEnvelope)
-      <> " and " <> quoted (envelopeIdText repeatedEnvelope)
   HouseholdPolicyHasNoUnassignedBudgetAccounts ->
     "budget.unassigned-accounts: expected at least one retained allocation Account identity"
   DuplicateUnassignedBudgetAccount account ->
@@ -507,12 +505,6 @@ renderHouseholdAccountPolicyError err = case err of
     "account-policy.budget.group: one Account occurs in more than one household group"
   DuplicateHouseholdSpendClassCoordinate ->
     "account-policy.expenses: one Account occurs in more than one spend class"
-  RetainedFixedMarkerHasNoSpendClass ->
-    "retained Account evidence: fixed marker has no spend class"
-  RetainedFixedMarkerConflictsWithSpendClass ->
-    "retained Account evidence: fixed marker conflicts with spend class"
-  RetainedAccountMetadataRemainsUnclassified ->
-    "retained Account evidence: unclassified metadata remains"
 
 renderEnvelopeIdError :: Text -> EnvelopeIdError -> Text
 renderEnvelopeIdError path err = path <> ": " <> case err of
