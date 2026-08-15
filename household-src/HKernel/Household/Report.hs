@@ -32,6 +32,7 @@ module HKernel.Household.Report
   , buildHouseholdReportSurfaceFromAdmitted
   ) where
 
+import Data.Either (partitionEithers)
 import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -85,7 +86,8 @@ import HKernel.Household.Policy
 import HKernel.HouseholdIssue
 import HKernel.Journal (Journal, journalAccountRegistry)
 import HKernel.Ledger
-  ( postingAccount
+  ( Posting
+  , postingAccount
   , postingAmount
   , transactionDate
   , transactionPostings
@@ -99,13 +101,15 @@ import HKernel.Plan.Completion
   , resolveOpenCommittedOutgoingPlans
   )
 import HKernel.Plan.Journal
-  ( IdentifiedPlanTransaction
+  ( ClassifiedPlanTransaction(..)
+  , IdentifiedPlanTransaction
+  , PlanClassificationError(..)
   , PlanJournal
   , admitPlanRetirements
   , classifiedIncomingPlanTransactions
-  , classifyPlanJournal
   , identifiedPlanId
   , identifiedPlanTransaction
+  , planJournalTransactions
   , planJournalValue
   , planLifecycleErrorLine
   , projectCommittedOutgoingPlans
@@ -285,14 +289,20 @@ classifyPlannedTransactions current = map classifyOne
       | periodContains current day = InCurrentCycle
       | otherwise = AfterCurrentCycle
 
+-- | Admit only the legacy incoming/outgoing subset needed by the narrow report
+-- surface. Role-neutral Asset-to-Asset Plans remain in the full PlanJournal for
+-- native Envelope Commitment/Fulfillment observers and are deliberately absent
+-- from this compatibility projection.
 admitPlanJournal :: PlanJournal -> Either (NonEmpty HouseholdSourceError) AdmittedPlans
 admitPlanJournal planJournal = do
   retirements <- mapLeft
     (fmap (\err -> sourceError "plan.journal" (planLifecycleErrorLine err) (tshow err)))
     (admitPlanRetirements planJournal)
-  classified <- mapLeft
-    (fmap (sourceError "plan.journal" 0 . tshow))
-    (classifyPlanJournal planJournal)
+  classified <- case partitionEithers
+      (map (classifyForNarrowReport registry) (planJournalTransactions planJournal)) of
+    ([], values) -> Right [value | Just value <- values]
+    (errors, _) -> Left
+      (fmap (sourceError "plan.journal" 0 . tshow) (NonEmpty.fromList errors))
   incoming <- mapLeft NonEmpty.singleton
     (traverse (projectIncomingCycleAnchor registry)
       (classifiedIncomingPlanTransactions classified))
@@ -306,6 +316,54 @@ admitPlanJournal planJournal = do
     }
   where
     registry = journalAccountRegistry (planJournalValue planJournal)
+
+classifyForNarrowReport
+  :: AccountRegistry
+  -> IdentifiedPlanTransaction
+  -> Either PlanClassificationError (Maybe ClassifiedPlanTransaction)
+classifyForNarrowReport registry identified
+  | incomingShape coordinates = Right (Just (IncomingPlanTransaction identified))
+  | outgoingShape coordinates = Right (Just (OutgoingPlanTransaction identified))
+  | assetTransferShape coordinates = Right Nothing
+  | otherwise = Left (UnsupportedPlanRoleFlow (identifiedPlanId identified))
+  where
+    coordinates = map (postingCoordinate registry)
+      (NonEmpty.toList
+        (transactionPostings (identifiedPlanTransaction identified)))
+
+type PostingCoordinate = (Maybe AccountType, Ordering)
+
+postingCoordinate :: AccountRegistry -> Posting -> PostingCoordinate
+postingCoordinate registry posting =
+  ( accountTypeFor (postingAccount posting) registry
+  , compare (amountQuantity (postingAmount posting)) zeroQuantity
+  )
+
+incomingShape :: [PostingCoordinate] -> Bool
+incomingShape coordinates =
+  hasCoordinate (Just Income, LT) coordinates
+    && hasCoordinate (Just Asset, GT) coordinates
+    && all (`elem` [(Just Income, LT), (Just Asset, GT)]) coordinates
+
+outgoingShape :: [PostingCoordinate] -> Bool
+outgoingShape coordinates =
+  hasCoordinate (Just Asset, LT) coordinates
+    && any (`hasCoordinate` coordinates)
+      [(Just Expense, GT), (Just Liability, GT)]
+    && all (`elem`
+      [ (Just Asset, LT)
+      , (Just Expense, GT)
+      , (Just Liability, GT)
+      ]) coordinates
+
+assetTransferShape :: [PostingCoordinate] -> Bool
+assetTransferShape coordinates =
+  hasCoordinate (Just Asset, LT) coordinates
+    && hasCoordinate (Just Asset, GT) coordinates
+    && all (`elem` [(Just Asset, LT), (Just Asset, GT)]) coordinates
+
+hasCoordinate :: PostingCoordinate -> [PostingCoordinate] -> Bool
+hasCoordinate = elem
 
 admittedOutgoingPlanValues :: AdmittedPlans -> [CommittedOutgoingPlan]
 admittedOutgoingPlanValues = admittedOutgoingPlans
