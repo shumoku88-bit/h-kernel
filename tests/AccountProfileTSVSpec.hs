@@ -10,7 +10,7 @@ import qualified Data.Text as T
 import HKernel.Account
 import HKernel.Account.Journal (parseAccountJournal)
 import HKernel.Actual.Journal
-import HKernel.Budget (envelopeIdText)
+import HKernel.Envelope.Identity (envelopeIdText)
 import HKernel.Household.AccountProfile
 import HKernel.Household.AccountProfile.TSV
 import HKernel.Journal (journalAccountRegistry)
@@ -36,7 +36,7 @@ characterizeSyntaxAndClassification = do
       budgetProfile = mustJust (Map.lookup budgetFood profiles)
       cashDeclaration = retainedAccountDeclaration cashProfile
       cashHousehold = retainedAccountHouseholdEvidence cashProfile
-      foodBudget = retainedAccountBudgetEvidence foodProfile
+      foodEnvelope = retainedAccountEnvelopeEvidence foodProfile
       foodHousehold = retainedAccountHouseholdEvidence foodProfile
       budgetHousehold = retainedAccountHouseholdEvidence budgetProfile
 
@@ -59,9 +59,9 @@ characterizeSyntaxAndClassification = do
     (Just "Cash")
     (fmap envelopeIdText
       (accountPlanDestinationEnvelopeEvidence cashHousehold))
-  assertEqual "Expense budget metadata becomes BudgetPolicy evidence"
+  assertEqual "Expense budget metadata becomes Envelope policy evidence"
     (Just "Food")
-    (fmap envelopeIdText (accountExpenseEnvelopeEvidence foodBudget))
+    (fmap envelopeIdText (accountExpenseEnvelopeEvidence foodEnvelope))
   assertEqual "Expense fixed marker remains separate household evidence"
     (Just False)
     (accountFixedExpenseEvidence foodHousehold)
@@ -391,10 +391,6 @@ actualRegistry input =
   journalAccountRegistry
     (actualJournalValue (mustRight (parseActualJournal input)))
 
-
-
-
-
 assertRight :: Show error => String -> Either error value -> IO ()
 assertRight label result = case result of
   Right _ -> putStrLn ("  [PASS] " ++ label)
@@ -434,4 +430,3 @@ assertShadowErrors label expected result = case result of
     putStrLn ("  [FAIL] " ++ label)
     putStrLn "    declaration was unexpectedly rendered"
     exitFailure
-

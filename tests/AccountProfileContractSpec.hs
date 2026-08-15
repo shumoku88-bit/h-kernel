@@ -8,11 +8,11 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import HKernel.Account
-import HKernel.Budget
+import HKernel.Envelope.Config (parseCurrentEnvelopeConfiguration)
+import HKernel.Envelope.Identity
   ( EnvelopeIdError(..)
   , envelopeIdText
   )
-import HKernel.Budget.Config (parseBudgetPolicy)
 import HKernel.Household.AccountProfile
 import HKernel.Household.Config
   ( householdConfigurationAccountPolicy
@@ -36,7 +36,7 @@ main = do
           , ("future-key", "kept")
           ]))
       assetHousehold = retainedAccountHouseholdEvidence assetProfile
-      assetBudget = retainedAccountBudgetEvidence assetProfile
+      assetEnvelope = retainedAccountEnvelopeEvidence assetProfile
 
   assertEqual "default Commodity remains Account declaration evidence"
     (Just jpy)
@@ -51,7 +51,7 @@ main = do
       (accountPlanDestinationEnvelopeEvidence assetHousehold))
   assertEqual "Asset budget reference is not an Expense assignment"
     Nothing
-    (accountExpenseEnvelopeEvidence assetBudget)
+    (accountExpenseEnvelopeEvidence assetEnvelope)
   assertEqual "unknown metadata remains visible instead of being discarded"
     (Map.fromList [("future-key", "kept")])
     (retainedAccountUnclassifiedMetadata assetProfile)
@@ -62,12 +62,12 @@ main = do
           , ("fixed", "1")
           , ("spend_class", "fixed")
           ]))
-      expenseBudget = retainedAccountBudgetEvidence expenseProfile
+      expenseEnvelope = retainedAccountEnvelopeEvidence expenseProfile
       expenseHousehold = retainedAccountHouseholdEvidence expenseProfile
-  assertEqual "Expense budget reference becomes general BudgetPolicy evidence"
+  assertEqual "Expense budget reference becomes current Envelope evidence"
     (Just "Food")
     (fmap envelopeIdText
-      (accountExpenseEnvelopeEvidence expenseBudget))
+      (accountExpenseEnvelopeEvidence expenseEnvelope))
   assertEqual "fixed marker remains explicit household evidence"
     (Just True)
     (accountFixedExpenseEvidence expenseHousehold)
@@ -157,9 +157,10 @@ characterizeNativeAccountPolicy jpy profileWithUnknownMetadata = do
         | value <- [asset, opening, unassigned, envelope, expense]
         ]
       projected = mustRight (projectRetainedHouseholdAccountPolicy retained)
-      budgetPolicy = mustRight (parseBudgetPolicy nativeBudgetConfig)
+      envelopePolicy = mustRight
+        (parseCurrentEnvelopeConfiguration nativeEnvelopeConfig)
       nativeConfiguration = mustRight
-        (parseHouseholdConfiguration budgetPolicy nativeHouseholdConfig)
+        (parseHouseholdConfiguration envelopePolicy nativeHouseholdConfig)
 
   assertEqual
     "semantic TOML axes reproduce retained Account household policy while historical Envelope section stays opaque"
@@ -201,8 +202,8 @@ characterizeNativeAccountPolicy jpy profileWithUnknownMetadata = do
         (declaration name role jpy)
         (Map.fromList metadata))
 
-nativeBudgetConfig :: T.Text
-nativeBudgetConfig = T.unlines
+nativeEnvelopeConfig :: T.Text
+nativeEnvelopeConfig = T.unlines
   [ "[[backing-pools]]"
   , "id = \"operating\""
   , "asset-accounts = [\"assets:cash\"]"

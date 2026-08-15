@@ -5,7 +5,7 @@ module Main (main) where
 import Test.Support (mustRight)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Time.Calendar (Day, addDays, fromGregorian)
-import HKernel.Budget (mkEnvelopeId)
+import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Envelope.EntitlementHistory
 import HKernel.Envelope.EntitlementTransfer
 import HKernel.Money

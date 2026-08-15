@@ -30,20 +30,11 @@ library
                     , HKernel.Backing
                     , HKernel.Backing.Identity
                     , HKernel.Backing.Policy
-                    , HKernel.Budget
-                    , HKernel.Budget.Config
-                    , HKernel.Budget.Consumption
-                    , HKernel.Budget.Distribution
-                    , HKernel.Budget.Entitlement
-                    , HKernel.Budget.History
-                    , HKernel.Budget.Policy
-                    , HKernel.Budget.Remaining
-                    , HKernel.Budget.Routing
-                    , HKernel.Budget.TSV
                     , HKernel.CLI
                     , HKernel.Engine
                     , HKernel.Envelope
                     , HKernel.Envelope.Commitment
+                    , HKernel.Envelope.Config
                     , HKernel.Envelope.Consumption
                     , HKernel.Envelope.Entitlement
                     , HKernel.Envelope.EntitlementHistory
@@ -57,6 +48,7 @@ library
                     , HKernel.Envelope.Headroom
                     , HKernel.Envelope.Identity
                     , HKernel.Envelope.Mode
+                    , HKernel.Envelope.Policy
                     , HKernel.Envelope.Remaining
                     , HKernel.Envelope.Render
                     , HKernel.HouseholdIssue
@@ -100,11 +92,11 @@ library h-kernel-household
                     , HKernel.Household.Backing
                     , HKernel.Household.BudgetMovement
                     , HKernel.Household.BudgetMovement.TSV
-                    , HKernel.Household.BudgetObservation
                     , HKernel.Household.Config
                     , HKernel.Household.DailyTarget
                     , HKernel.Household.DailyTarget.TSV
                     , HKernel.Household.EnvelopeHistory
+                    , HKernel.Household.EnvelopeObservation
                     , HKernel.Household.Issue.Relation.TSV
                     , HKernel.Household.Issue.TSV
                     , HKernel.Household.Policy
@@ -492,23 +484,6 @@ test-suite h-kernel-recent-transactions-test
                     , text
                     , time
 
-test-suite h-kernel-budget-model-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          BudgetModelSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , time
-
-test-suite h-kernel-budget-history-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          BudgetHistorySpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
 test-suite h-kernel-envelope-commitment-headroom-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
@@ -586,58 +561,6 @@ test-suite h-kernel-envelope-remaining-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EnvelopeRemainingSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-budget-entitlement-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          BudgetEntitlementSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-budget-remaining-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          BudgetRemainingSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-budget-tsv-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          BudgetTSVSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-budget-config-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          BudgetConfigSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-
-test-suite h-kernel-budget-routing-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          BudgetRoutingSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-
-test-suite h-kernel-budget-consumption-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          BudgetConsumptionSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text

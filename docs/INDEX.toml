@@ -14,6 +14,10 @@ path = "docs/BALANCE_ALGEBRA.md"
 role = "contract"
 
 [[documents]]
+path = "docs/BUDGET_DOMAIN_RETIREMENT.md"
+role = "contract"
+
+[[documents]]
 path = "docs/BUDGET_BACKING_OBSERVATION.md"
 role = "observation"
 

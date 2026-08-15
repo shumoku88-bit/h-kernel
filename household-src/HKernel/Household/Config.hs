@@ -1,13 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | TOML admission for household coordinates layered on an admitted
--- 'BudgetPolicy'.
---
--- General envelope, pacing, Expense assignment, and backing-pool syntax belongs
--- to 'HKernel.Budget.Config'. This module parses only household-specific
--- coordinates and combines both values immediately into typed configuration.
--- The shared @envelope-history@ section is consumed opaquely here; its historical
--- meaning is owned by 'HKernel.Household.EnvelopeHistory'.
+-- | TOML admission for household coordinates layered on an admitted current
+-- Envelope policy. Physical @budget@ section names remain source compatibility;
+-- no Budget domain value is constructed here.
 module HKernel.Household.Config
   ( HouseholdConfiguration
   , householdConfigurationPolicy
@@ -31,14 +26,12 @@ import HKernel.Account
   , accountName
   , mkAccount
   )
-import HKernel.Backing.Identity (backingPoolIdText)
-import HKernel.Backing.Policy (BackingPolicyError(..))
-import HKernel.Budget
+import HKernel.Envelope (CurrentEnvelopePolicy)
+import HKernel.Envelope.Identity
   ( EnvelopeIdError(..)
   , envelopeIdText
   , mkEnvelopeId
   )
-import HKernel.Budget.Policy (BudgetPolicy)
 import HKernel.Household.AccountProfile
   ( HouseholdAccountPolicy
   , HouseholdAccountPolicyError(..)
@@ -79,7 +72,7 @@ data HouseholdConfiguration = HouseholdConfiguration
 
 data RawHouseholdPolicy = RawHouseholdPolicy
   RawCycle
-  RawHouseholdBudget
+  RawHouseholdEnvelopeCoordinates
   (Maybe RawMoney)
   (Maybe RawDailyTarget)
   (Maybe RawAccountPolicy)
@@ -87,7 +80,7 @@ data RawHouseholdPolicy = RawHouseholdPolicy
 
 data RawCycle = RawCycle Text Text
 
-data RawHouseholdBudget = RawHouseholdBudget
+data RawHouseholdEnvelopeCoordinates = RawHouseholdEnvelopeCoordinates
   [RawEnvelopeCoordinates]
   [Text]
 
@@ -138,9 +131,9 @@ instance FromValue RawCycle where
       <$> reqKey "mode"
       <*> reqKey "income-account")
 
-instance FromValue RawHouseholdBudget where
+instance FromValue RawHouseholdEnvelopeCoordinates where
   fromValue = parseTableFromValue
-    (RawHouseholdBudget
+    (RawHouseholdEnvelopeCoordinates
       <$> reqKey "envelopes"
       <*> reqKey "unassigned-accounts")
 
@@ -215,38 +208,39 @@ instance FromValue RawExpensePolicy where
       <*> reqKey "variable")
 
 parseHouseholdConfiguration
-  :: BudgetPolicy
+  :: CurrentEnvelopePolicy
   -> Text
   -> Either [Text] HouseholdConfiguration
-parseHouseholdConfiguration budgetPolicy input =
+parseHouseholdConfiguration envelopePolicy input =
   case (decode input :: Result String RawHouseholdPolicy) of
     Failure errors -> Left (map T.pack errors)
     Success warnings raw
-      | null warnings -> rawToHouseholdConfiguration budgetPolicy raw
+      | null warnings -> rawToHouseholdConfiguration envelopePolicy raw
       | otherwise -> Left (map T.pack warnings)
 
 parseHouseholdPolicy
-  :: BudgetPolicy
+  :: CurrentEnvelopePolicy
   -> Text
   -> Either [Text] HouseholdPolicy
-parseHouseholdPolicy budgetPolicy =
-  fmap householdConfigurationPolicy . parseHouseholdConfiguration budgetPolicy
+parseHouseholdPolicy envelopePolicy =
+  fmap householdConfigurationPolicy . parseHouseholdConfiguration envelopePolicy
 
 renderHouseholdPolicyErrors :: [Text] -> Text
 renderHouseholdPolicyErrors = T.unlines . map ("  " <>)
 
 rawToHouseholdConfiguration
-  :: BudgetPolicy
+  :: CurrentEnvelopePolicy
   -> RawHouseholdPolicy
   -> Either [Text] HouseholdConfiguration
-rawToHouseholdConfiguration budgetPolicy
-    (RawHouseholdPolicy rawCycle rawHouseholdBudget rawMoney rawDailyTarget rawAccountPolicy _rawEnvelopeHistory) = do
-  policy <- rawToHouseholdPolicy budgetPolicy rawCycle rawHouseholdBudget
+rawToHouseholdConfiguration envelopePolicy
+    (RawHouseholdPolicy rawCycle rawCoordinates rawMoney rawDailyTarget rawAccountPolicy _rawEnvelopeHistory) = do
+  policy <- rawToHouseholdPolicy envelopePolicy rawCycle rawCoordinates
   primaryCommodity <- traverse parseRawMoney rawMoney
   dailyTargetAssets <- parseRawDailyTarget rawDailyTarget
   accountPolicy <- traverse parseRawAccountPolicy rawAccountPolicy
+  let admittedPolicy = withHouseholdAccountPolicy accountPolicy policy
   Right HouseholdConfiguration
-    { householdConfigurationPolicy = policy
+    { householdConfigurationPolicy = admittedPolicy
     , householdConfigurationPrimaryCommodity = primaryCommodity
     , householdConfigurationDailyTargetAssets = dailyTargetAssets
     , householdConfigurationAccountPolicy = accountPolicy
@@ -271,17 +265,17 @@ parseRawDailyTarget rawDailyTarget =
       Just (RawDailyTarget values) -> values
 
 rawToHouseholdPolicy
-  :: BudgetPolicy
+  :: CurrentEnvelopePolicy
   -> RawCycle
-  -> RawHouseholdBudget
+  -> RawHouseholdEnvelopeCoordinates
   -> Either [Text] HouseholdPolicy
-rawToHouseholdPolicy budgetPolicy rawCycle rawHouseholdBudget = do
+rawToHouseholdPolicy envelopePolicy rawCycle rawCoordinates = do
   cyclePolicy <- parseRawCycle rawCycle
-  case rawHouseholdBudget of
-    RawHouseholdBudget rawEnvelopes rawUnassigned ->
+  case rawCoordinates of
+    RawHouseholdEnvelopeCoordinates rawEnvelopes rawUnassigned ->
       case syntaxErrors of
         [] -> case mkHouseholdPolicy
-            cyclePolicy budgetPolicy envelopeCoordinates unassignedAccounts of
+            cyclePolicy envelopePolicy envelopeCoordinates unassignedAccounts of
           Right policy -> Right policy
           Left errors -> Left
             (map renderHouseholdPolicyError (NonEmpty.toList errors))
@@ -461,7 +455,7 @@ renderHouseholdPolicyError err = case err of
     "budget.envelopes: duplicate household coordinates for "
       <> quoted (envelopeIdText envelope)
   HouseholdCoordinatesReferenceUnknownEnvelope envelope ->
-    "budget.envelopes: unknown Budget envelope "
+    "budget.envelopes: unknown Envelope "
       <> quoted (envelopeIdText envelope)
   HouseholdEnvelopeMissingCoordinates envelope ->
     "budget.envelopes: missing household coordinates for "
@@ -475,7 +469,7 @@ renderHouseholdPolicyError err = case err of
       <> " belongs to both " <> quoted (envelopeIdText firstEnvelope)
       <> " and " <> quoted (envelopeIdText repeatedEnvelope)
   HouseholdPolicyHasNoUnassignedBudgetAccounts ->
-    "budget.unassigned-accounts: expected at least one Budget Account identity"
+    "budget.unassigned-accounts: expected at least one retained allocation Account identity"
   DuplicateUnassignedBudgetAccount account ->
     "budget.unassigned-accounts: duplicate Account "
       <> quoted (accountName account)
@@ -483,27 +477,6 @@ renderHouseholdPolicyError err = case err of
     "budget.unassigned-accounts: allocation Account " <> quoted (accountName account)
       <> " for envelope " <> quoted (envelopeIdText envelope)
       <> " cannot also be unassigned"
-  HouseholdBackingPolicyCompatibilityError backingError ->
-    "budget: Backing policy compatibility error: "
-      <> renderBackingPolicyError backingError
-
-renderBackingPolicyError :: BackingPolicyError -> Text
-renderBackingPolicyError err = case err of
-  DuplicateBackingPoolDefinition poolId ->
-    "duplicate BackingPool " <> quoted (backingPoolIdText poolId)
-  BackingPoolHasNoAssetAccounts poolId ->
-    "BackingPool " <> quoted (backingPoolIdText poolId) <> " has no Asset accounts"
-  DuplicateAssetAccountMembership account firstPool repeatedPool ->
-    "Asset Account " <> quoted (accountName account)
-      <> " belongs to both " <> quoted (backingPoolIdText firstPool)
-      <> " and " <> quoted (backingPoolIdText repeatedPool)
-  DuplicateEnvelopeBackingAssignment envelope firstPool repeatedPool ->
-    "Envelope " <> quoted (envelopeIdText envelope)
-      <> " is assigned to both " <> quoted (backingPoolIdText firstPool)
-      <> " and " <> quoted (backingPoolIdText repeatedPool)
-  EnvelopeReferencesUnknownBackingPool envelope poolId ->
-    "Envelope " <> quoted (envelopeIdText envelope)
-      <> " references unknown BackingPool " <> quoted (backingPoolIdText poolId)
 
 renderHouseholdAccountPolicyError :: HouseholdAccountPolicyError -> Text
 renderHouseholdAccountPolicyError err = case err of

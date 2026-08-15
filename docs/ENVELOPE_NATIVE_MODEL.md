@@ -1,26 +1,98 @@
 # Envelope-native model
 
-Status: design contract during Budget removal
+Status: active ownership contract after Budget-domain retirement
 
 ## Purpose
 
-The household needs three independent meanings around spending and saving:
+The Household needs separate meanings for:
 
 - accounting facts: what actually happened,
-- Plans: what is expected or committed,
-- Envelopes: what household funds are permitted or intended for.
+- Plans: what is expected, completed, or still committed,
+- Envelopes: what household capacity has been granted to a purpose,
+- Backing: which real Asset funding supports those outstanding claims.
 
-`Budget` is not a separate domain object in this model. If a future requirement
-needs a broader Budget concept, it must be introduced from that requirement
-rather than retained as an empty compatibility layer.
+`Budget` is not a separate domain object in this model. A future requirement may
+introduce a new Budget concept, but it must be designed from that requirement
+rather than restored from compatibility types.
 
-The native Envelope semantics are now partly implemented. Canonical Household
-source migration remains deliberately separate until replacement admission and
-writer paths are qualified.
+Physical names such as `budget.journal`, `budget.toml`, `budget:*` Accounts, and
+BudgetMovement writer vocabulary are migration/source contracts. They do not own
+the Envelope semantics described here.
+
+## Final ownership map
+
+```text
+EnvelopeRegistry
+    |
+    +------------------------------ stable Envelope identity only
+
+EnvelopeEntitlementHistory
+    |
+    v
+EnvelopeEntitlement
+
+ActualJournal + ExpenseRoutingHistory
+    |
+    v
+EnvelopeConsumption
+
+PlanJournal + Actual completion evidence + FulfillmentRoutingHistory
+    |
+    v
+EnvelopeFulfillment
+
+EnvelopeEntitlement
+  - EnvelopeConsumption
+  - EnvelopeFulfillment
+    |
+    v
+EnvelopeRemaining
+
+open PlanJournal
+  + ExpenseRoutingHistory
+  + FulfillmentRoutingHistory
+    |
+    v
+EnvelopeCommitment
+
+EnvelopeRemaining
+  - EnvelopeCommitment
+    |
+    v
+EnvelopeHeadroom
+
+Asset balances + BackingPolicy + Envelope claims
+    |
+    v
+BackingPoolPosition
+
+CurrentEnvelopePolicy
+    |
+    +------------------------------ current label/pacing/presentation only
+```
+
+There is no second Budget state beside this graph.
+
+## One fact, one owner
+
+A fact is written or admitted once and projected elsewhere.
+
+- Actual Expense use belongs to `ActualJournal`.
+- Plan intent belongs to `PlanJournal`.
+- Plan completion belongs to Plan/Actual relation evidence.
+- Envelope grant/reallocation belongs to `EnvelopeEntitlementHistory`.
+- Expense-to-Envelope meaning belongs to `ExpenseRoutingHistory`.
+- non-Expense target intent belongs to `FulfillmentRoutingHistory` by stable
+  `PlanId`.
+- current funding topology belongs to `BackingPolicy`.
+- stable Envelope existence belongs to `EnvelopeRegistry`.
+
+Consumption, fulfillment, remaining, commitment, headroom, and backing are
+observations. They must not be written back as duplicate facts.
 
 ## Accounting boundary
 
-The accounting chart contains only accounting categories:
+The accounting chart contains accounting categories only:
 
 ```text
 Asset
@@ -30,73 +102,71 @@ Income
 Expense
 ```
 
-An Envelope is not an Account. Allocation, reservation, remaining capacity,
+An Envelope is not an Account. Entitlement, commitment, remaining capacity,
 target fulfillment, and backing are not accounting balances.
 
-Actual Expense postings remain owned by the Actual Journal. Envelope consumption
-is derived from those admitted postings and is not written again to an Envelope
-history.
+A savings, investment, liability-payment, or other non-Expense target remains an
+ordinary accounting transaction. Its Envelope meaning comes from explicit Plan
+intent, never from the destination Account alone.
 
-A savings, investment, or other non-Expense target likewise remains an accounting
-transaction in its ordinary Accounts. Its Envelope meaning is explicit Plan
-intent, not a property inferred from the target Account.
+## Envelope identity
 
-## Envelope identity and current policy
+Each spendable Envelope has a stable `EnvelopeId`. `EnvelopeRegistry` owns the
+admitted identity universe and nothing else.
 
-Each spendable Envelope has a stable `EnvelopeId`. The admitted historical
-identity universe is owned by `EnvelopeRegistry`, independently from current
-configuration.
+The Registry contains no:
 
-The Registry contains existence only. It does not carry label, mode,
-BackingPool, Expense routing, allocation amount, or active/retired state. Those
-coordinates have different lifetimes. In particular, removing an Envelope from
-current policy must not make its historical identity cease to exist, and an
-Envelope may exist before receiving any entitlement.
+- label,
+- pacing,
+- Expense route,
+- BackingPool assignment,
+- entitlement amount,
+- current active/retired state.
 
-The physical source that will populate the canonical Registry remains unfixed.
-It may eventually be derived from an append-only declaration history, but current
-TOML must not be treated as retrospective identity authority.
+Those coordinates have different lifetimes. Removing an Envelope from current
+configuration must not erase historical identity.
 
-Current operational policy may assign:
+The final physical identity source is deliberately not fixed here. If an
+append-only declaration/lifecycle history becomes necessary, it receives its own
+owner. Current TOML must never become retrospective identity authority.
 
-- a human label,
-- an Envelope mode,
-- a BackingPool.
+## Current Envelope policy
 
-Expense routing and Plan target-fulfillment routing are historically observable
-relations described separately below. Current display/calculation policy must
-not be mistaken for retrospective truth.
+`CurrentEnvelopePolicy` is deliberately thin. Its final responsibility is current
+operational/presentation information such as:
 
-### Envelope mode
+- `EnvelopeId`,
+- human label,
+- current pacing/display mode,
+- current membership/visibility if required by the UI.
 
-```haskell
-data EnvelopeMode
-  = Daily
-  | Flex
-  | Reserve
-```
+It does **not** own:
 
-The modes are current calculation and presentation policy:
+- Expense Account routing,
+- BackingPool definitions or Envelope-to-pool assignments,
+- entitlement history,
+- historical identity.
 
-- `Daily`: participates in remaining-days pacing and the Daily display group.
-- `Flex`: keeps cycle-level capacity without per-day pacing and appears in the
-  Flex display group.
-- `Reserve`: keeps cycle-level capacity outside ordinary pacing and appears in a
-  protected Reserve display group.
+Those already have independent owners.
 
-The mode is not part of accounting metadata and is not a historical allocation
-coordinate. Changing an Envelope from Daily to Flex does not reinterpret old
-Actual facts or old allocation movements.
+The current implementation still carries Expense Account assignments and a
+`BackingPolicy` inside `CurrentEnvelopePolicy`. That is migration coupling, not
+the target ownership boundary. A shared TOML file may still be parsed into
+several admitted domain owners; sharing physical syntax does not require one
+aggregate owner.
 
-Do not split mode into independent axes until a real requirement needs a
-combination that the three modes cannot express.
+### Pacing
 
-## Envelope history
+Pacing is current policy, not historical fact. The implementation currently
+needs `Daily` and `Flex` behavior. Additional presentation/operational modes such
+as a protected Reserve mode may be added when a concrete requirement needs them;
+they must not alter old Actual, routing, or entitlement evidence.
 
-Envelope history owns explicit household allocation decisions only. It does not
-mirror Actual consumption, Plan completion, or target fulfillment.
+Do not split pacing into more axes until a real combination requires it.
 
-A transfer is one atomic decision with one provenance-bearing record:
+## Entitlement history
+
+Envelope history owns explicit grant/reallocation decisions only:
 
 ```text
 Unallocated -> Envelope
@@ -104,187 +174,229 @@ Envelope    -> Envelope
 Envelope    -> Unallocated
 ```
 
-The target domain shape is conceptually:
+Conceptually:
 
 ```haskell
 data EnvelopeEndpoint
   = Unallocated
   | Spendable EnvelopeId
-
-data EnvelopeMovement = EnvelopeMovement
-  { movementDate      :: Day
-  , movementCycle     :: Period
-  , movementFrom      :: EnvelopeEndpoint
-  , movementTo        :: EnvelopeEndpoint
-  , movementAmount    :: PositiveAmount
-  , movementNote      :: Text
-  }
 ```
 
-The exact canonical source shape is intentionally not fixed by this document
-yet. Source migration must preserve identity, exact amount, commodity, date,
-cycle, provenance, writer authority, and fail-closed admission.
+`Unallocated` is not an Envelope and not an Asset balance. It is the entitlement
+space not currently granted to a spendable Envelope. Whether real assets can
+support that entitlement is a separate Backing question.
 
-`Unallocated` is not a spendable Envelope identity. It is the backing capacity
-not currently granted to spendable Envelopes.
+Every transfer preserves exact amount, commodity, date, period, identity,
+provenance, and writer authority. Conflicting or unknown coordinates fail closed.
 
-## Expense consumption
+The current `budget.journal` projection through retained Budget Accounts is a
+source adapter into this owner. Opening/execution/unassigned Budget Account roles
+are not native Envelope concepts and must not leak past that adapter.
 
-Expense consumption is derived from admitted Actual Expense postings and an
+## Expense routing and consumption
+
+Expense consumption is derived from admitted Actual Expense postings plus an
 effective-dated Expense routing history.
 
-The routing coordinate is the Expense Account because that Account is the
-accounting meaning being classified for Envelope consumption. A declared Expense
-Account may be explicitly unmanaged. Missing routing remains attention evidence,
-and conflicting routing decisions fail closed.
-
-Refunds and typed Actual reversals change consumption through Actual evidence.
-They do not require compensating Envelope-history writes.
-
-A source-local TSV admission exists for the effective-dated Expense routing
-history with the coordinate shape:
-
 ```text
-effective_from / expense_account / route / target / note
+Expense Account @ effective day -> ManagedByEnvelope EnvelopeId
+Expense Account @ effective day -> NotEnvelopeManaged
 ```
 
-That admission establishes physical syntax only. The canonical Household path,
-writer authority, and snapshot participation are still deliberately unfixed.
-Cross-source admission proves that the routed Account exists in the admitted
-AccountRegistry, that its declared type is `Expense`, and that a
-`ManagedByEnvelope` target belongs to the stable EnvelopeRegistry. An explicit
-`NotEnvelopeManaged` decision requires an admitted Expense Account but performs
-no Envelope target check. Historical targets are never validated by replaying
-current TOML, because that would silently rewrite old intent.
+Missing routing is attention evidence. Conflicting routing fails closed.
+Historical targets are validated against stable identity, never by replaying
+latest TOML.
 
-## Non-Expense target fulfillment
+Refunds and typed Actual reversals affect consumption through Actual evidence.
+No compensating Envelope movement is written.
 
-Savings, investment, and similar goals are not Expense consumption. A completed
-Plan may nevertheless fulfill an Envelope target when that intent is declared
-for the stable `PlanId`.
+Current configuration may help an editor create a new routing declaration, but
+it must not become a second routing authority.
 
-The routing coordinate is therefore `PlanId`, not Account:
+## Fulfillment routing and fulfillment
 
-```text
-PlanId -> FulfillsEnvelope EnvelopeId
-PlanId -> NotFulfillmentTarget
-```
+Savings, investment, debt reduction, and similar non-Expense goals are distinct
+from Expense consumption.
 
-This distinction is required because one bank, savings, investment, or liability
-Account may participate in unrelated Plans and Actual transactions. Sharing an
-Account must not transfer Envelope meaning between those facts.
-
-Plan completion remains an explicit relation between Plan and Actual facts.
-Generic completion may relate one Actual to several Plans. An Envelope
-projection that would need to divide one Actual between several routed target
-Plans fails closed rather than inventing an allocation rule.
-
-When a routed Plan completes, Plan/Actual posting shape may be validated
-positionally. Account order, direction, and commodity coordinates must agree;
-Actual quantities remain authoritative and may differ from planned quantities.
-Repeated use of one Account therefore does not collapse target evidence into a
-whole-Account net.
-
-Target route identity is observed at the root completing Actual date. Typed
-reversal chains cancel or restore that root fulfillment evidence without
-re-inferring meaning from the reversal transaction's Accounts.
-
-A source-local TSV admission now exists for the effective-dated PlanId routing
-history with the coordinate shape:
+Their Envelope intent is attached to stable Plan identity:
 
 ```text
-effective_from / plan_id / route / target / note
+PlanId @ effective day -> FulfillsEnvelope EnvelopeId
+PlanId @ effective day -> NotFulfillmentTarget
 ```
 
-That admission establishes physical syntax only. The canonical Household path,
-writer authority, and snapshot participation are still deliberately unfixed.
-Cross-source admission proves both that the PlanId belongs to the admitted Plan
-identity universe and that a `FulfillsEnvelope` target belongs to the stable
-EnvelopeRegistry. A historical target is never validated by replaying current
-TOML, because that would silently rewrite old intent.
+A completed routed Plan produces `EnvelopeFulfillment` from Plan/Actual evidence.
+Actual quantities remain authoritative. Shared Accounts do not transfer Envelope
+meaning between unrelated Plans.
 
-## Plan observation and commitment
+Typed reversal chains cancel or restore the root fulfillment evidence without
+re-inferring intent from reversal Accounts.
 
-Plan lifecycle/completion observation is role-neutral. Being an open or completed
-Plan does not itself imply Income, Expense, Liability, or another accounting
-role.
+## Commitment
 
-This permits Asset-to-Asset savings/investment Plans to remain ordinary
-accounting Plans rather than pretending to be generic outgoing Expense flows.
-The narrower accounting-outgoing projection remains available for callers that
-actually require that role.
+Commitment is the still-open Plan claim against Envelope capacity.
 
-For Envelope commitment/headroom:
+There is no separate `CommitmentRoutingHistory`.
 
-- positive Expense postings use Expense Account routing,
-- positive non-Expense postings claim Envelope headroom only when their stable
-  `PlanId` has explicit fulfillment intent,
-- unrelated Asset/Liability Plans do not manufacture Envelope claims,
-- open Plan routing is observed at the current observation day because the Plan
-  remains current intent.
+- open Expense Plan postings use `ExpenseRoutingHistory`,
+- open non-Expense target Plans use `FulfillmentRoutingHistory`,
+- unrelated Plans create no Envelope claim.
 
-## Derived Envelope observation
+This is intentional: the same declared intent that will later explain
+Consumption or Fulfillment explains the open commitment before completion.
+Creating another routing owner would duplicate meaning.
 
-At one Household observation:
+For an open Plan, routing is observed at the current observation day because the
+Plan is still current intent. Completed historical fulfillment uses the route at
+the completing Actual evidence boundary.
+
+## Remaining and headroom
+
+These are exact arithmetic projections with explicit `Period` and observation
+`Day` alignment:
 
 ```text
-entitlement        = admitted allocation history
-expense consumption = routed Actual Expense postings
-target fulfillment  = routed completed non-Expense Plans using Actual evidence
-remaining           = entitlement - expense consumption - target fulfillment
-open commitment     = routed still-open Plan commitments
-headroom            = remaining - open commitment
+Remaining
+  = Entitlement
+  - Consumption
+  - Fulfillment
+
+Headroom
+  = Remaining
+  - Commitment
 ```
 
-Expense refunds/reversals affect Expense consumption. Reversal chains rooted in
-a completed target Plan affect target fulfillment. Neither path writes a second
-Budget/Envelope transaction.
+Negative Remaining is valid overspending/over-fulfillment evidence. Negative
+Headroom is valid over-commitment evidence. Neither value is silently clamped.
 
-## Routing and historical safety
+Current labels, pacing, presentation order, and attention policy stay outside
+these arithmetic owners.
 
-Current TOML is policy, not automatically historical truth. Changing current
-configuration must not silently reinterpret old observations.
+## Household Envelope observation
 
-The native model therefore separates two historical routing meanings:
+The final Household composition should produce one native observation from
+already admitted owners:
 
-- Expense Account routing answers which Envelope owns Expense consumption at a
-  given time,
-- PlanId fulfillment routing answers whether one stable Plan represents a
-  non-Expense Envelope target at a given time.
+```text
+HouseholdEnvelopeObservation
+  period
+  observedThrough
+  entitlement
+  consumption
+  fulfillment
+  remaining
+  commitment
+  headroom
+  routing attention
+```
 
-Neither relation may be reconstructed retrospectively from the latest Account
-classification or TOML defaults.
+It should not contain `HouseholdPolicy` as semantic state. Current policy joins
+later when a report or UI needs labels, pacing, order, or presentation.
+
+The current `Household.EnvelopeObservation` still accepts
+`HouseholdBudgetMovement`, `HouseholdAccountPolicy`, and retained Budget Account
+classification in order to adapt the existing canonical source into
+`EnvelopeEntitlementHistory`. That is migration infrastructure, not the final
+observation boundary.
 
 ## Backing
 
-Backing answers which admitted Asset funding supports current Envelope claims.
+Backing is separate from Envelope capacity.
 
 ```text
-Asset accounts -> BackingPool -> Envelope claims
+Asset Accounts -> BackingPool
+EnvelopeId     -> BackingPool
 ```
 
-BackingPool coordinates remain visible before Household aggregation. A shortage
-in one pool must not be erased by surplus in another pool.
+`BackingPolicy` owns the current funding topology. It is not part of
+`CurrentEnvelopePolicy` and it does not claim historical truth.
 
-Open Plans may create both Asset-pool commitments and Envelope commitments. Plan
-source and target meaning therefore remain separate evidence. An Account shared
-by several Plans cannot by itself identify an Envelope target.
+Backing compares real admitted Asset funding with outstanding Envelope claims.
+Pool coordinates remain visible before Household aggregation so shortage in one
+pool cannot be erased by surplus in another.
 
-There is no native `unassigned Budget Account`. Unallocated backing is derived
-from funding and granted Envelope claims.
+`EnvelopeRemaining` and `EnvelopeHeadroom` remain distinct inputs/metrics:
+Remaining expresses the outstanding granted claim after completed use; Headroom
+expresses how much of that claim is not already committed by open Plans.
+
+If historical Backing reports later require policy-as-of-time, introduce an
+effective-dated Backing policy history then. Do not make every current policy
+historical preemptively.
+
+The production `Household.Backing` path still contains migration compatibility:
+legacy destination-Account Plan reserve, retained Budget Account reconciliation,
+and direct entitlement-minus-consumption calculation. The target is to consume
+native `EnvelopeRemaining` / `EnvelopeHeadroom` plus independent `BackingPolicy`
+instead.
+
+## Historical safety
+
+Current configuration is not retrospective truth.
+
+Changing today's label, pacing, routing preference, or backing topology must not
+silently rewrite already admitted historical intent.
+
+Historical owners are introduced only where history affects meaning:
+
+- stable Envelope identity,
+- entitlement transfers,
+- Expense routing,
+- PlanId fulfillment routing.
+
+Backing policy remains current until a historical Backing requirement exists.
+Presentation policy remains current unless a concrete historical presentation
+requirement exists.
+
+## Admission laws
+
+Every cross-source admission follows the same laws:
+
+- exact arithmetic,
+- stable identity,
+- explicit provenance,
+- writer authority,
+- deterministic conflict reporting,
+- unknown references fail closed,
+- no fallback from missing historical evidence to current config,
+- no implicit allocation or amount splitting.
+
+A source adapter may translate legacy syntax, but it may not create new semantic
+facts.
 
 ## Migration boundary
 
-The current canonical `budget.journal` / `budget.toml` and Household
-`plan-destination-accounts` contract remains in production until replacement
-admission and writer paths are qualified. Do not rename or delete sources first
-and repair semantics afterwards.
+The following are deliberately source-compatibility debt, not native Envelope
+concepts:
 
-`plan-destination-accounts` is legacy Account-based intent authority. The native
-replacement must use the PlanId fulfillment relation instead of moving that
-Account lookup under a new name.
+- physical `budget.journal` and `budget.toml` names,
+- retained `Budget` AccountType / `budget:*` Accounts,
+- `HouseholdBudgetMovement*` writer vocabulary,
+- opening/spent/unassigned Budget Account roles,
+- `PlanBudgetSync`,
+- legacy `plan-destination-accounts` intent authority.
 
-The implementation should remove, rather than rename, concepts that exist only
-to support Budget Accounts, including Plan Budget sync and Budget-account
-execution/spent/unassigned roles. Laws that remain meaningful are migrated to
-their Envelope, Plan, Actual, or Backing owners.
+Do not rename these first and repair semantics later. Replace their admission and
+writer responsibilities with the native owners, qualify the replacement, then
+retire the old source contract.
+
+In particular, `plan-destination-accounts` must be replaced by stable `PlanId`
+fulfillment intent, not moved under a new name.
+
+## Implementation direction after Budget removal
+
+The next architectural work is therefore bounded:
+
+1. finish qualification of the Budget-domain removal branch without restoring
+   legacy owners,
+2. thin `CurrentEnvelopePolicy` so Expense routing and Backing are independent,
+3. complete `HouseholdEnvelopeObservation` with Fulfillment, Remaining,
+   Commitment, and Headroom,
+4. make Household Backing consume native Remaining/Headroom and independent
+   `BackingPolicy`,
+5. remove retained Budget-Account and destination-Account adapters only after
+   replacement source admission and writer paths are qualified,
+6. consider physical source renames only after semantics and writer authority no
+   longer depend on the legacy contract.
+
+This is the target architecture. New Envelope work should fit this ownership map
+rather than create another aggregate beside it.

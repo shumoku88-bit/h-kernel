@@ -7,7 +7,6 @@ import Data.Time.Calendar (fromGregorian)
 import HKernel.CLI
 import HKernel.Engine (mkDateRange)
 import HKernel.Period (mkPeriod)
-import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
@@ -95,11 +94,8 @@ main = do
       ])
 
   assertEqual
-    "envelope budget retains the separate policy path and explicit range"
-    (Right
-      ( "my.journal"
-      , RunEnvelopeBudget "envelope-policy.tsv" rangeCustom
-      ))
+    "retired standalone envelope allocation command is rejected"
+    (Left "invalid arguments")
     (parseArguments today
       [ "my.journal"
       , "envelope-budget"
@@ -107,6 +103,3 @@ main = do
       , "2026-04-01"
       , "2026-07-31"
       ])
-
-
-
