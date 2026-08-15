@@ -29,7 +29,7 @@ import HKernel.Envelope.Commitment
 import HKernel.Envelope.Consumption
   ( EnvelopeConsumption
   , EnvelopeConsumptionError
-  , observeEnvelopeConsumption
+  , observeEnvelopeStockConsumption
   )
 import HKernel.Envelope.Entitlement
   ( EnvelopeEntitlement
@@ -53,7 +53,7 @@ import HKernel.Envelope.ExpenseRouting
 import HKernel.Envelope.Fulfillment
   ( EnvelopeFulfillment
   , EnvelopeFulfillmentError
-  , observeEnvelopeFulfillment
+  , observeEnvelopeStockFulfillment
   )
 import HKernel.Envelope.FulfillmentRouting (FulfillmentRoutingHistory)
 import HKernel.Envelope.Headroom
@@ -128,11 +128,11 @@ deriveHouseholdEnvelopeObservation observedThrough period actual plans policy ac
   entitlement <- singleLeft HouseholdEnvelopeEntitlementObservationError
     (observeEnvelopeEntitlement period observedThrough history)
   consumption <- singleLeft HouseholdEnvelopeConsumptionError
-    (observeEnvelopeConsumption
-      period observedThrough actual (expenseRoutingResolver expenseRouting))
+    (observeEnvelopeStockConsumption
+      history period observedThrough actual (expenseRoutingResolver expenseRouting))
   fulfillment <- mapLeft (fmap HouseholdEnvelopeFulfillmentError)
-    (observeEnvelopeFulfillment
-      period observedThrough plans actual fulfillmentRouting)
+    (observeEnvelopeStockFulfillment
+      history period observedThrough plans actual fulfillmentRouting)
   remaining <- valueLeft HouseholdEnvelopeRemainingError
     (calculateEnvelopeRemaining entitlement consumption fulfillment)
   commitment <- mapLeft (fmap HouseholdEnvelopeCommitmentError)
