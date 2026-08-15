@@ -3,7 +3,6 @@
 -- | Pure admission and IO bootstrap for a canonical Household application state.
 module HKernel.Household.Application
   ( HouseholdState(..)
-  , householdStateBudgetMovements
   , HouseholdWriteSnapshot(..)
   , HouseholdLoadError(..)
   , loadCanonicalHousehold
@@ -141,7 +140,7 @@ data HouseholdState = HouseholdState
   , householdStateAccountsRegistry          :: AccountRegistry
   , householdStateActualJournal             :: ActualJournal
   , householdStatePlanJournal               :: PlanJournal
-  , householdStateBudgetMovementJournal     :: HouseholdBudgetMovementJournal
+  , householdStateBudgetMovements           :: [HouseholdBudgetMovement]
   , householdStateEnvelopePolicy            :: CurrentEnvelopePolicy
   , householdStateCurrentExpenseAssignments :: CurrentExpenseAssignments
   , householdStateConfiguration             :: HouseholdConfiguration
@@ -151,10 +150,6 @@ data HouseholdState = HouseholdState
   , householdStateIssues                    :: [HouseholdIssue]
   , householdStateDailyScope                :: DailyTargetScope
   } deriving (Eq, Show)
-
-householdStateBudgetMovements :: HouseholdState -> [HouseholdBudgetMovement]
-householdStateBudgetMovements =
-  householdBudgetMovementJournalMovements . householdStateBudgetMovementJournal
 
 data HouseholdWriteSnapshot = HouseholdWriteSnapshot
   { householdWriteSnapshotState          :: HouseholdState
@@ -369,7 +364,8 @@ assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJo
     , householdStateAccountsRegistry = accountsRegistry
     , householdStateActualJournal = actualJournal
     , householdStatePlanJournal = planJournal
-    , householdStateBudgetMovementJournal = budgetMovementJournal
+    , householdStateBudgetMovements =
+        householdBudgetMovementJournalMovements budgetMovementJournal
     , householdStateEnvelopePolicy = envelopePolicy
     , householdStateCurrentExpenseAssignments = currentExpenses
     , householdStateConfiguration = configuration
