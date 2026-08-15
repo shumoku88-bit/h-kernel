@@ -3,7 +3,6 @@
 -- | Pure admission and IO bootstrap for a canonical Household application state.
 module HKernel.Household.Application
   ( HouseholdState(..)
-  , householdStateBudgetJournal
   , householdStateBudgetMovements
   , HouseholdWriteSnapshot(..)
   , HouseholdLoadError(..)
@@ -64,7 +63,6 @@ import HKernel.Household.BudgetMovement
   , admitHouseholdBudgetMovementJournalFromResolvedJournal
   , admitHouseholdBudgetMovementJournalFromResolvedSources
   , householdBudgetMovementJournalMovements
-  , householdBudgetMovementJournalValue
   )
 import HKernel.Household.Config
   ( HouseholdConfiguration
@@ -155,12 +153,6 @@ data HouseholdState = HouseholdState
   , householdStateIssues                    :: [HouseholdIssue]
   , householdStateDailyScope                :: DailyTargetScope
   } deriving (Eq, Show)
-
--- | Retained physical allocation-journal projection. The source has not yet been
--- renamed, but it no longer feeds a Budget calculation domain.
-householdStateBudgetJournal :: HouseholdState -> Journal
-householdStateBudgetJournal =
-  householdBudgetMovementJournalValue . householdStateBudgetMovementJournal
 
 householdStateBudgetMovements :: HouseholdState -> [HouseholdBudgetMovement]
 householdStateBudgetMovements =

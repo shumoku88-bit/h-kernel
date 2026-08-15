@@ -54,6 +54,8 @@ HouseholdRoot
 
 `household.toml` の `[envelope-history]` は `HouseholdConfiguration` の opaque side fieldとして意味付けしない。同じ physical source から `HKernel.Household.EnvelopeHistory` が history を別 owner として admit する。
 
+shared canonical `household.toml` に残る `plan-destination-accounts` は source compatibility coordinate として `HKernel.Household.Config` が Account syntax を検証するが、`HouseholdPolicy` には保存しない。non-Expense target の current authority は stable `PlanId` Fulfillment routing である。physical key 自体の撤去は、bqn-ledger admission と canonical source を含む cross-engine cutover として別に行う。
+
 Account registry は Actual、Plan、Budget Journal と policy 上の Account reference を照合する。source family ごとの admission failure を欠落値や推測へ変換しない。
 
 ## Journal root observation
@@ -68,7 +70,7 @@ exact root Text
   -> named domain admission
 ```
 
-Budget Journal の root transaction-source evidence は admission fence に使うが、#279 以降 `HouseholdBudgetMovementJournal` の semantic state として保持しない。
+Budget Journal の resolved `Journal` と root transaction-source evidence は admission fence に使うが、admission後の `HouseholdBudgetMovementJournal` は ordered `HouseholdBudgetMovement` だけを保持する。parser-owned JournalをHousehold semantic stateへ二重保持しない。
 
 Included Account declarations は resolved Journal へ寄与できる。一方、included transaction が root-local transaction のように紛れ込むことは count / semantic alignment fence で拒否する。
 
@@ -85,6 +87,8 @@ Included Account declarations は resolved Journal へ寄与できる。一方�
 - `issues.tsv`
 
 これは generic repository/session abstraction ではない。具体的な coordinated write が同一 observation を必要とする source だけを保持する。
+
+`budget.journal` の exact root bytes は manual Budget movement publication の stale-source check と complete-source re-admission のために保持する。resolved Journal semantic stateを保持する理由にはしない。
 
 ## Retired migration sources
 
@@ -142,6 +146,7 @@ Report が source basename、retired TSV parser、Budget aggregate を再所有�
 - canonical source の private ownership を変えない
 - write capability から writer authority を推測しない
 - `HouseholdWriteSnapshot` の同一 observation boundary を崩さない
+- shared physical compatibility key を silent ignore しない
 - source-local failure を silent fallback へ変換しない
 - generic source parser、generic repository/session、generic event frameworkを先回りして作らない
 - completed migration adapter を「念のため」current application path へ戻さない

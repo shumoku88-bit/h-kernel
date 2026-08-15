@@ -5,13 +5,11 @@
 --
 -- The accounting Journal parser owns syntax, Account declarations, exact
 -- amounts, balancing, and root source coordinates. This module adds only the
--- household Budget movement shape. Retained TSV admission remains a
--- compatibility adapter.
+-- household Budget movement shape.
 module HKernel.Household.BudgetMovement
   ( HouseholdBudgetMovement(..)
   , householdBudgetMovement
   , HouseholdBudgetMovementJournal
-  , householdBudgetMovementJournalValue
   , householdBudgetMovementJournalMovements
   , HouseholdBudgetMovementJournalError(..)
   , admitHouseholdBudgetMovementJournal
@@ -83,12 +81,11 @@ householdBudgetMovement = HouseholdBudgetMovement
 
 -- | One admitted native @budget.journal@ observation.
 --
--- The resolved Journal owns accounting meaning. Ordered movements own the
--- household Budget projection. Root transaction sources are used only as an
--- admission fence and are not retained as household semantic state.
-data HouseholdBudgetMovementJournal = HouseholdBudgetMovementJournal
-  { householdBudgetMovementJournalValue     :: Journal
-  , householdBudgetMovementJournalMovements :: [HouseholdBudgetMovement]
+-- The resolved Journal is parser-owned admission evidence. Household state keeps
+-- only the ordered movement projection after all root/source alignment fences
+-- have succeeded.
+newtype HouseholdBudgetMovementJournal = HouseholdBudgetMovementJournal
+  { householdBudgetMovementJournalMovements :: [HouseholdBudgetMovement]
   } deriving (Eq, Show)
 
 -- | Privacy-preserving failures to admit one native Budget Journal observation.
@@ -105,10 +102,6 @@ data HouseholdBudgetMovementJournalError
 
 -- | Admit a validated accounting Journal as an ordered sequence of household
 -- Budget movements.
---
--- This source-independent projection remains useful to compatibility callers.
--- Canonical native loading should prefer a root-evidence admission so source
--- coordinates and movement meaning remain one observation.
 --
 -- Posting order is meaningful at this boundary: posting 1 is @from@ and posting
 -- 2 is @to@. This preserves the source-independent movement value even for a
@@ -156,9 +149,6 @@ admitHouseholdBudgetMovementJournal journal =
 
 -- | Admit one resolved Budget Journal together with the exact root bytes from
 -- which root-local transaction evidence was observed.
---
--- This compatibility entry point reparses the supplied root Text, then delegates
--- to the same parser-owned source admission used by canonical filesystem loading.
 admitHouseholdBudgetMovementJournalFromResolvedJournal
   :: Journal
   -> Text
@@ -174,7 +164,7 @@ admitHouseholdBudgetMovementJournalFromResolvedJournal journal rootSource = do
     (journalDocumentTransactionSources document)
 
 -- | Admit Budget movement meaning from parser-owned root transaction evidence
--- retained by the same loading observation as the resolved Journal.
+-- retained by the same loading observation.
 --
 -- Included Account declarations may contribute to the resolved Journal, but a
 -- hidden included transaction cannot silently become a Budget movement. The
@@ -203,10 +193,7 @@ admitHouseholdBudgetMovementJournalFromResolvedSources journal sources = do
       Just errors -> Left errors
       Nothing -> Right ()
   movements <- admitHouseholdBudgetMovementJournal journal
-  pure HouseholdBudgetMovementJournal
-    { householdBudgetMovementJournalValue = journal
-    , householdBudgetMovementJournalMovements = movements
-    }
+  pure (HouseholdBudgetMovementJournal movements)
 
 -- | Privacy-preserving rendering rejection. The transaction index identifies
 -- the coordinate without retaining source text.

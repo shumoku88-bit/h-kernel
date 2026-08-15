@@ -63,6 +63,11 @@ main = do
     "pre-cutover household.toml remains valid without inventing a Commodity fallback"
     Nothing
     (householdConfigurationPrimaryCommodity preCutoverConfiguration)
+  assertTextErrorsContain
+    "retained Plan destination syntax remains source-validated"
+    "plan-destination-accounts[0]"
+    (parseHouseholdConfiguration
+      envelopePolicy backingPolicy currentExpenses invalidPlanDestinationHouseholdConfig)
 
   assertEqual "eligible Asset policy is distinct from Plan obligations"
     (Set.singleton cash)
@@ -252,12 +257,28 @@ nativeHouseholdConfigWithoutMoney = T.unlines
   , "[[budget.envelopes]]"
   , "id = \"daily\""
   , "allocation-account = \"budget:daily\""
+  , "plan-destination-accounts = [\"assets:cash\"]"
   , ""
   , "[daily-target]"
   , ""
   , "[[daily-target.assets]]"
   , "id = \"cash\""
   , "account = \"assets:cash\""
+  ]
+
+invalidPlanDestinationHouseholdConfig :: T.Text
+invalidPlanDestinationHouseholdConfig = T.unlines
+  [ "[cycle]"
+  , "mode = \"income-anchor\""
+  , "income-account = \"income:benefit\""
+  , ""
+  , "[budget]"
+  , "unassigned-accounts = [\"budget:unassigned\"]"
+  , ""
+  , "[[budget.envelopes]]"
+  , "id = \"daily\""
+  , "allocation-account = \"budget:daily\""
+  , "plan-destination-accounts = [\" bad-account \" ]"
   ]
 
 nativePlanJournal :: T.Text
@@ -329,6 +350,20 @@ assertEqual label expected actual
   | expected == actual = putStrLn ("  [PASS] " ++ label)
   | otherwise = failTest label
       ("expected: " ++ show expected ++ ", but got: " ++ show actual)
+
+assertTextErrorsContain
+  :: String
+  -> T.Text
+  -> Either [T.Text] value
+  -> IO ()
+assertTextErrorsContain label expected result = case result of
+  Left errors
+    | any (expected `T.isInfixOf`) errors ->
+        putStrLn ("  [PASS] " ++ label)
+    | otherwise -> failTest label
+        ("expected diagnostic containing " ++ T.unpack expected
+          ++ ", but got: " ++ show errors)
+  Right _ -> failTest label "unexpectedly accepted invalid compatibility syntax"
 
 assertLeftSatisfies
   :: Show success
