@@ -103,7 +103,6 @@ parseLocatedRow (lineNumber, line) =
         transfer <- mapFieldError lineNumber InvalidEnvelopeEntitlementTransfer
           (mkEnvelopeEntitlementTransfer
             effectiveDay
-            period
             fromEndpoint
             toEndpoint
             (mkAmount commodity quantity)
@@ -152,12 +151,11 @@ historyErrorLine
   -> Int
 historyErrorLine locatedTransfers historyError =
   case historyError of
-    EnvelopeEntitlementBecameNegative period envelope commodity effectiveDay _ ->
+    EnvelopeEntitlementBecameNegative envelope commodity effectiveDay _ ->
       maximum
         (1 :
           [ lineNumber
           | (lineNumber, transfer) <- locatedTransfers
-          , entitlementTransferPeriod transfer == period
           , entitlementTransferDate transfer == effectiveDay
           , amountCommodity (entitlementTransferAmount transfer) == commodity
           , endpointNames envelope (entitlementTransferFrom transfer)

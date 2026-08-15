@@ -22,14 +22,13 @@ import HKernel.Money
   , negateQuantity
   , zeroQuantity
   )
-import HKernel.Period (Period)
 
 newtype EnvelopeEntitlementHistory = EnvelopeEntitlementHistory
   { envelopeEntitlementHistoryTransfers :: [EnvelopeEntitlementTransfer]
   } deriving (Eq, Show)
 
 data EnvelopeEntitlementHistoryError
-  = EnvelopeEntitlementBecameNegative Period EnvelopeId Commodity Day Quantity
+  = EnvelopeEntitlementBecameNegative EnvelopeId Commodity Day Quantity
   deriving (Eq, Show)
 
 mkEnvelopeEntitlementHistory
@@ -42,8 +41,7 @@ mkEnvelopeEntitlementHistory transfers =
   where
     errors = concatMap check (Map.toAscList histories)
     histories = Map.fromListWith (Map.unionWith addQuantity)
-      [ ( ( entitlementTransferPeriod transfer
-          , envelope
+      [ ( ( envelope
           , amountCommodity amount
           )
         , Map.singleton (entitlementTransferDate transfer) delta
@@ -63,12 +61,12 @@ mkEnvelopeEntitlementHistory transfers =
           Unallocated -> []
           Spendable envelope -> [(envelope, quantity)]
 
-    check ((period, envelope, commodity), dated) =
+    check ((envelope, commodity), dated) =
       case firstBelowZero dated of
         Nothing -> []
         Just (effectiveDay, quantity) ->
           [EnvelopeEntitlementBecameNegative
-            period envelope commodity effectiveDay quantity]
+            envelope commodity effectiveDay quantity]
 
 firstBelowZero :: Map Day Quantity -> Maybe (Day, Quantity)
 firstBelowZero =

@@ -114,11 +114,46 @@ main = do
       narrowPlans = mustRight (admitPlanJournal plans)
       movements =
         [ HouseholdBudgetMovement
+            { householdBudgetMovementDate = fromGregorian 2026 6 15
+            , householdBudgetMovementMemo = "June grant"
+            , householdBudgetMovementFrom = unassigned
+            , householdBudgetMovementTo = foodAllocation
+            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 50)
+            }
+        , HouseholdBudgetMovement
+            { householdBudgetMovementDate = fromGregorian 2026 7 20
+            , householdBudgetMovementMemo = "July release"
+            , householdBudgetMovementFrom = foodAllocation
+            , householdBudgetMovementTo = unassigned
+            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 10)
+            }
+        , HouseholdBudgetMovement
+            { householdBudgetMovementDate = fromGregorian 2026 7 25
+            , householdBudgetMovementMemo = "legacy expense execution"
+            , householdBudgetMovementFrom = foodAllocation
+            , householdBudgetMovementTo = spent
+            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 5)
+            }
+        , HouseholdBudgetMovement
+            { householdBudgetMovementDate = fromGregorian 2026 7 26
+            , householdBudgetMovementMemo = "legacy refund execution"
+            , householdBudgetMovementFrom = spent
+            , householdBudgetMovementTo = foodAllocation
+            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 5)
+            }
+        , HouseholdBudgetMovement
             { householdBudgetMovementDate = fromGregorian 2026 8 1
             , householdBudgetMovementMemo = "food entitlement"
             , householdBudgetMovementFrom = unassigned
             , householdBudgetMovementTo = foodAllocation
             , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 100)
+            }
+        , HouseholdBudgetMovement
+            { householdBudgetMovementDate = fromGregorian 2026 8 15
+            , householdBudgetMovementMemo = "future grant after observation"
+            , householdBudgetMovementFrom = unassigned
+            , householdBudgetMovementTo = foodAllocation
+            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 20)
             }
         ]
       expenseRouting = mustRight (mkExpenseRoutingHistoryWithInitial
@@ -143,16 +178,16 @@ main = do
 
   assertEqual "role-neutral Plan stays out of narrow outgoing report subset"
     [] (admittedOutgoingPlanValues narrowPlans)
-  assertEqual "entitlement comes from allocation movement"
-    (one jpy 100) (envelopeEntitlementBalance foodId entitlement)
+  assertEqual "entitlement carries pre-period grant and release while inverting legacy spent and cutting off future"
+    (one jpy 140) (envelopeEntitlementBalance foodId entitlement)
   assertEqual "charges are native Actual evidence"
     (one jpy 40) (consumptionCharges (envelopeConsumptionFor foodId consumption))
   assertEqual "refunds remain gross native evidence"
     (one jpy 10) (consumptionRefunds (envelopeConsumptionFor foodId consumption))
   assertEqual "Remaining is entitlement minus net consumption and fulfillment"
-    (one jpy 70) (envelopeRemainingFor foodId remaining)
+    (one jpy 110) (envelopeRemainingFor foodId remaining)
   assertEqual "PlanId-routed Asset transfer reserves native Headroom"
-    (one jpy 50) (envelopeHeadroomFor foodId headroom)
+    (one jpy 90) (envelopeHeadroomFor foodId headroom)
 
 one :: Commodity -> Integer -> Balance
 one commodity value = singletonBalance (mkAmount commodity (quantityFromInteger value))

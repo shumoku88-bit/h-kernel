@@ -152,7 +152,7 @@ sourceDiagnostics = do
     (\err -> envelopeEntitlementTSVErrorLine err == 3
       && case envelopeEntitlementTSVErrorReason err of
         InvalidEnvelopeEntitlementHistory
-          (EnvelopeEntitlementBecameNegative _ _ _ _ _) -> True
+          (EnvelopeEntitlementBecameNegative _ _ _ _) -> True
         _ -> False)
     (parseEnvelopeEntitlementTSV (T.unlines
       [ header

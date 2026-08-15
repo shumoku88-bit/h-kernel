@@ -9,7 +9,6 @@ import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Envelope.EntitlementHistory
 import HKernel.Envelope.EntitlementTransfer
 import HKernel.Money
-import HKernel.Period (Period, mkPeriod)
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -24,10 +23,10 @@ transferLaws = do
       amount = jpy 1000
       allocation = mustRight
         (mkEnvelopeEntitlementTransfer
-          (day 15) period Unallocated (Spendable food) amount "initial")
+          (day 15) Unallocated (Spendable food) amount "initial")
       moved = mustRight
         (mkEnvelopeEntitlementTransfer
-          (day 16) period (Spendable food) (Spendable stock) amount "move")
+          (day 16) (Spendable food) (Spendable stock) amount "move")
   equal "Unallocated is an endpoint, not an EnvelopeId"
     Unallocated
     (entitlementTransferFrom allocation)
@@ -36,16 +35,13 @@ transferLaws = do
     (entitlementTransferFrom moved, entitlementTransferTo moved)
   left "same endpoint is rejected"
     (mkEnvelopeEntitlementTransfer
-      (day 16) period (Spendable food) (Spendable food) amount "same")
+      (day 16) (Spendable food) (Spendable food) amount "same")
   left "zero amount is rejected"
     (mkEnvelopeEntitlementTransfer
-      (day 16) period Unallocated (Spendable food) (jpy 0) "zero")
+      (day 16) Unallocated (Spendable food) (jpy 0) "zero")
   left "negative amount is rejected"
     (mkEnvelopeEntitlementTransfer
-      (day 16) period Unallocated (Spendable food) (jpy (-1)) "negative")
-  left "date outside explicit Period is rejected"
-    (mkEnvelopeEntitlementTransfer
-      (fromGregorian 2026 10 15) period Unallocated (Spendable food) amount "outside")
+      (day 16) Unallocated (Spendable food) (jpy (-1)) "negative")
 
 historyLaws :: IO ()
 historyLaws = do
@@ -53,10 +49,10 @@ historyLaws = do
       stock = mustRight (mkEnvelopeId "stock-food")
       grant n effectiveDay note = mustRight
         (mkEnvelopeEntitlementTransfer
-          effectiveDay period Unallocated (Spendable food) (jpy n) note)
+          effectiveDay Unallocated (Spendable food) (jpy n) note)
       move n effectiveDay note = mustRight
         (mkEnvelopeEntitlementTransfer
-          effectiveDay period (Spendable food) (Spendable stock) (jpy n) note)
+          effectiveDay (Spendable food) (Spendable stock) (jpy n) note)
       initial = grant 10000 (day 15) "initial"
       laterMove = move 5000 (day 32) "later"
       sourceOrder = [laterMove, initial]
@@ -81,8 +77,7 @@ historyLaws = do
     (mkEnvelopeEntitlementHistory [grant 1000000 (day 15) "large claim"])
   case mkEnvelopeEntitlementHistory overdrawn of
     Left errors -> case NonEmpty.toList errors of
-      [EnvelopeEntitlementBecameNegative actualPeriod actualEnvelope actualCommodity actualDay actualQuantity] -> do
-        equal "negative error retains Period" period actualPeriod
+      [EnvelopeEntitlementBecameNegative actualEnvelope actualCommodity actualDay actualQuantity] -> do
         equal "negative error retains Envelope" food actualEnvelope
         equal "negative error retains commodity" jpyCommodity actualCommodity
         equal "negative error retains effective date" (day 32) actualDay
@@ -90,10 +85,6 @@ historyLaws = do
           (quantityFromInteger (-5000)) actualQuantity
       other -> failTest ("unexpected errors: " ++ show other)
     Right value -> failTest ("unexpectedly accepted: " ++ show value)
-
-period :: Period
-period = mustRight
-  (mkPeriod (fromGregorian 2026 8 15) (fromGregorian 2026 10 15))
 
 day :: Integer -> Day
 day n = addDays n (fromGregorian 2026 8 1)

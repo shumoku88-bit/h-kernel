@@ -20,7 +20,6 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time.Calendar (Day)
-import HKernel.Account (Account)
 import HKernel.Actual.Journal (ActualJournal)
 import HKernel.Envelope.Commitment
   ( EnvelopeCommitment
@@ -80,7 +79,7 @@ import HKernel.Household.Policy
   , householdUnassignedBudgetAccounts
   )
 import HKernel.Money (amountQuantity, negateAmount, zeroQuantity)
-import HKernel.Period (Period, periodContains)
+import HKernel.Period (Period)
 import HKernel.Plan.Journal (PlanJournal)
 
 data HouseholdEnvelopeObservation = HouseholdEnvelopeObservation
@@ -125,7 +124,7 @@ deriveHouseholdEnvelopeObservation
   -> [HouseholdBudgetMovement]
   -> Either (NonEmpty HouseholdEnvelopeError) HouseholdEnvelopeObservation
 deriveHouseholdEnvelopeObservation observedThrough period actual plans policy accountPolicy expenseRouting fulfillmentRouting movements = do
-  history <- projectEntitlementHistory period policy accountPolicy movements
+  history <- projectEntitlementHistory policy accountPolicy movements
   entitlement <- singleLeft HouseholdEnvelopeEntitlementObservationError
     (observeEnvelopeEntitlement period observedThrough history)
   consumption <- singleLeft HouseholdEnvelopeConsumptionError
@@ -153,12 +152,11 @@ deriveHouseholdEnvelopeObservation observedThrough period actual plans policy ac
     }
 
 projectEntitlementHistory
-  :: Period
-  -> HouseholdPolicy
+  :: HouseholdPolicy
   -> HouseholdAccountPolicy
   -> [HouseholdBudgetMovement]
   -> Either (NonEmpty HouseholdEnvelopeError) EnvelopeEntitlementHistory
-projectEntitlementHistory period policy accountPolicy movements =
+projectEntitlementHistory policy accountPolicy movements =
   case partitionEithers (zipWith projectMovement [1..] movements) of
     ([], maybeTransfers) ->
       mapLeft (fmap HouseholdEnvelopeEntitlementHistoryError)
@@ -170,7 +168,6 @@ projectEntitlementHistory period policy accountPolicy movements =
     kinds = householdBudgetKindByAccount accountPolicy
 
     projectMovement transactionIndex movement
-      | not (periodContains period (householdBudgetMovementDate movement)) = Right Nothing
       | amountQuantity sourceAmount == zeroQuantity = Right Nothing
       | otherwise = do
           let (fromAccount, toAccount, amount)
@@ -214,7 +211,6 @@ projectEntitlementHistory period policy accountPolicy movements =
         makeTransfer fromNative toNative =
           case mkEnvelopeEntitlementTransfer
               (householdBudgetMovementDate movement)
-              period
               fromNative
               toNative
               amount
