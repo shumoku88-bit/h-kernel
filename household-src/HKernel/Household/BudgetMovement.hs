@@ -5,16 +5,14 @@
 --
 -- The accounting Journal parser owns syntax, Account declarations, exact
 -- amounts, balancing, and root source coordinates. This module adds only the
--- household Budget movement shape and retains the root transaction evidence
--- that belongs to the same admitted observation. Retained TSV admission remains
--- a compatibility adapter.
+-- household Budget movement shape. Retained TSV admission remains a
+-- compatibility adapter.
 module HKernel.Household.BudgetMovement
   ( HouseholdBudgetMovement(..)
   , householdBudgetMovement
   , HouseholdBudgetMovementJournal
   , householdBudgetMovementJournalValue
   , householdBudgetMovementJournalMovements
-  , householdBudgetMovementJournalTransactionSources
   , HouseholdBudgetMovementJournalError(..)
   , admitHouseholdBudgetMovementJournal
   , admitHouseholdBudgetMovementJournalFromResolvedJournal
@@ -42,9 +40,6 @@ import HKernel.Journal
   , JournalTransactionSource
   , journalAccountRegistry
   , journalDocumentTransactionSources
-  , journalMetadataKey
-  , journalMetadataValue
-  , journalTransactionSourceMetadata
   , journalTransactionSourceTransaction
   , journalTransactions
   , parseJournalDocument
@@ -89,33 +84,12 @@ householdBudgetMovement = HouseholdBudgetMovement
 -- | One admitted native @budget.journal@ observation.
 --
 -- The resolved Journal owns accounting meaning. Ordered movements own the
--- household Budget projection. Root transaction source evidence is retained so
--- later operations such as Plan completion linkage can inspect metadata without
--- parsing the same root bytes again.
+-- household Budget projection. Root transaction sources are used only as an
+-- admission fence and are not retained as household semantic state.
 data HouseholdBudgetMovementJournal = HouseholdBudgetMovementJournal
-  { householdBudgetMovementJournalValue              :: Journal
-  , householdBudgetMovementJournalMovements          :: [HouseholdBudgetMovement]
-  , householdBudgetMovementJournalTransactionSources :: [JournalTransactionSource]
-  } deriving (Show)
-
--- Source line numbers and lexical columns are diagnostic coordinates rather
--- than household Budget meaning. Equality therefore compares the admitted
--- Journal/movements and ordered metadata meaning, not physical coordinates.
-instance Eq HouseholdBudgetMovementJournal where
-  left == right =
-    householdBudgetMovementJournalValue left
-      == householdBudgetMovementJournalValue right
-      && householdBudgetMovementJournalMovements left
-        == householdBudgetMovementJournalMovements right
-      && map sourceMetadataMeaning
-          (householdBudgetMovementJournalTransactionSources left)
-        == map sourceMetadataMeaning
-          (householdBudgetMovementJournalTransactionSources right)
-    where
-      sourceMetadataMeaning source =
-        [ (journalMetadataKey entry, journalMetadataValue entry)
-        | entry <- journalTransactionSourceMetadata source
-        ]
+  { householdBudgetMovementJournalValue     :: Journal
+  , householdBudgetMovementJournalMovements :: [HouseholdBudgetMovement]
+  } deriving (Eq, Show)
 
 -- | Privacy-preserving failures to admit one native Budget Journal observation.
 -- Diagnostics retain only structural coordinates or parser-owned errors, never
@@ -181,7 +155,7 @@ admitHouseholdBudgetMovementJournal journal =
          ]
 
 -- | Admit one resolved Budget Journal together with the exact root bytes from
--- which root-local metadata evidence was observed.
+-- which root-local transaction evidence was observed.
 --
 -- This compatibility entry point reparses the supplied root Text, then delegates
 -- to the same parser-owned source admission used by canonical filesystem loading.
@@ -203,7 +177,7 @@ admitHouseholdBudgetMovementJournalFromResolvedJournal journal rootSource = do
 -- retained by the same loading observation as the resolved Journal.
 --
 -- Included Account declarations may contribute to the resolved Journal, but a
--- hidden included transaction cannot silently acquire root-local metadata. The
+-- hidden included transaction cannot silently become a Budget movement. The
 -- count fence rejects missing/extra sources, while the semantic fence rejects
 -- equal-count evidence from a different transaction observation.
 admitHouseholdBudgetMovementJournalFromResolvedSources
@@ -232,7 +206,6 @@ admitHouseholdBudgetMovementJournalFromResolvedSources journal sources = do
   pure HouseholdBudgetMovementJournal
     { householdBudgetMovementJournalValue = journal
     , householdBudgetMovementJournalMovements = movements
-    , householdBudgetMovementJournalTransactionSources = sources
     }
 
 -- | Privacy-preserving rendering rejection. The transaction index identifies
