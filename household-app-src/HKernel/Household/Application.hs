@@ -144,6 +144,7 @@ data HouseholdState = HouseholdState
   , householdStateBudgetMovementJournal     :: HouseholdBudgetMovementJournal
   , householdStateEnvelopePolicy            :: CurrentEnvelopePolicy
   , householdStateCurrentExpenseAssignments :: CurrentExpenseAssignments
+  , householdStateConfiguration             :: HouseholdConfiguration
   , householdStateEnvelopeHistory           :: HouseholdEnvelopeHistory
   , householdStatePolicy                    :: HouseholdPolicy
   , householdStateReportConfig              :: ReportConfiguration
@@ -371,6 +372,7 @@ assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJo
     , householdStateBudgetMovementJournal = budgetMovementJournal
     , householdStateEnvelopePolicy = envelopePolicy
     , householdStateCurrentExpenseAssignments = currentExpenses
+    , householdStateConfiguration = configuration
     , householdStateEnvelopeHistory = envelopeHistory
     , householdStatePolicy = policy
     , householdStateReportConfig = reportConfig
