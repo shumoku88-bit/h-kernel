@@ -139,6 +139,10 @@ The current canonical `budget.journal` and retained Budget Account roles are a
 source adapter into `EnvelopeEntitlementHistory`. Opening, execution, and
 unassigned Budget Account vocabulary must not leak beyond that adapter.
 
+Legacy `Envelope <-> spent` execution movements remain readable source-era
+records, but the Entitlement adapter deliberately ignores them. Plan completion
+no longer appends new execution movements to `budget.journal`.
+
 ## Expense routing and Consumption
 
 Expense consumption is derived from admitted Actual Expense postings plus
@@ -173,6 +177,9 @@ configuration.
 A completed routed Plan produces `EnvelopeFulfillment` from Plan/Actual evidence.
 Actual quantities remain authoritative. Reversal chains cancel or restore root
 fulfillment evidence without re-inferring intent from Accounts.
+
+Plan completion does not publish a second Budget execution fact. Fulfillment is
+an observation of Plan/Actual evidence, not a `budget.journal` writer action.
 
 ## Commitment
 
@@ -302,19 +309,24 @@ facts.
 
 ## Retained source vocabulary
 
-The following are deliberately source or writer compatibility debt, not native
-Envelope concepts:
+The following are deliberately source or compatibility debt, not native Envelope
+concepts:
 
 - physical `budget.journal` and `budget.toml` names,
 - retained `Budget` AccountType and `budget:*` Accounts,
 - `HouseholdBudgetMovement*` writer vocabulary,
 - opening, spent, and unassigned Budget Account roles,
-- `PlanBudgetSync`,
+- the inert `PlanBudgetSync` API/TUI compatibility shell,
 - legacy `plan-destination-accounts` syntax.
 
 `plan-destination-accounts` is no longer Envelope claim authority. Stable
 `PlanId` fulfillment routing owns that meaning. Do not move destination-Account
 intent under a new compatibility type.
+
+`PlanBudgetSync` no longer has writer authority. Its temporary API shell returns
+without constructing or publishing `budget.journal` source. Remove that shell
+when the remaining TUI call sites are simplified; do not give it replacement
+routing semantics.
 
 Do not rename physical sources first and repair semantics later. Replace source
 admission and writer responsibilities with native owners, qualify the
@@ -322,10 +334,9 @@ replacement, then retire the old source contract.
 
 ## Next architectural work
 
-After the current-owner split, the remaining bounded work is:
+After the current-owner and writer cutovers, the remaining bounded work is:
 
-1. retire `plan-destination-accounts` from active Household policy once its
-   source/writer compatibility obligations are explicitly closed,
+1. remove the inert `PlanBudgetSync` API/TUI shell and stale retry affordance,
 2. continue removing retained Budget-Account adapters only after equivalent
    native source admission and writer paths are qualified,
 3. consider physical source renames only after semantics and writer authority no
