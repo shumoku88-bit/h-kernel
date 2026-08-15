@@ -26,6 +26,7 @@ import HKernel.Envelope.Policy
   ( Pacing(..)
   , defineEnvelope
   , mkCurrentEnvelopePolicy
+  , mkCurrentExpenseAssignments
   , mkEnvelopeLabel
   )
 import HKernel.Editor.SourcePublication
@@ -336,16 +337,14 @@ syncHouseholdPolicy =
         [defineBackingPool backingPool [account "assets:backing"]]
         [assignEnvelopeBackingPool envelope backingPool])
       envelopePolicy = mustRight (mkCurrentEnvelopePolicy
-        [ defineEnvelope
-            envelope
-            label
-            Daily
-            [account "expenses:fixed"]
-        ])
+        [defineEnvelope envelope label Daily])
+      currentExpenses = mustRight (mkCurrentExpenseAssignments
+        [(account "expenses:fixed", envelope)])
   in mustRight (mkHouseholdPolicy
       (incomeAnchorCyclePolicy (account "income:pension"))
       envelopePolicy
       backingPolicy
+      currentExpenses
       [ defineHouseholdEnvelopeCoordinates
           envelope
           (account "budget:daily")

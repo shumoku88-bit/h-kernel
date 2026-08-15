@@ -2,7 +2,7 @@
 
 ステータス: current architecture contract  
 Owner: canonical Household source shape、source role boundary、engine-neutral semantic contract  
-更新日: 2026-08-12
+更新日: 2026-08-15
 
 ## 目的
 
@@ -36,22 +36,24 @@ issues.tsv
 - `accounts.journal`: Account identity、AccountType、optional default Commodity
 - `actual.journal`: Actual Transaction、posting、durable identity、explicit completion/correction relation
 - `plan.journal`: future Plan、Plan identity、schedule、recurrence、lifecycle relation
-- `budget.journal`: ordered Budget decision/movementとprovenance
+- `budget.journal`: ordered retained allocation movementとprovenance
 
 ### Domain policy
 
-- `budget.toml`: general Budget policy。Envelope、pacing、backing pool、Expense assignmentを所有する
-- `household.toml`: household-specific policy。cycle、allocation Account、Plan destination、unassigned Accountなどを所有する
+- `budget.toml`: retained physical current-policy source boundary。current Envelope definition/presentation、current Expense assignment compatibility、current Backing topologyを供給するが、それらを一つのsemantic ownerにはしない
+- `household.toml`: household-specific policyとhistory。cycle、allocation Account、Plan destination、unassigned Account、effective-dated Envelope routing historyなどを所有する
+
+`budget.toml`のcurrent Expense assignmentはhistorical Expense routing authorityではない。current configから過去のroutingを再構成しない。
 
 ### Application policy
 
 - `report.toml`: typed Report query defaults、presentation、将来のnamed preset / ordered report setを所有する
 
-`report.toml`はAccount classification、Envelope membership、canonical source filename、Actual/Plan/Budget factを所有しない。
+`report.toml`はAccount classification、Envelope membership、canonical source filename、Actual/Plan/allocation factを所有しない。
 
 ### Notebook
 
-- `issues.tsv`: user-authored household notebook。Issueから会計factやBudget policyを暗黙生成しない
+- `issues.tsv`: user-authored household notebook。Issueから会計factやEnvelope policyを暗黙生成しない
 
 ## Engine-neutral semantic contract
 
@@ -66,7 +68,7 @@ canonical Household source
 
 - Haskellのconstructor、internal record shape、UI stateをsource contractへ保存しない
 - BQNのarray shape、rank、command argument shape、compatibility manifestをsource contractへ保存しない
-- Account identity、exact Quantity、Commodity、Plan identity、Actual identity、completion、reversal、Budget movement、provenance、policyなど、言語を越えて必要な意味をsource上で明示する
+- Account identity、exact Quantity、Commodity、Plan identity、Actual identity、completion、reversal、allocation movement、provenance、policyなど、言語を越えて必要な意味をsource上で明示する
 - 一方のengineが新しいsemantic coordinateへ未対応なら、推測やsilent ignoreをせずfail closedできる
 - engineごとのcanonical fork、同期copy、dual representationを作らない
 - reader compatibilityのために、先行engineのidentity / provenance contractを弱めない
@@ -96,7 +98,7 @@ explicit source pathを受け取るcompatibility / diagnostic entrypointが存�
 
 既存のtyped schemaがJournal-only Reportのquery defaultsとpresentationを所有する。Envelope、planned、cycle comparison、Daily Target、Issueなど新しいReport surfaceを追加する場合も、legacy execution argumentをgeneric arrayとして戻さず、typed requestとowner boundaryを先に確定する。
 
-source filename、Household Account classification、Envelope membership、Actual/Plan/Budget factをReport presetへ埋め込まない。
+source filename、Household Account classification、Envelope membership、Actual/Plan/allocation factをReport presetへ埋め込まない。
 
 ## Retained compatibility evidence
 

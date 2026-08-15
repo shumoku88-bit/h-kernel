@@ -9,34 +9,36 @@ import HKernel.Envelope.Config
   , renderCurrentEnvelopeConfiguration
   )
 import HKernel.Envelope.Policy
-  ( envelopeDefinitionExpenseAccounts
+  ( currentEnvelopePolicyDefinitions
+  , currentExpenseAssignmentPairs
   , envelopeDefinitionLabel
   , envelopeLabelText
-  , currentEnvelopePolicyDefinitions
   )
 
 main :: IO ()
 main = do
-  let (policy, backing) = mustRight (parseCurrentEnvelopeConfiguration source)
-      rendered = renderCurrentEnvelopeConfiguration policy backing
+  let (policy, backing, currentExpenses) =
+        mustRight (parseCurrentEnvelopeConfiguration source)
+      rendered = renderCurrentEnvelopeConfiguration policy backing currentExpenses
       reparsed = mustRight (parseCurrentEnvelopeConfiguration rendered)
 
   assertEqual
-    "current Envelope and Backing configuration round-trips as independent owners"
-    (policy, backing)
+    "current Envelope, Backing, and Expense assignment configuration round-trips as independent owners"
+    (policy, backing, currentExpenses)
     reparsed
 
   case currentEnvelopePolicyDefinitions policy of
-    [definition] -> do
+    [definition] ->
       assertEqual
         "current Envelope label stays presentation evidence"
         "Everyday"
         (envelopeLabelText (envelopeDefinitionLabel definition))
-      assertEqual
-        "current Expense assignment stays in the canonical policy owner"
-        1
-        (length (envelopeDefinitionExpenseAccounts definition))
     other -> error ("expected one Envelope definition, got: " ++ show other)
+
+  assertEqual
+    "current Expense assignment is admitted by its own owner"
+    1
+    (length (currentExpenseAssignmentPairs currentExpenses))
 
 source :: T.Text
 source = T.unlines
