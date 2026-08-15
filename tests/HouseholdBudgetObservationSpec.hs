@@ -76,11 +76,11 @@ main = do
         [defineBackingPool poolId [cash]]
         [assignEnvelopeBackingPool foodId poolId])
       envelopePolicy = mustRight (mkCurrentEnvelopePolicy
-        [ defineEnvelope foodId (mustRight (mkEnvelopeLabel "Food")) Daily [foodExpense] ]
-        backingPolicy)
+        [ defineEnvelope foodId (mustRight (mkEnvelopeLabel "Food")) Daily [foodExpense] ])
       policy = mustRight (mkHouseholdPolicy
         (incomeAnchorCyclePolicy income)
         envelopePolicy
+        backingPolicy
         [defineHouseholdEnvelopeCoordinates foodId foodAllocation []]
         [unassigned])
       accountPolicy = mustRight (mkHouseholdAccountPolicy
