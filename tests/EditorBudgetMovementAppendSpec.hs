@@ -69,8 +69,8 @@ testNativeBudgetMovement =
     registry = either (error . show) id (parseAccountJournal pathAwareAccounts)
     expectedBlock = T.unlines
       [ "2026-08-04 transfer"
-      , "    budget:from  -500 JPY"
-      , "    budget:to  500 JPY"
+      , "    budget:from    -500 JPY"
+      , "    budget:to    500 JPY"
       ]
 
 testNativeBudgetMovementRejectsNonBudget :: Bool
@@ -94,7 +94,7 @@ testNativeBudgetMovementRejectsNonBudget =
 testPathAwareJournalCommit :: IO Bool
 testPathAwareJournalCommit = do
   let rootPath = "tests/fixtures/test_editor_path_budget.journal"
-      accountsPath = "tests/fixtures/test_editor_path_accounts.journal"
+      accountsPath = "tests/fixtures/accounts.journal"
   cleanup rootPath
   cleanup accountsPath
   TIO.writeFile accountsPath pathAwareAccounts
@@ -113,7 +113,7 @@ testPathAwareJournalCommit = do
 testPathAwareJournalFailureRestores :: IO Bool
 testPathAwareJournalFailureRestores = do
   let rootPath = "tests/fixtures/test_editor_path_reject.journal"
-      accountsPath = "tests/fixtures/test_editor_path_accounts.journal"
+      accountsPath = "tests/fixtures/accounts.journal"
   cleanup rootPath
   cleanup accountsPath
   TIO.writeFile accountsPath pathAwareAccounts
@@ -157,16 +157,16 @@ pathAwareCandidate :: Text
 pathAwareCandidate = pathAwareRoot <> T.unlines
   [ ""
   , "2026-08-04 transfer"
-  , "    budget:from  -500 JPY"
-  , "    budget:to  500 JPY"
+  , "    budget:from    -500 JPY"
+  , "    budget:to    500 JPY"
   ]
 
 pathAwareInvalidCandidate :: Text
 pathAwareInvalidCandidate = pathAwareRoot <> T.unlines
   [ ""
   , "2026-08-04 invalid transfer"
-  , "    budget:from  -500 JPY"
-  , "    budget:unknown  500 JPY"
+  , "    budget:from    -500 JPY"
+  , "    budget:unknown    500 JPY"
   ]
 
 account value = either (error . show) id (mkAccount value)
