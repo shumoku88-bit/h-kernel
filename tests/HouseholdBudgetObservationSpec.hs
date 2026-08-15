@@ -29,7 +29,11 @@ import HKernel.Envelope.ExpenseRouting
   , InitialExpenseRoutingDecision(..)
   , mkExpenseRoutingHistoryWithInitial
   )
-import HKernel.Envelope.FulfillmentRouting (mkFulfillmentRoutingHistory)
+import HKernel.Envelope.FulfillmentRouting
+  ( FulfillmentRoute(..)
+  , FulfillmentRoutingDecision(..)
+  , mkFulfillmentRoutingHistory
+  )
 import HKernel.Envelope.Headroom (envelopeHeadroomFor)
 import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Envelope.Remaining (envelopeRemainingFor)
@@ -48,6 +52,7 @@ import HKernel.Household.EnvelopeObservation
 import HKernel.Household.Policy
 import HKernel.Money
 import HKernel.Period (mkPeriod)
+import HKernel.Plan (mkPlanId)
 import HKernel.Plan.Journal (parsePlanJournal)
 import System.Exit (exitFailure)
 
@@ -87,6 +92,7 @@ main = do
         [] [] [])
       declarations = T.unlines
         [ "account assets:cash", "  type: Asset"
+        , "account assets:savings", "  type: Asset"
         , "account income:pension", "  type: Income"
         , "account expenses:food", "  type: Expense"
         , "account budget:opening", "  type: Budget"
@@ -96,7 +102,10 @@ main = do
         ]
       actual = mustRight (parseActualJournal
         (declarations <> "\n2026-08-03 food\n  expenses:food  40 JPY\n  assets:cash  -40 JPY\n\n2026-08-04 refund\n  expenses:food  -10 JPY\n  assets:cash  10 JPY\n"))
-      plans = mustRight (parsePlanJournal declarations)
+      savingsPlanId = mustRight (mkPlanId "plan-save")
+      plans = mustRight (parsePlanJournal
+        (declarations <>
+          "\n2026-08-09 save\n  ; plan-id: plan-save\n  assets:savings  20 JPY\n  assets:cash  -20 JPY\n"))
       movements =
         [ HouseholdBudgetMovement
             { householdBudgetMovementDate = fromGregorian 2026 8 1
@@ -110,7 +119,14 @@ main = do
         [ InitialExpenseRoutingDecision
             foodExpense (ManagedByEnvelope foodId) "food initial route"
         ] [])
-      fulfillmentRouting = mustRight (mkFulfillmentRoutingHistory [])
+      fulfillmentRouting = mustRight (mkFulfillmentRoutingHistory
+        [ FulfillmentRoutingDecision
+            { fulfillmentRoutingEffectiveFrom = fromGregorian 2026 8 1
+            , fulfillmentRoutingPlanId = savingsPlanId
+            , fulfillmentRoutingRoute = FulfillsEnvelope foodId
+            , fulfillmentRoutingNote = "explicit savings intent"
+            }
+        ])
       observation = mustRight (deriveHouseholdEnvelopeObservation
         observed period actual plans policy accountPolicy
         expenseRouting fulfillmentRouting movements)
@@ -127,8 +143,8 @@ main = do
     (one jpy 10) (consumptionRefunds (envelopeConsumptionFor foodId consumption))
   assertEqual "Remaining is entitlement minus net consumption and fulfillment"
     (one jpy 70) (envelopeRemainingFor foodId remaining)
-  assertEqual "Headroom is native Remaining when no Plan is committed"
-    (one jpy 70) (envelopeHeadroomFor foodId headroom)
+  assertEqual "PlanId-routed Asset transfer reserves native Headroom"
+    (one jpy 50) (envelopeHeadroomFor foodId headroom)
 
 one :: Commodity -> Integer -> Balance
 one commodity value = singletonBalance (mkAmount commodity (quantityFromInteger value))
