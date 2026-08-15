@@ -67,6 +67,9 @@ newtype HouseholdCyclePolicy = IncomeAnchorCyclePolicy
 incomeAnchorCyclePolicy :: Account -> HouseholdCyclePolicy
 incomeAnchorCyclePolicy = IncomeAnchorCyclePolicy
 
+-- | Current canonical allocation coordinates. The retained
+-- @plan-destination-accounts@ list is parsed for source compatibility only; it
+-- no longer contributes Plan-to-Envelope meaning.
 data HouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
   { householdEnvelopeCoordinateId            :: EnvelopeId
   , householdEnvelopeAllocationAccount       :: Account
@@ -95,8 +98,6 @@ data HouseholdPolicy = HouseholdPolicy
   , householdCurrentExpenseAssignments   :: CurrentExpenseAssignments
   , householdEnvelopeOrder               :: [EnvelopeId]
   , householdAllocationEnvelopes         :: Map Account EnvelopeId
-  , householdPlanDestinationEnvelopes    :: Map Account EnvelopeId
-  , householdAdditionalPlanDestinations  :: Map Account EnvelopeId
   , householdUnassignedBudgetAccounts    :: Set Account
   , householdPolicyAccountPolicy         :: Maybe HouseholdAccountPolicy
   } deriving (Eq, Show)
@@ -124,8 +125,6 @@ mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy currentExpenses coord
       , householdCurrentExpenseAssignments = currentExpenses
       , householdEnvelopeOrder = map householdEnvelopeCoordinateId coordinates
       , householdAllocationEnvelopes = coordinateValues allocationObservation
-      , householdPlanDestinationEnvelopes = coordinateValues planObservation
-      , householdAdditionalPlanDestinations = coordinateValues additionalPlanObservation
       , householdUnassignedBudgetAccounts = Set.fromList unassignedAccounts
       , householdPolicyAccountPolicy = Nothing
       }
@@ -149,20 +148,6 @@ mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy currentExpenses coord
     allocationErrors =
       [ DuplicateAllocationAccount account firstEnvelope repeatedEnvelope
       | (account, firstEnvelope, repeatedEnvelope) <- coordinateConflicts allocationObservation ]
-    additionalPlanCoordinates =
-      [ (account, householdEnvelopeCoordinateId coordinate)
-      | coordinate <- canonicalCoordinates
-      , account <- householdEnvelopePlanDestinationAccounts coordinate ]
-    additionalPlanObservation = observeAssignments additionalPlanCoordinates
-    expensePlanCoordinates = currentExpenseAssignmentPairs currentExpenses
-    allocationPlanCoordinates =
-      [ (householdEnvelopeAllocationAccount coordinate, householdEnvelopeCoordinateId coordinate)
-      | coordinate <- canonicalCoordinates ]
-    planObservation = observeAssignments
-      (expensePlanCoordinates ++ allocationPlanCoordinates ++ additionalPlanCoordinates)
-    planErrors =
-      [ DuplicatePlanDestinationAccount account firstEnvelope repeatedEnvelope
-      | (account, firstEnvelope, repeatedEnvelope) <- coordinateConflicts planObservation ]
     unassignedObservation = observeCoordinates [(account, ()) | account <- unassignedAccounts]
     unassignedErrors =
       [ DuplicateUnassignedBudgetAccount account
@@ -173,10 +158,15 @@ mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy currentExpenses coord
       | (account, envelope) <- Map.toAscList (coordinateValues allocationObservation)
       , Set.member account (Set.fromList unassignedAccounts) ]
     errors = duplicateCoordinateErrors ++ unknownCoordinateErrors ++ missingCoordinateErrors
-      ++ allocationErrors ++ planErrors ++ presenceErrors ++ unassignedErrors ++ overlapErrors
+      ++ allocationErrors ++ presenceErrors ++ unassignedErrors ++ overlapErrors
 
+-- | Retained compatibility query for the legacy Budget-sync writer. Only the
+-- current Expense-assignment owner participates. The deprecated
+-- @plan-destination-accounts@ source coordinate and allocation Accounts are not
+-- Plan-to-Envelope authority.
 householdEnvelopeForPlanDestination :: Account -> HouseholdPolicy -> Maybe EnvelopeId
-householdEnvelopeForPlanDestination account = Map.lookup account . householdPlanDestinationEnvelopes
+householdEnvelopeForPlanDestination account policy =
+  lookup account (currentExpenseAssignmentPairs (householdCurrentExpenseAssignments policy))
 
 newtype AccountValidatedHouseholdPolicy = AccountValidatedHouseholdPolicy
   { accountValidatedHouseholdPolicy :: HouseholdPolicy
@@ -194,7 +184,6 @@ data HouseholdPolicyAccountError
   | HouseholdAllocationAccountNotBudget EnvelopeId Account AccountType
   | HouseholdUnassignedAccountUndeclared Account
   | HouseholdUnassignedAccountNotBudget Account AccountType
-  | HouseholdPlanDestinationUndeclared EnvelopeId Account
   deriving (Eq, Show)
 
 validateHouseholdPolicyAccounts
@@ -232,15 +221,9 @@ validateHouseholdPolicyAccounts registry policy =
       Just declaration
         | declaredAccountType declaration == Budget -> []
         | otherwise -> [HouseholdUnassignedAccountNotBudget account (declaredAccountType declaration)]
-    validateAdditionalPlanDestination (account, envelope) =
-      case lookupAccountDeclaration account registry of
-        Nothing -> [HouseholdPlanDestinationUndeclared envelope account]
-        Just _ -> []
     errors = currentExpenseErrors ++ backingErrors ++ validateCycle
       ++ concatMap validateAllocation (Map.toAscList (householdAllocationEnvelopes policy))
       ++ concatMap validateUnassigned (Set.toAscList (householdUnassignedBudgetAccounts policy))
-      ++ concatMap validateAdditionalPlanDestination
-        (Map.toAscList (householdAdditionalPlanDestinations policy))
 
 data CoordinateObservation key value = CoordinateObservation
   { coordinateValues :: Map key value
@@ -254,13 +237,3 @@ observeCoordinates = foldl' observe (CoordinateObservation Map.empty [])
       Nothing -> observation { coordinateValues = Map.insert key value (coordinateValues observation) }
       Just firstValue -> observation
         { coordinateConflicts = coordinateConflicts observation ++ [(key, firstValue, value)] }
-
-observeAssignments :: (Ord key, Eq value) => [(key, value)] -> CoordinateObservation key value
-observeAssignments = foldl' observe (CoordinateObservation Map.empty [])
-  where
-    observe observation (key, value) = case Map.lookup key (coordinateValues observation) of
-      Nothing -> observation { coordinateValues = Map.insert key value (coordinateValues observation) }
-      Just firstValue
-        | firstValue == value -> observation
-        | otherwise -> observation
-            { coordinateConflicts = coordinateConflicts observation ++ [(key, firstValue, value)] }
