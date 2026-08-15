@@ -52,7 +52,6 @@ import HKernel.Envelope
   , CurrentExpenseAssignments
   , CurrentExpenseAssignmentsReferenceError
   , currentEnvelopePolicyDefinitions
-  , currentExpenseAssignmentPairs
   , envelopeDefinitionId
   , validateCurrentExpenseAssignments
   )
