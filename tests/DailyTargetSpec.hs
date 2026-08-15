@@ -84,12 +84,12 @@ characterizeNativeSourceParity
   -> DailyTargetScope
   -> IO ()
 characterizeNativeSourceParity registry plan retainedScope = do
-  let envelopePolicy = mustRight
+  let (envelopePolicy, backingPolicy) = mustRight
         (parseCurrentEnvelopeConfiguration nativeEnvelopeConfig)
       householdConfiguration = mustRight
-        (parseHouseholdConfiguration envelopePolicy nativeHouseholdConfig)
+        (parseHouseholdConfiguration envelopePolicy backingPolicy nativeHouseholdConfig)
       preCutoverConfiguration = mustRight
-        (parseHouseholdConfiguration envelopePolicy nativeHouseholdConfigWithoutMoney)
+        (parseHouseholdConfiguration envelopePolicy backingPolicy nativeHouseholdConfigWithoutMoney)
       planJournal = mustRight (parsePlanJournal nativePlanJournal)
       obligationSelections = mustRight
         (admitDailyTargetPlanJournalSelections planJournal)
