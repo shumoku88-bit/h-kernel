@@ -16,6 +16,7 @@ import HKernel.Envelope
   ( Pacing(..)
   , defineEnvelope
   , mkCurrentEnvelopePolicy
+  , mkCurrentExpenseAssignments
   , mkEnvelopeLabel
   )
 import HKernel.Envelope.Consumption
@@ -76,11 +77,14 @@ main = do
         [defineBackingPool poolId [cash]]
         [assignEnvelopeBackingPool foodId poolId])
       envelopePolicy = mustRight (mkCurrentEnvelopePolicy
-        [ defineEnvelope foodId (mustRight (mkEnvelopeLabel "Food")) Daily [foodExpense] ])
+        [defineEnvelope foodId (mustRight (mkEnvelopeLabel "Food")) Daily])
+      currentExpenses = mustRight (mkCurrentExpenseAssignments
+        [(foodExpense, foodId)])
       policy = mustRight (mkHouseholdPolicy
         (incomeAnchorCyclePolicy income)
         envelopePolicy
         backingPolicy
+        currentExpenses
         [defineHouseholdEnvelopeCoordinates foodId foodAllocation []]
         [unassigned])
       accountPolicy = mustRight (mkHouseholdAccountPolicy
