@@ -85,6 +85,10 @@ data HouseholdPolicyError
   | HouseholdCoordinatesReferenceUnknownEnvelope EnvelopeId
   | HouseholdEnvelopeMissingCoordinates EnvelopeId
   | DuplicateAllocationAccount Account EnvelopeId EnvelopeId
+  -- Retained only for the physical config diagnostic surface while legacy
+  -- plan-destination syntax remains admitted. It is no longer produced by
+  -- Household semantic validation.
+  | DuplicatePlanDestinationAccount Account EnvelopeId EnvelopeId
   | HouseholdPolicyHasNoUnassignedBudgetAccounts
   | DuplicateUnassignedBudgetAccount Account
   | AllocationAccountAlsoUnassigned Account EnvelopeId
