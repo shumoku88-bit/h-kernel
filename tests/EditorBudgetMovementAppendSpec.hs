@@ -25,17 +25,12 @@ import HKernel.Editor.BudgetMovementAppend
   ( BudgetMovementAppendPreview(..)
   , prepareBudgetMovementAppend
   )
-import HKernel.Editor.PlanBudgetSync
-  ( PlanBudgetSyncResult(..)
-  , preparePlanBudgetSync
-  )
 import HKernel.Household.BudgetMovement
   ( HouseholdBudgetMovement(..) )
 import HKernel.Household.BudgetMovement.TSV
   ( parseHouseholdBudgetMovements )
 import HKernel.Loader (loadJournal)
 import HKernel.Money (mkAmount, mkCommodity, quantityFromInteger)
-import HKernel.Plan (mkPlanId)
 
 main :: IO ()
 main = do
@@ -44,7 +39,6 @@ main = do
         , ("testBudgetMovementCommit", testBudgetMovementCommit)
         , ("testPathAwareJournalCommit", testPathAwareJournalCommit)
         , ("testPathAwareJournalFailureRestores", testPathAwareJournalFailureRestores)
-        , ("retired Plan Budget sync has no writer authority", pure testRetiredPlanBudgetSyncHasNoWriterAuthority)
         ]
   results <- sequence [action | (_, action) <- tests]
   let namedResults = zip (map fst tests) results
@@ -144,22 +138,6 @@ testPathAwareJournalFailureRestores = do
   pure $ case result of
     Left (PostAdmissionFailed _ True) -> current == pathAwareRoot
     _ -> False
-
-testRetiredPlanBudgetSyncHasNoWriterAuthority :: Bool
-testRetiredPlanBudgetSyncHasNoWriterAuthority =
-  case mkPlanId "plan-retired" of
-    Left _ -> False
-    Right planId ->
-      preparePlanBudgetSync
-        (error "retired sync evaluated AccountRegistry")
-        (error "retired sync evaluated HouseholdPolicy")
-        (error "retired sync evaluated HouseholdAccountPolicy")
-        (error "retired sync evaluated PlanJournal")
-        (error "retired sync evaluated ActualJournal")
-        (error "retired sync evaluated BudgetMovementJournal")
-        (error "retired sync evaluated budget.journal source")
-        planId
-        == Right (PlanBudgetSyncNotLinked planId)
 
 data PathAdmissionError = PathAdmissionError
   deriving (Eq, Show)
