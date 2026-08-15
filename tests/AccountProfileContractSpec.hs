@@ -5,6 +5,7 @@ module Main (main) where
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
+import qualified Data.Text as T
 import HKernel.Account (Account, mkAccount)
 import HKernel.Backing.Identity (mkBackingPoolId)
 import HKernel.Backing.Policy
@@ -98,7 +99,7 @@ main = do
         [defineBackingPool poolId [liquid]]
         [assignEnvelopeBackingPool foodId poolId])
       currentExpenses = mustRight (mkCurrentExpenseAssignments [(expense, foodId)])
-      noLegacyRoleSource = Text.unlines
+      noLegacyRoleSource = T.unlines
         [ "[cycle]"
         , "mode = \"income-anchor\""
         , "income-account = \"income:pension\""
