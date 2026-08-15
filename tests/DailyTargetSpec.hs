@@ -19,6 +19,7 @@ import HKernel.Money
 import HKernel.Period
 import HKernel.Plan
 import HKernel.Plan.Journal (parsePlanJournal)
+import HKernel.Plan.Reservation (PlanReservationError(..))
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -108,23 +109,23 @@ characterizeNativeFailures registry plan cash wifi = do
       unknownObligation = selectDailyTargetObligation unknownId
         (declareDailyTargetObligation unknownPlanId Nothing)
 
-  assertLeftContaining
+  assertLeftSatisfies
     "eligible policy rejects non-Asset Accounts"
-    "DailyTargetEligibleAccountNotAsset"
+    isNonAsset
     (dailyTargetScopeFromSelections registry [plan] [nonAssetSelection] [])
 
-  assertLeftContaining
+  assertLeftSatisfies
     "obligation scope rejects unknown Plan references"
-    "UnknownDailyTargetObligation"
+    isUnknownPlan
     (dailyTargetScopeFromSelections
       registry [plan] [assetSelection] [unknownObligation])
 
   let overReservedSelections = mustRight
         (admitDailyTargetPlanJournalSelections
           (mustRight (parsePlanJournal overReservedPlanJournal)))
-  assertLeftContaining
+  assertLeftSatisfies
     "reservation evidence remains bounded by its Plan"
-    "ReservationExceedsPlanAmount"
+    isOverReserved
     (dailyTargetScopeFromSelections
       registry [plan] [assetSelection] overReservedSelections)
 
@@ -132,9 +133,9 @@ characterizeNativeFailures registry plan cash wifi = do
       normalSelections = mustRight
         (admitDailyTargetPlanJournalSelections
           (mustRight (parsePlanJournal nativePlanJournal)))
-  assertLeftContaining
+  assertLeftSatisfies
     "cross-owner Daily Target identities remain unique"
-    "DuplicateDailyTargetScopeId"
+    isDuplicateId
     (dailyTargetScopeFromSelections
       registry [plan] [duplicateAsset] normalSelections)
 
@@ -157,6 +158,27 @@ characterizeNativeFailures registry plan cash wifi = do
     []
     (mustRight
       (admitDailyTargetPlanJournalSelections detachedJournal))
+  where
+    isNonAsset err = case err of
+      DailyTargetPolicySelectionError
+          (DailyTargetEligibleAccountNotAsset found Expense) -> found == wifi
+      _ -> False
+
+    isUnknownPlan err = case err of
+      DailyTargetObligationSelectionError
+          (UnknownDailyTargetObligation found) -> found == unknownPlanId
+      _ -> False
+
+    isOverReserved err = case err of
+      DailyTargetObligationSelectionError
+          (DailyTargetReservationError
+            (ReservationExceedsPlanAmount _ found _ _)) ->
+              found == committedPlanId plan
+      _ -> False
+
+    isDuplicateId err = case err of
+      DuplicateDailyTargetScopeId found -> found == wifiId
+      _ -> False
 
 journalText :: T.Text
 journalText = T.unlines
@@ -309,21 +331,17 @@ assertEqual label expected actual
   | otherwise = failTest label
       ("expected: " ++ show expected ++ ", but got: " ++ show actual)
 
-assertLeftContaining
-  :: (Show error, Show success)
+assertLeftSatisfies
+  :: Show success
   => String
-  -> T.Text
+  -> (error -> Bool)
   -> Either (NonEmpty.NonEmpty error) success
   -> IO ()
-assertLeftContaining label expected result = case result of
+assertLeftSatisfies label predicate result = case result of
   Left errors
-    | expected `T.isInfixOf` rendered ->
+    | any predicate (NonEmpty.toList errors) ->
         putStrLn ("  [PASS] " ++ label)
-    | otherwise -> failTest label
-        ("expected diagnostic containing: " ++ T.unpack expected
-          ++ ", but got: " ++ T.unpack rendered)
-    where
-      rendered = T.pack (show (NonEmpty.toList errors))
+    | otherwise -> failTest label "expected typed error was not present"
   Right value -> failTest label ("accepted: " ++ show value)
 
 failTest :: String -> String -> IO ()
