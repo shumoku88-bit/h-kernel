@@ -197,8 +197,8 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
     (NonEmpty.singleton . sourceError "cycle" 0 . tshow)
     (currentCycleAccounts observation current journal)
   let outgoingPlans = admittedOutgoingPlans admittedPlans
-  outgoingDeclarations <- completionDeclarationsForOutgoingPlans admittedPlans
-    (actualJournalCompletionDeclarations actualJournal)
+  outgoingDeclarations <- completionDeclarationsForOutgoingPlans
+    planJournal admittedPlans (actualJournalCompletionDeclarations actualJournal)
   completionOpenPlanValues <- mapLeft
     (fmap (sourceError "actual.journal" 0 . tshow))
     (resolveOpenCommittedOutgoingPlans
@@ -393,10 +393,11 @@ committedPlanSource plan = declaredAccount (declaredPaymentSource direction)
   where direction = declaredOutgoingPaymentDirection (committedPlanDirection plan)
 
 completionDeclarationsForOutgoingPlans
-  :: AdmittedPlans
+  :: PlanJournal
+  -> AdmittedPlans
   -> [PlanCompletionDeclaration]
   -> Either (NonEmpty HouseholdSourceError) [PlanCompletionDeclaration]
-completionDeclarationsForOutgoingPlans plans declarations =
+completionDeclarationsForOutgoingPlans planJournal plans declarations =
   case NonEmpty.nonEmpty unknownErrors of
     Just errors -> Left errors
     Nothing -> Right
@@ -405,9 +406,9 @@ completionDeclarationsForOutgoingPlans plans declarations =
       , Set.member (declaredCompletionPlanId declaration) outgoingPlanIds
       ]
   where
-    incomingPlanIds = Set.fromList (map incomingAnchorId (admittedIncomingAnchors plans))
+    knownPlanIds = Set.fromList
+      (map identifiedPlanId (planJournalTransactions planJournal))
     outgoingPlanIds = Set.fromList (map committedPlanId (admittedOutgoingPlans plans))
-    knownPlanIds = Set.union incomingPlanIds outgoingPlanIds
     unknownErrors =
       [ sourceError "actual.journal" 0
           ("completion relation refers to unknown PlanId " <> planIdText planId)
