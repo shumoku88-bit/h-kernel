@@ -100,11 +100,12 @@ daily_target_scope.tsv
 legacy Report manifests
 ```
 
-2026-08-15 時点で h-kernel の completed migration shell からさらに次を撤去した。
+2026-08-15 時点で h-kernel の completed migration shell から次を撤去した。
 
 - `HKernel.Household.AccountProfile.TSV`: `accounts.tsv` admission / Account Journal migration shadow
 - `HKernel.Household.BudgetMovement.TSV`: `budget_alloc.tsv` admission
 - Editor の arbitrary Budget TSV append fallback
+- `HKernel.Household.DailyTarget.TSV`: `daily_target_scope.tsv` admission
 
 `budget` Editor command は canonical `budget.journal` だけを mutation target とし、native `HouseholdBudgetMovementJournal` admission を通す。
 
@@ -114,9 +115,11 @@ legacy Report manifests
 
 ## Daily Target
 
-`daily_target_scope.tsv` は current canonical Household bootstrap には存在しない。
+`daily_target_scope.tsv` は current canonical Household bootstrap に存在せず、compatibility parser も current build graph から退役済みである。
 
-Daily Target は `household.toml` から admit された Asset selection と `plan.journal` の typed Plan metadata / reservation evidence から `DailyTargetScope` を組み立てる。旧 TSV を canonical delivery path へ併読しない。
+Daily Target は `household.toml` から admit された Asset selection と `plan.journal` の typed Plan metadata / reservation evidence から `DailyTargetScope` を組み立てる。旧 TSV を canonical delivery path や diagnostic fallback へ併読しない。
+
+旧 TSV が検査していた eligible Asset、known Plan、bounded reservation、selection identity uniqueness の laws は native source tests が所有する。
 
 ## Household Report
 
