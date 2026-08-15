@@ -4,6 +4,7 @@ module Main (main) where
 
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
+import Data.Text (Text)
 import HKernel.Account (Account, mkAccount)
 import HKernel.Household.AccountProfile
 import System.Exit (exitFailure)
@@ -71,7 +72,7 @@ main = do
       , (expense, RetainedVariableSpend)
       ])
 
-account :: String -> Account
+account :: Text -> Account
 account value = mustRight (mkAccount value)
 
 mustRight :: Show error => Either error value -> value
