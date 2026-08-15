@@ -50,6 +50,7 @@ import HKernel.Household.EnvelopeObservation
   , householdEnvelopeRemaining
   )
 import HKernel.Household.Policy
+import HKernel.Household.Report (admitPlanJournal, admittedOutgoingPlanValues)
 import HKernel.Money
 import HKernel.Period (mkPeriod)
 import HKernel.Plan (mkPlanId)
@@ -106,6 +107,7 @@ main = do
       plans = mustRight (parsePlanJournal
         (declarations <>
           "\n2026-08-09 save\n  ; plan-id: plan-save\n  assets:savings  20 JPY\n  assets:cash  -20 JPY\n"))
+      narrowPlans = mustRight (admitPlanJournal plans)
       movements =
         [ HouseholdBudgetMovement
             { householdBudgetMovementDate = fromGregorian 2026 8 1
@@ -135,6 +137,8 @@ main = do
       remaining = householdEnvelopeRemaining observation
       headroom = householdEnvelopeHeadroom observation
 
+  assertEqual "role-neutral Plan stays out of narrow outgoing report subset"
+    [] (admittedOutgoingPlanValues narrowPlans)
   assertEqual "entitlement comes from allocation movement"
     (one jpy 100) (envelopeEntitlementBalance foodId entitlement)
   assertEqual "charges are native Actual evidence"
