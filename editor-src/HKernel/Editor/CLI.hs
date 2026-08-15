@@ -163,14 +163,14 @@ parseAccount (journalFile:accountText:typeText:rest) = do
 parseAccount _ = Left CliInvalidAccountArguments
 
 parseBudget :: [String] -> Either CliError EditorCommand
-parseBudget [tsvFile, dateText, memo, fromText, toText, quantityText, commodityText] = do
+parseBudget [journalFile, dateText, memo, fromText, toText, quantityText, commodityText] = do
   date <- parseDate dateText
   fromAccount <- parseAccountValue fromText
   toAccount <- parseAccountValue toText
   quantity <- parseQuantityValue quantityText
   commodity <- parseCommodity commodityText
   pure
-    (BudgetMovementCmd tsvFile
+    (BudgetMovementCmd journalFile
       (HouseholdBudgetMovement
         date
         (T.pack memo)
@@ -448,7 +448,7 @@ usageText = unlines
   , "  h-kernel-editor-cli append [--commit] <journal.txt> <YYYY-MM-DD> <desc> [<acct> <qty> <comm> ...]"
   , "  h-kernel-editor-cli reverse [--commit] <journal.txt> <new-event-id> <target-event-id> <YYYY-MM-DD> <desc...>"
   , "  h-kernel-editor-cli account [--commit] <journal.txt> <account> <type> [<commodity>]"
-  , "  h-kernel-editor-cli budget [--commit] <budget_alloc.tsv> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm>"
+  , "  h-kernel-editor-cli budget [--commit] <budget.journal> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm>"
   , "  h-kernel-editor-cli issue [--commit] <issues.tsv> <id> <status> <YYYY-MM-DD> <category> <title> <qty|-> <comm|-> <details...>"
   , "  h-kernel-editor-cli plan add [--commit] <plan.journal> <actual.journal> --date YYYY-MM-DD --description DESC --posting ACCT QTY COMM ... [--id ID] [--series SERIES]"
   , "  h-kernel-editor-cli plan edit [--commit] <plan.journal> <actual.journal> --id ID [--date YYYY-MM-DD] [--amount POSITIVE_QTY]"
