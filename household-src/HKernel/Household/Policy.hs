@@ -1,4 +1,5 @@
--- | Stable household policy layered on native Envelope and Backing policy.
+-- | Stable household policy layered on independently admitted current Envelope,
+-- current Expense assignment, and Backing owners.
 module HKernel.Household.Policy
   ( HouseholdCyclePolicy
   , incomeAnchorCyclePolicy
@@ -16,13 +17,13 @@ module HKernel.Household.Policy
   , householdPolicyCycle
   , householdEnvelopePolicy
   , householdBackingPolicy
+  , householdCurrentExpenseAssignments
   , householdEnvelopeOrder
   , householdAllocationEnvelopes
   , householdUnassignedBudgetAccounts
   , householdEnvelopeForPlanDestination
   , AccountValidatedHouseholdPolicy
   , accountValidatedHouseholdPolicy
-  , accountValidatedHouseholdEnvelopePolicy
   , accountValidatedHouseholdBackingPolicy
   , HouseholdPolicyAccountError(..)
   , validateHouseholdPolicyAccounts
@@ -48,13 +49,13 @@ import HKernel.Backing.Policy
   , validateBackingPolicyAccounts
   )
 import HKernel.Envelope
-  ( AccountValidatedCurrentEnvelopePolicy
-  , CurrentEnvelopePolicy
-  , CurrentEnvelopePolicyAccountError
+  ( CurrentEnvelopePolicy
+  , CurrentExpenseAssignments
+  , CurrentExpenseAssignmentsReferenceError
   , currentEnvelopePolicyDefinitions
-  , envelopeDefinitionExpenseAccounts
+  , currentExpenseAssignmentPairs
   , envelopeDefinitionId
-  , validateCurrentEnvelopePolicyAccounts
+  , validateCurrentExpenseAssignments
   )
 import HKernel.Envelope.Identity (EnvelopeId)
 import HKernel.Household.AccountProfile (HouseholdAccountPolicy)
@@ -88,15 +89,16 @@ data HouseholdPolicyError
   deriving (Eq, Show)
 
 data HouseholdPolicy = HouseholdPolicy
-  { householdPolicyCycle                :: HouseholdCyclePolicy
-  , householdEnvelopePolicy             :: CurrentEnvelopePolicy
-  , householdBackingPolicy              :: BackingPolicy
-  , householdEnvelopeOrder              :: [EnvelopeId]
-  , householdAllocationEnvelopes        :: Map Account EnvelopeId
-  , householdPlanDestinationEnvelopes   :: Map Account EnvelopeId
-  , householdAdditionalPlanDestinations :: Map Account EnvelopeId
-  , householdUnassignedBudgetAccounts   :: Set Account
-  , householdPolicyAccountPolicy        :: Maybe HouseholdAccountPolicy
+  { householdPolicyCycle                 :: HouseholdCyclePolicy
+  , householdEnvelopePolicy              :: CurrentEnvelopePolicy
+  , householdBackingPolicy               :: BackingPolicy
+  , householdCurrentExpenseAssignments   :: CurrentExpenseAssignments
+  , householdEnvelopeOrder               :: [EnvelopeId]
+  , householdAllocationEnvelopes         :: Map Account EnvelopeId
+  , householdPlanDestinationEnvelopes    :: Map Account EnvelopeId
+  , householdAdditionalPlanDestinations  :: Map Account EnvelopeId
+  , householdUnassignedBudgetAccounts    :: Set Account
+  , householdPolicyAccountPolicy         :: Maybe HouseholdAccountPolicy
   } deriving (Eq, Show)
 
 withHouseholdAccountPolicy
@@ -108,16 +110,18 @@ mkHouseholdPolicy
   :: HouseholdCyclePolicy
   -> CurrentEnvelopePolicy
   -> BackingPolicy
+  -> CurrentExpenseAssignments
   -> [HouseholdEnvelopeCoordinates]
   -> [Account]
   -> Either (NonEmpty HouseholdPolicyError) HouseholdPolicy
-mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy coordinates unassignedAccounts =
+mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy currentExpenses coordinates unassignedAccounts =
   case NonEmpty.nonEmpty errors of
     Just found -> Left found
     Nothing -> Right HouseholdPolicy
       { householdPolicyCycle = cyclePolicy
       , householdEnvelopePolicy = envelopePolicy
       , householdBackingPolicy = backingPolicy
+      , householdCurrentExpenseAssignments = currentExpenses
       , householdEnvelopeOrder = map householdEnvelopeCoordinateId coordinates
       , householdAllocationEnvelopes = coordinateValues allocationObservation
       , householdPlanDestinationEnvelopes = coordinateValues planObservation
@@ -150,10 +154,7 @@ mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy coordinates unassigne
       | coordinate <- canonicalCoordinates
       , account <- householdEnvelopePlanDestinationAccounts coordinate ]
     additionalPlanObservation = observeAssignments additionalPlanCoordinates
-    expensePlanCoordinates =
-      [ (account, envelopeDefinitionId definition)
-      | definition <- definitions
-      , account <- envelopeDefinitionExpenseAccounts definition ]
+    expensePlanCoordinates = currentExpenseAssignmentPairs currentExpenses
     allocationPlanCoordinates =
       [ (householdEnvelopeAllocationAccount coordinate, householdEnvelopeCoordinateId coordinate)
       | coordinate <- canonicalCoordinates ]
@@ -177,16 +178,15 @@ mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy coordinates unassigne
 householdEnvelopeForPlanDestination :: Account -> HouseholdPolicy -> Maybe EnvelopeId
 householdEnvelopeForPlanDestination account = Map.lookup account . householdPlanDestinationEnvelopes
 
-data AccountValidatedHouseholdPolicy = AccountValidatedHouseholdPolicy
-  { accountValidatedHouseholdPolicy         :: HouseholdPolicy
-  , accountValidatedHouseholdEnvelopePolicy :: AccountValidatedCurrentEnvelopePolicy
+newtype AccountValidatedHouseholdPolicy = AccountValidatedHouseholdPolicy
+  { accountValidatedHouseholdPolicy :: HouseholdPolicy
   } deriving (Eq, Show)
 
 accountValidatedHouseholdBackingPolicy :: AccountValidatedHouseholdPolicy -> BackingPolicy
 accountValidatedHouseholdBackingPolicy = householdBackingPolicy . accountValidatedHouseholdPolicy
 
 data HouseholdPolicyAccountError
-  = HouseholdEnvelopePolicyAccountError CurrentEnvelopePolicyAccountError
+  = HouseholdCurrentExpenseAssignmentsReferenceError CurrentExpenseAssignmentsReferenceError
   | HouseholdBackingPolicyAccountError BackingPolicyAccountError
   | HouseholdCycleIncomeAccountUndeclared Account
   | HouseholdCycleIncomeAccountNotIncome Account AccountType
@@ -204,16 +204,14 @@ validateHouseholdPolicyAccounts
 validateHouseholdPolicyAccounts registry policy =
   case NonEmpty.nonEmpty errors of
     Just found -> Left found
-    Nothing -> case envelopeValidation of
-      Right validated -> Right AccountValidatedHouseholdPolicy
-        { accountValidatedHouseholdPolicy = policy
-        , accountValidatedHouseholdEnvelopePolicy = validated
-        }
-      Left impossible -> Left (fmap HouseholdEnvelopePolicyAccountError impossible)
+    Nothing -> Right (AccountValidatedHouseholdPolicy policy)
   where
-    envelopeValidation = validateCurrentEnvelopePolicyAccounts registry (householdEnvelopePolicy policy)
-    envelopeErrors = case envelopeValidation of
-      Left values -> map HouseholdEnvelopePolicyAccountError (NonEmpty.toList values)
+    currentExpenseErrors = case validateCurrentExpenseAssignments
+        registry
+        (householdEnvelopePolicy policy)
+        (householdCurrentExpenseAssignments policy) of
+      Left values ->
+        map HouseholdCurrentExpenseAssignmentsReferenceError (NonEmpty.toList values)
       Right _ -> []
     backingErrors = case validateBackingPolicyAccounts registry (householdBackingPolicy policy) of
       Left values -> map HouseholdBackingPolicyAccountError (NonEmpty.toList values)
@@ -238,7 +236,7 @@ validateHouseholdPolicyAccounts registry policy =
       case lookupAccountDeclaration account registry of
         Nothing -> [HouseholdPlanDestinationUndeclared envelope account]
         Just _ -> []
-    errors = envelopeErrors ++ backingErrors ++ validateCycle
+    errors = currentExpenseErrors ++ backingErrors ++ validateCycle
       ++ concatMap validateAllocation (Map.toAscList (householdAllocationEnvelopes policy))
       ++ concatMap validateUnassigned (Set.toAscList (householdUnassignedBudgetAccounts policy))
       ++ concatMap validateAdditionalPlanDestination
