@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Account (mkAccount)
 import HKernel.Actual.Journal (parseActualJournal)
@@ -25,9 +26,13 @@ import HKernel.Envelope.Consumption
 import HKernel.Envelope.Entitlement (envelopeEntitlementBalance)
 import HKernel.Envelope.ExpenseRouting
   ( ExpenseRoute(..)
-  , ExpenseRouteResolver(..)
+  , InitialExpenseRoutingDecision(..)
+  , mkExpenseRoutingHistoryWithInitial
   )
+import HKernel.Envelope.FulfillmentRouting (mkFulfillmentRoutingHistory)
+import HKernel.Envelope.Headroom (envelopeHeadroomFor)
 import HKernel.Envelope.Identity (mkEnvelopeId)
+import HKernel.Envelope.Remaining (envelopeRemainingFor)
 import HKernel.Household.AccountProfile
   ( RetainedBudgetAccountKind(..)
   , mkHouseholdAccountPolicy
@@ -37,10 +42,13 @@ import HKernel.Household.EnvelopeObservation
   ( deriveHouseholdEnvelopeObservation
   , householdEnvelopeConsumption
   , householdEnvelopeEntitlement
+  , householdEnvelopeHeadroom
+  , householdEnvelopeRemaining
   )
 import HKernel.Household.Policy
 import HKernel.Money
 import HKernel.Period (mkPeriod)
+import HKernel.Plan.Journal (parsePlanJournal)
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -77,8 +85,18 @@ main = do
         , (foodAllocation, RetainedEnvelopeBudgetAccount)
         ]
         [] [] [])
+      declarations = T.unlines
+        [ "account assets:cash", "  type: Asset"
+        , "account income:pension", "  type: Income"
+        , "account expenses:food", "  type: Expense"
+        , "account budget:opening", "  type: Budget"
+        , "account budget:unassigned", "  type: Budget"
+        , "account budget:spent", "  type: Budget"
+        , "account budget:food", "  type: Budget"
+        ]
       actual = mustRight (parseActualJournal
-        "account assets:cash\n  type: Asset\naccount income:pension\n  type: Income\naccount expenses:food\n  type: Expense\naccount budget:opening\n  type: Budget\naccount budget:unassigned\n  type: Budget\naccount budget:spent\n  type: Budget\naccount budget:food\n  type: Budget\n\n2026-08-03 food\n  expenses:food  40 JPY\n  assets:cash  -40 JPY\n\n2026-08-04 refund\n  expenses:food  -10 JPY\n  assets:cash  10 JPY\n")
+        (declarations <> "\n2026-08-03 food\n  expenses:food  40 JPY\n  assets:cash  -40 JPY\n\n2026-08-04 refund\n  expenses:food  -10 JPY\n  assets:cash  10 JPY\n"))
+      plans = mustRight (parsePlanJournal declarations)
       movements =
         [ HouseholdBudgetMovement
             { householdBudgetMovementDate = fromGregorian 2026 8 1
@@ -88,12 +106,18 @@ main = do
             , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 100)
             }
         ]
-      resolver = ExpenseRouteResolver (\_ account ->
-        if account == foodExpense then Just (ManagedByEnvelope foodId) else Nothing)
+      expenseRouting = mustRight (mkExpenseRoutingHistoryWithInitial
+        [ InitialExpenseRoutingDecision
+            foodExpense (ManagedByEnvelope foodId) "food initial route"
+        ] [])
+      fulfillmentRouting = mustRight (mkFulfillmentRoutingHistory [])
       observation = mustRight (deriveHouseholdEnvelopeObservation
-        observed period actual policy accountPolicy resolver movements)
+        observed period actual plans policy accountPolicy
+        expenseRouting fulfillmentRouting movements)
       consumption = householdEnvelopeConsumption observation
       entitlement = householdEnvelopeEntitlement observation
+      remaining = householdEnvelopeRemaining observation
+      headroom = householdEnvelopeHeadroom observation
 
   assertEqual "entitlement comes from allocation movement"
     (one jpy 100) (envelopeEntitlementBalance foodId entitlement)
@@ -101,6 +125,10 @@ main = do
     (one jpy 40) (consumptionCharges (envelopeConsumptionFor foodId consumption))
   assertEqual "refunds remain gross native evidence"
     (one jpy 10) (consumptionRefunds (envelopeConsumptionFor foodId consumption))
+  assertEqual "Remaining is entitlement minus net consumption and fulfillment"
+    (one jpy 70) (envelopeRemainingFor foodId remaining)
+  assertEqual "Headroom is native Remaining when no Plan is committed"
+    (one jpy 70) (envelopeHeadroomFor foodId headroom)
 
 one :: Commodity -> Integer -> Balance
 one commodity value = singletonBalance (mkAmount commodity (quantityFromInteger value))
