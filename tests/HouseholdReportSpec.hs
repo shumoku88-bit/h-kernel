@@ -404,6 +404,16 @@ householdTOML = T.unlines
   , "[[daily-target.assets]]"
   , "id = \"cash\""
   , "account = \"assets:cash\""
+  , ""
+  , "[envelope-history]"
+  , "identities = [\"Food\"]"
+  , ""
+  , "[[envelope-history.expense-routing]]"
+  , "effective-from = \"initial\""
+  , "expense-account = \"expenses:food\""
+  , "route = \"managed\""
+  , "target = \"Food\""
+  , "note = \"report fixture initial routing\""
   ]
 
 cycleRoleMismatchTOML :: Text
