@@ -316,17 +316,15 @@ concepts:
 - retained `Budget` AccountType and `budget:*` Accounts,
 - `HouseholdBudgetMovement*` writer vocabulary,
 - opening, spent, and unassigned Budget Account roles,
-- the inert `PlanBudgetSync` API/TUI compatibility shell,
 - legacy `plan-destination-accounts` syntax.
 
 `plan-destination-accounts` is no longer Envelope claim authority. Stable
 `PlanId` fulfillment routing owns that meaning. Do not move destination-Account
 intent under a new compatibility type.
 
-`PlanBudgetSync` no longer has writer authority. Its temporary API shell returns
-without constructing or publishing `budget.journal` source. Remove that shell
-when the remaining TUI call sites are simplified; do not give it replacement
-routing semantics.
+The retired `PlanBudgetSync` API and TUI retry flow have been removed. Plan
+completion publishes only Plan/Actual relation evidence; native Envelope
+observations consume that evidence without a second Budget execution write.
 
 Do not rename physical sources first and repair semantics later. Replace source
 admission and writer responsibilities with native owners, qualify the
@@ -336,10 +334,9 @@ replacement, then retire the old source contract.
 
 After the current-owner and writer cutovers, the remaining bounded work is:
 
-1. remove the inert `PlanBudgetSync` API/TUI shell and stale retry affordance,
-2. continue removing retained Budget-Account adapters only after equivalent
+1. continue removing retained Budget-Account adapters only after equivalent
    native source admission and writer paths are qualified,
-3. consider physical source renames only after semantics and writer authority no
+2. consider physical source renames only after semantics and writer authority no
    longer depend on the legacy contract.
 
 New Envelope work must fit this ownership graph rather than create another

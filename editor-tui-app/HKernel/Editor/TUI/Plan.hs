@@ -47,11 +47,6 @@ import HKernel.Editor.Interaction.PlanCompleteAdvance
   , initialPlanCompleteAdvanceInput
   , parsePlanCompleteAdvanceInput
   )
-import HKernel.Editor.PlanBudgetSync
-  ( PlanBudgetSyncPreview(..)
-  , PlanBudgetSyncResult(..)
-  , preparePlanBudgetSync
-  )
 import HKernel.Editor.PlanCompleteAdvance
   ( PlanAdvanceProposal(..)
   , PlanCompleteAdvancePreview(..)
@@ -83,7 +78,6 @@ import HKernel.Editor.TUI.Model
   , AppEvent
   , HouseholdSection(..)
   , Name(..)
-  , contextBudgetSource
   , contextHouseholdState
   , contextPlanListL
   , contextPlanSource
@@ -95,7 +89,6 @@ import HKernel.Household.Application
   ( HouseholdState(..)
   , loadCanonicalHousehold
   )
-import HKernel.Household.Config (householdConfigurationAccountPolicy)
 import HKernel.Ledger
   ( Posting
   , postingAccount
@@ -151,7 +144,6 @@ data State event
   | CancelPreview Day IdentifiedPlanTransaction (PreviewResult PlanCancelPreview)
   | ReplaceInput Day IdentifiedPlanTransaction (Form PlanAddInput event Name)
   | ReplacePreview Day IdentifiedPlanTransaction (PreviewResult PlanSupersedePreview) (Form PlanAddInput event Name)
-  | BudgetSyncWarning PlanId Text
   | WriteOutcome Text
   | ReturnToWorkspace
   | PublishRequested PublishRequest
@@ -163,11 +155,9 @@ data PublishRequest
   | PublishEdit PlanEditPreview
   | PublishCancel PlanCancelPreview
   | PublishSupersede PlanSupersedePreview
-  | PublishBudgetSync PlanId
 
 data PublishResult
   = Published AppContext
-  | BudgetSyncPending AppContext PlanId Text
   | PublicationFailed Text
   | ReloadFailed
 
@@ -394,7 +384,6 @@ drawFlow state = case state of
           (vLimit 30
             (padAll 1
               ( str "This will update Actual and, when present, append the successor Plan as one operation."
-                <=> str "A linked Budget execution will then be synchronized idempotently by PlanId."
                 <=> str " "
                 <=> renderCompletePreview preview
                 <=> str " "
@@ -455,15 +444,6 @@ drawFlow state = case state of
         <=> str " "
         <=> renderPreviewResult renderSupersedePreview result)
       (simplePreviewControls result)
-  BudgetSyncWarning planId message ->
-    center
-      (borderWithLabel (str "Plan Completed / Budget Sync Pending")
-        (hLimit 88
-          (padAll 1
-            ( txt ("Plan " <> planIdText planId <> " is already completed.")
-              <=> txt message
-              <=> str " "
-              <=> str "[R] Reload & retry Budget sync | [Esc] Plans | [Q] Quit"))))
   WriteOutcome message ->
     center
       (borderWithLabel (str "Plan Result")
@@ -518,13 +498,6 @@ handleFlowEvent context event = do
         PublishSupersede
         result
         event
-    BudgetSyncWarning planId _ -> case event of
-      VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
-      VtyEvent (V.EvKey (V.KChar 'r') []) -> put (PublishRequested (PublishBudgetSync planId))
-      VtyEvent (V.EvKey (V.KChar 'R') []) -> put (PublishRequested (PublishBudgetSync planId))
-      VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
-      VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
-      _ -> pure ()
     WriteOutcome _ -> case event of
       VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
       VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
@@ -781,14 +754,13 @@ publishCandidate context request = case request of
   PublishEdit preview -> publishPlanRoot context (editCandidateCompleteSource preview)
   PublishCancel preview -> publishPlanRoot context (cancelCandidateCompleteSource preview)
   PublishSupersede preview -> publishPlanRoot context (supersedeCandidateCompleteSource preview)
-  PublishBudgetSync planId -> reloadAndSyncCompletedPlanBudget context planId
 
 publishCompleteAdvance
   :: AppContext
   -> PlanId
   -> PlanCompleteAdvancePreview
   -> IO PublishResult
-publishCompleteAdvance context planId preview = do
+publishCompleteAdvance context _planId preview = do
   let state = contextHouseholdState context
       paths = householdStatePaths state
       root = householdStateRoot state
@@ -805,54 +777,7 @@ publishCompleteAdvance context planId preview = do
   writeResult <- publishPlanCompleteAdvance postAdmission intent
   case writeResult of
     Left writeError -> pure (PublicationFailed (renderWriteError writeError))
-    Right () -> do
-      reloaded <- reloadWorkspaceContext
-        (context { contextCurrentSection = PlansSection })
-      case reloaded of
-        Nothing -> pure ReloadFailed
-        Just freshContext -> syncCompletedPlanBudget freshContext planId
-
-reloadAndSyncCompletedPlanBudget :: AppContext -> PlanId -> IO PublishResult
-reloadAndSyncCompletedPlanBudget context planId = do
-  reloaded <- reloadWorkspaceContext
-    (context { contextCurrentSection = PlansSection })
-  case reloaded of
-    Nothing -> pure ReloadFailed
-    Just freshContext -> syncCompletedPlanBudget freshContext planId
-
-syncCompletedPlanBudget :: AppContext -> PlanId -> IO PublishResult
-syncCompletedPlanBudget context planId =
-  case preparePlanBudgetSync
-      (householdStateAccountsRegistry state)
-      (householdStatePolicy state)
-      (householdConfigurationAccountPolicy (householdStateConfiguration state))
-      (householdStatePlanJournal state)
-      (householdStateActualJournal state)
-      (householdStateBudgetMovementJournal state)
-      (contextBudgetSource context)
-      planId of
-    Left errors -> pure (BudgetSyncPending context planId
-      ("Budget sync preparation failed: " <> showText (NonEmpty.toList errors)))
-    Right (PlanBudgetSyncNotLinked _) -> pure (Published context)
-    Right (PlanBudgetSyncApplied _) -> pure (Published context)
-    Right (PlanBudgetSyncAppend preview) -> do
-      let paths = householdStatePaths state
-          budgetPath = householdBudgetJournalPath paths
-          root = householdStateRoot state
-      result <- publishWithPathAdmission
-        (\_ -> loadCanonicalHousehold root)
-        WriteIntent
-          { targetFilePath = budgetPath
-          , expectedOldBytes = ExpectedSource (contextBudgetSource context)
-          , candidateNewBytes = CandidateSource
-              (planBudgetSyncCandidateCompleteSource preview)
-          }
-      case result of
-        Left err -> pure (BudgetSyncPending context planId
-          ("Budget sync publication failed: " <> showText err))
-        Right () -> reloadPlans context
-  where
-    state = contextHouseholdState context
+    Right () -> reloadPlans context
 
 publishPlanRoot :: AppContext -> Text -> IO PublishResult
 publishPlanRoot context candidate = do
@@ -1009,7 +934,6 @@ showText = T.pack . show
 data WorkspaceAction
   = MaintainContext
   | StartFlow (State AppEvent)
-  | OpenBudgetSyncPicker
 
 handleWorkspaceEvent
   :: BrickEvent Name AppEvent
@@ -1032,8 +956,6 @@ handleWorkspaceEvent event = case event of
   VtyEvent (V.EvKey (V.KChar 'X') []) -> openSelectedCancel
   VtyEvent (V.EvKey (V.KChar 'r') []) -> openSelectedReplace
   VtyEvent (V.EvKey (V.KChar 'R') []) -> openSelectedReplace
-  VtyEvent (V.EvKey (V.KChar 'b') []) -> pure OpenBudgetSyncPicker
-  VtyEvent (V.EvKey (V.KChar 'B') []) -> pure OpenBudgetSyncPicker
   VtyEvent (V.EvKey V.KEnter []) -> openSelectedCompletion
   VtyEvent (V.EvKey (V.KChar 'c') []) -> openSelectedCompletion
   VtyEvent (V.EvKey (V.KChar 'C') []) -> openSelectedCompletion
