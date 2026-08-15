@@ -18,7 +18,6 @@ module HKernel.Household.Config
 import Data.Either (partitionEithers)
 import Data.List (foldl')
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import HKernel.Account
@@ -43,7 +42,6 @@ import HKernel.Household.AccountProfile
   , RetainedAssetClass(..)
   , RetainedBudgetAccountKind(..)
   , RetainedBudgetGroup(..)
-  , RetainedEnvelopeRole(..)
   , RetainedSpendClass(..)
   , mkHouseholdAccountPolicy
   )
@@ -94,7 +92,7 @@ data RawMoney = RawMoney Text
 data RawEnvelopeCoordinates = RawEnvelopeCoordinates
   Text
   Text
-  (Maybe [Text])
+  (Maybe Value)
 
 data RawDailyTarget = RawDailyTarget [RawDailyTargetAsset]
 
@@ -109,12 +107,10 @@ data RawAssetPolicy = RawAssetPolicy [Text] [Text] [Text]
 
 data RawBudgetAccountPolicy = RawBudgetAccountPolicy
   RawBudgetKindPolicy
-  RawEnvelopeRolePolicy
+  (Maybe Value)
   RawBudgetGroupPolicy
 
 data RawBudgetKindPolicy = RawBudgetKindPolicy [Text] [Text] [Text] [Text]
-
-data RawEnvelopeRolePolicy = RawEnvelopeRolePolicy [Text] [Text] [Text]
 
 data RawBudgetGroupPolicy = RawBudgetGroupPolicy [Text] [Text] [Text]
 
@@ -181,7 +177,7 @@ instance FromValue RawBudgetAccountPolicy where
   fromValue = parseTableFromValue
     (RawBudgetAccountPolicy
       <$> reqKey "kind"
-      <*> reqKey "envelope-role"
+      <*> optKey "envelope-role"
       <*> reqKey "group")
 
 instance FromValue RawBudgetKindPolicy where
@@ -191,13 +187,6 @@ instance FromValue RawBudgetKindPolicy where
       <*> reqKey "unassigned"
       <*> reqKey "spent"
       <*> reqKey "envelope")
-
-instance FromValue RawEnvelopeRolePolicy where
-  fromValue = parseTableFromValue
-    (RawEnvelopeRolePolicy
-      <$> reqKey "unassigned"
-      <*> reqKey "dynamic"
-      <*> reqKey "execution")
 
 instance FromValue RawBudgetGroupPolicy where
   fromValue = parseTableFromValue
@@ -313,15 +302,14 @@ parseRawAccountPolicy
   case syntaxErrors of
     _ : _ -> Left syntaxErrors
     [] -> case mkHouseholdAccountPolicy
-        assetClasses budgetKinds envelopeRoles budgetGroups spendClasses of
+        assetClasses budgetKinds [] budgetGroups spendClasses of
       Left errors -> Left
         (map renderHouseholdAccountPolicyError (NonEmpty.toList errors))
       Right policy -> Right policy
   where
     RawAssetPolicy liquid savings investment = rawAssets
-    RawBudgetAccountPolicy rawKinds rawRoles rawGroups = rawBudget
+    RawBudgetAccountPolicy rawKinds _rawEnvelopeRole rawGroups = rawBudget
     RawBudgetKindPolicy opening unassigned spent envelope = rawKinds
-    RawEnvelopeRolePolicy roleUnassigned dynamic execution = rawRoles
     RawBudgetGroupPolicy daily flex reserve = rawGroups
     RawExpensePolicy fixed variable = rawExpenses
 
@@ -350,17 +338,6 @@ parseRawAccountPolicy
         ++ map (, RetainedSpentBudgetAccount) spentAccounts
         ++ map (, RetainedEnvelopeBudgetAccount) envelopeAccounts
 
-    (roleUnassignedErrors, roleUnassignedAccounts) = axisAccounts
-      "account-policy.budget.envelope-role.unassigned" roleUnassigned
-    (dynamicErrors, dynamicAccounts) = axisAccounts
-      "account-policy.budget.envelope-role.dynamic" dynamic
-    (executionErrors, executionAccounts) = axisAccounts
-      "account-policy.budget.envelope-role.execution" execution
-    envelopeRoles =
-      map (, RetainedUnassignedEnvelopeRole) roleUnassignedAccounts
-        ++ map (, RetainedDynamicEnvelopeRole) dynamicAccounts
-        ++ map (, RetainedExecutionEnvelopeRole) executionAccounts
-
     (dailyErrors, dailyAccounts) = axisAccounts
       "account-policy.budget.group.daily" daily
     (flexErrors, flexAccounts) = axisAccounts
@@ -383,7 +360,6 @@ parseRawAccountPolicy
     syntaxErrors = concat
       [ liquidErrors, savingsErrors, investmentErrors
       , openingErrors, unassignedErrors, spentErrors, envelopeErrors
-      , roleUnassignedErrors, dynamicErrors, executionErrors
       , dailyErrors, flexErrors, reserveErrors
       , fixedErrors, variableErrors
       ]
@@ -404,7 +380,7 @@ parseRawEnvelopeCoordinates
   -> RawEnvelopeCoordinates
   -> Either [Text] HouseholdEnvelopeCoordinates
 parseRawEnvelopeCoordinates index
-    (RawEnvelopeCoordinates rawId rawAllocation rawPlanDestinations) =
+    (RawEnvelopeCoordinates rawId rawAllocation _rawPlanDestinations) =
   case (envelopeIdResult, allocationResult, errors) of
     (Right envelopeId, Right allocationAccount, []) -> Right
       (defineHouseholdEnvelopeCoordinates envelopeId allocationAccount)
@@ -413,12 +389,6 @@ parseRawEnvelopeCoordinates index
     path = indexedPath "budget.envelopes" index
     envelopeIdResult = mkEnvelopeId rawId
     allocationResult = mkAccount rawAllocation
-    -- Shared canonical household.toml still carries this historical coordinate,
-    -- and bqn-ledger still admits it. h-kernel validates the physical Account
-    -- syntax here but deliberately does not retain it as Household policy state.
-    (planErrors, _planDestinationAccounts) = parseAccounts
-      (path <> ".plan-destination-accounts")
-      (fromMaybe [] rawPlanDestinations)
     errors =
       either
         (pure . renderEnvelopeIdError (path <> ".id"))
@@ -428,7 +398,6 @@ parseRawEnvelopeCoordinates index
           (pure . renderAccountError (path <> ".allocation-account"))
           (const [])
           allocationResult
-        ++ planErrors
 
 parseRawDailyTargetAsset
   :: Int
