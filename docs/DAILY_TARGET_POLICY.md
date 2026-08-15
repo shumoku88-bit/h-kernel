@@ -68,7 +68,9 @@ selections + AccountRegistry + admitted outgoing Plans
 
 `HKernel.Household.Application`がこのcompositionを行う。Account名、Plan表示text、現在のEnvelope assignmentからselectionを推測しない。
 
-historical `daily_target_scope.tsv`はcurrent canonical Household bootstrapではない。`HKernel.Household.DailyTarget.TSV`がretained compatibility moduleとして残っていても、それをcurrent application pathやwriter authorityの根拠にしない。
+historical `daily_target_scope.tsv` は current canonical Household bootstrap ではない。2026-08-15 に `HKernel.Household.DailyTarget.TSV` compatibility adapter を build graph から撤去し、旧 TSV が検証していた semantic laws は current `household.toml + plan.journal` source path の tests へ移した。
+
+この retirement は Daily Target の domain model を弱めない。source syntaxを外しただけで、selection identity、eligible Asset validation、known Plan validation、bounded reservation、partial reservation rejection は native owner に残る。
 
 ## Projection
 
@@ -112,7 +114,9 @@ rate[commodity]     = capacity[commodity] / days
 - reservation id / amount / Commodity は部分指定を許さない
 - eligible Account は canonical registry 上の Asset でなければならない
 - selected PlanId は admitted outgoing Planへ解決できなければならない
+- reservation Amount は対象 Plan の Amount を超えられない
 - current configからhistorical Plan intentを再構成しない
+- retired TSV syntaxをfallback readerとして再導入しない
 
 ## 非対象
 
@@ -120,7 +124,6 @@ rate[commodity]     = capacity[commodity] / days
 
 - fixed obligation、saving、investmentをどう分類するか
 - reservationがどのAsset Accountに置かれているか
-- historical `daily_target_scope.tsv` compatibility moduleの将来撤去時期
 - Daily Targetが負になった場合の助言またはUI
 - Report composition全体のstable component移動
 
