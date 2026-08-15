@@ -2,7 +2,7 @@
 
 
 ステータス: レポート作業で必須
-契約の基準日: `2026-07-31`
+契約の基準日: `2026-08-15`
 
 
 ## 目的
@@ -22,7 +22,7 @@ fixed source SHA + immutable input + explicit observation date
 ```
 
 
-型指定されたドメインとレポート モデルには、独自の会計セマンティクスがあります。スナップショットはレンダリングされたコントラクトを検証します。ドメインの不変条件をオーバーライドしません。
+型指定されたドメインとレポートモデルには独自の会計セマンティクスがあります。スナップショットはレンダリングされたコントラクトを検証します。ドメインの不変条件をオーバーライドしません。
 
 
 ## 検証レイヤー
@@ -50,13 +50,13 @@ sh ./report-verify --corpus
 ```
 
 
-このコーパスは、複数の口座、複数転記トランザクション、JPY と USD、境界時点、複数の暦月、トランザクション全体の最近のトランザクションをカバーしています。そのマニフェストはファイルのアイデンティティを修正し、レビューされたゴールデン レコードは完全な出力を記録します。
+このコーパスは、複数の口座、複数転記トランザクション、JPY と USD、境界時点、複数の暦月、トランザクション全体の最近のトランザクションをカバーしています。そのマニフェストはファイルのアイデンティティを固定し、レビューされたゴールデンレコードは完全な出力を記録します。
 
 
-### 外部private正規世帯観察
+### 外部private canonical Household観察
 
 
-明示設定されたprivate BQN互換source setは、ローカルでread-onlyに観察できます。
+現在のprivate canonical Household rootはローカルでread-onlyに観察できます。
 
 
 ```sh
@@ -64,7 +64,11 @@ sh ./report-verify --corpus
 ```
 
 
-`HKERNEL_LEDGER_DATA_DIR`またはGit管理外の`ledger-data.local`でsource directoryを選択します。出力は無視された`.report-artifacts/real-household-report/`に残し、リポジトリのgoldenにはしません。CIはprivate sourceへ接続しません。
+`HKERNEL_LEDGER_DATA_DIR`またはGit管理外の`ledger-data.local`でcanonical Household rootを選択します。`report-real-snapshot`はcurrent 8-source contract (`accounts.journal`, `actual.journal`, `plan.journal`, `budget.journal`, `budget.toml`, `household.toml`, `report.toml`, `issues.tsv`) を要求します。
+
+出力は無視された`.report-artifacts/real-household-report/`に残し、リポジトリのgoldenにはしません。CIはprivate sourceへ接続しません。
+
+historical `accounts.tsv`、`budget_alloc.tsv`、`daily_target_scope.tsv` などをprivate snapshot実行の前提へ戻しません。
 
 
 ### オプションのローカルジャーナル観察
@@ -78,22 +82,22 @@ sh ./report-verify --observe /path/to/local.journal 2026-07-31
 ```
 
 
-結果として得られる単純なレポートと証拠は、`.report-artifacts/` に書き込まれます。証拠には、ソース SHA、ジャーナル ハッシュ、観察日が記録されます。
+結果として得られる単純なレポートと証拠は、`.report-artifacts/` に書き込まれます。証拠には、ソース SHA、ジャーナルハッシュ、観察日が記録されます。
 
 
-fixtureとcorpusの固定検証では、`HKERNEL_REPORT_CONFIG`と`HKERNEL_LEDGER_DATA_DIR`をunsetし、分離された作業directoryからbinaryを実行します。ローカルの運用構成では固定契約を変更できません。`report-real-snapshot`だけが明示されたprivate sourceを読みます。
+fixtureとcorpusの固定検証では、`HKERNEL_REPORT_CONFIG`と`HKERNEL_LEDGER_DATA_DIR`をunsetし、分離された作業directoryからbinaryを実行します。ローカルの運用構成では固定契約を変更できません。`report-real-snapshot`だけが明示されたprivate canonical Household rootを読みます。
 
 
 ## 黄金律
 
 
-- `tests/golden/report-contract.txt` は小さなセマンティックフィクスチャを修正します。
+- `tests/golden/report-contract.txt` は小さなセマンティックフィクスチャを固定します。
 
-- `tests/golden/report-corpus-synthetic-v1.txt` は合成コーパスを修正します。
+- `tests/golden/report-corpus-synthetic-v1.txt` は合成コーパスを固定します。
 
-- ゴールデン アップデートは、動作の変更に応じてレビューする必要があり、単に CI をグリーンにするためだけに再生成することはできません。
+- ゴールデンアップデートは、動作の変更に応じてレビューする必要があり、単に CI をグリーンにするためだけに再生成することはできません。
 
-- コーパス ディレクトリは不変です。置換では、新しい合成コーパス バージョンが使用されます。
+- コーパスディレクトリは不変です。置換では、新しい合成コーパスバージョンが使用されます。
 
 - 単体テストに合格しただけでは、完全に締結された契約が変更されていないという証拠にはなりません。
 
