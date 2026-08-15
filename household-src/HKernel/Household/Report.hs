@@ -3,8 +3,8 @@
 -- | Pure Household report composition from already admitted typed values.
 --
 -- Source admission, writer authority, and delivery effects remain outside this
--- module. Envelope entitlement and Actual consumption meet directly here; no
--- intermediate Budget observation is constructed.
+-- module. Native Envelope owners meet here without an intermediate Budget
+-- calculation model.
 module HKernel.Household.Report
   ( HouseholdSourceError(..)
   , HouseholdCycleComparison(..)
@@ -47,7 +47,8 @@ import HKernel.Actual.Journal
   , actualJournalValue
   )
 import HKernel.Engine (LedgerEntry(..), journalEntries)
-import HKernel.Envelope.ExpenseRouting (ExpenseRouteResolver)
+import HKernel.Envelope.ExpenseRouting (ExpenseRoutingHistory)
+import HKernel.Envelope.FulfillmentRouting (FulfillmentRoutingHistory)
 import HKernel.Household.Backing
   ( HouseholdBackingPlan(..)
   , EnvelopeBackingLine(..)
@@ -68,13 +69,18 @@ import HKernel.Household.EnvelopeObservation
   ( deriveHouseholdEnvelopeObservation
   , householdEnvelopeConsumption
   , householdEnvelopeEntitlement
+  , householdEnvelopeHeadroom
+  , householdEnvelopeRemaining
   )
 import HKernel.Household.Policy
   ( AccountValidatedHouseholdPolicy
   , HouseholdPolicy
+  , householdBackingPolicy
   , householdCycleIncomeAccount
+  , householdEnvelopeOrder
   , householdPolicyAccountPolicy
   , householdPolicyCycle
+  , householdUnassignedBudgetAccounts
   )
 import HKernel.HouseholdIssue
 import HKernel.Journal (Journal, journalAccountRegistry)
@@ -159,15 +165,17 @@ data HouseholdReportSurface = HouseholdReportSurface
 buildHouseholdReportSurfaceFromAdmitted
   :: Day
   -> ActualJournal
+  -> PlanJournal
   -> HouseholdPolicy
   -> AccountValidatedHouseholdPolicy
-  -> ExpenseRouteResolver
+  -> ExpenseRoutingHistory
+  -> FulfillmentRoutingHistory
   -> AdmittedPlans
   -> [HouseholdBudgetMovement]
   -> [HouseholdIssue]
   -> DailyTargetScope
   -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
-buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy _validatedPolicy routeResolver admittedPlans movements issues dailyScope = do
+buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal policy _validatedPolicy expenseRouting fulfillmentRouting admittedPlans movements issues dailyScope = do
   accountPolicy <- case householdPolicyAccountPolicy policy of
     Just value -> Right value
     Nothing -> Left (sourceError "household.toml" 0
@@ -194,11 +202,21 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy _valida
       (actualJournalIdentifiedTransactions actualJournal)
       outgoingDeclarations)
   envelopeObservation <- mapLeft
-    (fmap (sourceError "budget.journal" 0 . tshow))
+    (fmap (sourceError "envelope" 0 . tshow))
     (deriveHouseholdEnvelopeObservation
-      observation current actualJournal policy accountPolicy routeResolver movements)
+      observation
+      current
+      actualJournal
+      planJournal
+      policy
+      accountPolicy
+      expenseRouting
+      fulfillmentRouting
+      movements)
   let envelopeConsumption = householdEnvelopeConsumption envelopeObservation
       entitlement = householdEnvelopeEntitlement envelopeObservation
+      remaining = householdEnvelopeRemaining envelopeObservation
+      headroom = householdEnvelopeHeadroom envelopeObservation
       openPlanValues = filter
         (\plan -> committedPlanId plan `Set.notMember` retiredPlanIds)
         completionOpenPlanValues
@@ -209,7 +227,6 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy _valida
       backingPlans =
         [ HouseholdBackingPlan
             { householdBackingPlanSource = committedPlanSource plan
-            , householdBackingPlanDestination = committedPlanDestination plan
             , householdBackingPlanAmount = committedPlanAmount plan
             }
         | plan <- backingOpenPlans
@@ -217,7 +234,18 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal policy _valida
   backing <- mapLeft
     (fmap (sourceError "backing" 0 . tshow))
     (deriveHouseholdBacking
-      observation current journal policy movements entitlement envelopeConsumption backingPlans)
+      observation
+      current
+      journal
+      (householdBackingPolicy policy)
+      (householdEnvelopeOrder policy)
+      (householdUnassignedBudgetAccounts policy)
+      movements
+      entitlement
+      envelopeConsumption
+      remaining
+      headroom
+      backingPlans)
   let target = deriveDailyTarget observation current journal dailyScope currentOpenPlans
       comparison = alignedHouseholdCycleComparison
         observation current previous journal currentCycle
@@ -304,10 +332,6 @@ projectIncomingCycleAnchor registry identified =
 
 committedPlanSource :: CommittedOutgoingPlan -> Account
 committedPlanSource plan = declaredAccount (declaredPaymentSource direction)
-  where direction = declaredOutgoingPaymentDirection (committedPlanDirection plan)
-
-committedPlanDestination :: CommittedOutgoingPlan -> Account
-committedPlanDestination plan = declaredAccount (declaredPaymentDestination direction)
   where direction = declaredOutgoingPaymentDirection (committedPlanDirection plan)
 
 completionDeclarationsForOutgoingPlans
