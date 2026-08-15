@@ -20,7 +20,7 @@ import HKernel.Backing.Policy
   , backingPolicyPoolForEnvelope, backingPoolDefinitionAssetAccounts
   , backingPoolDefinitionId, defineBackingPool, mkBackingPolicy )
 import HKernel.Envelope.Identity
-  ( EnvelopeIdError(..), envelopeIdText, mkEnvelopeId )
+  ( EnvelopeId, EnvelopeIdError(..), envelopeIdText, mkEnvelopeId )
 import HKernel.Envelope.Policy
 import Toml (decode)
 import Toml.Schema (FromValue(..), Result(..), parseTableFromValue, reqKey)
@@ -40,11 +40,16 @@ instance FromValue RawEnvelope where
     (RawEnvelope <$> reqKey "id" <*> reqKey "label" <*> reqKey "pacing"
       <*> reqKey "backing-pool" <*> reqKey "expense-accounts")
 
--- | Admit two independent semantic owners from one retained physical source.
--- The tuple is only the parser boundary; neither owner contains the other.
+-- | Admit three independent semantic/source owners from one retained physical
+-- source. The tuple is only the parser boundary; none of the owners contains
+-- either of the others.
+--
+-- Current Expense assignments remain source compatibility/current operational
+-- policy. Historical Expense routing is admitted independently and never
+-- reconstructed from this source.
 parseCurrentEnvelopeConfiguration
   :: Text
-  -> Either [Text] (CurrentEnvelopePolicy, BackingPolicy)
+  -> Either [Text] (CurrentEnvelopePolicy, BackingPolicy, CurrentExpenseAssignments)
 parseCurrentEnvelopeConfiguration input =
   case decode input :: Result String RawConfiguration of
     Failure errors -> Left (map T.pack errors)
@@ -54,22 +59,25 @@ parseCurrentEnvelopeConfiguration input =
 
 rawToPolicies
   :: RawConfiguration
-  -> Either [Text] (CurrentEnvelopePolicy, BackingPolicy)
+  -> Either [Text] (CurrentEnvelopePolicy, BackingPolicy, CurrentExpenseAssignments)
 rawToPolicies (RawConfiguration rawPools rawEnvelopes) =
   case syntaxErrors of
     _ : _ -> Left syntaxErrors
-    [] -> case mkBackingPolicy poolDefinitions assignments of
+    [] -> case mkBackingPolicy poolDefinitions backingAssignments of
       Left errors -> Left (map renderBackingError (NonEmpty.toList errors))
       Right backing -> case mkCurrentEnvelopePolicy envelopeDefinitions of
         Left errors -> Left (map renderPolicyError (NonEmpty.toList errors))
-        Right policy -> Right (policy, backing)
+        Right policy -> case mkCurrentExpenseAssignments expenseAssignments of
+          Left errors -> Left (map renderCurrentExpenseAssignmentsError (NonEmpty.toList errors))
+          Right currentExpenses -> Right (policy, backing, currentExpenses)
   where
     (poolErrorGroups, poolDefinitions) = partitionEithers
       (zipWith parseRawBackingPool [0 :: Int ..] rawPools)
     (envelopeErrorGroups, parsedEnvelopes) = partitionEithers
       (zipWith parseRawEnvelope [0 :: Int ..] rawEnvelopes)
-    envelopeDefinitions = map fst parsedEnvelopes
-    assignments = map snd parsedEnvelopes
+    envelopeDefinitions = [definition | (definition, _, _) <- parsedEnvelopes]
+    backingAssignments = [assignment | (_, assignment, _) <- parsedEnvelopes]
+    expenseAssignments = concat [assignments | (_, _, assignments) <- parsedEnvelopes]
     syntaxErrors = concat poolErrorGroups ++ concat envelopeErrorGroups
 
 parseRawBackingPool :: Int -> RawBackingPool -> Either [Text] BackingPoolDefinition
@@ -83,11 +91,17 @@ parseRawBackingPool index (RawBackingPool rawId rawAccounts) =
     (accountErrors, accounts) = parseAccounts (path <> ".asset-accounts") rawAccounts
     errors = either (pure . renderPoolIdError (path <> ".id")) (const []) poolResult ++ accountErrors
 
-parseRawEnvelope :: Int -> RawEnvelope -> Either [Text] (EnvelopeDefinition, EnvelopeBackingAssignment)
+parseRawEnvelope
+  :: Int
+  -> RawEnvelope
+  -> Either [Text] (EnvelopeDefinition, EnvelopeBackingAssignment, [(Account, EnvelopeId)])
 parseRawEnvelope index (RawEnvelope rawId rawLabel rawPacing rawPool rawAccounts) =
   case (idResult, labelResult, pacingResult, poolResult, errors) of
     (Right envelope, Right label, Right pacing, Right pool, []) -> Right
-      (defineEnvelope envelope label pacing accounts, assignEnvelopeBackingPool envelope pool)
+      ( defineEnvelope envelope label pacing
+      , assignEnvelopeBackingPool envelope pool
+      , [(account, envelope) | account <- accounts]
+      )
     _ -> Left errors
   where
     path = indexed "envelopes" index
@@ -110,8 +124,9 @@ parsePacing path value = Left [path <> ": expected daily or flex; got " <> quote
 renderCurrentEnvelopeConfiguration
   :: CurrentEnvelopePolicy
   -> BackingPolicy
+  -> CurrentExpenseAssignments
   -> Text
-renderCurrentEnvelopeConfiguration policy backing =
+renderCurrentEnvelopeConfiguration policy backing currentExpenses =
   T.intercalate "\n"
     (map renderPool (backingPolicyPoolDefinitions backing)
       ++ map renderEnvelope (currentEnvelopePolicyDefinitions policy)) <> "\n"
@@ -127,7 +142,8 @@ renderCurrentEnvelopeConfiguration policy backing =
       , "pacing = " <> tomlString (renderPacing (envelopeDefinitionPacing definition))
       , "backing-pool = " <> maybe "\"\"" (tomlString . backingPoolIdText)
           (backingPolicyPoolForEnvelope envelope backing)
-      , "expense-accounts = " <> renderAccountArray (envelopeDefinitionExpenseAccounts definition) ]
+      , "expense-accounts = " <> renderAccountArray
+          (currentExpenseAccountsForEnvelope envelope currentExpenses) ]
       where envelope = envelopeDefinitionId definition
 
 renderPacing :: Pacing -> Text
@@ -187,6 +203,8 @@ renderPolicyError err = case err of
   DuplicateCurrentEnvelopeLabel label firstEnvelope secondEnvelope ->
     "envelopes: duplicate label " <> quoted (envelopeLabelText label)
       <> " for " <> quoted (envelopeIdText firstEnvelope) <> " and " <> quoted (envelopeIdText secondEnvelope)
+renderCurrentExpenseAssignmentsError :: CurrentExpenseAssignmentsError -> Text
+renderCurrentExpenseAssignmentsError err = case err of
   DuplicateCurrentExpenseAccountAssignment account firstEnvelope secondEnvelope ->
     "Expense account " <> quoted (accountName account) <> " is assigned to both "
       <> quoted (envelopeIdText firstEnvelope) <> " and " <> quoted (envelopeIdText secondEnvelope)
