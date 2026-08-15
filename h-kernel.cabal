@@ -123,7 +123,6 @@ library h-kernel-editor
                     , HKernel.Editor.Interaction.PlanCompleteAdvance
                     , HKernel.Editor.HouseholdWorkspace
                     , HKernel.Editor.IssueAppend
-                    , HKernel.Editor.PlanBudgetSync
                     , HKernel.Editor.PlanLifecycle
                     , HKernel.Editor.PlanCompleteAdvance
                     , HKernel.Editor.TransactionBlock
@@ -627,7 +626,6 @@ executable h-kernel-editor-tui
                     , HKernel.Editor.TUI.Maintenance
                     , HKernel.Editor.TUI.Model
                     , HKernel.Editor.TUI.Plan
-                    , HKernel.Editor.TUI.PlanBudgetSyncPicker
                     , HKernel.Editor.TUI.Report
                     , HKernel.Editor.TUI.ReportStyle
     build-depends:    base >= 4.14 && < 5
