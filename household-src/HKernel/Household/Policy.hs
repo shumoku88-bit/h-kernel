@@ -8,7 +8,6 @@ module HKernel.Household.Policy
   , defineHouseholdEnvelopeCoordinates
   , householdEnvelopeCoordinateId
   , householdEnvelopeAllocationAccount
-  , householdEnvelopePlanDestinationAccounts
   , HouseholdPolicy
   , HouseholdPolicyError(..)
   , mkHouseholdPolicy
@@ -65,17 +64,17 @@ newtype HouseholdCyclePolicy = IncomeAnchorCyclePolicy
 incomeAnchorCyclePolicy :: Account -> HouseholdCyclePolicy
 incomeAnchorCyclePolicy = IncomeAnchorCyclePolicy
 
--- | Current canonical allocation coordinates. The retained
--- @plan-destination-accounts@ list is parsed for source compatibility only; it
--- no longer contributes Plan-to-Envelope meaning.
+-- | Current canonical allocation coordinates for one Envelope. Historical
+-- @plan-destination-accounts@ syntax is a physical shared-source compatibility
+-- coordinate owned at Config admission and is deliberately not Household policy
+-- state. Plan-to-Envelope intent belongs to stable PlanId fulfillment routing.
 data HouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
-  { householdEnvelopeCoordinateId            :: EnvelopeId
-  , householdEnvelopeAllocationAccount       :: Account
-  , householdEnvelopePlanDestinationAccounts :: [Account]
+  { householdEnvelopeCoordinateId      :: EnvelopeId
+  , householdEnvelopeAllocationAccount :: Account
   } deriving (Eq, Show)
 
 defineHouseholdEnvelopeCoordinates
-  :: EnvelopeId -> Account -> [Account] -> HouseholdEnvelopeCoordinates
+  :: EnvelopeId -> Account -> HouseholdEnvelopeCoordinates
 defineHouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
 
 data HouseholdPolicyError
@@ -83,7 +82,6 @@ data HouseholdPolicyError
   | HouseholdCoordinatesReferenceUnknownEnvelope EnvelopeId
   | HouseholdEnvelopeMissingCoordinates EnvelopeId
   | DuplicateAllocationAccount Account EnvelopeId EnvelopeId
-  | DuplicatePlanDestinationAccount Account EnvelopeId EnvelopeId
   | HouseholdPolicyHasNoUnassignedBudgetAccounts
   | DuplicateUnassignedBudgetAccount Account
   | AllocationAccountAlsoUnassigned Account EnvelopeId
