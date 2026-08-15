@@ -8,6 +8,7 @@ module HKernel.Household.Policy
   , defineHouseholdEnvelopeCoordinates
   , householdEnvelopeCoordinateId
   , householdEnvelopeAllocationAccount
+  , householdEnvelopePlanDestinationAccounts
   , HouseholdPolicy
   , HouseholdPolicyError(..)
   , mkHouseholdPolicy
@@ -64,30 +65,24 @@ newtype HouseholdCyclePolicy = IncomeAnchorCyclePolicy
 incomeAnchorCyclePolicy :: Account -> HouseholdCyclePolicy
 incomeAnchorCyclePolicy = IncomeAnchorCyclePolicy
 
--- | Current canonical allocation coordinates for one Envelope.
---
--- The final argument admits the retained @plan-destination-accounts@ source
--- shape but deliberately discards it. Plan-to-Envelope meaning belongs to
--- stable PlanId fulfillment routing, so legacy destination Accounts are no
--- longer Household policy state.
+-- | Current canonical allocation coordinates. The retained
+-- @plan-destination-accounts@ list is parsed for source compatibility only; it
+-- no longer contributes Plan-to-Envelope meaning.
 data HouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
-  { householdEnvelopeCoordinateId      :: EnvelopeId
-  , householdEnvelopeAllocationAccount :: Account
+  { householdEnvelopeCoordinateId            :: EnvelopeId
+  , householdEnvelopeAllocationAccount       :: Account
+  , householdEnvelopePlanDestinationAccounts :: [Account]
   } deriving (Eq, Show)
 
 defineHouseholdEnvelopeCoordinates
   :: EnvelopeId -> Account -> [Account] -> HouseholdEnvelopeCoordinates
-defineHouseholdEnvelopeCoordinates envelopeId allocationAccount _retiredPlanDestinations =
-  HouseholdEnvelopeCoordinates envelopeId allocationAccount
+defineHouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
 
 data HouseholdPolicyError
   = DuplicateHouseholdEnvelopeCoordinates EnvelopeId
   | HouseholdCoordinatesReferenceUnknownEnvelope EnvelopeId
   | HouseholdEnvelopeMissingCoordinates EnvelopeId
   | DuplicateAllocationAccount Account EnvelopeId EnvelopeId
-  -- Retained only for the physical config diagnostic surface while legacy
-  -- plan-destination syntax remains admitted. It is no longer produced by
-  -- Household semantic validation.
   | DuplicatePlanDestinationAccount Account EnvelopeId EnvelopeId
   | HouseholdPolicyHasNoUnassignedBudgetAccounts
   | DuplicateUnassignedBudgetAccount Account
