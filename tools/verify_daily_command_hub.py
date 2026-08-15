@@ -148,9 +148,9 @@ def main() -> None:
             raise AssertionError(f"plan delegation differed: {read_log(log)!r}")
 
         log.write_text("", encoding="utf-8")
-        result = invoke(["budget", "budget_alloc.tsv", "2026-08-06", "memo", "Expenses:Food", "Expenses:Dining", "1000", "JPY"], base_env)
+        result = invoke(["budget", "budget.journal", "2026-08-06", "memo", "Expenses:Food", "Expenses:Dining", "1000", "JPY"], base_env)
         assert_success(result, "budget delegation")
-        if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <budget> <budget_alloc.tsv> <2026-08-06> <memo> <Expenses:Food> <Expenses:Dining> <1000> <JPY>"]:
+        if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <budget> <budget.journal> <2026-08-06> <memo> <Expenses:Food> <Expenses:Dining> <1000> <JPY>"]:
             raise AssertionError(f"budget delegation differed: {read_log(log)!r}")
 
         log.write_text("", encoding="utf-8")
