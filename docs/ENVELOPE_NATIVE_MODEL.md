@@ -104,22 +104,23 @@ identity.
 
 ## Current Envelope policy
 
-`CurrentEnvelopePolicy` is transitional. Its target responsibility is current
-operational and presentation information such as label, pacing, order, and
-visibility.
+`CurrentEnvelopePolicy` owns only current Envelope definition and presentation
+coordinates such as label, pacing, order, and visibility.
 
-It must not become historical authority for:
+The retained physical `budget.toml` is one source boundary but is admitted into
+three independent current owners:
 
-- Expense routing,
-- fulfillment routing,
-- entitlement history,
-- stable identity,
-- historical Backing topology.
+- `CurrentEnvelopePolicy` for current Envelope definition/presentation,
+- `CurrentExpenseAssignments` for retained current operational Expense Account
+  assignment compatibility,
+- `BackingPolicy` for current funding topology.
 
-The implementation still carries Expense Account assignments and a
-`BackingPolicy` inside `CurrentEnvelopePolicy`. That coupling is the next
-ownership split. A shared physical TOML file may be parsed into several domain
-owners without creating one aggregate semantic owner.
+`CurrentExpenseAssignments` is not historical routing evidence. Actual and open
+Plan Envelope meaning remains owned by `ExpenseRoutingHistory`; missing
+historical routing never falls back to the current assignment owner.
+
+A shared physical TOML file may therefore be parsed into several domain owners
+without creating one aggregate semantic owner.
 
 ## Entitlement
 
@@ -321,15 +322,13 @@ replacement, then retire the old source contract.
 
 ## Next architectural work
 
-After this production cutover, the remaining bounded work is:
+After the current-owner split, the remaining bounded work is:
 
-1. thin `CurrentEnvelopePolicy` so current presentation/operation, Expense
-   routing declarations, and `BackingPolicy` are independent owners,
-2. retire `plan-destination-accounts` from active Household policy once its
+1. retire `plan-destination-accounts` from active Household policy once its
    source/writer compatibility obligations are explicitly closed,
-3. continue removing retained Budget-Account adapters only after equivalent
+2. continue removing retained Budget-Account adapters only after equivalent
    native source admission and writer paths are qualified,
-4. consider physical source renames only after semantics and writer authority no
+3. consider physical source renames only after semantics and writer authority no
    longer depend on the legacy contract.
 
 New Envelope work must fit this ownership graph rather than create another
