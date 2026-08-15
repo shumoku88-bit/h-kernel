@@ -2,7 +2,7 @@
 
 ステータス: current architecture contract  
 Owner: canonical Household source shape、source role boundary、engine-neutral semantic contract  
-更新日: 2026-08-15
+更新日: 2026-08-16
 
 ## 目的
 
@@ -41,11 +41,13 @@ issues.tsv
 ### Domain policy
 
 - `budget.toml`: retained physical current-policy source boundary。current Envelope definition/presentation、current Expense assignment compatibility、current Backing topologyを供給するが、それらを一つのsemantic ownerにはしない
-- `household.toml`: household-specific policyとhistory。cycle、allocation Account、unassigned Account、Daily Target selection、effective-dated Expense/Fulfillment routing historyなどを供給する
+- `household.toml`: household-specific policyとhistory。cycle、allocation Account、unassigned Account、Daily Target selection、Budget movement endpoint kind、effective-dated Expense/Fulfillment routing historyなどを供給する
 
-`household.toml`の一部Envelope entryには、cross-engine migration中のphysical compatibility coordinateとして`plan-destination-accounts`が残っている。これは**Plan-to-Envelope authorityではない**。stable `PlanId`をキーとするFulfillment routingがnon-Expense target intentを所有する。
+canonical private `household.toml` は既に `plan-destination-accounts` を保持しない。Plan-to-Envelope intentはstable `PlanId`をキーとするFulfillment routingが所有する。old sourceにこのretired keyが残る場合、reader transition中のh-kernelはopaque compatibility inputとして受理できるが、Account identityとして再解釈せず、`HouseholdPolicy`へ保存しない。
 
-physical compatibility keyがshared sourceに存在する間、engineはその構文を明示的にadmitまたはfail closedしなければならない。ただし各engineのnative semantic stateへ保存する必要はない。h-kernelはAccount syntaxを検証した後、このcoordinateを`HouseholdPolicy`へ保持しない。
+`account-policy.budget.envelope-role` もcurrent canonical Household semantic coordinateではない。canonical sourceはこのsectionを要求せず、h-kernelは存在してもnative Account policyへ投影しない。Budget movement endpoint classificationは `account-policy.budget.kind` の `opening` / `unassigned` / `spent` / `envelope` が所有する。`budget:spent` のhistorical rowが存在することからexecution authorityを復元しない。
+
+retired compatibility keyを既知のopaque inputとして一時的に受理することと、unknown semantic coordinateをsilent ignoreすることは別である。新しい意味を持つ未知のkeyやsectionはfail closedを維持する。
 
 `budget.toml`のcurrent Expense assignmentはhistorical Expense routing authorityではない。current configから過去のroutingを再構成しない。
 

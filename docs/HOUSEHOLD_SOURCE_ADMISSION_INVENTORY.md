@@ -1,7 +1,7 @@
 # Household source admission inventory
 
 ステータス: 現在状態の ownership inventory  
-更新日: 2026-08-15
+更新日: 2026-08-16
 
 ## 目的
 
@@ -54,9 +54,11 @@ HouseholdRoot
 
 `household.toml` の `[envelope-history]` は `HouseholdConfiguration` の opaque side fieldとして意味付けしない。同じ physical source から `HKernel.Household.EnvelopeHistory` が history を別 owner として admit する。
 
-shared canonical `household.toml` に残る `plan-destination-accounts` は source compatibility coordinate として `HKernel.Household.Config` が Account syntax を検証するが、`HouseholdPolicy` には保存しない。non-Expense target の current authority は stable `PlanId` Fulfillment routing である。physical key 自体の撤去は、bqn-ledger admission と canonical source を含む cross-engine cutover として別に行う。
+canonical private `household.toml` は既に `plan-destination-accounts` を保持しない。old sourceにこのretired keyが残る場合、`HKernel.Household.Config` はreader transition用のopaque compatibility inputとして受理するが、Account syntaxを再検証せず `HouseholdPolicy` に保存しない。non-Expense target のcurrent authorityはstable `PlanId` Fulfillment routingである。
 
-Account registry は Actual、Plan、Budget Journal と policy 上の Account reference を照合する。source family ごとの admission failure を欠落値や推測へ変換しない。
+`account-policy.budget.envelope-role` はcanonical admissionのrequired sectionではなく、存在しても `HouseholdAccountPolicy` へ投影しない。Budget movementのendpoint semanticsは `account-policy.budget.kind` が所有し、`opening` / `unassigned` / `spent` / `envelope` をnative Entitlement projectionが使用する。したがって `budget.kind` や `budget:spent` historical evidenceの退役をこの変更から推測しない。
+
+Account registry は Actual、Plan、Budget Journal とcurrent policy上のAccount referenceを照合する。retired compatibility coordinateをopaqueに受理することから、新しいunknown semantic coordinateのsilent fallbackを認めない。
 
 ## Journal root observation
 
@@ -146,7 +148,7 @@ Report が source basename、retired TSV parser、Budget aggregate を再所有�
 - canonical source の private ownership を変えない
 - write capability から writer authority を推測しない
 - `HouseholdWriteSnapshot` の同一 observation boundary を崩さない
-- shared physical compatibility key を silent ignore しない
+- known retired compatibility keyのopaque admissionとunknown semantic coordinateのsilent ignoreを混同しない
 - source-local failure を silent fallback へ変換しない
 - generic source parser、generic repository/session、generic event frameworkを先回りして作らない
 - completed migration adapter を「念のため」current application path へ戻さない
