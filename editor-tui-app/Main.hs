@@ -37,7 +37,6 @@ import HKernel.Editor.TUI.Model
   , makeWorkspaceContext
   )
 import qualified HKernel.Editor.TUI.Plan as Plan
-import qualified HKernel.Editor.TUI.PlanBudgetSyncPicker as PlanBudgetSyncPicker
 import qualified HKernel.Editor.TUI.Report as Report
 import HKernel.Household.Application
   ( HouseholdState(..)
@@ -66,7 +65,6 @@ data UIState
   | PlanFlow (Plan.State AppEvent)
   | MaintenanceFlow (Maintenance.State AppEvent)
   | ReportPicker (L.List Name ReportChoice)
-  | PlanBudgetSyncPicker PlanBudgetSyncPicker.State
   | ShowWorkspaceReloadFailure
 
 data AppWrapper = AppWrapper AppContext UIState
@@ -91,11 +89,6 @@ zoomReportPicker f (AppWrapper context (ReportPicker choices)) =
   (\updated -> AppWrapper context (ReportPicker updated)) <$> f choices
 zoomReportPicker _ wrapper = pure wrapper
 
-zoomPlanBudgetSyncPicker :: Traversal' AppWrapper PlanBudgetSyncPicker.State
-zoomPlanBudgetSyncPicker f (AppWrapper context (PlanBudgetSyncPicker picker)) =
-  (\updated -> AppWrapper context (PlanBudgetSyncPicker updated)) <$> f picker
-zoomPlanBudgetSyncPicker _ wrapper = pure wrapper
-
 zoomContext :: Lens' AppWrapper AppContext
 zoomContext f (AppWrapper context state) =
   (\updated -> AppWrapper updated state) <$> f context
@@ -108,7 +101,6 @@ drawUI (AppWrapper context (ActualFlow _ state)) = [Actual.drawFlow context stat
 drawUI (AppWrapper _ (PlanFlow state)) = [Plan.drawFlow state]
 drawUI (AppWrapper _ (MaintenanceFlow state)) = [Maintenance.drawFlow state]
 drawUI (AppWrapper _ (ReportPicker choices)) = [Report.drawPicker choices]
-drawUI (AppWrapper _ (PlanBudgetSyncPicker picker)) = [PlanBudgetSyncPicker.draw picker]
 drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
   [ center
       (borderWithLabel (str "Household reload")
@@ -166,9 +158,7 @@ drawNavigationBar currentSection =
 drawSectionBody :: AppContext -> Widget Name
 drawSectionBody context = case contextCurrentSection context of
   ActualSection -> Actual.drawWorkspace context
-  PlansSection ->
-    Plan.drawWorkspace context
-      <=> str "[B] Retry Budget sync for a completed Plan"
+  PlansSection -> Plan.drawWorkspace context
   BudgetSection -> Maintenance.drawBudgetWorkspace context
   AccountsSection -> Maintenance.drawAccountsWorkspace context
   IssuesSection -> Maintenance.drawIssuesWorkspace context
@@ -223,7 +213,6 @@ appEvent event = do
     PlanFlow _ -> handlePlanFlow context event
     MaintenanceFlow _ -> handleMaintenanceFlow context event
     ReportPicker _ -> handleReportPicker context event
-    PlanBudgetSyncPicker _ -> handlePlanBudgetSyncPicker context event
     ShowWorkspaceReloadFailure -> handleExitOnlyEvent event
 
 handleHomeEvent
@@ -316,7 +305,6 @@ handleWorkspaceEvent context event = case event of
       case action of
         Plan.MaintainContext -> pure ()
         Plan.StartFlow flow -> put (AppWrapper currentContext (PlanFlow flow))
-        Plan.OpenBudgetSyncPicker -> openPlanBudgetSyncPicker currentContext
     BudgetSection -> do
       action <- Maintenance.handleBudgetWorkspaceEvent event
       case action of
@@ -356,12 +344,6 @@ handleWorkspaceEvent context event = case event of
       let picker = L.list ReportPickerList (Vec.fromList Report.reportChoices) 1
           selectedIndex = Report.reportChoiceIndex (contextSelectedReport context)
       in put (AppWrapper context (ReportPicker (L.listMoveTo selectedIndex picker)))
-    openPlanBudgetSyncPicker currentContext =
-      case PlanBudgetSyncPicker.start currentContext of
-        Left message ->
-          put (AppWrapper currentContext (PlanFlow (Plan.WriteOutcome message)))
-        Right picker ->
-          put (AppWrapper currentContext (PlanBudgetSyncPicker picker))
 
 handleReportPicker :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleReportPicker context event = case event of
@@ -391,19 +373,6 @@ handleReportPicker context event = case event of
       let reportsViewport = viewportScroll ReportsViewport
       vScrollToBeginning reportsViewport
       hScrollToBeginning reportsViewport
-
-handlePlanBudgetSyncPicker :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
-handlePlanBudgetSyncPicker context event = do
-  zoom zoomPlanBudgetSyncPicker (PlanBudgetSyncPicker.handleEvent event)
-  AppWrapper _ state <- get
-  case state of
-    PlanBudgetSyncPicker picker -> case PlanBudgetSyncPicker.action picker of
-      PlanBudgetSyncPicker.Maintain -> pure ()
-      PlanBudgetSyncPicker.ReturnToWorkspace -> put (AppWrapper context Workspace)
-      PlanBudgetSyncPicker.QuitRequested -> halt
-      PlanBudgetSyncPicker.Retry planId ->
-        publishPlanRequest context (Plan.PublishBudgetSync planId)
-    _ -> pure ()
 
 handleActualFlow
   :: AppContext
@@ -448,8 +417,6 @@ publishPlanRequest context request = do
   result <- suspendAndResume' (Plan.publishCandidate context request)
   case result of
     Plan.Published freshContext -> put (AppWrapper freshContext Workspace)
-    Plan.BudgetSyncPending freshContext planId message ->
-      put (AppWrapper freshContext (PlanFlow (Plan.BudgetSyncWarning planId message)))
     Plan.PublicationFailed message ->
       put (AppWrapper context (PlanFlow (Plan.WriteOutcome message)))
     Plan.ReloadFailed -> put (AppWrapper context ShowWorkspaceReloadFailure)
