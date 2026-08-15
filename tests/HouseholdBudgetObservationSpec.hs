@@ -85,7 +85,7 @@ main = do
         envelopePolicy
         backingPolicy
         currentExpenses
-        [defineHouseholdEnvelopeCoordinates foodId foodAllocation []]
+        [defineHouseholdEnvelopeCoordinates foodId foodAllocation]
         [unassigned])
       accountPolicy = mustRight (mkHouseholdAccountPolicy
         []
