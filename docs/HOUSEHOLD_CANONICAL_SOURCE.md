@@ -41,7 +41,11 @@ issues.tsv
 ### Domain policy
 
 - `budget.toml`: retained physical current-policy source boundary。current Envelope definition/presentation、current Expense assignment compatibility、current Backing topologyを供給するが、それらを一つのsemantic ownerにはしない
-- `household.toml`: household-specific policyとhistory。cycle、allocation Account、Plan destination、unassigned Account、effective-dated Envelope routing historyなどを所有する
+- `household.toml`: household-specific policyとhistory。cycle、allocation Account、unassigned Account、Daily Target selection、effective-dated Expense/Fulfillment routing historyなどを供給する
+
+`household.toml`の一部Envelope entryには、cross-engine migration中のphysical compatibility coordinateとして`plan-destination-accounts`が残っている。これは**Plan-to-Envelope authorityではない**。stable `PlanId`をキーとするFulfillment routingがnon-Expense target intentを所有する。
+
+physical compatibility keyがshared sourceに存在する間、engineはその構文を明示的にadmitまたはfail closedしなければならない。ただし各engineのnative semantic stateへ保存する必要はない。h-kernelはAccount syntaxを検証した後、このcoordinateを`HouseholdPolicy`へ保持しない。
 
 `budget.toml`のcurrent Expense assignmentはhistorical Expense routing authorityではない。current configから過去のroutingを再構成しない。
 
@@ -75,6 +79,8 @@ canonical Household source
 
 `h-kernel`と`bqn-ledger`は同じsourceを異なる内部表現へ変換してよい。共有するのは内部データ構造ではなく、admission後に同じ意味へ到達することと、write後にその意味を失わないことである。
 
+physical compatibility coordinateが存在することと、そのcoordinateがcurrent semantic authorityであることを同一視しない。shared sourceからcoordinate自体を削除する場合は、両engineのreader/admissionを確認してcross-engine cutoverとして行う。
+
 ## Household root law
 
 canonical delivery pathは、一つの`HouseholdRoot`からsource basenameを解決する。
@@ -106,23 +112,24 @@ source filename、Household Account classification、Envelope membership、Actua
 
 それらが別engineのcompatibilityやprivate repository historyとして残るかどうかは、このcanonical contractから推測しない。current applicationへ「念のため」併読を戻さない。
 
-retained formatの意味を扱うcurrent compatibility moduleが存在する場合、その型・parser・testが現在の意味を所有する。完了済みmigration roadmapをcurrent architectureへ戻さない。
+current canonical source内部に残るretained physical keyについても同じlawを適用する。構文互換のために受理することから、native authorityや永続semantic stateを推測しない。
 
 ## Writer authority
 
-canonical repositoryが一つであること、write capabilityが複数engineに存在すること、current operational writer authorityが一つであることを同一視しない。
+canonical repositoryが一つであること、readerがsourceをadmitできること、write capabilityが複数engineに存在すること、current operational writer authorityが一つであることを同一視しない。
 
 source別authority、single-writer law、cutover gateは[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md)が所有する。この文書はcanonical source shapeからwriter authorityを推測しない。
 
 ## Evolution law
 
-canonical contractを将来変更する場合は、file数を減らすこと自体を目的にしない。
+canonical contractを将来変更する場合は、file数やkey数を減らすこと自体を目的にしない。
 
 - fact、declaration、policy、application policy、notebookのownerを先に確認する
 - unknown key、column、metadata、status、Commodity、relationを黙って捨てない
 - identity、provenance、exact Quantity、Commodityを維持する
 - source format migrationとwriter authority cutoverを同じchangeへ暗黙に混ぜない
 - 一方のengineの内部表現をcanonical sourceへ持ち込まない
+- shared physical coordinateを削除する前に両engineのadmissionを確認する
 - conversionが必要ならsemantic parityを明示的に確認する
 - 完了後は旧migration手順をcurrent documentへ保存せずGit履歴へ戻す
 
@@ -133,4 +140,5 @@ canonical contractを将来変更する場合は、file数を減らすこと自�
 - Haskell internal shapeまたはBQN compatibility argument shapeをcanonical configへ保存しない
 - engine別のcanonical source copyを作らない
 - write capabilityからwriter authorityを推測しない
+- retained physical keyから現在のsemantic authorityを推測しない
 - current 8-source shapeを将来変更不能な永久形式として扱わない
