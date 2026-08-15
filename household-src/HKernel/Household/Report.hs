@@ -116,6 +116,7 @@ import HKernel.Plan.Journal
   , projectedCommittedOutgoingPlan
   , retiredPlanIdsAt
   )
+import HKernel.Plan.Open (resolveOpenPlanTransactionsAt)
 import HKernel.Report.CycleAccounts
 
 data HouseholdSourceError = HouseholdSourceError
@@ -205,6 +206,13 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
       outgoingPlans
       (actualJournalIdentifiedTransactions actualJournal)
       outgoingDeclarations)
+  openFundingTransactions <- mapLeft
+    (fmap (sourceError "plan.journal" 0 . tshow))
+    (resolveOpenPlanTransactionsAt observation planJournal actualJournal)
+  backingPlans <- projectBackingFundingPlans
+    current
+    (journalAccountRegistry (planJournalValue planJournal))
+    openFundingTransactions
   envelopeObservation <- mapLeft
     (fmap (sourceError "envelope" 0 . tshow))
     (deriveHouseholdEnvelopeObservation
@@ -227,14 +235,6 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
       openPlanIds = Set.fromList (map committedPlanId openPlanValues)
       openPlans = openOutgoingPlans openPlanIds outgoingPlans
       currentOpenPlans = filter (periodContains current . committedPlanDate) openPlans
-      backingOpenPlans = filter ((< periodEndExclusive current) . committedPlanDate) openPlans
-      backingPlans =
-        [ HouseholdBackingPlan
-            { householdBackingPlanSource = committedPlanSource plan
-            , householdBackingPlanAmount = committedPlanAmount plan
-            }
-        | plan <- backingOpenPlans
-        ]
   backing <- mapLeft
     (fmap (sourceError "backing" 0 . tshow))
     (deriveHouseholdBacking
@@ -261,6 +261,39 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
     , householdEnvelopeBacking = backing
     , householdDailyTarget = target
     }
+
+-- | Project every negative Asset posting of every role-neutral open Plan into
+-- the independent Backing funding horizon. Plan destination semantics never
+-- enter this projection; Envelope claims are owned by Commitment routing.
+projectBackingFundingPlans
+  :: Period
+  -> AccountRegistry
+  -> [IdentifiedPlanTransaction]
+  -> Either (NonEmpty HouseholdSourceError) [HouseholdBackingPlan]
+projectBackingFundingPlans period registry = fmap concat . traverse projectPlan
+  where
+    projectPlan identified
+      | transactionDate transaction >= periodEndExclusive period = Right []
+      | otherwise = traverse projectPosting fundingPostings
+      where
+        transaction = identifiedPlanTransaction identified
+        fundingPostings =
+          [ posting
+          | posting <- NonEmpty.toList (transactionPostings transaction)
+          , accountTypeFor (postingAccount posting) registry == Just Asset
+          , amountQuantity (postingAmount posting) < zeroQuantity
+          ]
+
+    projectPosting posting =
+      case mkPositiveAmount (negateAmount (postingAmount posting)) of
+        Right amount -> Right HouseholdBackingPlan
+          { householdBackingPlanSource = postingAccount posting
+          , householdBackingPlanAmount = amount
+          }
+        Left err -> Left
+          (sourceError "plan.journal" 0
+            ("open funding Asset posting failed sign normalization: " <> tshow err)
+            NonEmpty.:| [])
 
 alignedHouseholdCycleComparison
   :: Day -> Period -> Period -> Journal -> CurrentCycleAccounts -> HouseholdCycleComparison
@@ -387,10 +420,6 @@ projectIncomingCycleAnchor registry identified =
       , accountTypeFor (postingAccount posting) registry == Just Income
       , amountQuantity (postingAmount posting) < zeroQuantity
       ]
-
-committedPlanSource :: CommittedOutgoingPlan -> Account
-committedPlanSource plan = declaredAccount (declaredPaymentSource direction)
-  where direction = declaredOutgoingPaymentDirection (committedPlanDirection plan)
 
 completionDeclarationsForOutgoingPlans
   :: PlanJournal
