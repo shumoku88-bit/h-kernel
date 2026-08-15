@@ -21,7 +21,6 @@ module HKernel.Household.Policy
   , householdEnvelopeOrder
   , householdAllocationEnvelopes
   , householdUnassignedBudgetAccounts
-  , householdEnvelopeForPlanDestination
   , AccountValidatedHouseholdPolicy
   , accountValidatedHouseholdPolicy
   , accountValidatedHouseholdBackingPolicy
@@ -159,14 +158,6 @@ mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy currentExpenses coord
       , Set.member account (Set.fromList unassignedAccounts) ]
     errors = duplicateCoordinateErrors ++ unknownCoordinateErrors ++ missingCoordinateErrors
       ++ allocationErrors ++ presenceErrors ++ unassignedErrors ++ overlapErrors
-
--- | Retained compatibility query for the legacy Budget-sync writer. Only the
--- current Expense-assignment owner participates. The deprecated
--- @plan-destination-accounts@ source coordinate and allocation Accounts are not
--- Plan-to-Envelope authority.
-householdEnvelopeForPlanDestination :: Account -> HouseholdPolicy -> Maybe EnvelopeId
-householdEnvelopeForPlanDestination account policy =
-  lookup account (currentExpenseAssignmentPairs (householdCurrentExpenseAssignments policy))
 
 newtype AccountValidatedHouseholdPolicy = AccountValidatedHouseholdPolicy
   { accountValidatedHouseholdPolicy :: HouseholdPolicy
