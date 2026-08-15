@@ -111,12 +111,12 @@ characterizeNativeFailures registry plan cash wifi = do
 
   assertLeftSatisfies
     "eligible policy rejects non-Asset Accounts"
-    isNonAsset
+    (isNonAsset wifi)
     (dailyTargetScopeFromSelections registry [plan] [nonAssetSelection] [])
 
   assertLeftSatisfies
     "obligation scope rejects unknown Plan references"
-    isUnknownPlan
+    (isUnknownPlan unknownPlanId)
     (dailyTargetScopeFromSelections
       registry [plan] [assetSelection] [unknownObligation])
 
@@ -125,7 +125,7 @@ characterizeNativeFailures registry plan cash wifi = do
           (mustRight (parsePlanJournal overReservedPlanJournal)))
   assertLeftSatisfies
     "reservation evidence remains bounded by its Plan"
-    isOverReserved
+    (isOverReserved (committedPlanId plan))
     (dailyTargetScopeFromSelections
       registry [plan] [assetSelection] overReservedSelections)
 
@@ -135,7 +135,7 @@ characterizeNativeFailures registry plan cash wifi = do
           (mustRight (parsePlanJournal nativePlanJournal)))
   assertLeftSatisfies
     "cross-owner Daily Target identities remain unique"
-    isDuplicateId
+    (isDuplicateId wifiId)
     (dailyTargetScopeFromSelections
       registry [plan] [duplicateAsset] normalSelections)
 
@@ -159,25 +159,24 @@ characterizeNativeFailures registry plan cash wifi = do
     (mustRight
       (admitDailyTargetPlanJournalSelections detachedJournal))
   where
-    isNonAsset err = case err of
+    isNonAsset expected err = case err of
       DailyTargetPolicySelectionError
-          (DailyTargetEligibleAccountNotAsset found Expense) -> found == wifi
+          (DailyTargetEligibleAccountNotAsset found Expense) -> found == expected
       _ -> False
 
-    isUnknownPlan err = case err of
+    isUnknownPlan expected err = case err of
       DailyTargetObligationSelectionError
-          (UnknownDailyTargetObligation found) -> found == unknownPlanId
+          (UnknownDailyTargetObligation found) -> found == expected
       _ -> False
 
-    isOverReserved err = case err of
+    isOverReserved expected err = case err of
       DailyTargetObligationSelectionError
           (DailyTargetReservationError
-            (ReservationExceedsPlanAmount _ found _ _)) ->
-              found == committedPlanId plan
+            (ReservationExceedsPlanAmount _ found _ _)) -> found == expected
       _ -> False
 
-    isDuplicateId err = case err of
-      DuplicateDailyTargetScopeId found -> found == wifiId
+    isDuplicateId expected err = case err of
+      DuplicateDailyTargetScopeId found -> found == expected
       _ -> False
 
 journalText :: T.Text
