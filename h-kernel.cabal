@@ -38,7 +38,6 @@ library
                     , HKernel.Envelope.Consumption
                     , HKernel.Envelope.Entitlement
                     , HKernel.Envelope.EntitlementHistory
-                    , HKernel.Envelope.EntitlementTSV
                     , HKernel.Envelope.EntitlementTransfer
                     , HKernel.Envelope.ExpenseRouting
                     , HKernel.Envelope.ExpenseRouting.TSV
@@ -524,14 +523,6 @@ test-suite h-kernel-envelope-entitlement-history-test
                     , h-kernel
                     , text
                     , time
-
-test-suite h-kernel-envelope-entitlement-tsv-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EnvelopeEntitlementTSVSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
 
 test-suite h-kernel-envelope-remaining-test
     import:           test-defaults
