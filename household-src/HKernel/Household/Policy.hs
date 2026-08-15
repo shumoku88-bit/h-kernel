@@ -66,17 +66,19 @@ incomeAnchorCyclePolicy = IncomeAnchorCyclePolicy
 
 -- | Current canonical allocation coordinates for one Envelope.
 --
--- Legacy @plan-destination-accounts@ syntax is admitted at the physical config
--- boundary but is no longer retained as Household policy state. Plan-to-Envelope
--- meaning belongs to stable PlanId fulfillment routing.
+-- The final argument admits the retained @plan-destination-accounts@ source
+-- shape but deliberately discards it. Plan-to-Envelope meaning belongs to
+-- stable PlanId fulfillment routing, so legacy destination Accounts are no
+-- longer Household policy state.
 data HouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
   { householdEnvelopeCoordinateId      :: EnvelopeId
   , householdEnvelopeAllocationAccount :: Account
   } deriving (Eq, Show)
 
 defineHouseholdEnvelopeCoordinates
-  :: EnvelopeId -> Account -> HouseholdEnvelopeCoordinates
-defineHouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
+  :: EnvelopeId -> Account -> [Account] -> HouseholdEnvelopeCoordinates
+defineHouseholdEnvelopeCoordinates envelopeId allocationAccount _retiredPlanDestinations =
+  HouseholdEnvelopeCoordinates envelopeId allocationAccount
 
 data HouseholdPolicyError
   = DuplicateHouseholdEnvelopeCoordinates EnvelopeId
