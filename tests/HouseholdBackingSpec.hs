@@ -3,6 +3,7 @@
 module Main (main) where
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Account (mkAccount)
@@ -14,12 +15,7 @@ import HKernel.Backing.Policy
   , defineBackingPool
   , mkBackingPolicy
   )
-import HKernel.Envelope
-  ( Pacing(..)
-  , defineEnvelope
-  , mkCurrentEnvelopePolicy
-  , mkEnvelopeLabel
-  )
+import HKernel.Envelope.Commitment (observeEnvelopeCommitment)
 import HKernel.Envelope.Consumption
   ( ConsumptionAmounts(ConsumptionAmounts)
   , consumptionCharges
@@ -36,14 +32,20 @@ import HKernel.Envelope.EntitlementTransfer
   )
 import HKernel.Envelope.ExpenseRouting
   ( ExpenseRoute(..)
-  , ExpenseRouteResolver(..)
+  , InitialExpenseRoutingDecision(..)
+  , expenseRoutingResolver
+  , mkExpenseRoutingHistoryWithInitial
   )
+import HKernel.Envelope.Fulfillment (observeEnvelopeFulfillment)
+import HKernel.Envelope.FulfillmentRouting (mkFulfillmentRoutingHistory)
+import HKernel.Envelope.Headroom (calculateEnvelopeHeadroom)
 import HKernel.Envelope.Identity (mkEnvelopeId)
+import HKernel.Envelope.Remaining (calculateEnvelopeRemaining)
 import HKernel.Household.Backing
-import HKernel.Household.Policy
 import HKernel.Money
 import HKernel.Period
 import HKernel.Plan (mkPositiveAmount)
+import HKernel.Plan.Journal (parsePlanJournal)
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -129,8 +131,6 @@ characterizeHouseholdBackingNativeDerivation = do
       travelExpense = mustRight (mkAccount "expenses:travel")
       taxExpense = mustRight (mkAccount "expenses:tax")
       unroutedExpense = mustRight (mkAccount "expenses:unrouted")
-      foodLabel = mustRight (mkEnvelopeLabel "Food")
-      travelLabel = mustRight (mkEnvelopeLabel "Travel")
       backingPolicy = mustRight (mkBackingPolicy
         [ defineBackingPool cashPoolId [cash]
         , defineBackingPool reservePoolId [bank]
@@ -138,19 +138,7 @@ characterizeHouseholdBackingNativeDerivation = do
         [ assignEnvelopeBackingPool foodId cashPoolId
         , assignEnvelopeBackingPool travelId reservePoolId
         ])
-      envelopePolicy = mustRight (mkCurrentEnvelopePolicy
-        [ defineEnvelope foodId foodLabel Daily [foodExpense]
-        , defineEnvelope travelId travelLabel Flex [travelExpense]
-        ] backingPolicy)
-      householdPolicy = mustRight
-        (mkHouseholdPolicy
-          (incomeAnchorCyclePolicy income)
-          envelopePolicy
-          [ defineHouseholdEnvelopeCoordinates foodId foodAlloc []
-          , defineHouseholdEnvelopeCoordinates travelId travelAlloc []
-          ]
-          [unassigned])
-      journalSource = T.unlines
+      declarations =
         [ "account assets:cash", "  type: Asset"
         , "account assets:bank", "  type: Asset"
         , "account income:salary", "  type: Income"
@@ -161,7 +149,10 @@ characterizeHouseholdBackingNativeDerivation = do
         , "account budget:unassigned", "  type: Budget"
         , "account budget:food", "  type: Budget"
         , "account budget:travel", "  type: Budget"
-        , ""
+        ]
+      journalSource = T.unlines
+        (declarations ++
+        [ ""
         , "2026-08-01 salary"
         , "  assets:cash  500 JPY"
         , "  assets:bank  300 JPY"
@@ -186,8 +177,9 @@ characterizeHouseholdBackingNativeDerivation = do
         , "2026-08-06 unrouted refund"
         , "  expenses:unrouted  -5 JPY"
         , "  assets:cash  5 JPY"
-        ]
+        ])
       actualJournal = mustRight (parseActualJournal journalSource)
+      planJournal = mustRight (parsePlanJournal (T.unlines declarations))
       journal = actualJournalValue actualJournal
       entitlementHistory = mustRight (mkEnvelopeEntitlementHistory
         [ mustRight (mkEnvelopeEntitlementTransfer
@@ -199,24 +191,35 @@ characterizeHouseholdBackingNativeDerivation = do
         ])
       entitlement = mustRight
         (observeEnvelopeEntitlement period obsDay entitlementHistory)
-      resolver = ExpenseRouteResolver (\_day account ->
-        if account == foodExpense then Just (ManagedByEnvelope foodId)
-        else if account == travelExpense then Just (ManagedByEnvelope travelId)
-        else if account == taxExpense then Just NotEnvelopeManaged
-        else Nothing)
+      expenseRouting = mustRight (mkExpenseRoutingHistoryWithInitial
+        [ InitialExpenseRoutingDecision foodExpense (ManagedByEnvelope foodId) "food"
+        , InitialExpenseRoutingDecision travelExpense (ManagedByEnvelope travelId) "travel"
+        , InitialExpenseRoutingDecision taxExpense NotEnvelopeManaged "tax unmanaged"
+        ] [])
       consumption = mustRight
-        (observeEnvelopeConsumption period obsDay actualJournal resolver)
+        (observeEnvelopeConsumption
+          period obsDay actualJournal (expenseRoutingResolver expenseRouting))
+      fulfillmentRouting = mustRight (mkFulfillmentRoutingHistory [])
+      fulfillment = mustRight
+        (observeEnvelopeFulfillment
+          period obsDay planJournal actualJournal fulfillmentRouting)
+      remaining = mustRight
+        (calculateEnvelopeRemaining entitlement consumption fulfillment)
+      commitment = mustRight
+        (observeEnvelopeCommitment
+          period obsDay planJournal actualJournal expenseRouting fulfillmentRouting)
+      headroom = mustRight (calculateEnvelopeHeadroom remaining commitment)
       plans =
         [ HouseholdBackingPlan
             { householdBackingPlanSource = cash
-            , householdBackingPlanDestination = foodAlloc
             , householdBackingPlanAmount = mustRight
                 (mkPositiveAmount (mkAmount jpy (quantityFromInteger 30)))
             }
         ]
       backing = mustRight
         (deriveHouseholdBacking
-          obsDay period journal householdPolicy [] entitlement consumption plans)
+          obsDay period journal backingPolicy [foodId, travelId]
+          (Set.singleton unassigned) [] entitlement consumption remaining headroom plans)
 
   case envelopeBackingLines backing of
     [foodLine, travelLine] -> do
@@ -230,6 +233,8 @@ characterizeHouseholdBackingNativeDerivation = do
         mempty (envelopeActualConsumption travelLine)
       assertEqual "travel remaining is native entitlement"
         (one jpy 200) (envelopeLedgerRemaining travelLine)
+      assertEqual "unrelated funding Plan does not invent Envelope commitment"
+        mempty (envelopeOpenPlanReserve foodLine)
     _ -> failTest "native lines" "expected food and travel lines"
 
   assertEqual "unrouted Expense reaches attention surface"

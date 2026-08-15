@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Household composition of native BackingPool arithmetic from admitted
--- Envelope, ledger, entitlement-movement, and open Plan facts.
+-- Envelope claims, ledger facts, allocation movements, and open funding Plans.
 module HKernel.Household.Backing
   ( HouseholdBackingPlan(..)
   , EnvelopeBackingLine(..)
@@ -19,6 +19,7 @@ module HKernel.Household.Backing
 
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time.Calendar (Day)
@@ -34,7 +35,8 @@ import HKernel.Backing
   , deriveBackingPoolPosition
   )
 import HKernel.Backing.Policy
-  ( backingPoolDefinitionAssetAccounts
+  ( BackingPolicy
+  , backingPoolDefinitionAssetAccounts
   , backingPoolDefinitionId
   , backingPolicyEnvelopeAssignments
   , backingPolicyPoolDefinitions
@@ -54,32 +56,32 @@ import HKernel.Envelope.Entitlement
   ( EnvelopeEntitlement
   , envelopeEntitlementBalance
   )
-import HKernel.Envelope.Identity (envelopeIdText)
+import HKernel.Envelope.Headroom
+  ( EnvelopeHeadroom
+  , envelopeHeadroomFor
+  )
+import HKernel.Envelope.Identity (EnvelopeId, envelopeIdText)
+import HKernel.Envelope.Remaining
+  ( EnvelopeRemaining
+  , envelopeRemainingFor
+  )
 import HKernel.Engine (accountBalance, accountBalancesThrough)
 import HKernel.Household.BudgetMovement
-import HKernel.Household.Policy
-  ( HouseholdPolicy
-  , householdBackingPolicy
-  , householdEnvelopeForPlanDestination
-  , householdEnvelopeOrder
-  , householdUnassignedBudgetAccounts
-  )
 import HKernel.Journal (Journal)
 import HKernel.Money
 import HKernel.Period (Period, periodEndExclusive)
 import HKernel.Plan (PositiveAmount, positiveAmountValue)
 
 data HouseholdBackingPlan = HouseholdBackingPlan
-  { householdBackingPlanSource      :: Account
-  , householdBackingPlanDestination :: Account
-  , householdBackingPlanAmount      :: PositiveAmount
+  { householdBackingPlanSource :: Account
+  , householdBackingPlanAmount :: PositiveAmount
   } deriving (Eq, Show)
 
 -- | Envelope detail for the current observation.
 --
--- Ledger remaining here is the exact current entitlement minus posted Expense
--- use. Non-Expense target fulfillment remains a separate native Envelope owner
--- until its historical PlanId routing is admitted by the production Household.
+-- Remaining and Headroom are native Envelope projections. Backing only presents
+-- them beside entitlement/consumption evidence and compares the outstanding
+-- claims with real Asset funding.
 data EnvelopeBackingLine = EnvelopeBackingLine
   { envelopeBackingName        :: Text
   , envelopeEntitlement        :: Balance
@@ -121,19 +123,24 @@ envelopeReconciliationDelta :: EnvelopeBacking -> Balance
 envelopeReconciliationDelta report =
   envelopeBackingSurplus report `subtractBalance` envelopeLedgerUnassigned report
 
--- | Compose pool-local Backing directly from native Envelope entitlement and
--- consumption. There is no intermediate Budget entitlement/remaining model.
+-- | Compose pool-local Backing from native Envelope Remaining/Headroom and an
+-- independent BackingPolicy. The retained allocation journal is used only for
+-- source-era unallocated reconciliation, not for Envelope claim arithmetic.
 deriveHouseholdBacking
   :: Day
   -> Period
   -> Journal
-  -> HouseholdPolicy
+  -> BackingPolicy
+  -> [EnvelopeId]
+  -> Set Account
   -> [HouseholdBudgetMovement]
   -> EnvelopeEntitlement
   -> EnvelopeConsumption
+  -> EnvelopeRemaining
+  -> EnvelopeHeadroom
   -> [HouseholdBackingPlan]
   -> Either (NonEmpty BackingPoolError) EnvelopeBacking
-deriveHouseholdBacking observation period journal policy movements entitlement consumption plans = do
+deriveHouseholdBacking observation period journal backingPolicy envelopes unassignedAccounts movements entitlement consumption remaining headroom plans = do
   pools <- traverse poolFor poolDefinitions
   pure EnvelopeBacking
     { envelopeBackingPeriod = period
@@ -147,37 +154,21 @@ deriveHouseholdBacking observation period journal policy movements entitlement c
         ]
     }
   where
-    backingPolicy = householdBackingPolicy policy
     poolDefinitions = backingPolicyPoolDefinitions backingPolicy
     envelopeAssignments = backingPolicyEnvelopeAssignments backingPolicy
-    envelopes = householdEnvelopeOrder policy
-    unassignedAccounts = householdUnassignedBudgetAccounts policy
 
     lineFor envelope =
       let amounts = envelopeConsumptionFor envelope consumption
+          nativeRemaining = envelopeRemainingFor envelope remaining
+          nativeHeadroom = envelopeHeadroomFor envelope headroom
       in EnvelopeBackingLine
         { envelopeBackingName = envelopeIdText envelope
         , envelopeEntitlement = envelopeEntitlementBalance envelope entitlement
         , envelopeActualConsumption = consumptionCharges amounts
         , envelopeActualRefunds = consumptionRefunds amounts
-        , envelopeLedgerRemaining = remainingFor envelope
-        , envelopeOpenPlanReserve = reserveFor envelope
+        , envelopeLedgerRemaining = nativeRemaining
+        , envelopeOpenPlanReserve = nativeRemaining `subtractBalance` nativeHeadroom
         }
-
-    remainingFor envelope =
-      envelopeEntitlementBalance envelope entitlement
-        `subtractBalance` consumptionNet (envelopeConsumptionFor envelope consumption)
-
-    -- Destination-Account commitment remains isolated compatibility evidence.
-    -- It is independent from the removed Budget calculation model and can be
-    -- replaced by native PlanId commitment routing separately.
-    reserveFor envelope = foldMap
-      (singletonBalance . positiveAmountValue . householdBackingPlanAmount)
-      [ plan
-      | plan <- plans
-      , householdEnvelopeForPlanDestination
-          (householdBackingPlanDestination plan) policy == Just envelope
-      ]
 
     poolFor definition =
       deriveBackingPoolPosition
@@ -197,9 +188,8 @@ deriveHouseholdBacking observation period journal policy movements entitlement c
         claims =
           [ BackedEnvelopeClaim
               { backedEnvelopeId = envelope
-              , backedEnvelopeRemaining = remainingFor envelope
-              , backedEnvelopeHeadroom =
-                  remainingFor envelope `subtractBalance` reserveFor envelope
+              , backedEnvelopeRemaining = envelopeRemainingFor envelope remaining
+              , backedEnvelopeHeadroom = envelopeHeadroomFor envelope headroom
               }
           | assignment <- envelopeAssignments
           , envelopeBackingAssignmentPool assignment == poolId

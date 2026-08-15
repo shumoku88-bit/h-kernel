@@ -250,9 +250,22 @@ main = do
   assertLeftContaining "Household allocation Account must be declared Budget"
     "HouseholdAllocationAccountNotBudget"
     (buildSurfaceAt observation actualJournal planJournalText allocationRoleMismatchTOML issuesTSV)
-  assertLeftContaining "unsupported Plan Journal directions fail at admission"
-    "UnsupportedPlanRoleFlow"
-    (buildSurfaceAt observation actualJournal unsupportedPlanJournalText householdTOML issuesTSV)
+  let roleNeutralSurface = mustRightText
+        (buildSurfaceAt observation actualJournal roleNeutralPlanJournalText householdTOML issuesTSV)
+      roleNeutralBacking = householdEnvelopeBacking roleNeutralSurface
+      roleNeutralPool = exactlyOne (envelopeBackingPools roleNeutralBacking)
+      roleNeutralFood = exactlyOne (envelopeBackingLines roleNeutralBacking)
+  assertEqual "role-neutral Asset transfer stays outside narrow Planned Transactions"
+    False
+    ("plan-transfer" `elem`
+      map (planIdText . committedPlanId)
+        (householdPlannedTransactions roleNeutralSurface))
+  assertEqual "unrouted role-neutral Plan does not invent Envelope commitment"
+    (one jpy 550)
+    (envelopePostPlanHeadroom roleNeutralFood)
+  assertEqual "role-neutral open Plan still reserves its source Asset in Backing"
+    (one jpy 360)
+    (backingPoolFundingCommitment roleNeutralPool)
   assertLeftContaining "unknown completion Plan references fail closed"
     "unknown PlanId"
     (buildSurfaceAt observation unknownPlanActualJournal planJournalText householdTOML issuesTSV)
@@ -490,8 +503,8 @@ planJournalText = "include accounts.journal\n\n" <> T.unlines
   , "    assets:cash    -300 JPY"
   ]
 
-unsupportedPlanJournalText :: Text
-unsupportedPlanJournalText = planJournalText <> T.unlines
+roleNeutralPlanJournalText :: Text
+roleNeutralPlanJournalText = planJournalText <> T.unlines
   [ ""
   , "2026-08-10 transfer"
   , "    ; plan-id: plan-transfer"
