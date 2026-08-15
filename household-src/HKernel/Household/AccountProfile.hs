@@ -70,13 +70,6 @@ data HouseholdAccountPolicyError
   | DuplicateHouseholdEnvelopeRoleCoordinate
   | DuplicateHouseholdBudgetGroupCoordinate
   | DuplicateHouseholdSpendClassCoordinate
-  -- These three constructors remain until the current Config diagnostic
-  -- renderer is simplified with the account-policy axis retirement. They are no
-  -- longer produced by current admission after the accounts.tsv migration
-  -- adapter was retired.
-  | RetainedFixedMarkerHasNoSpendClass
-  | RetainedFixedMarkerConflictsWithSpendClass
-  | RetainedAccountMetadataRemainsUnclassified
   deriving (Eq, Show)
 
 mkHouseholdAccountPolicy
