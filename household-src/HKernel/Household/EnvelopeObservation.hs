@@ -1,10 +1,15 @@
--- | Native Household Envelope observation from admitted Actual and entitlement
--- movement evidence.
+-- | Native Household Envelope observation from admitted entitlement, Actual,
+-- Plan, and historical routing evidence.
 module HKernel.Household.EnvelopeObservation
   ( HouseholdEnvelopeObservation
-  , householdEnvelopeObservationPolicy
+  , householdEnvelopeObservationPeriod
+  , householdEnvelopeObservationObservedThrough
   , householdEnvelopeConsumption
   , householdEnvelopeEntitlement
+  , householdEnvelopeFulfillment
+  , householdEnvelopeRemaining
+  , householdEnvelopeCommitment
+  , householdEnvelopeHeadroom
   , HouseholdEnvelopeError(..)
   , deriveHouseholdEnvelopeObservation
   ) where
@@ -17,6 +22,11 @@ import qualified Data.Set as Set
 import Data.Time.Calendar (Day)
 import HKernel.Account (Account)
 import HKernel.Actual.Journal (ActualJournal)
+import HKernel.Envelope.Commitment
+  ( EnvelopeCommitment
+  , EnvelopeCommitmentError
+  , observeEnvelopeCommitment
+  )
 import HKernel.Envelope.Consumption
   ( EnvelopeConsumption
   , EnvelopeConsumptionError
@@ -37,8 +47,27 @@ import HKernel.Envelope.EntitlementTransfer
   , EnvelopeEntitlementTransferError
   , mkEnvelopeEntitlementTransfer
   )
-import HKernel.Envelope.ExpenseRouting (ExpenseRouteResolver)
+import HKernel.Envelope.ExpenseRouting
+  ( ExpenseRoutingHistory
+  , expenseRoutingResolver
+  )
+import HKernel.Envelope.Fulfillment
+  ( EnvelopeFulfillment
+  , EnvelopeFulfillmentError
+  , observeEnvelopeFulfillment
+  )
+import HKernel.Envelope.FulfillmentRouting (FulfillmentRoutingHistory)
+import HKernel.Envelope.Headroom
+  ( EnvelopeHeadroom
+  , EnvelopeHeadroomError
+  , calculateEnvelopeHeadroom
+  )
 import HKernel.Envelope.Identity (EnvelopeId)
+import HKernel.Envelope.Remaining
+  ( EnvelopeRemaining
+  , EnvelopeRemainingError
+  , calculateEnvelopeRemaining
+  )
 import HKernel.Household.AccountProfile
   ( HouseholdAccountPolicy
   , RetainedBudgetAccountKind(..)
@@ -52,11 +81,17 @@ import HKernel.Household.Policy
   )
 import HKernel.Money (amountQuantity, negateAmount, zeroQuantity)
 import HKernel.Period (Period, periodContains)
+import HKernel.Plan.Journal (PlanJournal)
 
 data HouseholdEnvelopeObservation = HouseholdEnvelopeObservation
-  { householdEnvelopeObservationPolicy :: HouseholdPolicy
-  , householdEnvelopeConsumption       :: EnvelopeConsumption
-  , householdEnvelopeEntitlement       :: EnvelopeEntitlement
+  { householdEnvelopeObservationPeriod          :: Period
+  , householdEnvelopeObservationObservedThrough :: Day
+  , householdEnvelopeConsumption                :: EnvelopeConsumption
+  , householdEnvelopeEntitlement                :: EnvelopeEntitlement
+  , householdEnvelopeFulfillment                :: EnvelopeFulfillment
+  , householdEnvelopeRemaining                  :: EnvelopeRemaining
+  , householdEnvelopeCommitment                 :: EnvelopeCommitment
+  , householdEnvelopeHeadroom                   :: EnvelopeHeadroom
   } deriving (Eq, Show)
 
 data HouseholdEnvelopeError
@@ -66,6 +101,10 @@ data HouseholdEnvelopeError
   | HouseholdEnvelopeEntitlementTransferError Int EnvelopeEntitlementTransferError
   | HouseholdEnvelopeEntitlementHistoryError EnvelopeEntitlementHistoryError
   | HouseholdEnvelopeEntitlementObservationError EnvelopeEntitlementError
+  | HouseholdEnvelopeFulfillmentError EnvelopeFulfillmentError
+  | HouseholdEnvelopeRemainingError EnvelopeRemainingError
+  | HouseholdEnvelopeCommitmentError EnvelopeCommitmentError
+  | HouseholdEnvelopeHeadroomError EnvelopeHeadroomError
   deriving (Eq, Show)
 
 data SourceEndpoint
@@ -78,21 +117,39 @@ deriveHouseholdEnvelopeObservation
   :: Day
   -> Period
   -> ActualJournal
+  -> PlanJournal
   -> HouseholdPolicy
   -> HouseholdAccountPolicy
-  -> ExpenseRouteResolver
+  -> ExpenseRoutingHistory
+  -> FulfillmentRoutingHistory
   -> [HouseholdBudgetMovement]
   -> Either (NonEmpty HouseholdEnvelopeError) HouseholdEnvelopeObservation
-deriveHouseholdEnvelopeObservation observedThrough period actual policy accountPolicy routeResolver movements = do
+deriveHouseholdEnvelopeObservation observedThrough period actual plans policy accountPolicy expenseRouting fulfillmentRouting movements = do
   history <- projectEntitlementHistory period policy accountPolicy movements
   entitlement <- singleLeft HouseholdEnvelopeEntitlementObservationError
     (observeEnvelopeEntitlement period observedThrough history)
   consumption <- singleLeft HouseholdEnvelopeConsumptionError
-    (observeEnvelopeConsumption period observedThrough actual routeResolver)
+    (observeEnvelopeConsumption
+      period observedThrough actual (expenseRoutingResolver expenseRouting))
+  fulfillment <- mapLeft (fmap HouseholdEnvelopeFulfillmentError)
+    (observeEnvelopeFulfillment
+      period observedThrough plans actual fulfillmentRouting)
+  remaining <- valueLeft HouseholdEnvelopeRemainingError
+    (calculateEnvelopeRemaining entitlement consumption fulfillment)
+  commitment <- mapLeft (fmap HouseholdEnvelopeCommitmentError)
+    (observeEnvelopeCommitment
+      period observedThrough plans actual expenseRouting fulfillmentRouting)
+  headroom <- valueLeft HouseholdEnvelopeHeadroomError
+    (calculateEnvelopeHeadroom remaining commitment)
   Right HouseholdEnvelopeObservation
-    { householdEnvelopeObservationPolicy = policy
+    { householdEnvelopeObservationPeriod = period
+    , householdEnvelopeObservationObservedThrough = observedThrough
     , householdEnvelopeConsumption = consumption
     , householdEnvelopeEntitlement = entitlement
+    , householdEnvelopeFulfillment = fulfillment
+    , householdEnvelopeRemaining = remaining
+    , householdEnvelopeCommitment = commitment
+    , householdEnvelopeHeadroom = headroom
     }
 
 projectEntitlementHistory
@@ -170,6 +227,12 @@ singleLeft
   -> Either error value
   -> Either (NonEmpty HouseholdEnvelopeError) value
 singleLeft wrap = mapLeft (NonEmpty.singleton . wrap)
+
+valueLeft
+  :: (error -> HouseholdEnvelopeError)
+  -> Either error value
+  -> Either (NonEmpty HouseholdEnvelopeError) value
+valueLeft = singleLeft
 
 mapLeft :: (left -> right) -> Either left value -> Either right value
 mapLeft f result = case result of
