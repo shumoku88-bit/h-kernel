@@ -481,6 +481,10 @@ renderHouseholdPolicyError err = case err of
     "budget.envelopes: allocation Account " <> quoted (accountName account)
       <> " belongs to both " <> quoted (envelopeIdText firstEnvelope)
       <> " and " <> quoted (envelopeIdText repeatedEnvelope)
+  DuplicatePlanDestinationAccount account firstEnvelope repeatedEnvelope ->
+    "budget.envelopes: Plan destination Account " <> quoted (accountName account)
+      <> " belongs to both " <> quoted (envelopeIdText firstEnvelope)
+      <> " and " <> quoted (envelopeIdText repeatedEnvelope)
   HouseholdPolicyHasNoUnassignedBudgetAccounts ->
     "budget.unassigned-accounts: expected at least one retained allocation Account identity"
   DuplicateUnassignedBudgetAccount account ->
@@ -514,49 +518,31 @@ renderEnvelopeIdError :: Text -> EnvelopeIdError -> Text
 renderEnvelopeIdError path err = path <> ": " <> case err of
   EmptyEnvelopeId -> "expected a non-empty envelope identity"
   EnvelopeIdHasSurroundingWhitespace value ->
-    "identity has surrounding whitespace: " <> quoted value
-  EnvelopeIdContainsControl value ->
-    "identity contains control characters: " <> quoted value
-  EnvelopeIdContainsTab value ->
-    "identity contains a tab: " <> quoted value
-  EnvelopeIdContainsNewline value ->
-    "identity contains a newline: " <> quoted value
-
-renderAccountError :: Text -> AccountError -> Text
-renderAccountError path err = path <> ": " <> case err of
-  EmptyAccountName -> "expected a non-empty Account"
-  AccountNameHasSurroundingWhitespace value ->
-    "Account has surrounding whitespace: " <> quoted value
-  AccountNameContainsControl value ->
-    "Account contains control characters: " <> quoted value
-  AccountNameContainsTab value ->
-    "Account contains a tab: " <> quoted value
-  AccountNameContainsNewline value ->
-    "Account contains a newline: " <> quoted value
+    "surrounding whitespace is not allowed; got " <> quoted value
+  EnvelopeIdContainsControlCharacter value ->
+    "control characters are not allowed; got " <> quoted value
+  EnvelopeIdContainsWhitespace value ->
+    "whitespace is not allowed; got " <> quoted value
+  ReservedEnvelopeId value ->
+    quoted value <> " is derived and cannot be a spendable envelope identity"
 
 renderDailyTargetScopeIdError :: Text -> DailyTargetScopeIdError -> Text
 renderDailyTargetScopeIdError path err = path <> ": " <> case err of
-  EmptyDailyTargetScopeId -> "expected a non-empty scope identity"
-  DailyTargetScopeIdHasSurroundingWhitespace value ->
-    "scope identity has surrounding whitespace: " <> quoted value
-  DailyTargetScopeIdContainsControl value ->
-    "scope identity contains control characters: " <> quoted value
-  DailyTargetScopeIdContainsTab value ->
-    "scope identity contains a tab: " <> quoted value
-  DailyTargetScopeIdContainsNewline value ->
-    "scope identity contains a newline: " <> quoted value
+  EmptyDailyTargetScopeId -> "expected a non-empty Daily Target selection identity"
 
 renderCommodityError :: Text -> CommodityError -> Text
 renderCommodityError path err = path <> ": " <> case err of
-  EmptyCommodityCode -> "expected a non-empty Commodity"
-  CommodityCodeHasSurroundingWhitespace value ->
-    "Commodity has surrounding whitespace: " <> quoted value
-  CommodityCodeContainsControl value ->
-    "Commodity contains control characters: " <> quoted value
-  CommodityCodeContainsTab value ->
-    "Commodity contains a tab: " <> quoted value
-  CommodityCodeContainsNewline value ->
-    "Commodity contains a newline: " <> quoted value
+  EmptyCommodity -> "expected a non-empty Commodity identity"
+  CommodityContainsWhitespace value ->
+    "whitespace is not allowed; got " <> quoted value
+
+renderAccountError :: Text -> AccountError -> Text
+renderAccountError path err = path <> ": " <> case err of
+  EmptyAccount -> "expected a non-empty Account identity"
+  AccountHasSurroundingWhitespace value ->
+    "surrounding whitespace is not allowed; got " <> quoted value
+  AccountContainsControlCharacter value ->
+    "control characters are not allowed; got " <> quoted value
 
 quoted :: Text -> Text
-quoted value = "'" <> value <> "'"
+quoted value = "‘" <> value <> "’"
