@@ -20,9 +20,6 @@ module HKernel.Household.Policy
   , householdEnvelopeOrder
   , householdAllocationEnvelopes
   , householdUnassignedBudgetAccounts
-  , AccountValidatedHouseholdPolicy
-  , accountValidatedHouseholdPolicy
-  , accountValidatedHouseholdBackingPolicy
   , HouseholdPolicyAccountError(..)
   , validateHouseholdPolicyAccounts
   ) where
@@ -156,13 +153,6 @@ mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy currentExpenses coord
     errors = duplicateCoordinateErrors ++ unknownCoordinateErrors ++ missingCoordinateErrors
       ++ allocationErrors ++ presenceErrors ++ unassignedErrors ++ overlapErrors
 
-newtype AccountValidatedHouseholdPolicy = AccountValidatedHouseholdPolicy
-  { accountValidatedHouseholdPolicy :: HouseholdPolicy
-  } deriving (Eq, Show)
-
-accountValidatedHouseholdBackingPolicy :: AccountValidatedHouseholdPolicy -> BackingPolicy
-accountValidatedHouseholdBackingPolicy = householdBackingPolicy . accountValidatedHouseholdPolicy
-
 data HouseholdPolicyAccountError
   = HouseholdCurrentExpenseAssignmentsReferenceError CurrentExpenseAssignmentsReferenceError
   | HouseholdBackingPolicyAccountError BackingPolicyAccountError
@@ -174,14 +164,17 @@ data HouseholdPolicyAccountError
   | HouseholdUnassignedAccountNotBudget Account AccountType
   deriving (Eq, Show)
 
+-- | Validate all Account references owned by Household policy. Success is a
+-- gate, not a second semantic value: consumers continue to use the admitted
+-- 'HouseholdPolicy' that was checked here.
 validateHouseholdPolicyAccounts
   :: AccountRegistry
   -> HouseholdPolicy
-  -> Either (NonEmpty HouseholdPolicyAccountError) AccountValidatedHouseholdPolicy
+  -> Either (NonEmpty HouseholdPolicyAccountError) ()
 validateHouseholdPolicyAccounts registry policy =
   case NonEmpty.nonEmpty errors of
     Just found -> Left found
-    Nothing -> Right (AccountValidatedHouseholdPolicy policy)
+    Nothing -> Right ()
   where
     currentExpenseErrors = case validateCurrentExpenseAssignments
         registry
