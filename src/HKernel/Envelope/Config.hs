@@ -15,7 +15,7 @@ import HKernel.Account (Account, AccountError(..), accountName, mkAccount)
 import HKernel.Backing.Identity
   ( BackingPoolIdError(..), backingPoolIdText, mkBackingPoolId )
 import HKernel.Backing.Policy
-  ( BackingPolicyError(..), BackingPoolDefinition, EnvelopeBackingAssignment
+  ( BackingPolicy, BackingPolicyError(..), BackingPoolDefinition, EnvelopeBackingAssignment
   , assignEnvelopeBackingPool, backingPolicyPoolDefinitions
   , backingPolicyPoolForEnvelope, backingPoolDefinitionAssetAccounts
   , backingPoolDefinitionId, defineBackingPool, mkBackingPolicy )
@@ -40,23 +40,29 @@ instance FromValue RawEnvelope where
     (RawEnvelope <$> reqKey "id" <*> reqKey "label" <*> reqKey "pacing"
       <*> reqKey "backing-pool" <*> reqKey "expense-accounts")
 
-parseCurrentEnvelopeConfiguration :: Text -> Either [Text] CurrentEnvelopePolicy
+-- | Admit two independent semantic owners from one retained physical source.
+-- The tuple is only the parser boundary; neither owner contains the other.
+parseCurrentEnvelopeConfiguration
+  :: Text
+  -> Either [Text] (CurrentEnvelopePolicy, BackingPolicy)
 parseCurrentEnvelopeConfiguration input =
   case decode input :: Result String RawConfiguration of
     Failure errors -> Left (map T.pack errors)
     Success warnings raw
-      | null warnings -> rawToPolicy raw
+      | null warnings -> rawToPolicies raw
       | otherwise -> Left (map T.pack warnings)
 
-rawToPolicy :: RawConfiguration -> Either [Text] CurrentEnvelopePolicy
-rawToPolicy (RawConfiguration rawPools rawEnvelopes) =
+rawToPolicies
+  :: RawConfiguration
+  -> Either [Text] (CurrentEnvelopePolicy, BackingPolicy)
+rawToPolicies (RawConfiguration rawPools rawEnvelopes) =
   case syntaxErrors of
     _ : _ -> Left syntaxErrors
     [] -> case mkBackingPolicy poolDefinitions assignments of
       Left errors -> Left (map renderBackingError (NonEmpty.toList errors))
-      Right backing -> case mkCurrentEnvelopePolicy envelopeDefinitions backing of
+      Right backing -> case mkCurrentEnvelopePolicy envelopeDefinitions of
         Left errors -> Left (map renderPolicyError (NonEmpty.toList errors))
-        Right policy -> Right policy
+        Right policy -> Right (policy, backing)
   where
     (poolErrorGroups, poolDefinitions) = partitionEithers
       (zipWith parseRawBackingPool [0 :: Int ..] rawPools)
@@ -101,13 +107,15 @@ parsePacing _ "daily" = Right Daily
 parsePacing _ "flex" = Right Flex
 parsePacing path value = Left [path <> ": expected daily or flex; got " <> quoted value]
 
-renderCurrentEnvelopeConfiguration :: CurrentEnvelopePolicy -> Text
-renderCurrentEnvelopeConfiguration policy =
+renderCurrentEnvelopeConfiguration
+  :: CurrentEnvelopePolicy
+  -> BackingPolicy
+  -> Text
+renderCurrentEnvelopeConfiguration policy backing =
   T.intercalate "\n"
     (map renderPool (backingPolicyPoolDefinitions backing)
       ++ map renderEnvelope (currentEnvelopePolicyDefinitions policy)) <> "\n"
   where
-    backing = currentEnvelopePolicyBackingPolicy policy
     renderPool definition = T.unlines
       [ "[[backing-pools]]"
       , "id = " <> tomlString (backingPoolIdText (backingPoolDefinitionId definition))

@@ -17,13 +17,13 @@ import HKernel.Envelope.Policy
 
 main :: IO ()
 main = do
-  let policy = mustRight (parseCurrentEnvelopeConfiguration source)
-      rendered = renderCurrentEnvelopeConfiguration policy
+  let (policy, backing) = mustRight (parseCurrentEnvelopeConfiguration source)
+      rendered = renderCurrentEnvelopeConfiguration policy backing
       reparsed = mustRight (parseCurrentEnvelopeConfiguration rendered)
 
   assertEqual
-    "current Envelope configuration round-trips without a second allocation model"
-    policy
+    "current Envelope and Backing configuration round-trips as independent owners"
+    (policy, backing)
     reparsed
 
   case currentEnvelopePolicyDefinitions policy of

@@ -262,12 +262,12 @@ loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
     admitHouseholdBudgetMovementJournalFromResolvedSources budgetJournal budgetSources
 
   envelopePolicySource <- readHouseholdSourceExcept (householdBudgetConfigPath paths)
-  envelopePolicy <- liftEither . first (pure . HouseholdEnvelopePolicyParseFailed) $
+  (envelopePolicy, backingPolicy) <- liftEither . first (pure . HouseholdEnvelopePolicyParseFailed) $
     parseCurrentEnvelopeConfiguration envelopePolicySource
 
   householdPolicySource <- readHouseholdSourceExcept (householdPolicyConfigPath paths)
   configuration <- liftEither . first (pure . HouseholdPolicyParseFailed) $
-    parseHouseholdConfiguration envelopePolicy householdPolicySource
+    parseHouseholdConfiguration envelopePolicy backingPolicy householdPolicySource
   envelopeHistory <- liftEither $
     admitRequiredEnvelopeHistory
       accountsRegistry (planIds planJournal) envelopePolicy householdPolicySource
@@ -487,10 +487,10 @@ admitCanonicalHousehold root accountsText actualText planText budgetText envelop
   budgetMovementJournal <- first (pure . HouseholdBudgetMovementAdmitFailed)
     (admitHouseholdBudgetMovementJournalFromResolvedJournal budgetJournal budgetText)
 
-  envelopePolicy <- first (pure . HouseholdEnvelopePolicyParseFailed)
+  (envelopePolicy, backingPolicy) <- first (pure . HouseholdEnvelopePolicyParseFailed)
     (parseCurrentEnvelopeConfiguration envelopePolicyText)
   configuration <- first (pure . HouseholdPolicyParseFailed)
-    (parseHouseholdConfiguration envelopePolicy householdPolicyText)
+    (parseHouseholdConfiguration envelopePolicy backingPolicy householdPolicyText)
   envelopeHistory <- admitRequiredEnvelopeHistory
     accountsRegistry (planIds planJournal) envelopePolicy householdPolicyText
   (policy, validatedPolicy) <- validateHouseholdPolicyAndAccounts

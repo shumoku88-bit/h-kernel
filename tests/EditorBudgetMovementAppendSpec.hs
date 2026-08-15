@@ -341,11 +341,11 @@ syncHouseholdPolicy =
             label
             Daily
             [account "expenses:fixed"]
-        ]
-        backingPolicy)
+        ])
   in mustRight (mkHouseholdPolicy
       (incomeAnchorCyclePolicy (account "income:pension"))
       envelopePolicy
+      backingPolicy
       [ defineHouseholdEnvelopeCoordinates
           envelope
           (account "budget:daily")

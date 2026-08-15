@@ -23,7 +23,6 @@ module HKernel.Envelope.Policy
   , currentEnvelopePolicyDefinitions
   , currentEnvelopePolicyDefinition
   , currentEnvelopePolicyEnvelopeForExpense
-  , currentEnvelopePolicyBackingPolicy
   , AccountValidatedCurrentEnvelopePolicy
   , accountValidatedCurrentEnvelopePolicy
   , CurrentEnvelopePolicyAccountError(..)
@@ -44,11 +43,6 @@ import HKernel.Account
   , AccountType(..)
   , declaredAccountType
   , lookupAccountDeclaration
-  )
-import HKernel.Backing.Policy
-  ( BackingPolicy
-  , BackingPolicyAccountError
-  , validateBackingPolicyAccounts
   )
 import HKernel.Envelope.Identity (EnvelopeId)
 
@@ -89,7 +83,6 @@ defineEnvelope = EnvelopeDefinition
 data CurrentEnvelopePolicy = CurrentEnvelopePolicy
   { currentDefinitions        :: Map EnvelopeId EnvelopeDefinition
   , currentExpenseAssignments :: Map Account EnvelopeId
-  , currentBackingPolicy      :: BackingPolicy
   } deriving (Eq, Show)
 
 data CurrentEnvelopePolicyError
@@ -131,15 +124,13 @@ observeCoordinates coordinates = CoordinateObservation
 
 mkCurrentEnvelopePolicy
   :: [EnvelopeDefinition]
-  -> BackingPolicy
   -> Either (NonEmpty CurrentEnvelopePolicyError) CurrentEnvelopePolicy
-mkCurrentEnvelopePolicy definitions backing =
+mkCurrentEnvelopePolicy definitions =
   case NonEmpty.nonEmpty errors of
     Just found -> Left found
     Nothing -> Right CurrentEnvelopePolicy
       { currentDefinitions = definitionMap
       , currentExpenseAssignments = expenseAssignments
-      , currentBackingPolicy = backing
       }
   where
     definitionObservation = observeCoordinates
@@ -184,9 +175,6 @@ currentEnvelopePolicyDefinition envelope = Map.lookup envelope . currentDefiniti
 currentEnvelopePolicyEnvelopeForExpense :: Account -> CurrentEnvelopePolicy -> Maybe EnvelopeId
 currentEnvelopePolicyEnvelopeForExpense account = Map.lookup account . currentExpenseAssignments
 
-currentEnvelopePolicyBackingPolicy :: CurrentEnvelopePolicy -> BackingPolicy
-currentEnvelopePolicyBackingPolicy = currentBackingPolicy
-
 newtype AccountValidatedCurrentEnvelopePolicy = AccountValidatedCurrentEnvelopePolicy
   { accountValidatedCurrentEnvelopePolicy :: CurrentEnvelopePolicy
   } deriving (Eq, Show)
@@ -194,7 +182,6 @@ newtype AccountValidatedCurrentEnvelopePolicy = AccountValidatedCurrentEnvelopeP
 data CurrentEnvelopePolicyAccountError
   = CurrentEnvelopePolicyExpenseAccountUndeclared EnvelopeId Account
   | CurrentEnvelopePolicyExpenseAccountNotExpense EnvelopeId Account AccountType
-  | CurrentEnvelopePolicyBackingAccountError BackingPolicyAccountError
   deriving (Eq, Show)
 
 validateCurrentEnvelopePolicyAccounts
@@ -206,11 +193,7 @@ validateCurrentEnvelopePolicyAccounts registry policy =
     Just found -> Left found
     Nothing -> Right (AccountValidatedCurrentEnvelopePolicy policy)
   where
-    expenseErrors = concatMap validateDefinition (currentEnvelopePolicyDefinitions policy)
-    backingErrors = case validateBackingPolicyAccounts registry (currentEnvelopePolicyBackingPolicy policy) of
-      Right _ -> []
-      Left found -> map CurrentEnvelopePolicyBackingAccountError (NonEmpty.toList found)
-    errors = expenseErrors ++ backingErrors
+    errors = concatMap validateDefinition (currentEnvelopePolicyDefinitions policy)
     validateDefinition definition = concatMap
       (validateExpense (envelopeDefinitionId definition))
       (envelopeDefinitionExpenseAccounts definition)
