@@ -1,6 +1,4 @@
--- | Stable household policy layered on current Envelope coordinates.
--- Backing is an orthogonal owner and deliberately does not live inside this
--- policy value.
+-- | Stable household policy layered on native Envelope and Backing policy.
 module HKernel.Household.Policy
   ( HouseholdCyclePolicy
   , incomeAnchorCyclePolicy
@@ -17,6 +15,7 @@ module HKernel.Household.Policy
   , householdPolicyAccountPolicy
   , householdPolicyCycle
   , householdEnvelopePolicy
+  , householdBackingPolicy
   , householdEnvelopeOrder
   , householdAllocationEnvelopes
   , householdUnassignedBudgetAccounts
@@ -24,6 +23,7 @@ module HKernel.Household.Policy
   , AccountValidatedHouseholdPolicy
   , accountValidatedHouseholdPolicy
   , accountValidatedHouseholdEnvelopePolicy
+  , accountValidatedHouseholdBackingPolicy
   , HouseholdPolicyAccountError(..)
   , validateHouseholdPolicyAccounts
   ) where
@@ -41,6 +41,11 @@ import HKernel.Account
   , AccountType(..)
   , declaredAccountType
   , lookupAccountDeclaration
+  )
+import HKernel.Backing.Policy
+  ( BackingPolicy
+  , BackingPolicyAccountError
+  , validateBackingPolicyAccounts
   )
 import HKernel.Envelope
   ( AccountValidatedCurrentEnvelopePolicy
@@ -85,6 +90,7 @@ data HouseholdPolicyError
 data HouseholdPolicy = HouseholdPolicy
   { householdPolicyCycle                :: HouseholdCyclePolicy
   , householdEnvelopePolicy             :: CurrentEnvelopePolicy
+  , householdBackingPolicy              :: BackingPolicy
   , householdEnvelopeOrder              :: [EnvelopeId]
   , householdAllocationEnvelopes        :: Map Account EnvelopeId
   , householdPlanDestinationEnvelopes   :: Map Account EnvelopeId
@@ -101,15 +107,17 @@ withHouseholdAccountPolicy accountPolicy policy =
 mkHouseholdPolicy
   :: HouseholdCyclePolicy
   -> CurrentEnvelopePolicy
+  -> BackingPolicy
   -> [HouseholdEnvelopeCoordinates]
   -> [Account]
   -> Either (NonEmpty HouseholdPolicyError) HouseholdPolicy
-mkHouseholdPolicy cyclePolicy envelopePolicy coordinates unassignedAccounts =
+mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy coordinates unassignedAccounts =
   case NonEmpty.nonEmpty errors of
     Just found -> Left found
     Nothing -> Right HouseholdPolicy
       { householdPolicyCycle = cyclePolicy
       , householdEnvelopePolicy = envelopePolicy
+      , householdBackingPolicy = backingPolicy
       , householdEnvelopeOrder = map householdEnvelopeCoordinateId coordinates
       , householdAllocationEnvelopes = coordinateValues allocationObservation
       , householdPlanDestinationEnvelopes = coordinateValues planObservation
@@ -174,8 +182,12 @@ data AccountValidatedHouseholdPolicy = AccountValidatedHouseholdPolicy
   , accountValidatedHouseholdEnvelopePolicy :: AccountValidatedCurrentEnvelopePolicy
   } deriving (Eq, Show)
 
+accountValidatedHouseholdBackingPolicy :: AccountValidatedHouseholdPolicy -> BackingPolicy
+accountValidatedHouseholdBackingPolicy = householdBackingPolicy . accountValidatedHouseholdPolicy
+
 data HouseholdPolicyAccountError
   = HouseholdEnvelopePolicyAccountError CurrentEnvelopePolicyAccountError
+  | HouseholdBackingPolicyAccountError BackingPolicyAccountError
   | HouseholdCycleIncomeAccountUndeclared Account
   | HouseholdCycleIncomeAccountNotIncome Account AccountType
   | HouseholdAllocationAccountUndeclared EnvelopeId Account
@@ -203,6 +215,9 @@ validateHouseholdPolicyAccounts registry policy =
     envelopeErrors = case envelopeValidation of
       Left values -> map HouseholdEnvelopePolicyAccountError (NonEmpty.toList values)
       Right _ -> []
+    backingErrors = case validateBackingPolicyAccounts registry (householdBackingPolicy policy) of
+      Left values -> map HouseholdBackingPolicyAccountError (NonEmpty.toList values)
+      Right _ -> []
     cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
     validateCycle = case lookupAccountDeclaration cycleAccount registry of
       Nothing -> [HouseholdCycleIncomeAccountUndeclared cycleAccount]
@@ -223,7 +238,7 @@ validateHouseholdPolicyAccounts registry policy =
       case lookupAccountDeclaration account registry of
         Nothing -> [HouseholdPlanDestinationUndeclared envelope account]
         Just _ -> []
-    errors = envelopeErrors ++ validateCycle
+    errors = envelopeErrors ++ backingErrors ++ validateCycle
       ++ concatMap validateAllocation (Map.toAscList (householdAllocationEnvelopes policy))
       ++ concatMap validateUnassigned (Set.toAscList (householdUnassignedBudgetAccounts policy))
       ++ concatMap validateAdditionalPlanDestination
