@@ -1,10 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Current household Envelope policy.
+-- | Current household Envelope policy and current Expense-assignment policy.
 --
 -- Stable identity, historical routing, entitlement history, and Backing each
--- have separate owners. This policy contains only current Envelope definition
--- and presentation/selection coordinates.
+-- have separate owners. 'CurrentEnvelopePolicy' contains only current Envelope
+-- definition and presentation/selection coordinates. Current Expense Account
+-- assignments remain a separate retained source owner and are not historical
+-- routing evidence.
 module HKernel.Envelope.Policy
   ( Pacing(..)
   , EnvelopeLabel
@@ -16,17 +18,21 @@ module HKernel.Envelope.Policy
   , envelopeDefinitionId
   , envelopeDefinitionLabel
   , envelopeDefinitionPacing
-  , envelopeDefinitionExpenseAccounts
+  , CurrentExpenseAssignments
+  , CurrentExpenseAssignmentsError(..)
+  , mkCurrentExpenseAssignments
+  , currentExpenseAssignmentPairs
+  , currentExpenseAssignmentFor
+  , currentExpenseAccountsForEnvelope
+  , AccountValidatedCurrentExpenseAssignments
+  , accountValidatedCurrentExpenseAssignments
+  , CurrentExpenseAssignmentsReferenceError(..)
+  , validateCurrentExpenseAssignments
   , CurrentEnvelopePolicy
   , CurrentEnvelopePolicyError(..)
   , mkCurrentEnvelopePolicy
   , currentEnvelopePolicyDefinitions
   , currentEnvelopePolicyDefinition
-  , currentEnvelopePolicyEnvelopeForExpense
-  , AccountValidatedCurrentEnvelopePolicy
-  , accountValidatedCurrentEnvelopePolicy
-  , CurrentEnvelopePolicyAccountError(..)
-  , validateCurrentEnvelopePolicyAccounts
   ) where
 
 import Data.Char (isControl)
@@ -66,30 +72,116 @@ mkEnvelopeLabel value
   | otherwise = Right (EnvelopeLabel value)
 
 data EnvelopeDefinition = EnvelopeDefinition
-  { envelopeDefinitionId              :: EnvelopeId
-  , envelopeDefinitionLabel           :: EnvelopeLabel
-  , envelopeDefinitionPacing          :: Pacing
-  , envelopeDefinitionExpenseAccounts :: [Account]
+  { envelopeDefinitionId     :: EnvelopeId
+  , envelopeDefinitionLabel  :: EnvelopeLabel
+  , envelopeDefinitionPacing :: Pacing
   } deriving (Eq, Show)
 
 defineEnvelope
   :: EnvelopeId
   -> EnvelopeLabel
   -> Pacing
-  -> [Account]
   -> EnvelopeDefinition
 defineEnvelope = EnvelopeDefinition
 
+-- | Retained current Expense Account assignments from the physical Envelope
+-- configuration source.
+--
+-- This is current operational/source compatibility policy only. It must never
+-- be interpreted as historical routing when deriving Actual consumption.
+newtype CurrentExpenseAssignments = CurrentExpenseAssignments
+  { currentExpenseAssignmentsByAccount :: Map Account EnvelopeId
+  } deriving (Eq, Show)
+
+data CurrentExpenseAssignmentsError
+  = DuplicateCurrentExpenseAccountAssignment Account EnvelopeId EnvelopeId
+  deriving (Eq, Show)
+
+mkCurrentExpenseAssignments
+  :: [(Account, EnvelopeId)]
+  -> Either (NonEmpty CurrentExpenseAssignmentsError) CurrentExpenseAssignments
+mkCurrentExpenseAssignments assignments =
+  case NonEmpty.nonEmpty duplicateErrors of
+    Just found -> Left found
+    Nothing -> Right
+      (CurrentExpenseAssignments (coordinateValues observation))
+  where
+    observation = observeCoordinates assignments
+    duplicateErrors =
+      [ DuplicateCurrentExpenseAccountAssignment account firstEnvelope repeatedEnvelope
+      | (account, firstEnvelope, repeatedEnvelope) <- coordinateConflicts observation
+      ]
+
+currentExpenseAssignmentPairs
+  :: CurrentExpenseAssignments
+  -> [(Account, EnvelopeId)]
+currentExpenseAssignmentPairs = Map.toAscList . currentExpenseAssignmentsByAccount
+
+currentExpenseAssignmentFor
+  :: Account
+  -> CurrentExpenseAssignments
+  -> Maybe EnvelopeId
+currentExpenseAssignmentFor account =
+  Map.lookup account . currentExpenseAssignmentsByAccount
+
+currentExpenseAccountsForEnvelope
+  :: EnvelopeId
+  -> CurrentExpenseAssignments
+  -> [Account]
+currentExpenseAccountsForEnvelope envelope assignments =
+  [ account
+  | (account, assignedEnvelope) <- currentExpenseAssignmentPairs assignments
+  , assignedEnvelope == envelope
+  ]
+
+newtype AccountValidatedCurrentExpenseAssignments =
+  AccountValidatedCurrentExpenseAssignments
+    { accountValidatedCurrentExpenseAssignments :: CurrentExpenseAssignments
+    }
+  deriving (Eq, Show)
+
+data CurrentExpenseAssignmentsReferenceError
+  = CurrentExpenseAssignmentAccountUndeclared Account
+  | CurrentExpenseAssignmentAccountNotExpense Account AccountType
+  | CurrentExpenseAssignmentReferencesUnknownEnvelope Account EnvelopeId
+  deriving (Eq, Show)
+
+validateCurrentExpenseAssignments
+  :: AccountRegistry
+  -> CurrentEnvelopePolicy
+  -> CurrentExpenseAssignments
+  -> Either
+      (NonEmpty CurrentExpenseAssignmentsReferenceError)
+      AccountValidatedCurrentExpenseAssignments
+validateCurrentExpenseAssignments registry envelopePolicy assignments =
+  case NonEmpty.nonEmpty errors of
+    Just found -> Left found
+    Nothing -> Right (AccountValidatedCurrentExpenseAssignments assignments)
+  where
+    errors = concatMap validateAssignment (currentExpenseAssignmentPairs assignments)
+    validateAssignment (account, envelope) =
+      accountErrors account ++ envelopeErrors account envelope
+    accountErrors account = case lookupAccountDeclaration account registry of
+      Nothing -> [CurrentExpenseAssignmentAccountUndeclared account]
+      Just declaration
+        | declaredAccountType declaration == Expense -> []
+        | otherwise ->
+            [ CurrentExpenseAssignmentAccountNotExpense
+                account (declaredAccountType declaration)
+            ]
+    envelopeErrors account envelope =
+      [ CurrentExpenseAssignmentReferencesUnknownEnvelope account envelope
+      | currentEnvelopePolicyDefinition envelope envelopePolicy == Nothing
+      ]
+
 data CurrentEnvelopePolicy = CurrentEnvelopePolicy
-  { currentDefinitions        :: Map EnvelopeId EnvelopeDefinition
-  , currentExpenseAssignments :: Map Account EnvelopeId
+  { currentDefinitions :: Map EnvelopeId EnvelopeDefinition
   } deriving (Eq, Show)
 
 data CurrentEnvelopePolicyError
   = CurrentEnvelopePolicyHasNoEnvelopes
   | DuplicateCurrentEnvelopeDefinition EnvelopeId
   | DuplicateCurrentEnvelopeLabel EnvelopeLabel EnvelopeId EnvelopeId
-  | DuplicateCurrentExpenseAccountAssignment Account EnvelopeId EnvelopeId
   deriving (Eq, Show)
 
 data CoordinateObservation key value = CoordinateObservation
@@ -130,7 +222,6 @@ mkCurrentEnvelopePolicy definitions =
     Just found -> Left found
     Nothing -> Right CurrentEnvelopePolicy
       { currentDefinitions = definitionMap
-      , currentExpenseAssignments = expenseAssignments
       }
   where
     definitionObservation = observeCoordinates
@@ -150,59 +241,13 @@ mkCurrentEnvelopePolicy definitions =
       [ DuplicateCurrentEnvelopeLabel label firstEnvelope repeatedEnvelope
       | (label, firstEnvelope, repeatedEnvelope) <- coordinateConflicts labelObservation
       ]
-    expenseObservation = observeCoordinates
-      [ (account, envelopeDefinitionId definition)
-      | definition <- definitions
-      , account <- envelopeDefinitionExpenseAccounts definition
-      ]
-    expenseAssignments = coordinateValues expenseObservation
-    duplicateExpenseErrors =
-      [ DuplicateCurrentExpenseAccountAssignment account firstEnvelope repeatedEnvelope
-      | (account, firstEnvelope, repeatedEnvelope) <- coordinateConflicts expenseObservation
-      ]
     errors =
       [CurrentEnvelopePolicyHasNoEnvelopes | null definitions]
         ++ duplicateDefinitionErrors
         ++ duplicateLabelErrors
-        ++ duplicateExpenseErrors
 
 currentEnvelopePolicyDefinitions :: CurrentEnvelopePolicy -> [EnvelopeDefinition]
 currentEnvelopePolicyDefinitions = Map.elems . currentDefinitions
 
 currentEnvelopePolicyDefinition :: EnvelopeId -> CurrentEnvelopePolicy -> Maybe EnvelopeDefinition
 currentEnvelopePolicyDefinition envelope = Map.lookup envelope . currentDefinitions
-
-currentEnvelopePolicyEnvelopeForExpense :: Account -> CurrentEnvelopePolicy -> Maybe EnvelopeId
-currentEnvelopePolicyEnvelopeForExpense account = Map.lookup account . currentExpenseAssignments
-
-newtype AccountValidatedCurrentEnvelopePolicy = AccountValidatedCurrentEnvelopePolicy
-  { accountValidatedCurrentEnvelopePolicy :: CurrentEnvelopePolicy
-  } deriving (Eq, Show)
-
-data CurrentEnvelopePolicyAccountError
-  = CurrentEnvelopePolicyExpenseAccountUndeclared EnvelopeId Account
-  | CurrentEnvelopePolicyExpenseAccountNotExpense EnvelopeId Account AccountType
-  deriving (Eq, Show)
-
-validateCurrentEnvelopePolicyAccounts
-  :: AccountRegistry
-  -> CurrentEnvelopePolicy
-  -> Either (NonEmpty CurrentEnvelopePolicyAccountError) AccountValidatedCurrentEnvelopePolicy
-validateCurrentEnvelopePolicyAccounts registry policy =
-  case NonEmpty.nonEmpty errors of
-    Just found -> Left found
-    Nothing -> Right (AccountValidatedCurrentEnvelopePolicy policy)
-  where
-    errors = concatMap validateDefinition (currentEnvelopePolicyDefinitions policy)
-    validateDefinition definition = concatMap
-      (validateExpense (envelopeDefinitionId definition))
-      (envelopeDefinitionExpenseAccounts definition)
-    validateExpense envelope account =
-      case lookupAccountDeclaration account registry of
-        Nothing -> [CurrentEnvelopePolicyExpenseAccountUndeclared envelope account]
-        Just declaration
-          | declaredAccountType declaration == Expense -> []
-          | otherwise ->
-              [ CurrentEnvelopePolicyExpenseAccountNotExpense
-                  envelope account (declaredAccountType declaration)
-              ]
