@@ -4,6 +4,7 @@ module HKernel.Envelope.Fulfillment
   , EnvelopeFulfillment
   , EnvelopeFulfillmentError(..)
   , observeEnvelopeFulfillment
+  , observeEnvelopeStockFulfillment
   , envelopeFulfillmentPeriod
   , envelopeFulfillmentObservedThrough
   , envelopeFulfillmentFor
@@ -23,6 +24,10 @@ import HKernel.Actual.Journal
   , reversedTransactionId
   , reversalTransactionId
   )
+import HKernel.Envelope.EntitlementHistory
+  ( EnvelopeEntitlementHistory
+  , envelopeEntitlementHistoryOriginFor
+  )
 import HKernel.Envelope.FulfillmentRouting
   ( FulfillmentRoute(..)
   , FulfillmentRoutingHistory
@@ -37,8 +42,10 @@ import HKernel.Ledger
   , transactionPostings
   )
 import HKernel.Money
-  ( Balance
+  ( Amount
+  , Balance
   , addBalance
+  , amountCommodity
   , amountQuantity
   , emptyBalance
   , singletonBalance
@@ -110,24 +117,11 @@ data EnvelopeFulfillmentError
       (NonEmpty.NonEmpty PlanId)
   deriving (Eq, Show)
 
--- | Observe completed non-Expense target Plans and their typed reversal chains
--- through one inclusive day.
+-- | Observe bounded completed non-Expense target activity in one Period.
 --
--- Fulfillment intent is selected by stable PlanId, never by Account or by the
--- generic Income/outgoing classifier. This matters for Asset-to-Asset savings
--- and investment Plans, whose Envelope meaning is explicit household intent
--- rather than an accounting role inferred from Account types.
---
--- Once a routed Plan completes, its root Plan/Actual shape identifies target
--- posting positions. Actual quantities at those positions are authoritative.
--- Reversal chains then reverse or restore that whole root fulfillment evidence.
--- They do not re-derive target meaning from the reversal transaction's Account
--- aggregate, so repeated target postings remain positionally well-defined.
---
--- Route identity is frozen at the root completion Actual date. A single Actual
--- may generically complete several Plans, but if more than one of those Plans is
--- routed as Envelope fulfillment this projection fails closed rather than
--- inventing an amount-allocation rule.
+-- This remains an activity observation. Household Envelope Remaining must use
+-- 'observeEnvelopeStockFulfillment' so completed capacity use survives report
+-- Period boundaries.
 observeEnvelopeFulfillment
   :: Period
   -> Day
@@ -135,7 +129,51 @@ observeEnvelopeFulfillment
   -> ActualJournal
   -> FulfillmentRoutingHistory
   -> Either (NonEmpty.NonEmpty EnvelopeFulfillmentError) EnvelopeFulfillment
-observeEnvelopeFulfillment period observedThrough plans actual routing
+observeEnvelopeFulfillment period observedThrough plans actual routing =
+  observeEnvelopeFulfillmentWith
+    False
+    (periodContains period)
+    (\_day _amount -> True)
+    period observedThrough plans actual routing
+
+-- | Observe cumulative non-Expense target Fulfillment from each Commodity's
+-- native Entitlement origin through the inclusive observation day.
+--
+-- A completion before its target Commodity enters the Envelope stock world is
+-- absent together with its entire reversal chain. This prevents a later reversal
+-- of pre-Envelope accounting history from manufacturing live Envelope capacity.
+observeEnvelopeStockFulfillment
+  :: EnvelopeEntitlementHistory
+  -> Period
+  -> Day
+  -> PlanJournal
+  -> ActualJournal
+  -> FulfillmentRoutingHistory
+  -> Either (NonEmpty.NonEmpty EnvelopeFulfillmentError) EnvelopeFulfillment
+observeEnvelopeStockFulfillment history period observedThrough plans actual routing =
+  observeEnvelopeFulfillmentWith
+    True
+    (const True)
+    targetInStock
+    period observedThrough plans actual routing
+  where
+    targetInStock completionDay amount =
+      case envelopeEntitlementHistoryOriginFor (amountCommodity amount) history of
+        Nothing -> False
+        Just origin -> completionDay >= origin
+
+observeEnvelopeFulfillmentWith
+  :: Bool
+  -> (Day -> Bool)
+  -> (Day -> Amount -> Bool)
+  -> Period
+  -> Day
+  -> PlanJournal
+  -> ActualJournal
+  -> FulfillmentRoutingHistory
+  -> Either (NonEmpty.NonEmpty EnvelopeFulfillmentError) EnvelopeFulfillment
+observeEnvelopeFulfillmentWith requireStockTarget entryInHorizon targetInHorizon
+    period observedThrough plans actual routing
   | not (periodContains period observedThrough) =
       Left (EnvelopeFulfillmentObservationOutsidePeriod observedThrough period NonEmpty.:| [])
   | otherwise = do
@@ -169,8 +207,8 @@ observeEnvelopeFulfillment period observedThrough plans actual routing
       [ entry
       | entry <- entries
       , let entryDay = transactionDate (actualTransactionEntryTransaction entry)
-      , periodContains period entryDay
       , entryDay <= observedThrough
+      , entryInHorizon entryDay
       ]
 
     routedCompleted completed =
@@ -182,7 +220,21 @@ observeEnvelopeFulfillment period observedThrough plans actual routing
             planId = identifiedPlanId identifiedPlan
       , Just (FulfillsEnvelope envelope) <-
           [fulfillmentRouteAt routeDay planId routing]
+      , not requireStockTarget || hasStockTarget routeDay pair
       ]
+
+    hasStockTarget routeDay pair =
+      any isVisibleTarget
+        (NonEmpty.toList
+          (transactionPostings
+            (identifiedPlanTransaction (completedPlan pair))))
+      where
+        isVisibleTarget posting =
+          amountQuantity amount > zeroQuantity
+            && accountTypeFor (postingAccount posting) registry /= Just Expense
+            && targetInHorizon routeDay amount
+          where
+            amount = postingAmount posting
 
     rejectAmbiguousRoutedActuals routed =
       case NonEmpty.nonEmpty errors of
@@ -218,12 +270,16 @@ observeEnvelopeFulfillment period observedThrough plans actual routing
 
     targetBalance pair =
       foldl addBalance emptyBalance
-        [ singletonBalance (postingAmount actualPosting)
+        [ singletonBalance actualAmount
         | (planPosting, actualPosting) <- zip planPostings actualPostings
         , amountQuantity (postingAmount planPosting) > zeroQuantity
         , accountTypeFor (postingAccount planPosting) registry /= Just Expense
+        , let actualAmount = postingAmount actualPosting
+        , targetInHorizon completionDay actualAmount
         ]
       where
+        completionDay = transactionDate
+          (identifiedActualTransaction (completedActual pair))
         planPostings = NonEmpty.toList
           (transactionPostings
             (identifiedPlanTransaction (completedPlan pair)))
