@@ -54,7 +54,7 @@ main = do
 testBudgetUsageShape :: Bool
 testBudgetUsageShape = case parseEditorCommand
   [ "budget"
-  , "budget_alloc.tsv"
+  , "budget.journal"
   , "2026-08-05"
   , "move"
   , "budget:daily"
@@ -62,7 +62,7 @@ testBudgetUsageShape = case parseEditorCommand
   , "100"
   , "JPY"
   ] of
-    Right (PreviewOnly, BudgetMovementCmd "budget_alloc.tsv" movement) ->
+    Right (PreviewOnly, BudgetMovementCmd "budget.journal" movement) ->
       householdBudgetMovementMemo movement == "move"
     _ -> False
 
@@ -70,7 +70,7 @@ testBudgetExtraArgument :: Bool
 testBudgetExtraArgument =
   parseEditorCommand
     [ "budget"
-    , "budget_alloc.tsv"
+    , "budget.journal"
     , "2026-08-05"
     , "move"
     , "budget:daily"
@@ -83,7 +83,7 @@ testBudgetExtraArgument =
 testBudgetCommitTextIsData :: Bool
 testBudgetCommitTextIsData = case parseEditorCommand
   [ "budget"
-  , "budget_alloc.tsv"
+  , "budget.journal"
   , "2026-08-05"
   , "--commit"
   , "budget:daily"
