@@ -103,11 +103,11 @@ entitlementThrough observedThrough selectedPeriod =
     jpy = commodity "JPY"
     start = periodStart selectedPeriod
     history = mustRight (mkEnvelopeEntitlementHistory
-      [ grant selectedPeriod start (envelope "food") jpy 100
-      , grant selectedPeriod start (envelope "stock") jpy 50
-      , grant selectedPeriod start (envelope "savings") jpy 10
-      , grant selectedPeriod start (envelope "temporary") jpy 20
-      , grant selectedPeriod start (envelope "unused") jpy 10
+      [ grant start (envelope "food") jpy 100
+      , grant start (envelope "stock") jpy 50
+      , grant start (envelope "savings") jpy 10
+      , grant start (envelope "temporary") jpy 20
+      , grant start (envelope "unused") jpy 10
       ])
 
 consumptionThrough :: Day -> Period -> EnvelopeConsumption
@@ -267,17 +267,15 @@ expenseRoute effectiveFrom accountName routeValue = ExpenseRoutingDecision
   }
 
 grant
-  :: Period
-  -> Day
+  :: Day
   -> EnvelopeId
   -> Commodity
   -> Integer
   -> EnvelopeEntitlementTransfer
-grant selectedPeriod effectiveDay target unit quantity =
+grant effectiveDay target unit quantity =
   mustRight
     (mkEnvelopeEntitlementTransfer
       effectiveDay
-      selectedPeriod
       Unallocated
       (Spendable target)
       (mkAmount unit (quantityFromInteger quantity))

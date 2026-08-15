@@ -183,10 +183,10 @@ characterizeHouseholdBackingNativeDerivation = do
       journal = actualJournalValue actualJournal
       entitlementHistory = mustRight (mkEnvelopeEntitlementHistory
         [ mustRight (mkEnvelopeEntitlementTransfer
-            (fromGregorian 2026 8 1) period Unallocated (Spendable foodId)
+            (fromGregorian 2026 8 1) Unallocated (Spendable foodId)
             (mkAmount jpy (quantityFromInteger 150)) "food entitlement")
         , mustRight (mkEnvelopeEntitlementTransfer
-            (fromGregorian 2026 8 1) period Unallocated (Spendable travelId)
+            (fromGregorian 2026 8 1) Unallocated (Spendable travelId)
             (mkAmount jpy (quantityFromInteger 200)) "travel entitlement")
         ])
       entitlement = mustRight

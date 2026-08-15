@@ -208,7 +208,6 @@ entitlementHistory = mustRight (mkEnvelopeEntitlementHistory
     grant target quantity = mustRight
       (mkEnvelopeEntitlementTransfer
         (periodStart period)
-        period
         Unallocated
         (Spendable target)
         (mkAmount (commodity "JPY") (quantityFromInteger quantity))

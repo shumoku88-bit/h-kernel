@@ -21,7 +21,6 @@ import HKernel.Envelope.EntitlementTransfer
   , entitlementTransferAmount
   , entitlementTransferDate
   , entitlementTransferFrom
-  , entitlementTransferPeriod
   , entitlementTransferTo
   )
 import HKernel.Envelope.Identity (EnvelopeId)
@@ -52,10 +51,11 @@ data EnvelopeEntitlementError
 
 -- | Project admitted entitlement history through one inclusive observation day.
 --
--- Only transfers carrying the requested explicit Period participate. Source
--- order is provenance only; exact contributions are reduced by EnvelopeId and
--- commodity. History admission has already proven that effective-date
--- entitlement never becomes negative.
+-- All admitted transfers whose effective day is on or before the observation day
+-- contribute to the observed balance. Period start does not truncate historical
+-- facts, allowing pre-period grants, reallocations, and releases to carry forward.
+-- History admission has already proven that effective-date entitlement never
+-- becomes negative.
 observeEnvelopeEntitlement
   :: Period
   -> Day
@@ -75,7 +75,6 @@ observeEnvelopeEntitlement period observedThrough history
     visibleTransfers =
       [ transfer
       | transfer <- envelopeEntitlementHistoryTransfers history
-      , entitlementTransferPeriod transfer == period
       , entitlementTransferDate transfer <= observedThrough
       ]
 

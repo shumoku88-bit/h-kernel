@@ -36,47 +36,52 @@ projectionLaws = do
       nextPeriod = mustRight
         (mkPeriod (fromGregorian 2026 10 15) (fromGregorian 2026 12 15))
       transfers =
-        [ transfer (day 20) period (Spendable food) (Spendable stock) jpy 2000 "move"
-        , transfer (day 15) period Unallocated (Spendable food) jpy 10000 "grant JPY"
-        , transfer (day 15) period Unallocated (Spendable food) usd 5 "grant USD"
-        , transfer (day 18) period (Spendable temporary) Unallocated jpy 100 "release same day"
-        , transfer (day 18) period Unallocated (Spendable temporary) jpy 100 "grant same day"
-        , transfer (day 25) period (Spendable stock) Unallocated jpy 500 "release later"
-        , transfer (fromGregorian 2026 9 1) period Unallocated (Spendable food) jpy 3000 "future"
-        , transfer (fromGregorian 2026 10 15) nextPeriod Unallocated (Spendable food) jpy 999 "other period"
+        [ transfer (fromGregorian 2026 6 15) Unallocated (Spendable food) jpy 40000 "pre-period June grant"
+        , transfer (fromGregorian 2026 7 10) (Spendable food) (Spendable stock) jpy 5000 "pre-period July reallocation"
+        , transfer (fromGregorian 2026 7 20) (Spendable stock) Unallocated jpy 1000 "pre-period July release"
+        , transfer (day 15) Unallocated (Spendable food) jpy 10000 "grant JPY"
+        , transfer (day 15) Unallocated (Spendable food) usd 5 "grant USD"
+        , transfer (day 18) (Spendable temporary) Unallocated jpy 100 "release same day"
+        , transfer (day 18) Unallocated (Spendable temporary) jpy 100 "grant same day"
+        , transfer (day 20) (Spendable food) (Spendable stock) jpy 2000 "move"
+        , transfer (day 25) (Spendable stock) Unallocated jpy 500 "release later"
+        , transfer (fromGregorian 2026 9 1) Unallocated (Spendable food) jpy 3000 "future within period"
+        , transfer (fromGregorian 2026 10 20) Unallocated (Spendable food) jpy 999 "future in next period"
         ]
       history = mustRight (mkEnvelopeEntitlementHistory transfers)
       observed = mustRight (observeEnvelopeEntitlement period (day 20) history)
       later = mustRight (observeEnvelopeEntitlement period (day 25) history)
+      nextPeriodObserved = mustRight
+        (observeEnvelopeEntitlement nextPeriod (fromGregorian 2026 10 25) history)
       expectedFood = balance
-        [ mkAmount jpy (quantityFromInteger 8000)
+        [ mkAmount jpy (quantityFromInteger 43000)
         , mkAmount usd (quantityFromInteger 5)
         ]
 
-  equal "projection retains explicit Period"
+  equal "projection retains explicit Period coordinate"
     period
     (envelopeEntitlementPeriod observed)
   equal "observation horizon is inclusive"
     (day 20)
     (envelopeEntitlementObservedThrough observed)
-  equal "grant and transfer reduce exact JPY while preserving USD"
+  equal "pre-period grants, reallocations, and current movements carry into Entitlement"
     expectedFood
     (envelopeEntitlementBalance food observed)
-  equal "Envelope-to-Envelope transfer creates destination entitlement"
-    (balance [mkAmount jpy (quantityFromInteger 2000)])
+  equal "pre-period reallocation and release carry into destination Entitlement"
+    (balance [mkAmount jpy (quantityFromInteger 6000)])
     (envelopeEntitlementBalance stock observed)
   equal "later release is excluded before its date"
-    (balance [mkAmount jpy (quantityFromInteger 2000)])
+    (balance [mkAmount jpy (quantityFromInteger 6000)])
     (envelopeEntitlementBalance stock observed)
   equal "later release is visible on its date"
-    (balance [mkAmount jpy (quantityFromInteger 1500)])
+    (balance [mkAmount jpy (quantityFromInteger 5500)])
     (envelopeEntitlementBalance stock later)
   equal "future transfer is excluded from earlier observation"
     expectedFood
     (envelopeEntitlementBalance food observed)
-  equal "other Period is isolated"
-    expectedFood
-    (envelopeEntitlementBalance food observed)
+  equal "multiple historical Period boundaries carry forward into later Period observation"
+    (balance [mkAmount jpy (quantityFromInteger 46999), mkAmount usd (quantityFromInteger 5)])
+    (envelopeEntitlementBalance food nextPeriodObserved)
   equal "untouched Envelope lookup is canonical zero"
     emptyBalance
     (envelopeEntitlementBalance absent observed)
@@ -101,18 +106,16 @@ commodity = mustRight . mkCommodity . T.pack
 
 transfer
   :: Day
-  -> Period
   -> EnvelopeEndpoint
   -> EnvelopeEndpoint
   -> Commodity
   -> Integer
   -> String
   -> EnvelopeEntitlementTransfer
-transfer effectiveDay transferPeriod fromEndpoint toEndpoint unit quantity note =
+transfer effectiveDay fromEndpoint toEndpoint unit quantity note =
   mustRight
     (mkEnvelopeEntitlementTransfer
       effectiveDay
-      transferPeriod
       fromEndpoint
       toEndpoint
       (mkAmount unit (quantityFromInteger quantity))
