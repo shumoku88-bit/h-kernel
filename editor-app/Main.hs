@@ -35,8 +35,6 @@ import HKernel.Household.Application
   , loadCanonicalHousehold
   , loadCanonicalHouseholdWriteSnapshot
   )
-import HKernel.Household.BudgetMovement.TSV
-  ( parseHouseholdBudgetMovements )
 import HKernel.Household.Issue.TSV (parseHouseholdIssues)
 import HKernel.Journal (Journal)
 import HKernel.Loader (loadJournal, loadJournalFromRootSource)
@@ -132,8 +130,9 @@ executeCommand commitMode command = case command of
       Left err -> die ("Invalid Household root: " <> show err)
       Right r -> pure r
     let paths = householdSourcePaths root
-    if normalise targetFile == normalise (householdBudgetJournalPath paths)
-      then do
+    if normalise targetFile /= normalise (householdBudgetJournalPath paths)
+      then die "Budget movement command only accepts canonical budget.journal"
+      else do
         snapshotResult <- loadCanonicalHouseholdWriteSnapshot root
         snapshot <- case snapshotResult of
           Left errors -> validationFailed errors
@@ -150,18 +149,6 @@ executeCommand commitMode command = case command of
               existingSource
               (BudgetMovementAppend.budgetJournalCandidateBlock preview)
               (BudgetMovementAppend.budgetJournalCandidateCompleteSource preview)
-              commitMode
-      else do
-        existingSource <- TIO.readFile targetFile
-        case BudgetMovementAppend.prepareBudgetMovementAppend existingSource movement of
-          Left errors -> validationFailed errors
-          Right preview ->
-            executePreview
-              (publishWithAdmission parseHouseholdBudgetMovements)
-              targetFile
-              existingSource
-              (BudgetMovementAppend.candidateBlock preview)
-              (BudgetMovementAppend.candidateCompleteSource preview)
               commitMode
 
   IssueCmd tsvFile intent -> do

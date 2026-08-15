@@ -1,10 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HKernel.Editor.BudgetMovementAppend
-  ( BudgetMovementAppendError(..)
-  , BudgetMovementAppendPreview(..)
-  , prepareBudgetMovementAppend
-  , BudgetJournalMovementAppendError(..)
+  ( BudgetJournalMovementAppendError(..)
   , BudgetJournalMovementAppendPreview(..)
   , prepareBudgetJournalMovementAppend
   ) where
@@ -14,14 +11,12 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time.Format (defaultTimeLocale, formatTime)
 
 import HKernel.Account
   ( Account
   , AccountRegistry
   , AccountType(..)
   , accountDeclarations
-  , accountName
   , accountTypeFor
   )
 import HKernel.Account.Journal (renderAccountDeclaration)
@@ -32,10 +27,6 @@ import HKernel.Household.BudgetMovement
   , HouseholdBudgetMovementJournalRenderError
   , admitHouseholdBudgetMovementJournal
   , renderHouseholdBudgetMovementTransactions
-  )
-import HKernel.Household.BudgetMovement.TSV
-  ( HouseholdBudgetMovementTSVError
-  , parseHouseholdBudgetMovements
   )
 import HKernel.Journal
   ( Journal
@@ -48,53 +39,9 @@ import HKernel.Journal
   , resolveJournalDocumentIncludes
   , validateJournalDocument
   )
-import HKernel.Money
-  ( amountCommodity
-  , amountQuantity
-  , commodityCode
-  , renderQuantity
-  )
 
-data BudgetMovementAppendError
-  = SourceParseError (NonEmpty HouseholdBudgetMovementTSVError)
-  | CandidateSourceParseError (NonEmpty HouseholdBudgetMovementTSVError)
-  deriving (Eq, Show)
-
-data BudgetMovementAppendPreview = BudgetMovementAppendPreview
-  { candidateBlock          :: Text
-  , candidateCompleteSource :: Text
-  } deriving (Eq, Show)
-
-prepareBudgetMovementAppend
-  :: Text
-  -> HouseholdBudgetMovement
-  -> Either (NonEmpty BudgetMovementAppendError) BudgetMovementAppendPreview
-prepareBudgetMovementAppend existingSource movement = do
-  _ <- first (pure . SourceParseError) (parseHouseholdBudgetMovements existingSource)
-
-  let block = renderHouseholdBudgetMovement movement
-      preview = BudgetMovementAppendPreview
-        { candidateBlock = block
-        , candidateCompleteSource =
-            appendSourceBlock existingSource (SourceBlock block)
-        }
-
-  _ <- first (pure . CandidateSourceParseError)
-    (parseHouseholdBudgetMovements (candidateCompleteSource preview))
-  pure preview
-
-renderHouseholdBudgetMovement :: HouseholdBudgetMovement -> Text
-renderHouseholdBudgetMovement movement = T.intercalate "\t"
-  [ T.pack (formatTime defaultTimeLocale "%F" (householdBudgetMovementDate movement))
-  , householdBudgetMovementMemo movement
-  , accountName (householdBudgetMovementFrom movement)
-  , accountName (householdBudgetMovementTo movement)
-  , renderQuantity (amountQuantity (householdBudgetMovementAmount movement))
-  , "currency=" <> commodityCode (amountCommodity (householdBudgetMovementAmount movement))
-  ]
-
--- Native budget.journal append
-
+-- | Prepare one canonical @budget.journal@ movement append. The candidate is
+-- admitted through the native Budget Journal owner before publication.
 data BudgetJournalMovementAppendError
   = BudgetJournalMovementNotBudgetAccount Account
   | BudgetJournalRenderError (NonEmpty HouseholdBudgetMovementJournalRenderError)

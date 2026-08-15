@@ -1,26 +1,27 @@
 # Household Backing契約
 
-ステータス: アクティブなdomain contract  
-更新日: 2026-08-14
+ステータス: アクティブな domain contract  
+更新日: 2026-08-15
 
 ## 目的
 
-この文書は、`HKernel.Household.Backing`が何を観察し、どの値を保持し、どこから先を推測しないかを所有する。
+この文書は、`HKernel.Household.Backing` が何を観察し、どの native value を組み合わせ、どこから先を推測しないかを所有する。
 
-Backingは、Envelopeとして残っている家計上のclaimと、それを支えるpolicy指定Assetの残高・open Plan commitmentを、同じ観察日にBackingPoolごとに並べるprojectionである。
+Backing は、Envelope として残っている家計上の claim と、それを支える policy 指定 Asset の残高・open Plan funding commitment を、同じ観察日に BackingPool ごとに並べる projection である。
 
-Backingは次ではない。
+Backing は次ではない。
 
 - 銀行口座内で資金が物理的に分離されているという主張
 - 資金移動、支出、貯蓄、投資を命令する仕組み
-- 異なるCommodityを換算する評価
-- Account名やmemoからEnvelope intentを推測する仕組み
+- 異なる Commodity を換算する評価
+- Account 名や memo から Envelope intent を推測する仕組み
+- retired `BudgetPolicy` / `BudgetRemaining` aggregate の別名
 
-## ownerの分離
+## owner の分離
 
-`HKernel.Backing`はsource shapeを知らない純粋なBackingPool算術を所有する。
+`HKernel.Backing` は source shape を知らない pure BackingPool 算術を所有する。
 
-一つのpoolについて、少なくとも次を別座標として保持する。
+一つの pool について次を別座標として保持する。
 
 ```text
 Funding Balance
@@ -31,92 +32,107 @@ Gross Surplus
 Available Surplus
 ```
 
-`HKernel.Household.Backing`は、admitted Household policy・Journal・Plan・Budget compatibility observationからこれらの座標を解決して`HKernel.Backing`へ渡すcomposition ownerである。pool算術を再実装しない。
+`HKernel.Household.Backing` は admitted Household policy、Journal facts、native Envelope projections、allocation movement facts、open funding Plan evidence を解決して `HKernel.Backing` へ渡す composition owner である。pool 算術を再実装しない。
 
-## 入力の声部
+## Current inputs
 
 ```text
 observation day + Period
-HouseholdPolicy + BudgetPolicy compatibility
 Journal Account balances
-aligned Entitlement / Consumption / Remaining
+BackingPolicy
+Envelope identities
+unassigned allocation Accounts
 HouseholdBudgetMovement facts
-open HouseholdBackingPlan evidence
+EnvelopeEntitlement
+EnvelopeConsumption
+EnvelopeRemaining
+EnvelopeHeadroom
+open HouseholdBackingPlan funding evidence
   -> pool-local native Backing
   -> Household Backing surface
 ```
 
-### Policy
+旧 `BudgetPolicy`、旧 `BudgetObservation`、旧 Account-based Plan destination lookup は current input ではない。
 
-現在のcompatibility windowでは、`HouseholdPolicy`が保持するnative `BackingPolicy`（`HKernel.Backing.Policy`）が次を供給する。
+### BackingPolicy
+
+`HKernel.Backing.Policy` が次を所有する。
 
 - Envelope -> BackingPool
 - BackingPool -> Asset Account membership
 
-既存のcanonical `budget.toml` / `BudgetPolicy`からは`budgetPolicyBackingPolicy`による一方向のcompatibility projectionを通じてnative `BackingPolicy`が構成される。
+canonical `budget.toml` は `HKernel.Envelope.Config.parseCurrentEnvelopeConfiguration` を通じて native `BackingPolicy` を直接 admit する。`BudgetPolicy` compatibility aggregate を経由しない。
 
-`BackingPoolId`そのものは`HKernel.Backing.Identity`が所有し、native `BackingPolicy`およびcompatibility projectionは同じidentityを再利用する。
-
-Household BackingはAsset Accountの名前や残高からpool membershipを推測しない。
+Household Backing は Asset Account の名前や残高から pool membership を推測しない。
 
 ### HouseholdBudgetMovement
 
-`HKernel.Household.BudgetMovement`は、日付、memo、from Account、to Account、正確なAmountを持つsource-independentなfactである。
+`HKernel.Household.BudgetMovement` は日付、memo、from Account、to Account、正確な Amount を持つ source-independent な allocation movement fact である。
 
-現在の`budget_alloc.tsv` rowは`HKernel.Household.BudgetMovement.TSV`でこの値へadmitされる。Backing計算はTSVの列形状やfile pathを知らない。
+current canonical source は `budget.journal`。`HKernel.Household.BudgetMovement` が resolved Journal から ordered movement を admit する。
 
-### Open Plan evidence
+historical `budget_alloc.tsv` adapter は current canonical reader でも Editor fallback でもない。2026-08-15 に completed migration shell から撤去した。
 
-`HouseholdBackingPlan`はopen outgoing Planの次の二つのAccount座標を分けて保持する。
+allocation movement は current Envelope claim 算術そのものを所有しない。Backing では unassigned allocation Account の reconciliation evidence に使う。
 
-- source Account
-- destination Account
+### Open Plan funding evidence
 
-source Assetは、policyのAsset -> BackingPool membershipを通じて`Funding Commitment`を作る。
+`HouseholdBackingPlan` は open outgoing Plan の **source Account と positive Amount** を保持する。
+
+source Asset は `BackingPolicy` の Asset -> BackingPool membership を通じて Funding Commitment を作る。
 
 ```text
 Available Funding
   = Funding Balance - Funding Commitment
 ```
 
-Planのfunding horizonは「current Periodに日付が含まれるか」ではない。次Period境界より前に予定され、まだopenであるPlanはcommitmentであり、overdueになってもcompletion/cancellation等のlifecycle evidenceで閉じるまで残る。
+Plan の funding horizon は「current Period の開始日以後か」ではない。次 Period 境界より前に予定され、まだ open である Plan は commitment であり、overdue になっても lifecycle evidence で閉じるまで残る。
 
 ```text
 planned date < current period end-exclusive
 ```
 
-このため、current period開始前のoverdue open PlanもBackingから消えない。
+この funding commitment は Envelope fulfillment routing とは独立した座標である。
 
 ## Envelope claim
 
-native Backing ownerへ渡すEnvelope claimは二つの量を保持する。
+native Backing owner へ渡す Envelope claim は二つの量を保持する。
 
 ```text
-Gross claim      = Remaining
-Available claim  = Headroom
+Gross claim      = EnvelopeRemaining
+Available claim  = EnvelopeHeadroom
 ```
 
-負のRemaining/Headroomはoverspending evidenceとして保持するが、別Envelopeの正のclaimを相殺してBacking Requiredを減らしてはいけない。
+負の Remaining / Headroom は overspending evidence として保持するが、別 Envelope の正の claim を相殺して Backing Required を減らしてはいけない。
 
-### 現在のcompatibility bridge
+`EnvelopeBackingLine` は presentation detail として次を並べる。
 
-Household Report全体はまだ旧Budget observationから段階移行中である。そのため現在の`EnvelopeBackingLine`では一時的に、旧`plan-destination-accounts`のdestination Account lookupから`Open Plan Reserve`を作り、
+- Entitlement
+- Actual Consumption charges
+- Actual Refunds
+- native Remaining
+- Open Plan Reserve
+
+ここで `Open Plan Reserve` は legacy destination Account lookup ではない。
 
 ```text
-Headroom = Budget Remaining - Open Plan Reserve
+Open Plan Reserve
+  = native Remaining - native Headroom
 ```
 
-としてnative Backingへ渡す。
+Headroom 自体は stable PlanId fulfillment routing を含む native Envelope projection から受け取る。Backing が Plan destination Account から Envelope intent を再構成しない。
 
-これはnative Envelope intentではない。#250で確立したnative semanticsでは、non-Expense target fulfillment/commitmentのintent ownerはAccountではなくstable `PlanId`である。
+## Unassigned attention と unmanaged
 
-従ってこのdestination lookupはmigration bridgeであり、新しいAccount-based authorityとして固定してはいけない。canonical Householdがnative `EnvelopeCommitment`へ接続された時点で削除する。
+`EnvelopeConsumption` の `unrouted` evidence は `envelopeUnassignedExpenses` として surface に残す。
 
-source Account -> BackingPool funding commitmentは、このlegacy destination lookupとは独立した意味である。
+explicit `NotEnvelopeManaged` は `unrouted` と同一視しない。Envelope 管理外と明示された Expense を unassigned attention へ混ぜない。
+
+この区別は current Expense routing authority から導かれ、Backing が Account 名や current config から historical intent を推測し直さない。
 
 ## BackingPool position
 
-Household surfaceはpool別positionをaggregationより先に保持する。
+Household surface は pool 別 position を aggregation より先に保持する。
 
 ```text
 BackingPoolPosition
@@ -129,36 +145,19 @@ BackingPoolPosition
   available surplus
 ```
 
-重要なlaw:
+重要な law:
 
 ```text
 pool A shortage + pool B surplus
 ```
 
-を先に足して「家計全体では0」としてはいけない。pool Aの不足はpool Aの不足として観察可能でなければならない。
+を先に足して「家計全体では0」としてはいけない。pool A の不足は pool A の不足として観察可能でなければならない。
 
-Household aggregate helperは表示・互換用summaryであり、pool-local adequacyのownerではない。
-
-## Envelope compatibility detail
-
-`EnvelopeBackingLine`は移行期間中、一つのEnvelopeについて次を保持する。
-
-- Entitlement
-- Actual Consumption charges
-- Actual Refunds
-- Budget Remaining
-- Open Plan Reserve
-
-```text
-Post-Plan Headroom
-  = Budget Remaining - Open Plan Reserve
-```
-
-この値はprojectionであり、JournalやEnvelope historyへ自動記帳しない。
+aggregate helper は表示・summary 用であり、pool-local adequacy の owner ではない。
 
 ## Household summary
 
-aggregate helperは次を提供する。
+aggregate helper は次を提供する。
 
 ```text
 Funding Balance
@@ -174,64 +173,67 @@ Available Backing Surplus
   = foldMap pool Available Surplus
 ```
 
-これらは便利なsummaryだが、poolごとの不足/余剰を置き換えない。
+`Signed Total` は Envelope の signed Remaining をそのまま足すので overspending evidence を負のまま保持する。
 
-`Signed Total`はEnvelopeのsigned Remainingをそのまま足すのでoverspending evidenceを負のまま保持する。
-
-`Reconciliation Delta`は移行中のunassigned Budget ledger evidenceをGross Backing Surplusと別座標で照合する。
+`Reconciliation Delta` は allocation journal の unassigned evidence と Gross Backing Surplus を別座標で照合する。
 
 ## exact arithmetic
 
-すべての計算はCommodityを分離した正確な`Balance`上で行う。
+すべての計算は Commodity を分離した正確な `Balance` 上で行う。
 
-- Commodity conversionをしない
+- Commodity conversion をしない
 - 浮動小数点を使わない
 - 暗黙の丸めをしない
-- JPY surplusでUSD shortageを相殺しない
+- JPY surplus で USD shortage を相殺しない
 
 ## 現在の境界
 
-この契約で確立済み:
+確立済み:
 
 - native `BackingPoolId`
-- pool-local exact arithmetic owner
-- native `HKernel.Backing.Policy`によるBacking座標（Envelope -> pool, Asset -> pool）の所有
-- `Household.Backing` compositionがnative `BackingPolicy`から読むこと
-- Household compositionがpool positionを保持すること
-- Plan source Assetからpool funding commitmentを導くこと
-- overdue open Planをcurrent funding horizonから落とさないこと
-- aggregate summaryとpool-local adequacyを分けること
+- native `BackingPolicy`
+- native `EnvelopeEntitlement`
+- native `EnvelopeConsumption`
+- native `EnvelopeRemaining`
+- native `EnvelopeHeadroom`
+- pool-local exact arithmetic
+- stable PlanId fulfillment semantics と Backing の source-Asset funding commitment の分離
+- overdue open Plan を funding horizon から落とさないこと
+- aggregate summary と pool-local adequacy の分離
+- `budget.journal` movement を source-era reconciliation evidence として扱うこと
 
-まだmigration中:
+current architecture に存在しない bridge:
 
-- Envelope claimのHousehold compositionは旧Budget Remainingを利用している
-- Envelope Plan reserveは旧destination Account lookupをbridgeとして利用している
-- `budget.journal` / `budget.toml` / `plan-destination-accounts`のcanonical source replacement
+- `BudgetPolicy` -> Backing projection
+- legacy `BudgetRemaining` -> Envelope claim
+- destination Account -> Envelope Plan reserve lookup
+- `budget_alloc.tsv` -> canonical movement admission
 
 ここでは決めない:
 
-- Commodity conversionや市場価値
-- Asset -> BackingPool assignmentのhistorical source shape
-- PlanId Fulfillment routingのphysical source shape
-- writer authority for those future sources
+- `budget.journal` や Budget AccountType の将来の physical naming
+- Commodity conversion や市場価値
+- Asset -> BackingPool assignment の historical source shape
+- writer authority の将来変更
 
 ## 検証
 
-`h-kernel-backing-test`はpure native ownerについて次を検査する。
+`h-kernel-backing-test` は pure native owner について次を検査する。
 
-- matching/external funding commitments
-- overspendingが正claimを相殺しないこと
+- matching / external funding commitments
+- overspending が正 claim を相殺しないこと
 - pool-local shortage
 - multi-commodity exactness
 - duplicate Envelope claim fail-closed
 
-`h-kernel-household-backing-test`はHousehold surfaceについて次を検査する。
+`h-kernel-household-backing-test` と Household Report の laws は次を検査する。
 
-- signed Envelope evidence
-- native pool positionsをaggregation前に保持すること
-- gross/available summary
-- source funding commitment後のavailable shortage
-- 他poolのsurplusが不足poolそのものを消さないこと
-- compatibility headroomとledger remainingの区別
-
-Household Report lawは、open Plan sourceがBackingPool funding commitmentへ接続され、次Period境界までのoverdue/current open Planを同じfunding horizonとして扱うことを検証する。
+- signed native Envelope evidence
+- charges / refunds
+- unrouted attention
+- unmanaged Expense を attention に混ぜないこと
+- native pool positions を aggregation 前に保持すること
+- gross / available summary
+- source Asset funding commitment
+- overdue/current open Plan の funding horizon
+- 他 pool の surplus が不足 pool そのものを消さないこと

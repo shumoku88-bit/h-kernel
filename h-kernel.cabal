@@ -88,10 +88,8 @@ library
 library h-kernel-household
     import:           common-defaults
     exposed-modules:  HKernel.Household.AccountProfile
-                    , HKernel.Household.AccountProfile.TSV
                     , HKernel.Household.Backing
                     , HKernel.Household.BudgetMovement
-                    , HKernel.Household.BudgetMovement.TSV
                     , HKernel.Household.Config
                     , HKernel.Household.DailyTarget
                     , HKernel.Household.DailyTarget.TSV
@@ -233,16 +231,6 @@ test-suite h-kernel-account-profile-contract-test
                     , h-kernel-household
                     , text
 
-test-suite h-kernel-account-profile-tsv-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          AccountProfileTSVSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
-                    , h-kernel
-                    , h-kernel-household
-                    , text
-
 test-suite h-kernel-backing-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
@@ -288,16 +276,6 @@ test-suite h-kernel-household-budget-observation-test
     main-is:          HouseholdBudgetObservationSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
-                    , h-kernel
-                    , h-kernel-household
-                    , text
-                    , time
-
-test-suite h-kernel-household-budget-movement-tsv-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          HouseholdBudgetMovementTSVSpec.hs
-    build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-household
                     , text
