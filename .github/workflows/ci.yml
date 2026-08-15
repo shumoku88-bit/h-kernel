@@ -83,7 +83,7 @@ jobs:
         run: cabal build all -j --semaphore
 
       - name: Test
-        run: cabal test all -j
+        run: cabal test all -j --test-show-details=direct
 
       # These checks are cheap once the executable is built, so retain them on
       # the PR gate as well as the canonical full qualification on main.
