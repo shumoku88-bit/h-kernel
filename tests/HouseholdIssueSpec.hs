@@ -7,7 +7,10 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Time.Calendar (fromGregorian)
 import HKernel.HouseholdIssue
 import HKernel.HouseholdIssue.Render
-import HKernel.Editor.HouseholdWorkspace (issuesForWorkspace)
+import HKernel.Editor.HouseholdWorkspace
+  ( IssueWorkspaceFilter(..)
+  , issuesForWorkspace
+  )
 import HKernel.Money
 import HKernel.Plan (mkPlanId)
 import HKernel.Plan.Completion (mkActualTransactionId)
@@ -272,15 +275,29 @@ characterizeWorkspaceOrder = do
         , issue Open 8 "open-new"
         , issue Resolved 2 "resolved-old"
         ]
-  assertEqual "workspace keeps open Issues first and newest-first within status groups"
+  assertEqual "workspace defaults can project only open Issues newest-first"
+    [ "open-new"
+    , "open-old"
+    ]
+    (map (issueIdText . householdIssueId)
+      (issuesForWorkspace OpenIssueFilter sourceIssues))
+  assertEqual "workspace can explicitly project closed Issue history"
+    [ "resolved-newest"
+    , "dropped-new"
+    , "resolved-old"
+    ]
+    (map (issueIdText . householdIssueId)
+      (issuesForWorkspace ClosedIssueFilter sourceIssues))
+  assertEqual "workspace can explicitly project all Issues with open attention first"
     [ "open-new"
     , "open-old"
     , "resolved-newest"
     , "dropped-new"
     , "resolved-old"
     ]
-    (map (issueIdText . householdIssueId) (issuesForWorkspace sourceIssues))
-  assertEqual "workspace ordering does not mutate canonical source order"
+    (map (issueIdText . householdIssueId)
+      (issuesForWorkspace AllIssueFilter sourceIssues))
+  assertEqual "workspace filtering does not mutate canonical source order"
     [ "resolved-newest"
     , "open-old"
     , "dropped-new"

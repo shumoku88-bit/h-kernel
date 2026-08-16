@@ -69,6 +69,9 @@ import HKernel.Editor.BudgetMovementAppend
   ( BudgetJournalMovementAppendPreview(..)
   , prepareCurrentBudgetJournalMovementAppend
   )
+import HKernel.Editor.HouseholdWorkspace
+  ( IssueWorkspaceFilter(..)
+  )
 import HKernel.Editor.IssueAppend
   ( IssueAppendIntent(..)
   , IssueAppendPreview(..)
@@ -91,9 +94,11 @@ import HKernel.Editor.TUI.Model
   , contextAccountsSource
   , contextBudgetSource
   , contextHouseholdState
+  , contextIssueCounts
   , contextIssueListL
   , contextIssuesSource
   , reloadWorkspaceContext
+  , setIssueWorkspaceFilter
   )
 import HKernel.Household.Application
   ( HouseholdState(..)
@@ -382,12 +387,23 @@ drawAccountsWorkspace context =
 drawIssuesWorkspace :: AppContext -> Widget Name
 drawIssuesWorkspace context =
   vBox
-    [ borderWithLabel (str "Household Notebook (issues.tsv)")
+    [ borderWithLabel (str
+        ("Household Notebook (issues.tsv) | View: "
+          <> issueWorkspaceFilterLabel (contextIssueFilter context)
+          <> " | Open: " <> show openCount
+          <> " | Closed: " <> show closedCount))
         (vLimit 18 (L.renderList renderIssueItem True (contextIssueList context)))
     , borderWithLabel (str "Selected Issue")
         (padAll 1 (renderSelectedIssue context))
-    , str "[j/k/Arrows] Move   [Enter] Resolve/Drop   [U] Due   [A] Add Issue   [1-7] Sections   [q] Quit"
+    , str "[O] Open   [C] Closed   [L] All   [j/k/Arrows] Move"
+    , str "[Enter] Resolve/Drop (Open)   [U] Due (Open)   [A] Add Issue   [1-7] Sections   [q] Quit"
     ]
+  where
+    (openCount, closedCount) = contextIssueCounts context
+    issueWorkspaceFilterLabel visibility = case visibility of
+      OpenIssueFilter -> "Open"
+      ClosedIssueFilter -> "Closed"
+      AllIssueFilter -> "All"
 
 drawFlow :: State AppEvent -> Widget Name
 drawFlow state = case state of
@@ -922,6 +938,12 @@ handleIssuesWorkspaceEvent event = case event of
   MouseDown IssueList V.BLeft _ (Location (_, row)) -> do
     zoom contextIssueListL (modify (L.listMoveTo row))
     pure IssuesActionMaintain
+  VtyEvent (V.EvKey (V.KChar 'o') []) -> selectView OpenIssueFilter
+  VtyEvent (V.EvKey (V.KChar 'O') []) -> selectView OpenIssueFilter
+  VtyEvent (V.EvKey (V.KChar 'c') []) -> selectView ClosedIssueFilter
+  VtyEvent (V.EvKey (V.KChar 'C') []) -> selectView ClosedIssueFilter
+  VtyEvent (V.EvKey (V.KChar 'l') []) -> selectView AllIssueFilter
+  VtyEvent (V.EvKey (V.KChar 'L') []) -> selectView AllIssueFilter
   VtyEvent (V.EvKey (V.KChar 'a') []) -> pure IssuesActionStartAdd
   VtyEvent (V.EvKey (V.KChar 'A') []) -> pure IssuesActionStartAdd
   VtyEvent (V.EvKey (V.KChar 'u') []) -> openSelectedIssueDueUpdate
@@ -932,6 +954,9 @@ handleIssuesWorkspaceEvent event = case event of
     pure IssuesActionMaintain
   _ -> pure IssuesActionMaintain
   where
+    selectView visibility = do
+      modify (setIssueWorkspaceFilter visibility)
+      pure IssuesActionMaintain
     openSelectedIssueClose = do
       context <- get
       case startSelectedIssueClose context of
