@@ -53,8 +53,7 @@ import HKernel.Household.Application
   )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.Config
-  ( householdConfigurationAccountPolicy
-  , householdConfigurationDailyTargetAssets
+  ( householdConfigurationDailyTargetAssets
   )
 import HKernel.HouseholdIssue (IssueStatus(..), mkIssueId)
 import HKernel.Money (mkAmount, mkCommodity, quantityFromInteger)
@@ -96,9 +95,6 @@ testSyntheticRootLoading = do
 
   unless (length (householdConfigurationDailyTargetAssets (householdStateConfiguration state)) == 1)
     (die "household.toml Daily Target asset selection was not retained")
-  case householdConfigurationAccountPolicy (householdStateConfiguration state) of
-    Nothing -> die "household.toml Account policy was discarded"
-    Just _ -> pure ()
 
   let observation = fromGregorian 2026 7 20
   case buildHouseholdReportSurfaceFromHousehold observation state of
@@ -380,52 +376,18 @@ testFirstFailurePrecedence = do
         , "income-account = \"Income:Salary\""
         , ""
         , "[budget]"
-        , "unassigned-accounts = [\"Budget:Living\", \"Budget:Unassigned\"]"
+        , "opening-accounts = [\"Budget:Opening\"]"
+        , "unassigned-accounts = [\"Budget:Living\"]"
         , ""
         , "[[budget.envelopes]]"
         , "id = \"Daily\""
         , "allocation-account = \"Budget:Daily\""
         , ""
-        , "[daily-target]"
-        , ""
-        , "[[daily-target.assets]]"
-        , "id = \"bank\""
-        , "account = \"Assets:Bank\""
-        , ""
-        , "[account-policy.assets]"
-        , "liquid = [\"Assets:Bank\"]"
-        , "savings = []"
-        , "investment = []"
-        , ""
         , "[account-policy.budget.kind]"
-        , "opening = []"
-        , "unassigned = [\"Budget:Living\", \"Budget:Unassigned\"]"
+        , "opening = [\"Budget:Opening\"]"
+        , "unassigned = [\"Budget:Living\"]"
         , "spent = []"
         , "envelope = [\"Budget:Daily\"]"
-        , ""
-        , "[account-policy.budget.envelope-role]"
-        , "unassigned = [\"Budget:Living\", \"Budget:Unassigned\"]"
-        , "dynamic = [\"Budget:Daily\"]"
-        , "execution = []"
-        , ""
-        , "[account-policy.budget.group]"
-        , "daily = [\"Budget:Daily\"]"
-        , "flex = []"
-        , "reserve = [\"Budget:Living\", \"Budget:Unassigned\"]"
-        , ""
-        , "[account-policy.expenses]"
-        , "fixed = []"
-        , "variable = [\"Expenses:Groceries\", \"Expenses:UndeclaredAccount\"]"
-        , ""
-        , "[envelope-history]"
-        , "identities = [\"Daily\"]"
-        , ""
-        , "[[envelope-history.expense-routing]]"
-        , "effective-from = \"initial\""
-        , "expense-account = \"Expenses:Groceries\""
-        , "route = \"managed\""
-        , "target = \"Daily\""
-        , "note = \"synthetic precedence fixture routing\""
         ]
       invalidReportToml = "[reports.trial-balance\n"
 
@@ -439,18 +401,16 @@ testFirstFailurePrecedence = do
   fsResult <- loadCanonicalHousehold root
   case fsResult of
     Left errs -> case NonEmpty.head errs of
-      HouseholdPolicyAccountValidationFailed {} -> pure ()
-      HouseholdAccountPolicyRegistryDisagreement {} -> pure ()
-      other -> die ("Expected Household policy validation error first on filesystem path, got: " <> show other <> "\nFull errors: " <> show (NonEmpty.toList errs))
-    Right _ -> die "Expected failure on invalid household policy, but succeeded"
+      HouseholdPolicyParseFailed _ -> pure ()
+      other -> die ("Expected retired Household policy syntax to fail before report admission, got: " <> show other <> "\nFull errors: " <> show (NonEmpty.toList errs))
+    Right _ -> die "Expected failure on retired household policy syntax, but succeeded"
 
   let pureResult = admitCanonicalHousehold root syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml invalidHouseholdToml invalidReportToml syntheticIssues
   case pureResult of
     Left errs -> case NonEmpty.head errs of
-      HouseholdPolicyAccountValidationFailed {} -> pure ()
-      HouseholdAccountPolicyRegistryDisagreement {} -> pure ()
-      other -> die ("Expected Household policy validation error first on pure path, got: " <> show other)
-    Right _ -> die "Expected failure on invalid household policy, but succeeded"
+      HouseholdPolicyParseFailed _ -> pure ()
+      other -> die ("Expected retired Household policy syntax first on pure path, got: " <> show other)
+    Right _ -> die "Expected failure on retired household policy syntax, but succeeded"
 
   removeDirectoryRecursive dir
 
@@ -600,6 +560,10 @@ syntheticAccounts = T.unlines
   , "  type: Expense"
   , "  commodity: JPY"
   , ""
+  , "account Budget:Opening"
+  , "  type: Budget"
+  , "  commodity: JPY"
+  , ""
   , "account Budget:Living"
   , "  type: Budget"
   , "  commodity: JPY"
@@ -679,7 +643,6 @@ syntheticBudgetToml = T.unlines
   , "label = \"Daily\""
   , "pacing = \"daily\""
   , "backing-pool = \"main\""
-  , "expense-accounts = [\"Expenses:Groceries\"]"
   ]
 
 syntheticHouseholdToml :: Text
@@ -689,6 +652,7 @@ syntheticHouseholdToml = T.unlines
   , "income-account = \"Income:Salary\""
   , ""
   , "[budget]"
+  , "opening-accounts = [\"Budget:Opening\"]"
   , "unassigned-accounts = [\"Budget:Living\"]"
   , ""
   , "[[budget.envelopes]]"
@@ -700,31 +664,6 @@ syntheticHouseholdToml = T.unlines
   , "[[daily-target.assets]]"
   , "id = \"bank\""
   , "account = \"Assets:Bank\""
-  , ""
-  , "[account-policy.assets]"
-  , "liquid = [\"Assets:Bank\"]"
-  , "savings = []"
-  , "investment = []"
-  , ""
-  , "[account-policy.budget.kind]"
-  , "opening = []"
-  , "unassigned = [\"Budget:Living\"]"
-  , "spent = []"
-  , "envelope = [\"Budget:Daily\"]"
-  , ""
-  , "[account-policy.budget.envelope-role]"
-  , "unassigned = [\"Budget:Living\"]"
-  , "dynamic = [\"Budget:Daily\"]"
-  , "execution = []"
-  , ""
-  , "[account-policy.budget.group]"
-  , "daily = [\"Budget:Daily\"]"
-  , "flex = []"
-  , "reserve = [\"Budget:Living\"]"
-  , ""
-  , "[account-policy.expenses]"
-  , "fixed = []"
-  , "variable = [\"Expenses:Groceries\"]"
   , ""
   , "[envelope-history]"
   , "identities = [\"Daily\"]"
