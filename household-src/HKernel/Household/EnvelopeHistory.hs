@@ -79,7 +79,7 @@ data HouseholdEnvelopeHistoryReferenceError
   deriving (Eq, Show)
 
 data RawSharedHouseholdRoot = RawSharedHouseholdRoot
-  Value Value (Maybe Value) (Maybe Value) (Maybe Value) (Maybe RawEnvelopeHistory)
+  Value Value (Maybe Value) (Maybe Value) (Maybe RawEnvelopeHistory)
 
 data RawEnvelopeHistory = RawEnvelopeHistory
   [Text]
@@ -103,7 +103,6 @@ instance FromValue RawSharedHouseholdRoot where
       <*> reqKey "budget"
       <*> optKey "money"
       <*> optKey "daily-target"
-      <*> optKey "account-policy"
       <*> optKey "envelope-history")
 
 instance FromValue RawEnvelopeHistory where
@@ -144,7 +143,7 @@ parseHouseholdEnvelopeHistory input =
 rawToEnvelopeHistory
   :: RawSharedHouseholdRoot
   -> Either [Text] (Maybe HouseholdEnvelopeHistory)
-rawToEnvelopeHistory (RawSharedHouseholdRoot _ _ _ _ _ maybeRawHistory) =
+rawToEnvelopeHistory (RawSharedHouseholdRoot _ _ _ _ maybeRawHistory) =
   traverse parseRawEnvelopeHistory maybeRawHistory
 
 parseRawEnvelopeHistory
