@@ -617,8 +617,10 @@ prepareBudget context input = do
         , householdBudgetMovementTo = toAccount
         , householdBudgetMovementAmount = mkAmount commodity quantity
         }
-      registry = householdStateAccountsRegistry (contextHouseholdState context)
-  case prepareBudgetJournalMovementAppend registry (contextBudgetSource context) movement of
+      state = contextHouseholdState context
+      registry = householdStateAccountsRegistry state
+      policy = householdStatePolicy state
+  case prepareBudgetJournalMovementAppend registry policy (contextBudgetSource context) movement of
     Left errors -> Left ("Budget movement rejected: " <> showText (NonEmpty.toList errors))
     Right preview -> Right preview
 
