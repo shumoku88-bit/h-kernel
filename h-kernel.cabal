@@ -154,6 +154,7 @@ executable h-kernel
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
     hs-source-dirs:   app
+
 executable repository-audit
     import:           common-defaults
     main-is:          Main.hs
@@ -313,7 +314,8 @@ test-suite h-kernel-loader-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          LoaderSpec.hs
-    build-depends:    base >= 4.14 && < 5                    , directory
+    build-depends:    base >= 4.14 && < 5
+                    , directory
                     , filepath
                     , h-kernel
                     , text
@@ -472,6 +474,7 @@ test-suite h-kernel-envelope-test
                     , h-kernel
                     , text
                     , time
+
 test-suite h-kernel-cli-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
@@ -632,6 +635,7 @@ test-suite h-kernel-editor-cli-contract-test
                     , h-kernel-editor
                     , text
                     , time
+
 test-suite h-kernel-editor-tui-actual-add-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
