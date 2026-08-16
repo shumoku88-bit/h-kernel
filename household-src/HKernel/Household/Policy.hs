@@ -77,6 +77,7 @@ defineHouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
 
 data HouseholdPolicyError
   = DuplicateHouseholdEnvelopeCoordinates EnvelopeId
+  | HouseholdCoordinatesReferenceUnknownEnvelope EnvelopeId
   | HouseholdEnvelopeMissingCoordinates EnvelopeId
   | DuplicateAllocationAccount Account EnvelopeId EnvelopeId
   | HouseholdPolicyHasNoUnassignedBudgetAccounts
