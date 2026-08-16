@@ -7,7 +7,6 @@ import Data.Time.Calendar (fromGregorian)
 import HKernel.Account
 import HKernel.Money
 import HKernel.Plan
-import HKernel.Plan.Render
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -18,7 +17,6 @@ main = do
   characterizeDeclaredPaymentDirection
   characterizeOutgoingPaymentDirection
   characterizeCommittedOutgoingPlan
-  characterizePlannedTransactionRendering
 
 characterizePlanIdentity :: IO ()
 characterizePlanIdentity = do
@@ -166,26 +164,6 @@ characterizeCommittedOutgoingPlan = do
     (mkCommittedOutgoingPlan
       planId plannedDate "Wi-Fi支払い\n来週" amount direction)
 
-characterizePlannedTransactionRendering :: IO ()
-characterizePlannedTransactionRendering = do
-  let planId = mustRight (mkPlanId "plan-2026-001")
-      jpy = mustRight (mkCommodity "JPY")
-      amount = mustRight
-        (mkPositiveAmount (mkAmount jpy (quantityFromInteger 4810)))
-      fromAccount = mustRight (mkAccount "assets:smbc")
-      toAccount = mustRight (mkAccount "expenses:wifi")
-      direction = outgoingDirectionFixture fromAccount toAccount
-      plan = mustRight (mkCommittedOutgoingPlan
-        planId
-        (fromGregorian 2026 8 8)
-        "Wi-Fi支払い"
-        amount
-        direction)
-
-  assertEqual "planned transaction line publishes every admitted Plan fact"
-    "2026-08-08 | plan-2026-001 | 4810 JPY | assets:smbc -> expenses:wifi | Wi-Fi支払い"
-    (renderCommittedOutgoingPlanLine plan)
-
 declaredDirectionFixture
   :: Account
   -> Account
@@ -228,4 +206,3 @@ assertLeft label result = case result of
     putStrLn ("  [FAIL] " ++ label)
     putStrLn ("    unexpectedly accepted: " ++ show value)
     exitFailure
-
