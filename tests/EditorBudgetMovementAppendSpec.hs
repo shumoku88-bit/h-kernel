@@ -12,10 +12,12 @@ import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account (mkAccount)
 import HKernel.Account.Journal (parseAccountJournal)
+import HKernel.Backing.Policy (mkBackingPolicy)
 import HKernel.Editor.BudgetMovementAppend
   ( BudgetJournalMovementAppendError(..)
   , BudgetJournalMovementAppendPreview(..)
   , prepareBudgetJournalMovementAppend
+  , prepareCurrentBudgetJournalMovementAppend
   )
 import HKernel.Editor.SourcePublication
   ( CandidateSource(..)
@@ -26,7 +28,20 @@ import HKernel.Editor.SourcePublication
   , defaultWriterFileSystem
   , publishWithPathAdmission
   )
+import HKernel.Envelope
+  ( Pacing(..)
+  , defineEnvelope
+  , mkCurrentEnvelopePolicy
+  , mkCurrentExpenseAssignments
+  , mkEnvelopeLabel
+  )
+import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Household.BudgetMovement
+import HKernel.Household.Policy
+  ( defineHouseholdEnvelopeCoordinates
+  , incomeAnchorCyclePolicy
+  , mkHouseholdPolicy
+  )
 import HKernel.Journal (parseJournal)
 import HKernel.Loader (loadJournal)
 import HKernel.Money (mkAmount, mkCommodity, quantityFromInteger)
@@ -36,6 +51,7 @@ main = do
   let tests =
         [ ("testNativeBudgetMovement", pure testNativeBudgetMovement)
         , ("testNativeBudgetMovementRejectsNonBudget", pure testNativeBudgetMovementRejectsNonBudget)
+        , ("testCurrentWriterRejectsRetiredEnvelope", pure testCurrentWriterRejectsRetiredEnvelope)
         , ("testNativeJournalRoundTrip", pure testNativeJournalRoundTrip)
         , ("testResolvedSourceAdmission", pure testResolvedSourceAdmission)
         , ("testNativeAdmissionFailures", pure testNativeAdmissionFailures)
@@ -91,6 +107,31 @@ testNativeBudgetMovementRejectsNonBudget =
       ]))
     invalidMovement = testMovement
       { householdBudgetMovementFrom = account "assets:cash" }
+
+testCurrentWriterRejectsRetiredEnvelope :: Bool
+testCurrentWriterRejectsRetiredEnvelope =
+  case prepareCurrentBudgetJournalMovementAppend
+      registry retiredPolicy pathAwareRoot testMovement of
+    Left (BudgetJournalMovementRetiredEnvelopeAccount found :| _) ->
+      found == account "budget:from"
+    _ -> False
+  where
+    registry = mustRight (parseAccountJournal pathAwareAccounts)
+    currentId = mustRight (mkEnvelopeId "current")
+    retiredId = mustRight (mkEnvelopeId "retired")
+    currentPolicy = mustRight (mkCurrentEnvelopePolicy
+      [defineEnvelope currentId (mustRight (mkEnvelopeLabel "Current")) Flex])
+    backingPolicy = mustRight (mkBackingPolicy [] [])
+    currentExpenses = mustRight (mkCurrentExpenseAssignments [])
+    retiredPolicy = mustRight (mkHouseholdPolicy
+      (incomeAnchorCyclePolicy (account "income:pension"))
+      currentPolicy
+      backingPolicy
+      currentExpenses
+      [ defineHouseholdEnvelopeCoordinates retiredId (account "budget:from")
+      , defineHouseholdEnvelopeCoordinates currentId (account "budget:to")
+      ]
+      [account "budget:unassigned"])
 
 testNativeJournalRoundTrip :: Bool
 testNativeJournalRoundTrip =

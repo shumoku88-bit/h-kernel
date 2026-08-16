@@ -19,6 +19,7 @@ module HKernel.Household.Policy
   , householdCurrentExpenseAssignments
   , householdEnvelopeOrder
   , householdAllocationEnvelopes
+  , householdRetiredAllocationAccounts
   , householdUnassignedBudgetAccounts
   , HouseholdPolicyAccountError(..)
   , validateHouseholdPolicyAccounts
@@ -61,10 +62,10 @@ newtype HouseholdCyclePolicy = IncomeAnchorCyclePolicy
 incomeAnchorCyclePolicy :: Account -> HouseholdCyclePolicy
 incomeAnchorCyclePolicy = IncomeAnchorCyclePolicy
 
--- | Current canonical allocation coordinates for one Envelope. Historical
--- @plan-destination-accounts@ syntax is a physical shared-source compatibility
--- coordinate owned at Config admission and is deliberately not Household policy
--- state. Plan-to-Envelope intent belongs to stable PlanId fulfillment routing.
+-- | Stable allocation coordinates for one Envelope identity. Current Envelope
+-- membership is owned independently by 'CurrentEnvelopePolicy'. Coordinates may
+-- therefore outlive a current Envelope so historical budget.journal movements
+-- remain interpretable without rewriting their evidence.
 data HouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
   { householdEnvelopeCoordinateId      :: EnvelopeId
   , householdEnvelopeAllocationAccount :: Account
@@ -100,6 +101,18 @@ withHouseholdAccountPolicy
 withHouseholdAccountPolicy accountPolicy policy =
   policy { householdPolicyAccountPolicy = accountPolicy }
 
+-- | Allocation Accounts whose stable Envelope identity is no longer present in
+-- current policy. Readers retain them for historical evidence; current writers
+-- must not create new movements through them.
+householdRetiredAllocationAccounts :: HouseholdPolicy -> Set Account
+householdRetiredAllocationAccounts policy = Set.fromList
+  [ account
+  | (account, envelope) <- Map.toAscList (householdAllocationEnvelopes policy)
+  , envelope `Set.notMember` currentEnvelopes
+  ]
+  where
+    currentEnvelopes = Set.fromList (householdEnvelopeOrder policy)
+
 mkHouseholdPolicy
   :: HouseholdCyclePolicy
   -> CurrentEnvelopePolicy
@@ -116,14 +129,15 @@ mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy currentExpenses coord
       , householdEnvelopePolicy = envelopePolicy
       , householdBackingPolicy = backingPolicy
       , householdCurrentExpenseAssignments = currentExpenses
-      , householdEnvelopeOrder = map householdEnvelopeCoordinateId coordinates
+      , householdEnvelopeOrder = currentEnvelopeIds
       , householdAllocationEnvelopes = coordinateValues allocationObservation
       , householdUnassignedBudgetAccounts = Set.fromList unassignedAccounts
       , householdPolicyAccountPolicy = Nothing
       }
   where
     definitions = currentEnvelopePolicyDefinitions envelopePolicy
-    knownEnvelopes = Set.fromList (map envelopeDefinitionId definitions)
+    currentEnvelopeIds = map envelopeDefinitionId definitions
+    currentEnvelopes = Set.fromList currentEnvelopeIds
     envelopeCoordinateObservation = observeCoordinates
       [ (householdEnvelopeCoordinateId coordinate, coordinate) | coordinate <- coordinates ]
     canonicalCoordinates = Map.elems (coordinateValues envelopeCoordinateObservation)
@@ -131,10 +145,8 @@ mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy currentExpenses coord
     duplicateCoordinateErrors =
       [ DuplicateHouseholdEnvelopeCoordinates envelope
       | (envelope, _, _) <- coordinateConflicts envelopeCoordinateObservation ]
-    unknownCoordinateErrors = map HouseholdCoordinatesReferenceUnknownEnvelope
-      (Set.toAscList (Set.difference coordinateEnvelopes knownEnvelopes))
     missingCoordinateErrors = map HouseholdEnvelopeMissingCoordinates
-      (Set.toAscList (Set.difference knownEnvelopes coordinateEnvelopes))
+      (Set.toAscList (Set.difference currentEnvelopes coordinateEnvelopes))
     allocationObservation = observeCoordinates
       [ (householdEnvelopeAllocationAccount coordinate, householdEnvelopeCoordinateId coordinate)
       | coordinate <- canonicalCoordinates ]
@@ -150,7 +162,7 @@ mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy currentExpenses coord
       [ AllocationAccountAlsoUnassigned account envelope
       | (account, envelope) <- Map.toAscList (coordinateValues allocationObservation)
       , Set.member account (Set.fromList unassignedAccounts) ]
-    errors = duplicateCoordinateErrors ++ unknownCoordinateErrors ++ missingCoordinateErrors
+    errors = duplicateCoordinateErrors ++ missingCoordinateErrors
       ++ allocationErrors ++ presenceErrors ++ unassignedErrors ++ overlapErrors
 
 data HouseholdPolicyAccountError
