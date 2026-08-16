@@ -6,15 +6,11 @@ Owner: canonical Household source shape、source role boundary、engine-neutral 
 
 ## 目的
 
-private `household-ledger-data` repositoryのrootを、`h-kernel`と`bqn-ledger`が共有するcanonical Household rootとして扱う。
+private `household-ledger-data` repository の root を、`h-kernel` と `bqn-ledger` が共有する唯一の canonical Household root として扱う。
 
-この文書は**現在のcanonical source shapeと、engineを越えて共有する意味の境界**を所有する。h-kernelが実際にどのsourceをどうadmitするかは[`HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md)、source別writer authorityは[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md)が所有する。
-
-完了済みmigration手順や途中のcompatibility source配置はcurrent contractへ保存しない。過去の状態はGit履歴とmerged PRが所有する。
+完了した migration 手順や compatibility source は current contract に残さない。過去の状態は Git 履歴と merged PR が所有する。
 
 ## Canonical root
-
-現在のcanonical Household rootは次の8 sourceで構成する。
 
 ```text
 accounts.journal
@@ -27,47 +23,44 @@ report.toml
 issues.tsv
 ```
 
-追加の`data/`や`config/`directoryをcanonical rootの内側に設けない。private repository root自体を`HouseholdRoot`とする。
+追加の `data/` や `config/` directory を canonical root の内側に設けない。application は一つの `HouseholdRoot` からこの8 sourceを解決し、欠落時に legacy source や repository sample へ fallback しない。
 
 ## Source roles
 
 ### Facts and declarations
 
 - `accounts.journal`: Account identity、AccountType、optional default Commodity
-- `actual.journal`: Actual Transaction、posting、durable identity、explicit completion/correction relation
-- `plan.journal`: future Plan、Plan identity、schedule、recurrence、lifecycle relation
-- `budget.journal`: ordered retained allocation movementとprovenance
+- `actual.journal`: Actual Transaction、Posting、durable identity、completion / correction relation
+- `plan.journal`: Plan identity、schedule、recurrence、lifecycle relation
+- `budget.journal`: ordered Envelope allocation movement evidence and provenance
 
-### Domain policy
+### Current domain policy
 
-- `budget.toml`: retained physical current-policy source boundary。current active Envelope membershipとdefinition/presentation、current Expense assignment compatibility、current Backing topologyを供給するが、それらを一つのsemantic ownerにはしない
-- `household.toml`: household-specific policyとhistory。cycle、stable allocation Account -> Envelope identity relation、unassigned Account、Daily Target selection、Budget movement endpoint kind、effective-dated Expense/Fulfillment routing historyなどを供給する
+- `budget.toml`: current active Envelope definition / presentation and current Backing topology only
+- `household.toml`: Cycle、explicit opening / unassigned Budget Account coordinates、stable allocation Account -> Envelope identity coordinates、Daily Target selection、explicit Expense / Fulfillment routing history
 
-`budget.toml`のcurrent Envelope集合と`household.toml [[budget.envelopes]]`のstable allocation座標集合は同じ寿命を持たない。各current Envelopeにはstable allocation座標が必要だが、Envelopeがcurrent policyから退役しても、そのallocation AccountとEnvelope identityの座標は過去の`budget.journal`を解釈するため残せる。stable allocation座標のEnvelope identityは`envelope-history.identities`に存在しなければならない。
+`budget.toml` does not classify Expense Accounts. Expense-to-Envelope meaning belongs only to explicit `ExpenseRoutingHistory`. Missing routing never falls back to current Envelope configuration.
 
-retired allocation座標はhistorical source evidenceとしてreaderが解釈できるが、current writer authorityではない。canonical Budget writerはcurrent `budget.toml`に存在しないEnvelopeへ対応するretired allocation Accountを新しいmovement endpointとして使ってはならない。retirementのために過去の`budget.journal` rowを書き換えない。
+`household.toml [budget]` owns explicit opening and unassigned coordinates. `household.toml [[budget.envelopes]]` owns allocation Account -> stable Envelope identity coordinates. Budget movement endpoint meaning is derived only from these explicit coordinates; there is no `spent` / `execution` endpoint authority.
 
-canonical private `household.toml` は既に `plan-destination-accounts` を保持しない。Plan-to-Envelope intentはstable `PlanId`をキーとするFulfillment routingが所有する。old sourceにこのretired keyが残る場合、reader transition中のh-kernelはopaque compatibility inputとして受理できるが、Account identityとして再解釈せず、`HouseholdPolicy`へ保存しない。
+Plan-to-Envelope intent belongs to effective-dated Fulfillment routing keyed by stable `PlanId`. Destination Account names are not authority.
 
-`account-policy.budget.envelope-role` もcurrent canonical Household semantic coordinateではない。canonical sourceはこのsectionを要求せず、h-kernelは存在してもnative Account policyへ投影しない。Budget movement endpoint classificationは `account-policy.budget.kind` の `opening` / `unassigned` / `spent` / `envelope` が所有する。`budget:spent` のhistorical rowが存在することからexecution authorityを復元しない。
+`account-policy.*`, `plan-destination-accounts`, and current Expense-assignment compatibility are not canonical coordinates. Unknown retired syntax fails closed rather than becoming opaque state or fallback authority.
 
-retired compatibility keyを既知のopaque inputとして一時的に受理することと、unknown semantic coordinateをsilent ignoreすることは別である。新しい意味を持つ未知のkeyやsectionはfail closedを維持する。
+### Application policy and notebook
 
-`budget.toml`のcurrent Expense assignmentはhistorical Expense routing authorityではない。current configから過去のroutingを再構成しない。
+- `report.toml`: typed Report query defaults and presentation policy
+- `issues.tsv`: user-authored Household notebook; it does not implicitly generate accounting or Envelope facts
 
-### Application policy
+## Envelope lifetime law
 
-- `report.toml`: typed Report query defaults、presentation、将来のnamed preset / ordered report setを所有する
+Current Envelope membership and stable historical identity have different lifetimes. Every current Envelope needs a stable allocation coordinate and identity. Historical identity may remain after an Envelope leaves current presentation policy when retained source evidence still refers to it.
 
-`report.toml`はAccount classification、Envelope membership、canonical source filename、Actual/Plan/allocation factを所有しない。
+A retired allocation coordinate is historical evidence, not current writer authority. Current writers must not create new movements through an Envelope absent from current `budget.toml`.
 
-### Notebook
-
-- `issues.tsv`: user-authored household notebook。Issueから会計factやEnvelope policyを暗黙生成しない
+A clean Envelope epoch may begin with an empty `budget.journal`. No entitlement or stock origin exists until an explicit source movement is written. Initial money is not inferred from Actual history.
 
 ## Engine-neutral semantic contract
-
-canonical Householdが所有するのは、Journal / TOML / TSVの表面そのものだけではなく、それらからadmitされるsemantic coordinatesである。
 
 ```text
 canonical Household source
@@ -76,75 +69,42 @@ canonical Household source
      -> bqn-ledger array-native values
 ```
 
-- Haskellのconstructor、internal record shape、UI stateをsource contractへ保存しない
-- BQNのarray shape、rank、command argument shape、compatibility manifestをsource contractへ保存しない
-- Account identity、exact Quantity、Commodity、Plan identity、Actual identity、completion、reversal、allocation movement、provenance、policyなど、言語を越えて必要な意味をsource上で明示する
-- 一方のengineが新しいsemantic coordinateへ未対応なら、推測やsilent ignoreをせずfail closedできる
-- engineごとのcanonical fork、同期copy、dual representationを作らない
-- reader compatibilityのために、先行engineのidentity / provenance contractを弱めない
+The engines share source meaning, not internal representation.
 
-`h-kernel`と`bqn-ledger`は同じsourceを異なる内部表現へ変換してよい。共有するのは内部データ構造ではなく、admission後に同じ意味へ到達することと、write後にその意味を失わないことである。
-
-physical compatibility coordinateが存在することと、そのcoordinateがcurrent semantic authorityであることを同一視しない。shared sourceからcoordinate自体を削除する場合は、両engineのreader/admissionを確認してcross-engine cutoverとして行う。
+- keep exact Quantity / Commodity
+- preserve Account、Plan、Actual、movement identity and provenance
+- fail closed on unknown or ambiguous coordinates
+- do not infer historical meaning from current configuration
+- do not create engine-specific canonical copies or dual authority
+- do not weaken identity or provenance for reader compatibility
 
 ## Household root law
 
-canonical delivery pathは、一つの`HouseholdRoot`からsource basenameを解決する。
+Canonical basename resolution belongs to the application boundary. TUI、CLI、Report and editor surfaces must not independently redefine `actual.journal`, `budget.toml`, or other source identities.
 
-```text
-HouseholdRoot
-  -> source-specific admission
-  -> typed / array-native Household values and policies
-  -> interaction and rendering
-```
-
-canonical basenameの対応はapplication ownerが一箇所で解決する。TUI navigation、Brick screen、Report preset、BQN command surfaceが`actual.journal`、`budget.toml`などのbasenameを独自に意味付けし直さない。
-
-これはsource-specific parser ownershipをgeneric parserへ統合することを意味しない。各syntaxのadmission ownerは各engineのnamed ownerに残す。
-
-explicit source pathを受け取るcompatibility / diagnostic entrypointが存在しても、それをcanonical application topologyの正本として扱わない。
-
-## Report configuration
-
-`report.toml`はcanonical HouseholdのReport application configである。
-
-既存のtyped schemaがJournal-only Reportのquery defaultsとpresentationを所有する。Envelope、planned、cycle comparison、Daily Target、Issueなど新しいReport surfaceを追加する場合も、legacy execution argumentをgeneric arrayとして戻さず、typed requestとowner boundaryを先に確定する。
-
-source filename、Household Account classification、Envelope membership、Actual/Plan/allocation factをReport presetへ埋め込まない。
-
-## Retained compatibility evidence
-
-`accounts.tsv`、`plan.tsv`、`budget_alloc.tsv`、`cycle.tsv`、`config.tsv`、`daily_target_scope.tsv`、legacy Report manifestsは、current h-kernel canonical bootstrapのsourceではない。
-
-それらが別engineのcompatibilityやprivate repository historyとして残るかどうかは、このcanonical contractから推測しない。current applicationへ「念のため」併読を戻さない。
-
-current canonical source内部に残るretained physical keyについても同じlawを適用する。構文互換のために受理することから、native authorityや永続semantic stateを推測しない。
+Source-specific parsers remain source-specific. One Household root does not imply one generic parser or generic repository/session abstraction.
 
 ## Writer authority
 
-canonical repositoryが一つであること、readerがsourceをadmitできること、write capabilityが複数engineに存在すること、current operational writer authorityが一つであることを同一視しない。
+A shared canonical repository, read capability, write capability, and operational writer authority are distinct. Source-specific writer authority and publication gates are owned by [`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md).
 
-source別authority、single-writer law、cutover gateは[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md)が所有する。この文書はcanonical source shapeからwriter authorityを推測しない。
+A write must not reconstruct facts from compatibility syntax, presentation config, or another source's derived observation.
 
 ## Evolution law
 
-canonical contractを将来変更する場合は、file数やkey数を減らすこと自体を目的にしない。
+When this contract changes:
 
-- fact、declaration、policy、application policy、notebookのownerを先に確認する
-- unknown key、column、metadata、status、Commodity、relationを黙って捨てない
-- identity、provenance、exact Quantity、Commodityを維持する
-- source format migrationとwriter authority cutoverを同じchangeへ暗黙に混ぜない
-- 一方のengineの内部表現をcanonical sourceへ持ち込まない
-- shared physical coordinateを削除する前に両engineのadmissionを確認する
-- conversionが必要ならsemantic parityを明示的に確認する
-- 完了後は旧migration手順をcurrent documentへ保存せずGit履歴へ戻す
+- establish the semantic owner before changing physical shape
+- preserve exactness、identity、provenance and source order
+- remove completed migration shells instead of keeping them "just in case"
+- qualify both engines before deleting a shared coordinate
+- never silently reinterpret current configuration as historical evidence
+- keep completed migration history in Git, not in current architecture docs
 
 ## Non-goals
 
-- private source内容をpublic fixtureへ複製しない
-- TUIのためにdomain ownershipをUIへ移さない
-- Haskell internal shapeまたはBQN compatibility argument shapeをcanonical configへ保存しない
-- engine別のcanonical source copyを作らない
-- write capabilityからwriter authorityを推測しない
-- retained physical keyから現在のsemantic authorityを推測しない
-- current 8-source shapeを将来変更不能な永久形式として扱わない
+- public replication of private Household contents
+- UI-owned domain semantics
+- compatibility aliases for retired source meaning
+- generic event/repository abstractions without a concrete owner
+- treating the current eight-file shape as permanently immutable
