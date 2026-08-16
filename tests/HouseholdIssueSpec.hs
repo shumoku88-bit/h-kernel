@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module HouseholdIssueSpec (main) where
+module Main (main) where
 
 import Test.Support (mustRight, assertEqual)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -9,7 +9,9 @@ import HKernel.HouseholdIssue
 import HKernel.HouseholdIssue.Render
 import HKernel.Editor.HouseholdWorkspace
   ( IssueWorkspaceFilter(..)
+  , homeIssuesDueOn
   , issuesForWorkspace
+  , workspaceIssueCounts
   )
 import HKernel.Money
 import HKernel.Plan (mkPlanId)
@@ -23,6 +25,7 @@ main = do
   characterizeIssueRelations
   characterizeIssueRelationReferences
   characterizeWorkspaceOrder
+  characterizeHomeIssueProjection
   characterizeCompleteLineRendering
 
 characterizeIssueIdentity :: IO ()
@@ -275,6 +278,9 @@ characterizeWorkspaceOrder = do
         , issue Open 8 "open-new"
         , issue Resolved 2 "resolved-old"
         ]
+  assertEqual "workspace Issue counts keep open attention separate from closed history"
+    (2, 3)
+    (workspaceIssueCounts sourceIssues)
   assertEqual "workspace defaults can project only open Issues newest-first"
     [ "open-new"
     , "open-old"
@@ -305,6 +311,24 @@ characterizeWorkspaceOrder = do
     , "resolved-old"
     ]
     (map (issueIdText . householdIssueId) sourceIssues)
+
+characterizeHomeIssueProjection :: IO ()
+characterizeHomeIssueProjection = do
+  let dueDay = fromGregorian 2026 8 12
+      issue status due issueId = mustRight (mkHouseholdIssue
+        (mustRight (mkIssueId issueId))
+        (fromGregorian 2026 8 1)
+        status
+        due
+        Nothing
+        issueId
+        "")
+      openDue = issue Open (DueOn dueDay) "open-due"
+      openOther = issue Open (DueOn (fromGregorian 2026 8 13)) "open-other"
+      resolvedDue = issue Resolved (DueOn dueDay) "resolved-due"
+  assertEqual "Home due projection includes only open Issues due on the selected day"
+    [openDue]
+    (homeIssuesDueOn dueDay [openDue, openOther, resolvedDue])
 
 characterizeCompleteLineRendering :: IO ()
 characterizeCompleteLineRendering = do
