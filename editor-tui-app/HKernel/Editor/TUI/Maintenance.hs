@@ -51,10 +51,8 @@ import HKernel.Account
   )
 import HKernel.Application.Config (HouseholdSourcePaths(..))
 import HKernel.Envelope.Policy
-  ( CurrentExpenseAssignments
-  , EnvelopeDefinition
+  ( EnvelopeDefinition
   , currentEnvelopePolicyDefinitions
-  , currentExpenseAccountsForEnvelope
   , envelopeDefinitionId
   )
 import HKernel.Editor.AccountAppend
@@ -361,7 +359,7 @@ drawBudgetWorkspace context =
               , vBox (map renderBudgetMovement (householdStateBudgetMovements state))
               , str " "
               , str "--- Spendable Envelopes ---"
-              , vBox (map (renderEnvelopeDef (householdStateCurrentExpenseAssignments state))
+              , vBox (map renderEnvelopeDef
                   (currentEnvelopePolicyDefinitions (householdStateEnvelopePolicy state)))
               ])))
     , str "[Enter/M] New movement   [1-7] Sections   [q] Quit"
@@ -816,15 +814,9 @@ renderBudgetMovement movement =
         <> renderQuantity (amountQuantity (householdBudgetMovementAmount movement)) <> " "
         <> commodityCode (amountCommodity (householdBudgetMovementAmount movement)))
 
-renderEnvelopeDef :: CurrentExpenseAssignments -> EnvelopeDefinition -> Widget Name
-renderEnvelopeDef currentExpenses definition =
-  txt ("Envelope: " <> T.pack (show (envelopeDefinitionId definition))
-    <> "  Expenses: "
-    <> T.intercalate ", "
-      (map accountName
-        (currentExpenseAccountsForEnvelope
-          (envelopeDefinitionId definition)
-          currentExpenses)))
+renderEnvelopeDef :: EnvelopeDefinition -> Widget Name
+renderEnvelopeDef definition =
+  txt ("Envelope: " <> T.pack (show (envelopeDefinitionId definition)))
 
 renderAccountDecl :: AccountDeclaration -> Widget Name
 renderAccountDecl declaration =
