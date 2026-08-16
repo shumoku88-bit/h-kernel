@@ -101,7 +101,11 @@ report app、editor app、Brick TUI、shell launcherは引数、環境変数、�
 
 ### 5.1 QuantityとCommodity
 
-Quantityは`Scientific`による正確な10進数として保持する。`Amount`は必ず一つの`Commodity`を持つ。異なるCommodityを一つの数値へ暗黙変換しない。
+`Commodity`はvalidated text identityであり、fiat currencyやISO codeの閉じた列挙ではない。表示名、symbol、locale、fraction digitsはpresentation policyであり、Commodity identityを変更しない。
+
+`Quantity`は`Scientific`による正確な10進数として保持する。`Amount`は一つの`Commodity`におけるnative magnitudeであり、異なるCommodityを一つの数値へ暗黙変換しない。個々のAccount declarationはdefault Commodityを明示的constraintとして持ち得て、`Journal` admissionがその一致を検証する。ただしそのAccount-level constraintを理由に`Commodity`型そのものを閉じたcurrency universeへ変えない。
+
+Quantityとvaluationは別の意味である。将来reporting valueや換算が必要になっても、元`Amount`を書き換えず、explicit price evidenceとvaluation policyからProjectionとして導出する。Commodity identity、price observation、valuation policy、lot identityを一つの型や設定へ潰さない。
 
 ### 5.2 Balance
 
@@ -113,11 +117,13 @@ Quantityは`Scientific`による正確な10進数として保持する。`Amount
 
 Accountの意味は名前から推測しない。`AccountRegistry`と検証済みdeclarationがAccount identity、`AccountType`、optional default Commodityを所有する。
 
-UIでも表示Textをidentityとして使わずtyped `Account`を保持する。
+UIでも表示Textをidentityとして使わずtyped `Account`を保持する。現在のlabelやdescriptionをdurable external identity、counterparty identity、historical relationの代用にしない。
 
 ### 5.4 Transaction
 
 `Transaction` constructorは公開しない。admissionは少なくともdescription、2+ Postings、declared Account、exact Quantity/Commodity、Commodityごとのzero balanceを保証する。
+
+Account、Posting、Transactionは会計Factとして小さく保つ。将来のimport、statement、document、counterparty、workflow都合だけでoptional fieldをcore primitiveへ蓄積しない。gross / net / fee / taxのような会計上のmovementは、必要なAccountと複数Postingで表現できる限りTransaction metadataへ重複保存しない。
 
 ### 5.5 Actual identityとreversal
 
@@ -136,6 +142,14 @@ Posting-grainの集計viewを作ることはよいが、それだけを唯一の
 Durable relationは明示的なtyped identity / evidenceで表し、description、日付、金額の近似一致をauthorityにしない。この区分はJournalをappend-only event storeへ変更せず、universal event typeも要求しない。
 
 計算lawも区別する。Balanceのような順序不変のcontributionは可換なreductionとして結合できる。一方、Plan lifecycle、routing history、correction chainなど過去のstateとordered evidenceに依存する計算は順序を保持するtransitionとして扱う。どちらもfoldに見えるという理由だけで同じgeneric frameworkへ統一しない。
+
+### 5.7 External evidence
+
+Bank row、card statement、CSV feed、OCR / AI extraction、document metadataなど外部から得たobservationはcandidate evidenceであり、それだけではcanonical Actual factではない。Canonical sourceへ入るにはnamed admission ownerを通り、identity / provenance / validationを明示する。
+
+Ledgerから導出した`Balance`と、statement等が主張するexternal balanceも別の意味である。照合機能を追加する場合は両者を比較し、不一致をfail closedに扱う。差分を消すためだけのbalancing Transactionを自動生成してFactを書き換えない。
+
+External evidenceやworkflow capabilityはcore accounting primitiveへoptional fieldとして埋め込むのではなく、具体的なownerが必要になった時点でtyped relation / admission / projectionとして隣接させる。
 
 ## 6. Report and Household projections
 
