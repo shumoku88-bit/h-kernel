@@ -40,8 +40,12 @@ issues.tsv
 
 ### Domain policy
 
-- `budget.toml`: retained physical current-policy source boundary。current Envelope definition/presentation、current Expense assignment compatibility、current Backing topologyを供給するが、それらを一つのsemantic ownerにはしない
-- `household.toml`: household-specific policyとhistory。cycle、allocation Account、unassigned Account、Daily Target selection、Budget movement endpoint kind、effective-dated Expense/Fulfillment routing historyなどを供給する
+- `budget.toml`: retained physical current-policy source boundary。current active Envelope membershipとdefinition/presentation、current Expense assignment compatibility、current Backing topologyを供給するが、それらを一つのsemantic ownerにはしない
+- `household.toml`: household-specific policyとhistory。cycle、stable allocation Account -> Envelope identity relation、unassigned Account、Daily Target selection、Budget movement endpoint kind、effective-dated Expense/Fulfillment routing historyなどを供給する
+
+`budget.toml`のcurrent Envelope集合と`household.toml [[budget.envelopes]]`のstable allocation座標集合は同じ寿命を持たない。各current Envelopeにはstable allocation座標が必要だが、Envelopeがcurrent policyから退役しても、そのallocation AccountとEnvelope identityの座標は過去の`budget.journal`を解釈するため残せる。stable allocation座標のEnvelope identityは`envelope-history.identities`に存在しなければならない。
+
+retired allocation座標はhistorical source evidenceとしてreaderが解釈できるが、current writer authorityではない。canonical Budget writerはcurrent `budget.toml`に存在しないEnvelopeへ対応するretired allocation Accountを新しいmovement endpointとして使ってはならない。retirementのために過去の`budget.journal` rowを書き換えない。
 
 canonical private `household.toml` は既に `plan-destination-accounts` を保持しない。Plan-to-Envelope intentはstable `PlanId`をキーとするFulfillment routingが所有する。old sourceにこのretired keyが残る場合、reader transition中のh-kernelはopaque compatibility inputとして受理できるが、Account identityとして再解釈せず、`HouseholdPolicy`へ保存しない。
 
