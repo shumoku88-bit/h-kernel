@@ -69,6 +69,7 @@ import HKernel.Editor.ActualWorkspace
 import HKernel.Editor.SourcePublication (publishActualBlockWithPathAdmission)
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
+  , accountCandidateAt
   , actualMultiPostingAt
   , commitMultiAccountCandidate
   , dailyAccountCandidates
@@ -481,13 +482,13 @@ dailyPreviewTitle kind = case kind of
 
 dailyInputControls :: Form ActualAddInput AppEvent Name -> Widget Name
 dailyInputControls form = case dailySelectionTarget form of
-  Just _ -> str "[Up/Down] Choose Account | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
+  Just _ -> str "[Up/Down] Choose Account | [click] Select | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
   Nothing -> str "[Tab] Next field | [Enter] Preview | [Esc] Actual"
 
 multiInputControls :: Form MultiFormState AppEvent Name -> Widget Name
 multiInputControls form
   | multiAccountFocused form =
-      str "[Up/Down] Choose Account | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
+      str "[Up/Down] Choose Account | [click] Select | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
   | otherwise =
       str "[Tab] Next field | [Up/Down] Previous/next posting row | [Enter] Preview | [Esc] Actual"
 
@@ -499,7 +500,7 @@ renderDailyInlineAccountSelector
 renderDailyInlineAccountSelector context kind form = case dailySelectionTarget form of
   Nothing -> emptyWidget
   Just target ->
-    renderInlineAccountSelector False context label selectedCursor candidates
+    renderInlineAccountSelector context label selectedCursor candidates
     where
       input = formState form
       current = dailyAccountText target input
@@ -518,7 +519,7 @@ renderMultiInlineAccountSelector
   -> Widget Name
 renderMultiInlineAccountSelector context form
   | multiAccountFocused form =
-      renderInlineAccountSelector True context "Posting Accounts"
+      renderInlineAccountSelector context "Posting Accounts"
         (multiFormAccountCandidateCursor state)
         (filterMultiAccountCandidates current (multiCandidates context))
   | otherwise = emptyWidget
@@ -529,13 +530,12 @@ renderMultiInlineAccountSelector context form
     current = multiPostingAccountText selectedPosting
 
 renderInlineAccountSelector
-  :: Bool
-  -> AppContext
+  :: AppContext
   -> String
   -> Maybe Int
   -> [HKernel.Account.Account]
   -> Widget Name
-renderInlineAccountSelector mouseEnabled context label cursor candidates =
+renderInlineAccountSelector context label cursor candidates =
   borderWithLabel (str label)
     (hLimit 82
       (padAll 1
@@ -550,14 +550,13 @@ renderInlineAccountSelector mouseEnabled context label cursor candidates =
     indexedCandidates = zip [0 ..] candidates
     visibleCandidates = candidateWindow 9 cursor indexedCandidates
     renderCandidate (index, account) =
-      let selected = cursor == Just index
-          accountType = HKernel.Account.accountTypeFor account registry
-          row = txt
-            (accountTypeLabel accountType <> "  " <> HKernel.Account.accountName account)
-          highlighted = if selected then withAttr L.listSelectedAttr row else row
-      in if mouseEnabled
-          then clickable (MultiAccountCandidate index) highlighted
-          else highlighted
+      clickable (AccountCandidate index) highlighted
+      where
+        selected = cursor == Just index
+        accountType = HKernel.Account.accountTypeFor account registry
+        row = txt
+          (accountTypeLabel accountType <> "  " <> HKernel.Account.accountName account)
+        highlighted = if selected then withAttr L.listSelectedAttr row else row
 
 accountTypeLabel :: Maybe HKernel.Account.AccountType -> Text
 accountTypeLabel maybeType = case maybeType of
@@ -696,6 +695,9 @@ handleDailyInput
   -> BrickEvent Name AppEvent
   -> EventM Name (State AppEvent) ()
 handleDailyInput context kind form event = case event of
+  MouseDown (AccountCandidate index) V.BLeft _ _
+    | Just target <- dailySelectionTarget form ->
+        selectDailyAccountCandidateAt context kind target index form
   VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
   VtyEvent (V.EvKey V.KUp [])
     | Just target <- dailySelectionTarget form ->
@@ -735,6 +737,22 @@ moveDailyAccountCandidate context kind offset target form =
     current = dailyAccountText target input
     candidates = dailyCandidates context kind target
 
+selectDailyAccountCandidateAt
+  :: AppContext
+  -> DailyEntryKind
+  -> AccountSelectionTarget
+  -> Int
+  -> Form ActualAddInput AppEvent Name
+  -> EventM Name (State AppEvent) ()
+selectDailyAccountCandidateAt context kind target index form =
+  case accountCandidateAt index (dailyCandidates context kind target) of
+    Nothing -> pure ()
+    Just account ->
+      let updatedInput = selectActualAddAccount target account (formState form)
+          updatedForm = setFormFocus (dailyNextField target)
+            (updateFormState updatedInput form)
+      in put (DailyInput kind updatedForm)
+
 acceptDailyAccount
   :: DailyEntryKind
   -> AccountSelectionTarget
@@ -742,16 +760,17 @@ acceptDailyAccount
   -> EventM Name (State AppEvent) ()
 acceptDailyAccount kind target form
   | T.null (T.strip (dailyAccountText target (formState form))) = pure ()
-  | otherwise = put (DailyInput kind (setFormFocus nextField form))
-  where
-    nextField = case target of
-      SelectToAccount -> FromAccountField
-      SelectFromAccount -> DateField
+  | otherwise = put (DailyInput kind (setFormFocus (dailyNextField target) form))
 
 dailyFieldName :: AccountSelectionTarget -> Name
 dailyFieldName target = case target of
   SelectToAccount -> ToAccountField
   SelectFromAccount -> FromAccountField
+
+dailyNextField :: AccountSelectionTarget -> Name
+dailyNextField target = case target of
+  SelectToAccount -> FromAccountField
+  SelectFromAccount -> DateField
 
 handleDailyPreview
   :: AppContext
@@ -787,7 +806,7 @@ handleMultiInput
   -> BrickEvent Name AppEvent
   -> EventM Name (State AppEvent) ()
 handleMultiInput context form event = case event of
-  MouseDown (MultiAccountCandidate index) V.BLeft _ _
+  MouseDown (AccountCandidate index) V.BLeft _ _
     | multiAccountFocused form -> selectMultiAccountCandidateAt context index form
   VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
   VtyEvent (V.EvKey V.KUp [])
@@ -841,7 +860,7 @@ selectMultiAccountCandidateAt context index form =
     input = multiFormInput state
     selected = multiFormSelectedPosting state
     current = multiPostingAccountText (actualMultiPostingAt selected input)
-    candidates = multiCandidates context
+    candidates = filterMultiAccountCandidates current (multiCandidates context)
 
 acceptMultiAccount
   :: AppContext
