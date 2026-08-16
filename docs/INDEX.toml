@@ -70,10 +70,6 @@ path = "docs/REPORT_CONFIGURATION.md"
 role = "contract"
 
 [[documents]]
-path = "docs/REPORT_FACTS_OWNER.md"
-role = "architecture"
-
-[[documents]]
 path = "docs/REPORT_PIPELINE_POLICY.md"
 role = "policy"
 
