@@ -69,7 +69,7 @@ import HKernel.Editor.SourcePublication
   )
 import HKernel.Editor.BudgetMovementAppend
   ( BudgetJournalMovementAppendPreview(..)
-  , prepareBudgetJournalMovementAppend
+  , prepareCurrentBudgetJournalMovementAppend
   )
 import HKernel.Editor.IssueAppend
   ( IssueAppendIntent(..)
@@ -620,7 +620,7 @@ prepareBudget context input = do
       state = contextHouseholdState context
       registry = householdStateAccountsRegistry state
       policy = householdStatePolicy state
-  case prepareBudgetJournalMovementAppend registry policy (contextBudgetSource context) movement of
+  case prepareCurrentBudgetJournalMovementAppend registry policy (contextBudgetSource context) movement of
     Left errors -> Left ("Budget movement rejected: " <> showText (NonEmpty.toList errors))
     Right preview -> Right preview
 
