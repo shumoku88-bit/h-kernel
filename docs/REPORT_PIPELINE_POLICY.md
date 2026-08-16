@@ -23,6 +23,8 @@ Journal files
 
 依存方向を逆転させない。Report modelはfileを読まず、rendererは会計計算やsource admissionを行わず、delivery adapterは会計ruleを複製しない。
 
+load、parse、validationの失敗を空Journal、欠落fact、partial Reportへ変換しない。
+
 ## 3. 所有者
 
 - loader: filesystem IOとinclude path解決
