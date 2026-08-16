@@ -17,7 +17,6 @@ import HKernel.Envelope
   ( Pacing(..)
   , defineEnvelope
   , mkCurrentEnvelopePolicy
-  , mkCurrentExpenseAssignments
   , mkEnvelopeLabel
   )
 import HKernel.Envelope.Consumption
@@ -39,10 +38,6 @@ import HKernel.Envelope.FulfillmentRouting
 import HKernel.Envelope.Headroom (envelopeHeadroomFor)
 import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Envelope.Remaining (envelopeRemainingFor)
-import HKernel.Household.AccountProfile
-  ( RetainedBudgetAccountKind(..)
-  , mkHouseholdAccountPolicy
-  )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.EnvelopeObservation
   ( deriveHouseholdEnvelopeObservation
@@ -73,7 +68,6 @@ main = do
       foodExpense = mustRight (mkAccount "expenses:food")
       opening = mustRight (mkAccount "budget:opening")
       unassigned = mustRight (mkAccount "budget:unassigned")
-      spent = mustRight (mkAccount "budget:spent")
       foodAllocation = mustRight (mkAccount "budget:food")
       retiredAllocation = mustRight (mkAccount "budget:retired-savings")
       backingPolicy = mustRight (mkBackingPolicy
@@ -81,26 +75,15 @@ main = do
         [assignEnvelopeBackingPool foodId poolId])
       envelopePolicy = mustRight (mkCurrentEnvelopePolicy
         [defineEnvelope foodId (mustRight (mkEnvelopeLabel "Food")) Daily])
-      currentExpenses = mustRight (mkCurrentExpenseAssignments
-        [(foodExpense, foodId)])
       policy = mustRight (mkHouseholdPolicy
         (incomeAnchorCyclePolicy income)
         envelopePolicy
         backingPolicy
-        currentExpenses
         [ defineHouseholdEnvelopeCoordinates foodId foodAllocation
         , defineHouseholdEnvelopeCoordinates retiredId retiredAllocation
         ]
+        [opening]
         [unassigned])
-      accountPolicy = mustRight (mkHouseholdAccountPolicy
-        []
-        [ (opening, RetainedOpeningBudgetAccount)
-        , (unassigned, RetainedUnassignedBudgetAccount)
-        , (spent, RetainedSpentBudgetAccount)
-        , (foodAllocation, RetainedEnvelopeBudgetAccount)
-        , (retiredAllocation, RetainedEnvelopeBudgetAccount)
-        ]
-        [] [] [])
       declarations = T.unlines
         [ "account assets:cash", "  type: Asset"
         , "account assets:savings", "  type: Asset"
@@ -108,7 +91,6 @@ main = do
         , "account expenses:food", "  type: Expense"
         , "account budget:opening", "  type: Budget"
         , "account budget:unassigned", "  type: Budget"
-        , "account budget:spent", "  type: Budget"
         , "account budget:food", "  type: Budget"
         , "account budget:retired-savings", "  type: Budget"
         ]
@@ -152,20 +134,6 @@ main = do
             , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 10)
             }
         , HouseholdBudgetMovement
-            { householdBudgetMovementDate = fromGregorian 2026 7 25
-            , householdBudgetMovementMemo = "legacy expense execution"
-            , householdBudgetMovementFrom = foodAllocation
-            , householdBudgetMovementTo = spent
-            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 5)
-            }
-        , HouseholdBudgetMovement
-            { householdBudgetMovementDate = fromGregorian 2026 7 26
-            , householdBudgetMovementMemo = "legacy refund execution"
-            , householdBudgetMovementFrom = spent
-            , householdBudgetMovementTo = foodAllocation
-            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 5)
-            }
-        , HouseholdBudgetMovement
             { householdBudgetMovementDate = fromGregorian 2026 8 1
             , householdBudgetMovementMemo = "food entitlement"
             , householdBudgetMovementFrom = unassigned
@@ -193,8 +161,7 @@ main = do
             }
         ])
       observation = mustRight (deriveHouseholdEnvelopeObservation
-        observed period actual plans policy accountPolicy
-        expenseRouting fulfillmentRouting movements)
+        observed period actual plans policy expenseRouting fulfillmentRouting movements)
       consumption = householdEnvelopeConsumption observation
       entitlement = householdEnvelopeEntitlement observation
       remaining = householdEnvelopeRemaining observation
@@ -206,7 +173,7 @@ main = do
     (Just retiredId) (Map.lookup retiredAllocation (householdAllocationEnvelopes policy))
   assertEqual "role-neutral Plan stays out of narrow outgoing report subset"
     [] (admittedOutgoingPlanValues narrowPlans)
-  assertEqual "entitlement carries pre-period grant and release while ignoring legacy spent and cutting off future"
+  assertEqual "entitlement carries pre-period grant and release while cutting off future"
     (one jpy 140) (envelopeEntitlementBalance foodId entitlement)
   assertEqual "source opening makes routed pre-grant Actual part of live stock"
     (one jpy 45) (consumptionCharges (envelopeConsumptionFor foodId consumption))
