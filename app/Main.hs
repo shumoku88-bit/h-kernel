@@ -133,18 +133,23 @@ runCanonicalDefaultReportBook :: FilePath -> Day -> IO ()
 runCanonicalDefaultReportBook directory latest = do
   state <- loadCanonicalReportState directory
   configuration <- loadCanonicalReportConfiguration state
-  latestSurface <- buildCanonicalHouseholdSurface latest state
   let journal = actualJournalValue (householdStateActualJournal state)
-      currentCycle = currentCyclePeriodFromSurface latestSurface
+      plan = reportConfigurationPlan configuration
+  (currentCycle, latestSurface) <-
+    if reportPlanNeedsCurrentCycle plan
+      then do
+        surface <- buildCanonicalHouseholdSurface latest state
+        pure (Just (currentCyclePeriodFromSurface surface), Just surface)
+      else pure (Nothing, Nothing)
   resolvedPlan <- case resolveReportPlanWithCurrentCycle
-      latest journal (Just currentCycle) (reportConfigurationPlan configuration) of
+      latest journal currentCycle plan of
     Left err -> dieText (renderReportPlanError err)
     Right value -> pure value
-  reportSurface <-
-    if resolvedTrialBalanceAsOf resolvedPlan == latest
-      then pure latestSurface
-      else buildCanonicalHouseholdSurface
-        (resolvedTrialBalanceAsOf resolvedPlan) state
+  reportSurface <- case latestSurface of
+    Just surface
+      | resolvedTrialBalanceAsOf resolvedPlan == latest -> pure surface
+    _ -> buildCanonicalHouseholdSurface
+      (resolvedTrialBalanceAsOf resolvedPlan) state
   renderCanonicalReportBook
     (reportConfigurationPresentation configuration)
     (reportBookWithPlan resolvedPlan journal)
