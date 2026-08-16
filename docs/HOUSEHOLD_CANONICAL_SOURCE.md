@@ -41,7 +41,7 @@ issues.tsv
 | `report.toml` | `HKernel.Report.Config.parseReportConfiguration` | `ReportConfiguration` |
 | `issues.tsv` | `HKernel.Household.Issue.TSV.parseHouseholdIssues` | `[HouseholdIssue]` |
 
-Actual、Plan、Budget root textは`HKernel.Loader`で一度観察し、named domain admissionがその結果を使う。同じroot sourceをfeatureごとに再parseして別authorityを作らない。
+`actual.journal`、`plan.journal`、`budget.journal`のroot textは`HKernel.Loader`で一度観察し、named domain admissionがその結果を使う。同じroot sourceをfeatureごとに再parseして別authorityを作らない。
 
 Included Account declarations may contribute to a resolved Journal. Included Transactions must not masquerade as root-local Actual、Plan、Budget evidence.
 
@@ -59,6 +59,8 @@ Included Account declarations may contribute to a resolved Journal. Included Tra
 `budget.toml` admits current active Envelope definition / presentation and current Backing topology only. Expense Account classificationやhistorical routingを所有しない。
 
 `household.toml` owns Cycle、explicit opening / unassigned Budget Account coordinates、stable allocation Account -> Envelope identity coordinates、Daily Target selection、explicit Expense / Fulfillment routing history.
+
+Daily Target selection comes from `household.toml`; reservation evidence comes from admitted `plan.journal`. Retired TSV is not re-read or inferred.
 
 Missing Expense routing never falls back to current Envelope configuration. Budget movement endpoint meaning is derived only from explicit opening / unassigned / allocation coordinates. `spent` endpoint、Account名、`account-policy.*` はauthorityではない。
 
