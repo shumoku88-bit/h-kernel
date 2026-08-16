@@ -9,7 +9,7 @@
 3. 対象領域がまだ広い場合は、`tools/hk context TERM`でcurrent source、test、active documentの候補を絞る。componentと公開境界の全体像が必要な場合だけ`tools/hk map`を見る。
 4. 対象領域のarchitecture、contract、source ownership文書と実コードを読む。
 5. editorまたはwriter effectへ触れる場合は、[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)でcurrent capabilityとsafe writer law、[`docs/WRITER_AUTHORITY.md`](docs/WRITER_AUTHORITY.md)でsource別authorityとcutover gateを確認する。
-6. private household sourceへ触れる場合は、[`docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md)でcurrent reader topologyを確認し、writer authority、公開境界、実データが維持されることを先に確認する。
+6. private household sourceへ触れる場合は、[`docs/HOUSEHOLD_CANONICAL_SOURCE.md`](docs/HOUSEHOLD_CANONICAL_SOURCE.md)でcanonical source shapeとcurrent reader topologyを確認し、writer authority、公開境界、実データが維持されることを先に確認する。
 
 `tools/hk map`と`tools/hk context`の出力は、`h-kernel.cabal`、Haskell source、test、`docs/INDEX.toml`からその場で作る探索viewであり、設計上のauthorityではない。出力を文書として保存したり、別の手書き目録へ転記したりしない。
 
@@ -84,7 +84,7 @@ tools/hk --base /absolute/path/to/private-ledger-data check-household
 - [`docs/REPOSITORY_POLICY.md`](docs/REPOSITORY_POLICY.md): 作業手順と文書寿命
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): component、依存方向、会計不変条件、effect ownership
 - [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): editorのcurrent capability、roadmap、safe writer law
-- [`docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md): current canonical reader topology
+- [`docs/HOUSEHOLD_CANONICAL_SOURCE.md`](docs/HOUSEHOLD_CANONICAL_SOURCE.md): canonical Household source shapeとcurrent reader topology
 - [`docs/WRITER_AUTHORITY.md`](docs/WRITER_AUTHORITY.md): source別writer authorityとcutover gate
 - [`docs/INDEX.toml`](docs/INDEX.toml): 稼働中の正規文書一覧
 - [`SECURITY.md`](SECURITY.md): 公開データと秘密情報の境界
