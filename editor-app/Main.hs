@@ -139,8 +139,10 @@ executeCommand commitMode command = case command of
           Right value -> pure value
         let state = householdWriteSnapshotState snapshot
             registry = householdStateAccountsRegistry state
+            policy = householdStatePolicy state
             existingSource = householdWriteSnapshotBudgetSource snapshot
-        case BudgetMovementAppend.prepareBudgetJournalMovementAppend registry existingSource movement of
+        case BudgetMovementAppend.prepareBudgetJournalMovementAppend
+            registry policy existingSource movement of
           Left errors -> validationFailed errors
           Right preview ->
             executePreview
