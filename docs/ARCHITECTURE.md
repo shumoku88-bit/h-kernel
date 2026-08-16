@@ -1,13 +1,12 @@
 # h-kernel アーキテクチャ
 
-ステータス: アクティブな正規architecture  
-更新日: 2026-08-12
+ステータス: アクティブな正規architecture
 
 ## 1. この文書の役割
 
 この文書は、`h-kernel`の安定したcomponent境界、依存方向、会計上の不変条件、effectの置き場所を所有する。
 
-editorの現在地は[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)、current canonical reader topologyは[`HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md)、writer authorityは[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md)が所有する。`actual.journal`のsource-specific cutoverは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
+editorの現在地は[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)、canonical Household source shapeとcurrent reader topologyは[`HOUSEHOLD_CANONICAL_SOURCE.md`](HOUSEHOLD_CANONICAL_SOURCE.md)、writer authorityは[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md)が所有する。`actual.journal`のsource-specific cutoverは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
 
 ## 2. Functional coreと明示的なeffect boundary
 
@@ -42,7 +41,7 @@ pure coreはfile path、process exit、interactive event loop、atomic renameを
 ```text
 h-kernel
   source: src/
-  owns: Account, Money, Ledger, Journal, Actual, Plan, Budget,
+  owns: Account, Money, Ledger, Journal, Actual, Plan,
         Engine, Report, rendering primitives, application config admission
 
 h-kernel-household
