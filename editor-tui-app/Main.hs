@@ -290,9 +290,6 @@ handleWorkspaceEvent context event = case event of
         Actual.OpenIncome -> put (AppWrapper currentContext
           (ActualFlow ActualReturnWorkspace
             (Actual.startIncome (contextEntryDay currentContext))))
-        Actual.OpenMulti -> put (AppWrapper currentContext
-          (ActualFlow ActualReturnWorkspace
-            (Actual.startMulti (contextEntryDay currentContext))))
         Actual.OpenRecord -> put (AppWrapper currentContext
           (ActualFlow ActualReturnWorkspace
             (Actual.startRecord (contextEntryDay currentContext))))
