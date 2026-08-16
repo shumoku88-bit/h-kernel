@@ -8,6 +8,7 @@ module HKernel.Editor.TUI.Model
   , contextAccountsSource
   , contextBudgetSource
   , contextHouseholdState
+  , contextIssueCounts
   , contextIssueListL
   , contextIssuesSource
   , contextPlanListL
@@ -18,6 +19,7 @@ module HKernel.Editor.TUI.Model
   , contextWorkspaceListL
   , makeWorkspaceContext
   , reloadWorkspaceContext
+  , setIssueWorkspaceFilter
   ) where
 
 import qualified Brick.Widgets.List as L
@@ -49,8 +51,15 @@ import HKernel.Household.Application
   )
 import HKernel.Household.Report (HouseholdReportSurface)
 import HKernel.Household.Report.Render (HouseholdReportSection)
-import HKernel.HouseholdIssue (HouseholdIssue)
-import HKernel.Editor.HouseholdWorkspace (issuesForWorkspace)
+import HKernel.HouseholdIssue
+  ( HouseholdIssue
+  , IssueStatus(..)
+  , householdIssueStatus
+  )
+import HKernel.Editor.HouseholdWorkspace
+  ( IssueWorkspaceFilter(..)
+  , issuesForWorkspace
+  )
 import HKernel.Ledger (Transaction)
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
@@ -158,6 +167,7 @@ data AppContext = AppContext
   , contextWorkspaceList           :: L.List Name Transaction
   , contextWorkspaceFocus          :: WorkspaceFocus
   , contextPlanList                :: L.List Name IdentifiedPlanTransaction
+  , contextIssueFilter             :: IssueWorkspaceFilter
   , contextIssueList               :: L.List Name HouseholdIssue
   }
 
@@ -203,6 +213,7 @@ makeWorkspaceContext _focusLatest today snapshot =
     , contextWorkspaceList = workspaceList
     , contextWorkspaceFocus = TransactionsFocus
     , contextPlanList = planList
+    , contextIssueFilter = OpenIssueFilter
     , contextIssueList = issueList
     }
   where
@@ -229,7 +240,8 @@ makeWorkspaceContext _focusLatest today snapshot =
       allPlans
     planList = L.list PlanList (Vec.fromList openPlans) 1
     issueList = L.list IssueList
-      (Vec.fromList (issuesForWorkspace (householdStateIssues state))) 1
+      (Vec.fromList
+        (issuesForWorkspace OpenIssueFilter (householdStateIssues state))) 1
     journal = actualJournalValue (householdStateActualJournal state)
     reportConfig = householdStateReportConfig state
     resolvedReportBook = case resolveReportPlan
@@ -246,12 +258,14 @@ reloadWorkspaceContext context = do
     Left _ -> pure Nothing
     Right snapshot ->
       pure (Just
-        ((makeWorkspaceContext True
-            (contextObservationDay context)
-            snapshot)
-          { contextEntryDay = contextEntryDay context
-          , contextCurrentSection = contextCurrentSection context
-          }))
+        (setIssueWorkspaceFilter
+          (contextIssueFilter context)
+          ((makeWorkspaceContext True
+              (contextObservationDay context)
+              snapshot)
+            { contextEntryDay = contextEntryDay context
+            , contextCurrentSection = contextCurrentSection context
+            })))
 
 contextWorkspaceAccountsL :: Lens' AppContext (L.List Name (Maybe Account))
 contextWorkspaceAccountsL f context =
@@ -264,6 +278,23 @@ contextWorkspaceListL f context =
 contextPlanListL :: Lens' AppContext (L.List Name IdentifiedPlanTransaction)
 contextPlanListL f context =
   (\updated -> context { contextPlanList = updated }) <$> f (contextPlanList context)
+
+contextIssueCounts :: AppContext -> (Int, Int)
+contextIssueCounts context =
+  ( length (filter ((== Open) . householdIssueStatus) issues)
+  , length (filter ((/= Open) . householdIssueStatus) issues)
+  )
+  where
+    issues = householdStateIssues (contextHouseholdState context)
+
+setIssueWorkspaceFilter :: IssueWorkspaceFilter -> AppContext -> AppContext
+setIssueWorkspaceFilter visibility context = context
+  { contextIssueFilter = visibility
+  , contextIssueList = L.list IssueList
+      (Vec.fromList
+        (issuesForWorkspace visibility
+          (householdStateIssues (contextHouseholdState context)))) 1
+  }
 
 contextIssueListL :: Lens' AppContext (L.List Name HouseholdIssue)
 contextIssueListL f context =

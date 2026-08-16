@@ -54,6 +54,8 @@ Accounts        -> Add Account
 
 Recordはordinary transactionとmulti-posting transactionを別世界にしない。必要なposting数へ自然に拡張できる一つの記帳体験を目指す。
 
+Issues workspaceはattention surfaceとしてOpenだけを既定表示する。ResolvedとDroppedはcanonical sourceから削除せず、TUIの明示的なOpen / Closed / All表示で履歴を確認できるようにする。表示選択はTUI stateであり、Issue lifecycleや`issues.tsv`を変更しない。
+
 日常操作では、canonical Account名、PlanId、event-idなどを人間へ暗記させない。workspaceがtyped identityを保持し、表示Textからidentityを再構築しない。
 
 keyboard operationは完全に保ち、mouseは同じvisible objectへの短い入口として使える。click-only mutationは作らない。
