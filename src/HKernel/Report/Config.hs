@@ -85,9 +85,10 @@ data RawReports = RawReports
 
 data RawAsOf = RawAsOf Text
 
-data RawRange = RawRange Text Text
+data RawRange = RawRange (Maybe Text) (Maybe Text) (Maybe Text)
 
-data RawDailyFlow = RawDailyFlow Text Text (Maybe Integer)
+data RawDailyFlow =
+  RawDailyFlow (Maybe Text) (Maybe Text) (Maybe Text) (Maybe Integer)
 
 data RawRecent = RawRecent Text Integer
 
@@ -147,13 +148,17 @@ instance FromValue RawAsOf where
 
 instance FromValue RawRange where
   fromValue = parseTableFromValue
-    (RawRange <$> reqKey "from" <*> reqKey "through")
+    (RawRange
+      <$> optKey "range"
+      <*> optKey "from"
+      <*> optKey "through")
 
 instance FromValue RawDailyFlow where
   fromValue = parseTableFromValue
     (RawDailyFlow
-      <$> reqKey "from"
-      <*> reqKey "through"
+      <$> optKey "range"
+      <*> optKey "from"
+      <*> optKey "through"
       <*> optKey "max-date-columns")
 
 instance FromValue RawRecent where
@@ -178,58 +183,59 @@ parseReportConfig = fmap reportConfigurationPlan . parseReportConfiguration
 -- other Household policy coordinates.
 renderReportConfiguration :: ReportConfiguration -> Text
 renderReportConfiguration configuration = T.unlines
-  [ "[presentation.hierarchy]"
-  , "heading-color = " <> quoted (renderPresentationColor
-      (presentationHeadingColor presentation))
-  , "section-color = " <> quoted (renderPresentationColor
-      (presentationSectionColor presentation))
-  , ""
-  , "[presentation.amounts]"
-  , "negative-style = " <> quoted (renderNegativeStyle
-      (presentationNegativeStyle presentation))
-  , "positive-color = " <> quoted (renderPresentationColor
-      (presentationPositiveAmountColor presentation))
-  , "negative-color = " <> quoted (renderPresentationColor
-      (presentationNegativeAmountColor presentation))
-  , ""
-  , "[presentation.calendar]"
-  , "cycle-end-marker = " <> quotedCalendarMarker
-      (calendarCycleEndMarker calendarMarkers)
-  , "plan-due-marker = " <> quotedCalendarMarker
-      (calendarPlanDueMarker calendarMarkers)
-  , "issue-due-marker = " <> quotedCalendarMarker
-      (calendarIssueDueMarker calendarMarkers)
-  , "multiple-marker = " <> quotedCalendarMarker
-      (calendarMultipleMarker calendarMarkers)
-  , ""
-  , "[reports.trial-balance]"
-  , "as-of = " <> quoted (renderAsOf (trialBalanceSpec plan))
-  , ""
-  , "[reports.balance-sheet]"
-  , "as-of = " <> quoted (renderAsOf (balanceSheetSpec plan))
-  , ""
-  , "[reports.profit-and-loss]"
-  , renderRangeLine "from" (profitAndLossSpec plan)
-  , renderRangeThroughLine (profitAndLossSpec plan)
-  , ""
-  , "[reports.daily-flow]"
-  , renderRangeLine "from" (dailyFlowSpec plan)
-  , renderRangeThroughLine (dailyFlowSpec plan)
-  , "max-date-columns = " <> T.pack
-      (show (dateColumnCountValue
-        (presentationDailyFlowDateColumns presentation)))
-  , ""
-  , "[reports.monthly-accounts]"
-  , renderRangeLine "from" (monthlyAccountsSpec plan)
-  , renderRangeThroughLine (monthlyAccountsSpec plan)
-  , ""
-  , "[reports.recent-transactions]"
-  , "through = " <> quoted (renderEndBoundary
-      (recentSpecThrough (recentTransactionsSpec plan)))
-  , "count = " <> T.pack
-      (show (recentCountValue
-        (recentSpecCount (recentTransactionsSpec plan))))
-  ]
+  ( [ "[presentation.hierarchy]"
+    , "heading-color = " <> quoted (renderPresentationColor
+        (presentationHeadingColor presentation))
+    , "section-color = " <> quoted (renderPresentationColor
+        (presentationSectionColor presentation))
+    , ""
+    , "[presentation.amounts]"
+    , "negative-style = " <> quoted (renderNegativeStyle
+        (presentationNegativeStyle presentation))
+    , "positive-color = " <> quoted (renderPresentationColor
+        (presentationPositiveAmountColor presentation))
+    , "negative-color = " <> quoted (renderPresentationColor
+        (presentationNegativeAmountColor presentation))
+    , ""
+    , "[presentation.calendar]"
+    , "cycle-end-marker = " <> quotedCalendarMarker
+        (calendarCycleEndMarker calendarMarkers)
+    , "plan-due-marker = " <> quotedCalendarMarker
+        (calendarPlanDueMarker calendarMarkers)
+    , "issue-due-marker = " <> quotedCalendarMarker
+        (calendarIssueDueMarker calendarMarkers)
+    , "multiple-marker = " <> quotedCalendarMarker
+        (calendarMultipleMarker calendarMarkers)
+    , ""
+    , "[reports.trial-balance]"
+    , "as-of = " <> quoted (renderAsOf (trialBalanceSpec plan))
+    , ""
+    , "[reports.balance-sheet]"
+    , "as-of = " <> quoted (renderAsOf (balanceSheetSpec plan))
+    , ""
+    , "[reports.profit-and-loss]"
+    ]
+    <> renderRangeLines (profitAndLossSpec plan)
+    <> [ ""
+       , "[reports.daily-flow]"
+       ]
+    <> renderRangeLines (dailyFlowSpec plan)
+    <> [ "max-date-columns = " <> T.pack
+          (show (dateColumnCountValue
+            (presentationDailyFlowDateColumns presentation)))
+       , ""
+       , "[reports.monthly-accounts]"
+       ]
+    <> renderRangeLines (monthlyAccountsSpec plan)
+    <> [ ""
+       , "[reports.recent-transactions]"
+       , "through = " <> quoted (renderEndBoundary
+           (recentSpecThrough (recentTransactionsSpec plan)))
+       , "count = " <> T.pack
+           (show (recentCountValue
+             (recentSpecCount (recentTransactionsSpec plan))))
+       ]
+  )
   where
     plan = reportConfigurationPlan configuration
     presentation = reportConfigurationPresentation configuration
@@ -256,13 +262,13 @@ renderDateReference :: DateReference -> Text
 renderDateReference Latest = "latest"
 renderDateReference (ExactDate day) = renderDay day
 
-renderRangeLine :: Text -> RangeSpec -> Text
-renderRangeLine key (RangeSpec start _) =
-  key <> " = " <> quoted (renderStartBoundary start)
-
-renderRangeThroughLine :: RangeSpec -> Text
-renderRangeThroughLine (RangeSpec _ end) =
-  "through = " <> quoted (renderEndBoundary end)
+renderRangeLines :: RangeSpec -> [Text]
+renderRangeLines CurrentCycleToDate =
+  ["range = \"current-cycle-to-date\""]
+renderRangeLines (RangeSpec start end) =
+  [ "from = " <> quoted (renderStartBoundary start)
+  , "through = " <> quoted (renderEndBoundary end)
+  ]
 
 renderStartBoundary :: StartBoundary -> Text
 renderStartBoundary FromBeginning = "beginning"
@@ -311,9 +317,9 @@ rawConfigToConfiguration (RawConfig rawPresentation reports) = case reports of
     calendarMarkers <- parseCalendarMarkers calendar
     trialSpec <- parseAsOf "reports.trial-balance.as-of" trial
     balanceSpec <- parseAsOf "reports.balance-sheet.as-of" balance
-    profitSpec <- parseRange "reports.profit-and-loss" profit
+    profitSpec <- parseRange True "reports.profit-and-loss" profit
     (dailySpec', dateColumns) <- parseDailyFlow daily
-    monthlySpec <- parseRange "reports.monthly-accounts" monthly
+    monthlySpec <- parseRange False "reports.monthly-accounts" monthly
     recentSpec' <- parseRecent recent
     pure ReportConfiguration
       { reportConfigurationPlan = ReportPlan
@@ -456,17 +462,36 @@ parseAsOf :: Text -> RawAsOf -> Either [Text] AsOfSpec
 parseAsOf path (RawAsOf value) =
   AsOf <$> parseDateReference path value
 
-parseRange :: Text -> RawRange -> Either [Text] RangeSpec
-parseRange path (RawRange start end) =
-  RangeSpec
-    <$> parseStartBoundary (path <> ".from") start
-    <*> parseEndBoundary (path <> ".through") end
+parseRange :: Bool -> Text -> RawRange -> Either [Text] RangeSpec
+parseRange allowCurrentCycle path (RawRange symbolic start end) =
+  case (symbolic, start, end) of
+    (Just value, Nothing, Nothing) -> parseSymbolicRange allowCurrentCycle path value
+    (Nothing, Just startValue, Just endValue) ->
+      RangeSpec
+        <$> parseStartBoundary (path <> ".from") startValue
+        <*> parseEndBoundary (path <> ".through") endValue
+    (Just _, _, _) -> Left
+      [path <> ": range cannot be combined with from or through"]
+    (Nothing, _, _) -> Left
+      [ path
+          <> ": expected both from and through"
+          <> if allowCurrentCycle then ", or range = \"current-cycle-to-date\"" else ""
+      ]
+
+parseSymbolicRange :: Bool -> Text -> Text -> Either [Text] RangeSpec
+parseSymbolicRange True _ "current-cycle-to-date" = Right CurrentCycleToDate
+parseSymbolicRange False path "current-cycle-to-date" = Left
+  [path <> ".range: current-cycle-to-date is not supported for this report"]
+parseSymbolicRange _ path value = Left
+  [ path <> ".range: expected current-cycle-to-date; got ‘"
+      <> value <> "’"
+  ]
 
 parseDailyFlow
   :: RawDailyFlow
   -> Either [Text] (RangeSpec, DateColumnCount)
-parseDailyFlow (RawDailyFlow start end configuredColumns) = do
-  rangeSpec <- parseRange "reports.daily-flow" (RawRange start end)
+parseDailyFlow (RawDailyFlow symbolic start end configuredColumns) = do
+  rangeSpec <- parseRange True "reports.daily-flow" (RawRange symbolic start end)
   dateColumns <- case configuredColumns of
     Nothing -> Right defaultDateColumnCount
     Just value -> integerToDateColumnCount value

@@ -4,9 +4,10 @@ module Main (main) where
 
 import Test.Support (mustRight, assertEqual)
 import qualified Data.Text as T
-import Data.Time.Calendar (fromGregorian)
+import Data.Time.Calendar (Day, fromGregorian)
 import HKernel.Engine (rangeEnd, rangeStart)
-import HKernel.Journal (parseJournal)
+import HKernel.Journal (Journal, parseJournal)
+import HKernel.Period (mkPeriod)
 import HKernel.Report (recentCountValue)
 import HKernel.Report.Config
 import HKernel.Report.Plan
@@ -87,6 +88,7 @@ main = do
     (dateColumnCountValue
       (presentationDailyFlowDateColumns presentation))
 
+  characterizeCurrentCycleRange journal latest
   characterizeCalendarSelection calendarMarkers
 
   let defaultColumnsConfiguration = mustRight
@@ -201,6 +203,14 @@ main = do
   assertLeft "invalid dates are rejected with domain context"
     (parseReportConfiguration
       (T.replace "2026-06-15" "not-a-date" validConfig))
+  assertLeft "range and explicit boundaries cannot be combined"
+    (parseReportConfiguration mixedCurrentCycleConfig)
+  assertLeft "explicit ranges require both from and through"
+    (parseReportConfiguration incompleteExplicitRangeConfig)
+  assertLeft "unknown symbolic ranges are rejected"
+    (parseReportConfiguration unknownSymbolicRangeConfig)
+  assertLeft "monthly accounts does not silently inherit current-cycle semantics"
+    (parseReportConfiguration monthlyCurrentCycleConfig)
   assertLeft "unknown negative amount styles are rejected"
     (parseReportConfiguration
       (T.replace "negative-style = \"minus\""
@@ -242,6 +252,43 @@ main = do
   assertLeft "non-positive daily flow date columns are rejected"
     (parseReportConfiguration
       (T.replace "max-date-columns = 10" "max-date-columns = 0" validConfig))
+
+characterizeCurrentCycleRange :: Journal -> Day -> IO ()
+characterizeCurrentCycleRange journal latest = do
+  let configuration = mustRight (parseReportConfiguration currentCycleConfig)
+      plan = reportConfigurationPlan configuration
+      period = mustRight
+        (mkPeriod (fromGregorian 2026 7 15) (fromGregorian 2026 8 15))
+      resolved = mustRight
+        (resolveReportPlanWithCurrentCycle latest journal (Just period) plan)
+      dailyRange = case resolvedDailyFlowSpec resolved of
+        ResolvedDailyFlowInRange value -> value
+        ResolvedDailyFlowThrough _ -> error "configured daily range was not resolved"
+      rendered = renderReportConfiguration configuration
+  assertEqual "current-cycle query is retained as a typed symbolic range"
+    True
+    (reportPlanNeedsCurrentCycle plan)
+  assertEqual "profit and loss current cycle starts at the resolved Period start"
+    (fromGregorian 2026 7 15)
+    (rangeStart (resolvedProfitAndLossRange resolved))
+  assertEqual "profit and loss current cycle ends on the observation day"
+    latest
+    (rangeEnd (resolvedProfitAndLossRange resolved))
+  assertEqual "daily flow uses the same current cycle start"
+    (fromGregorian 2026 7 15)
+    (rangeStart dailyRange)
+  assertEqual "daily flow uses the same observation day"
+    latest
+    (rangeEnd dailyRange)
+  assertEqual "canonical rendering preserves both symbolic current-cycle queries"
+    2
+    (T.count "range = \"current-cycle-to-date\"" rendered)
+  assertLeft "pure Journal resolution fails closed without current cycle context"
+    (resolveReportPlan latest journal plan)
+  let stalePeriod = mustRight
+        (mkPeriod (fromGregorian 2026 6 15) (fromGregorian 2026 7 15))
+  assertLeft "current-cycle query rejects an observation outside the supplied Period"
+    (resolveReportPlanWithCurrentCycle latest journal (Just stalePeriod) plan)
 
 characterizeCalendarSelection :: CalendarMarkers -> IO ()
 characterizeCalendarSelection markers = do
@@ -365,6 +412,54 @@ validConfig = presentationTable <> T.unlines
   , "through = \"latest\""
   , "count = 7"
   ]
+
+currentCycleConfig :: T.Text
+currentCycleConfig = presentationTable <> T.unlines
+  [ "[reports.trial-balance]"
+  , "as-of = \"latest\""
+  , ""
+  , "[reports.balance-sheet]"
+  , "as-of = \"latest\""
+  , ""
+  , "[reports.profit-and-loss]"
+  , "range = \"current-cycle-to-date\""
+  , ""
+  , "[reports.daily-flow]"
+  , "range = \"current-cycle-to-date\""
+  , "max-date-columns = 10"
+  , ""
+  , "[reports.monthly-accounts]"
+  , "from = \"beginning\""
+  , "through = \"latest\""
+  , ""
+  , "[reports.recent-transactions]"
+  , "through = \"latest\""
+  , "count = 7"
+  ]
+
+mixedCurrentCycleConfig :: T.Text
+mixedCurrentCycleConfig = T.replace
+  "range = \"current-cycle-to-date\""
+  "range = \"current-cycle-to-date\"\nfrom = \"2026-07-15\"\nthrough = \"latest\""
+  currentCycleConfig
+
+incompleteExplicitRangeConfig :: T.Text
+incompleteExplicitRangeConfig = T.replace
+  "from = \"2026-06-15\"\nthrough = \"latest\""
+  "from = \"2026-06-15\""
+  validConfig
+
+unknownSymbolicRangeConfig :: T.Text
+unknownSymbolicRangeConfig = T.replace
+  "current-cycle-to-date"
+  "current-month-to-date"
+  currentCycleConfig
+
+monthlyCurrentCycleConfig :: T.Text
+monthlyCurrentCycleConfig = T.replace
+  "from = \"beginning\"\nthrough = \"latest\""
+  "range = \"current-cycle-to-date\""
+  validConfig
 
 journalInput :: T.Text
 journalInput = T.unlines

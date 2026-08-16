@@ -16,7 +16,9 @@ module HKernel.Report.Plan
   , ResolvedReportPlan(..)
   , ReportPlanError(..)
   , defaultResolvedReportPlan
+  , reportPlanNeedsCurrentCycle
   , resolveReportPlan
+  , resolveReportPlanWithCurrentCycle
   ) where
 
 import Data.List (minimumBy)
@@ -26,6 +28,7 @@ import Data.Time.Calendar (Day, fromGregorian, toGregorian)
 import HKernel.Engine (DateRange, mkDateRange)
 import HKernel.Journal (Journal, journalTransactions)
 import HKernel.Ledger (transactionDate)
+import HKernel.Period (Period, periodContains, periodStart)
 import HKernel.Report.RecentTransactions (RecentCount, defaultRecentCount)
 
 data DateReference
@@ -46,7 +49,9 @@ data EndBoundary
   | ThroughLatest
   deriving (Eq, Show)
 
-data RangeSpec = RangeSpec StartBoundary EndBoundary
+data RangeSpec
+  = RangeSpec StartBoundary EndBoundary
+  | CurrentCycleToDate
   deriving (Eq, Show)
 
 data RecentSpec = RecentSpec
@@ -78,11 +83,15 @@ data ResolvedReportPlan = ResolvedReportPlan
   , resolvedRecentTransactionsCount :: RecentCount
   } deriving (Eq, Show)
 
-data ReportPlanError = InvalidReportRange
-  { invalidReportName  :: Text
-  , invalidReportStart :: Day
-  , invalidReportEnd   :: Day
-  } deriving (Eq, Show)
+data ReportPlanError
+  = InvalidReportRange
+      { invalidReportName  :: Text
+      , invalidReportStart :: Day
+      , invalidReportEnd   :: Day
+      }
+  | CurrentCycleContextRequired Text
+  | CurrentCycleObservationOutsidePeriod Text Day
+  deriving (Eq, Show)
 
 defaultResolvedReportPlan :: Day -> ResolvedReportPlan
 defaultResolvedReportPlan latest = ResolvedReportPlan
@@ -95,17 +104,37 @@ defaultResolvedReportPlan latest = ResolvedReportPlan
   , resolvedRecentTransactionsCount = defaultRecentCount
   }
 
+reportPlanNeedsCurrentCycle :: ReportPlan -> Bool
+reportPlanNeedsCurrentCycle plan = any rangeNeedsCurrentCycle
+  [ profitAndLossSpec plan
+  , dailyFlowSpec plan
+  , monthlyAccountsSpec plan
+  ]
+  where
+    rangeNeedsCurrentCycle CurrentCycleToDate = True
+    rangeNeedsCurrentCycle (RangeSpec _ _) = False
+
 resolveReportPlan
   :: Day
   -> Journal
   -> ReportPlan
   -> Either ReportPlanError ResolvedReportPlan
-resolveReportPlan latest journal plan = do
+resolveReportPlan latest journal =
+  resolveReportPlanWithCurrentCycle latest journal Nothing
+
+resolveReportPlanWithCurrentCycle
+  :: Day
+  -> Journal
+  -> Maybe Period
+  -> ReportPlan
+  -> Either ReportPlanError ResolvedReportPlan
+resolveReportPlanWithCurrentCycle latest journal currentCycle plan = do
   profitAndLossRange <- resolveRange
-    "profit-and-loss" latest journal (profitAndLossSpec plan)
-  dailyRange <- resolveRange "daily-flow" latest journal (dailyFlowSpec plan)
+    "profit-and-loss" latest journal currentCycle (profitAndLossSpec plan)
+  dailyRange <- resolveRange
+    "daily-flow" latest journal currentCycle (dailyFlowSpec plan)
   monthlyRange <- resolveRange
-    "monthly-accounts" latest journal (monthlyAccountsSpec plan)
+    "monthly-accounts" latest journal currentCycle (monthlyAccountsSpec plan)
   pure ResolvedReportPlan
     { resolvedTrialBalanceAsOf = resolveAsOf latest (trialBalanceSpec plan)
     , resolvedBalanceSheetAsOf = resolveAsOf latest (balanceSheetSpec plan)
@@ -132,17 +161,29 @@ resolveRange
   :: Text
   -> Day
   -> Journal
+  -> Maybe Period
   -> RangeSpec
   -> Either ReportPlanError DateRange
-resolveRange reportName latest journal (RangeSpec startBoundary endBoundary) =
-  case mkDateRange start end of
-    Right dateRange -> Right dateRange
-    Left _ -> Left (InvalidReportRange reportName start end)
-  where
-    end = resolveEnd latest endBoundary
-    start = case startBoundary of
-      FromDate day -> day
-      FromBeginning -> journalBeginningThrough end journal
+resolveRange reportName latest journal currentCycle rangeSpec =
+  case rangeSpec of
+    RangeSpec startBoundary endBoundary ->
+      case mkDateRange start end of
+        Right dateRange -> Right dateRange
+        Left _ -> Left (InvalidReportRange reportName start end)
+      where
+        end = resolveEnd latest endBoundary
+        start = case startBoundary of
+          FromDate day -> day
+          FromBeginning -> journalBeginningThrough end journal
+    CurrentCycleToDate -> case currentCycle of
+      Nothing -> Left (CurrentCycleContextRequired reportName)
+      Just period
+        | not (periodContains period latest) ->
+            Left (CurrentCycleObservationOutsidePeriod reportName latest)
+        | otherwise -> case mkDateRange (periodStart period) latest of
+            Right dateRange -> Right dateRange
+            Left _ -> Left
+              (InvalidReportRange reportName (periodStart period) latest)
 
 journalBeginningThrough :: Day -> Journal -> Day
 journalBeginningThrough end journal = case eligible of

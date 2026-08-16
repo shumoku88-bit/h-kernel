@@ -175,9 +175,16 @@ renderSelectedReport context = case contextSelectedReport context of
       Right surface -> reportText (renderHouseholdReportSection pres section surface)
 
 renderReportPlanError :: ReportPlanError -> Text
-renderReportPlanError (InvalidReportRange reportName start end) =
-  "invalid " <> reportName <> " range: start " <> T.pack (show start)
-    <> " is after end " <> T.pack (show end)
+renderReportPlanError errorValue = case errorValue of
+  InvalidReportRange reportName start end ->
+    "invalid " <> reportName <> " range: start " <> T.pack (show start)
+      <> " is after end " <> T.pack (show end)
+  CurrentCycleContextRequired reportName ->
+    reportName
+      <> " range current-cycle-to-date requires canonical Household cycle context"
+  CurrentCycleObservationOutsidePeriod reportName observation ->
+    reportName <> " current-cycle-to-date observation "
+      <> T.pack (show observation) <> " is outside the resolved current cycle"
 
 reportText :: Text -> Widget Name
 reportText = ReportStyle.renderTerminalReport

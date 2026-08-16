@@ -20,12 +20,10 @@ as-of = "latest"
 as-of = "latest"
 
 [reports.profit-and-loss]
-from = "2026-06-15"
-through = "latest"
+range = "current-cycle-to-date"
 
 [reports.daily-flow]
-from = "2026-07-01"
-through = "latest"
+range = "current-cycle-to-date"
 max-date-columns = 5
 
 [reports.monthly-accounts]

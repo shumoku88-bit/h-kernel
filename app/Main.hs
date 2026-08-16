@@ -22,15 +22,20 @@ import HKernel.Household.Application
   , buildHouseholdReportSurfaceFromHousehold
   , loadCanonicalHousehold
   )
+import HKernel.Household.Report (HouseholdReportSurface(..))
 import HKernel.Household.Report.Render
   ( renderReportBookWithHouseholdPresentation
   )
 import HKernel.Journal
 import HKernel.Loader (loadJournal)
+import HKernel.Period (Period)
 import HKernel.Render
 import HKernel.Report
 import HKernel.Report.Config
-import HKernel.Report.CycleAccounts (cycleAccounts)
+import HKernel.Report.CycleAccounts
+  ( currentCycleAccountsPeriod
+  , cycleAccounts
+  )
 import HKernel.Report.Plan
 import HKernel.Report.Presentation
 import System.Directory (doesFileExist)
@@ -85,7 +90,7 @@ run today journalPath householdDirectory command =
     (Just directory, RunJournal (RunDefaultReportBook day)) ->
       runCanonicalDefaultReportBook directory day
     (Just directory, RunJournal (RunReportBook dateRange)) ->
-      runCanonicalReportBook directory today dateRange
+      runCanonicalReportBook directory dateRange
     _ -> runJournalSourceCommand today journalPath householdDirectory command
 
 runJournalSourceCommand
@@ -111,9 +116,17 @@ runJournalSourceCommand today journalPath householdDirectory command = do
             reportConfigurationPresentation configuration
       resolvedCommand <- case configuration of
         Nothing -> pure journalCommand
-        Just configured -> case resolveReportPlan today journal (reportConfigurationPlan configured) of
-          Left err -> dieText (renderReportPlanError err)
-          Right resolvedPlan -> pure (applyReportPlanResolved resolvedPlan journalCommand)
+        Just configured
+          | not (journalCommandUsesConfiguredPeriod journalCommand) ->
+              pure journalCommand
+          | otherwise -> do
+              currentCycle <- loadCurrentCycleContextIfNeeded
+                today householdDirectory (reportConfigurationPlan configured)
+              case resolveReportPlanWithCurrentCycle
+                  today journal currentCycle (reportConfigurationPlan configured) of
+                Left err -> dieText (renderReportPlanError err)
+                Right resolvedPlan ->
+                  pure (applyReportPlanResolved resolvedPlan journalCommand)
       TIO.putStr (executeWithPresentation presentation resolvedCommand journal)
 
 runCanonicalDefaultReportBook :: FilePath -> Day -> IO ()
@@ -121,29 +134,37 @@ runCanonicalDefaultReportBook directory latest = do
   state <- loadCanonicalReportState directory
   configuration <- loadCanonicalReportConfiguration state
   let journal = actualJournalValue (householdStateActualJournal state)
-  resolvedPlan <- case resolveReportPlan
-      latest journal (reportConfigurationPlan configuration) of
+      plan = reportConfigurationPlan configuration
+  (currentCycle, latestSurface) <-
+    if reportPlanNeedsCurrentCycle plan
+      then do
+        surface <- buildCanonicalHouseholdSurface latest state
+        pure (Just (currentCyclePeriodFromSurface surface), Just surface)
+      else pure (Nothing, Nothing)
+  resolvedPlan <- case resolveReportPlanWithCurrentCycle
+      latest journal currentCycle plan of
     Left err -> dieText (renderReportPlanError err)
     Right value -> pure value
+  reportSurface <- case latestSurface of
+    Just surface
+      | resolvedTrialBalanceAsOf resolvedPlan == latest -> pure surface
+    _ -> buildCanonicalHouseholdSurface
+      (resolvedTrialBalanceAsOf resolvedPlan) state
   renderCanonicalReportBook
     (reportConfigurationPresentation configuration)
-    (resolvedTrialBalanceAsOf resolvedPlan)
     (reportBookWithPlan resolvedPlan journal)
-    state
+    reportSurface
 
-runCanonicalReportBook :: FilePath -> Day -> DateRange -> IO ()
-runCanonicalReportBook directory today dateRange = do
+runCanonicalReportBook :: FilePath -> DateRange -> IO ()
+runCanonicalReportBook directory dateRange = do
   state <- loadCanonicalReportState directory
   configuration <- loadCanonicalReportConfiguration state
+  reportSurface <- buildCanonicalHouseholdSurface (rangeEnd dateRange) state
   let journal = actualJournalValue (householdStateActualJournal state)
-  _ <- case resolveReportPlan today journal (reportConfigurationPlan configuration) of
-    Left err -> dieText (renderReportPlanError err)
-    Right value -> pure value
   renderCanonicalReportBook
     (reportConfigurationPresentation configuration)
-    (rangeEnd dateRange)
     (reportBook dateRange journal)
-    state
+    reportSurface
 
 loadCanonicalReportState :: FilePath -> IO HouseholdState
 loadCanonicalReportState directory = do
@@ -168,19 +189,53 @@ loadCanonicalReportConfiguration state = do
   where
     canonicalPath = householdReportConfigPath (householdStatePaths state)
 
-renderCanonicalReportBook
-  :: PresentationConfig
-  -> Day
-  -> ReportBook
+buildCanonicalHouseholdSurface
+  :: Day
   -> HouseholdState
-  -> IO ()
-renderCanonicalReportBook presentation observation book state =
+  -> IO HouseholdReportSurface
+buildCanonicalHouseholdSurface observation state =
   case buildHouseholdReportSurfaceFromHousehold observation state of
     Left errors -> dieText
       ("household report surface calculation failed:\n"
         <> T.unlines (map (("  - " <>) . tshow) (NonEmpty.toList errors)))
-    Right surface -> TIO.putStr
-      (renderReportBookWithHouseholdPresentation presentation book surface)
+    Right surface -> pure surface
+
+currentCyclePeriodFromSurface :: HouseholdReportSurface -> Period
+currentCyclePeriodFromSurface =
+  currentCycleAccountsPeriod . householdCurrentCycleAccounts
+
+loadCurrentCycleContextIfNeeded
+  :: Day
+  -> Maybe FilePath
+  -> ReportPlan
+  -> IO (Maybe Period)
+loadCurrentCycleContextIfNeeded observation householdDirectory plan
+  | not (reportPlanNeedsCurrentCycle plan) = pure Nothing
+  | otherwise = case householdDirectory of
+      Nothing -> pure Nothing
+      Just directory -> do
+        state <- loadCanonicalReportState directory
+        surface <- buildCanonicalHouseholdSurface observation state
+        pure (Just (currentCyclePeriodFromSurface surface))
+
+renderCanonicalReportBook
+  :: PresentationConfig
+  -> ReportBook
+  -> HouseholdReportSurface
+  -> IO ()
+renderCanonicalReportBook presentation book surface =
+  TIO.putStr
+    (renderReportBookWithHouseholdPresentation presentation book surface)
+
+journalCommandUsesConfiguredPeriod :: JournalCommand -> Bool
+journalCommandUsesConfiguredPeriod command = case command of
+  RunTrialBalance DefaultedDate _ -> True
+  RunBalanceSheet DefaultedDate _ -> True
+  RunProfitAndLoss DefaultedDate _ -> True
+  RunDailyFlow DefaultedDate _ -> True
+  RunMonthlyAccounts DefaultedDate _ -> True
+  RunRecentTransactions DefaultedDate _ -> True
+  _ -> False
 
 applyReportPlanResolved :: ResolvedReportPlan -> JournalCommand -> JournalCommand
 applyReportPlanResolved plan command = case command of
@@ -287,9 +342,16 @@ ledgerDataLocalPath :: FilePath
 ledgerDataLocalPath = "ledger-data.local"
 
 renderReportPlanError :: ReportPlanError -> Text
-renderReportPlanError (InvalidReportRange reportName start end) =
-  "invalid " <> reportName <> " range: start " <> tshow start
-    <> " is after end " <> tshow end
+renderReportPlanError errorValue = case errorValue of
+  InvalidReportRange reportName start end ->
+    "invalid " <> reportName <> " range: start " <> tshow start
+      <> " is after end " <> tshow end
+  CurrentCycleContextRequired reportName ->
+    reportName
+      <> " range current-cycle-to-date requires canonical Household cycle context"
+  CurrentCycleObservationOutsidePeriod reportName observation ->
+    reportName <> " current-cycle-to-date observation " <> tshow observation
+      <> " is outside the resolved current cycle"
 
 executeWithPresentation
   :: PresentationConfig
