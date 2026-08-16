@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main (main) where
+module EnvelopeEntitlementHistorySpec (main) where
 
 import Test.Support (mustRight)
 import qualified Data.List.NonEmpty as NonEmpty

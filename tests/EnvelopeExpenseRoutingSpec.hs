@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main (main) where
+module EnvelopeExpenseRoutingSpec (main) where
 
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)

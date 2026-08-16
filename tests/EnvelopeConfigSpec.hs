@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main (main) where
+module EnvelopeConfigSpec (main) where
 
 import Test.Support (assertEqual, mustRight)
 import qualified Data.Text as T

@@ -459,85 +459,21 @@ test-suite h-kernel-recent-transactions-test
                     , text
                     , time
 
-test-suite h-kernel-envelope-commitment-headroom-test
+test-suite h-kernel-envelope-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
-    main-is:          EnvelopeCommitmentHeadroomSpec.hs
+    main-is:          EnvelopeSpec.hs
+    other-modules:    EnvelopeCommitmentHeadroomSpec
+                    , EnvelopeConfigSpec
+                    , EnvelopeConsumptionSpec
+                    , EnvelopeEntitlementHistorySpec
+                    , EnvelopeEntitlementSpec
+                    , EnvelopeExpenseRoutingSpec
+                    , EnvelopeFulfillmentRoutingTSVSpec
+                    , EnvelopeFulfillmentSpec
+                    , EnvelopeRemainingSpec
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-envelope-consumption-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EnvelopeConsumptionSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-envelope-expense-routing-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EnvelopeExpenseRoutingSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-envelope-fulfillment-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EnvelopeFulfillmentSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-envelope-fulfillment-routing-tsv-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EnvelopeFulfillmentRoutingTSVSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-envelope-entitlement-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EnvelopeEntitlementSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-envelope-entitlement-history-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EnvelopeEntitlementHistorySpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-envelope-remaining-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EnvelopeRemainingSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-envelope-budget-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EnvelopeBudgetSpec.hs
-    build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , text
                     , time

@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main (main) where
+module EnvelopeRemainingSpec (main) where
 
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, fromGregorian)

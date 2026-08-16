@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main (main) where
+module EnvelopeFulfillmentSpec (main) where
 
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
