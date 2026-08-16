@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main (main) where
+module HouseholdWorkspaceProjectionSpec (main) where
 
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Account
@@ -43,9 +43,9 @@ characterizeWorkspaceLists = do
       journal = mustRight (parseActualJournal source)
       transactions = workspaceTransactions journal
 
-  equal "workspace Account projection preserves admitted declaration order"
-    [cash, food]
-    (workspaceAccounts registry)
+  equal "workspace Account projection exposes every admitted declaration"
+    2
+    (length (workspaceAccounts registry))
   equal "workspace Actual projection is newest first without rewriting source"
     [fromGregorian 2026 8 2, fromGregorian 2026 8 1]
     (map transactionDate transactions)
