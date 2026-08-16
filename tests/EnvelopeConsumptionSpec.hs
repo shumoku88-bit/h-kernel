@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main (main) where
+module EnvelopeConsumptionSpec (main) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
