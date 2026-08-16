@@ -25,6 +25,8 @@ import HKernel.Actual.Journal
   )
 import HKernel.Editor.ActualWorkspace
   ( ActualIdentityPromotionError(..)
+  , ActualReverseAvailability(..)
+  , actualReverseAvailability
   , identityPromotionCandidateCompleteSource
   , newestTransactionEntriesForAccount
   , prepareActualIdentityPromotion
@@ -146,6 +148,28 @@ main = do
               actualTransactionIdText existingId == "actual-second"
             _ -> False
         )
+      reverseJournal = mustRight (parseActualJournal reverseAvailabilitySource)
+      reverseEntries = actualJournalTransactionEntries reverseJournal
+      identityFreeEntry = reverseEntries !! 0
+      targetEntry = reverseEntries !! 1
+      reversalEntry = reverseEntries !! 2
+      targetId = mustRight (mkActualTransactionId "actual-target")
+      reversalId = mustRight (mkActualTransactionId "actual-target-reversal")
+      reverseIdentityResult =
+        ( "identity-free Actual is not a reverse target"
+        , actualReverseAvailability reverseJournal identityFreeEntry
+            == ActualReverseIdentityMissing
+        )
+      alreadyReversedResult =
+        ( "directly reversed Actual reports its typed reversal edge"
+        , actualReverseAvailability reverseJournal targetEntry
+            == ActualReverseAlreadyReversed targetId reversalId
+        )
+      reverseOfReverseResult =
+        ( "a reversal remains available as a reverse-of-reverse target"
+        , actualReverseAvailability reverseJournal reversalEntry
+            == ActualReverseAvailable reversalId
+        )
       results = fixtureResults ++
         [ alignmentResult
         , sourceEvidenceResult
@@ -154,6 +178,9 @@ main = do
         , staleSourceResult
         , alreadyIdentifiedResult
         , duplicateIdentityResult
+        , reverseIdentityResult
+        , alreadyReversedResult
+        , reverseOfReverseResult
         ]
 
   mapM_ print results
@@ -208,4 +235,30 @@ duplicateShapeSource = T.unlines
   , "  ; event-id: actual-second"
   , "  assets:cash  -100 JPY"
   , "  expenses:food  100 JPY"
+  ]
+
+reverseAvailabilitySource :: Text
+reverseAvailabilitySource = T.unlines
+  [ "account assets:cash"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , ""
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , ""
+  , "2026-08-08 Identity free"
+  , "  assets:cash  -50 JPY"
+  , "  expenses:food  50 JPY"
+  , ""
+  , "2026-08-09 Reversible target"
+  , "  ; event-id: actual-target"
+  , "  assets:cash  -100 JPY"
+  , "  expenses:food  100 JPY"
+  , ""
+  , "2026-08-10 Reverse target"
+  , "  ; event-id: actual-target-reversal"
+  , "  ; reverses: actual-target"
+  , "  assets:cash  100 JPY"
+  , "  expenses:food  -100 JPY"
   ]
