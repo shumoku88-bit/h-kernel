@@ -40,25 +40,25 @@
 
 ## 標準検証
 
+通常のrepository qualificationは次の一つを入口とする。
+
 ```sh
-cabal build all
-cabal test all
-cabal run repository-audit
+tools/hk check
 ```
 
 Reportへ影響する場合は、必要なfocused testに加えて次を実行する。
 
 ```sh
-./report-build
-./report-verify --fixture
-./report-verify --corpus
+tools/hk check-report
 ```
 
-正規世帯sourceへ影響する場合は、private sourceの内容を出力せず追加検証する。
+正規世帯sourceへ影響する場合は、private sourceの内容を出力せず次を追加実行する。
 
 ```sh
-HKERNEL_LEDGER_DATA_DIR=/absolute/path/to/private-ledger-data ./report all >/dev/null
+tools/hk --base /absolute/path/to/private-ledger-data check-household
 ```
+
+`cabal`、`report-*`、verification scriptの個別呼び出しはCIやtool実装を調査するときだけ使い、通常作業の入口として重複させない。
 
 ## 文書入口
 

@@ -32,6 +32,8 @@ h-kernelは、日々の記帳、予定、封筒による家計管理、振り返
 ./tools/hk issue ...
 ./tools/hk edit ...
 ./tools/hk check
+./tools/hk check-report
+./tools/hk --base /path/to/private-ledger-data check-household
 ./tools/hk help
 ```
 
@@ -78,19 +80,25 @@ edit intent
 
 ## Build and verification
 
+通常のrepository qualificationは次の一つを入口とします。
+
 ```bash
-cabal build all
-cabal test all
-cabal run exe:repository-audit
+./tools/hk check
 ```
 
 Reportへ影響する変更では必要に応じて次も実行します。
 
 ```bash
-./report-build
-./report-verify --fixture
-./report-verify --corpus
+./tools/hk check-report
 ```
+
+private canonical Household sourceへ影響する変更では、内容を出力せず次を追加実行します。
+
+```bash
+./tools/hk --base /absolute/path/to/private-ledger-data check-household
+```
+
+低レベルの`cabal`、`report-*`、verification scriptは、CIやtool実装自体を調査するときの内部入口です。
 
 ## 正データ
 
