@@ -92,6 +92,10 @@ Haskellの識別子、module名、型名、関数名、file path、CLI command�
 
 新しい抽象やdependencyは、Haskellで可能だからではなく、実在するdomain問題、重複、correctness、operational costを改善する場合だけ導入する。
 
+AIや作者の探索用に、code map、module一覧、公開symbol一覧、test対応表をcurrent documentとして手書きしない。componentとmodule visibilityは`h-kernel.cabal`、公開面はHaskellのmodule export、実装と参照関係はHaskell source、test ownershipはCabalとtest source、active document setは`docs/INDEX.toml`を正本とする。
+
+`tools/hk map`と`tools/hk context TERM`は、これらの正本から必要な時点で作る使い捨ての探索viewである。生成結果そのものをcommitしたり、別のinventoryへ転記したりしない。探索viewがないと意味やownerを判断できない場合は、手書き目録を増やす前に型、module境界、export、正規contractの不足を検討する。
+
 ## 8. 正規データとwriter authority
 
 別private repositoryにある正規データ、writer authority、公開境界は、関連するsource migrationとsecurity policyに従う。
