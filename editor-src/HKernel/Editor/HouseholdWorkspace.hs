@@ -41,7 +41,7 @@ import HKernel.HouseholdIssue
   , householdIssueStatus
   )
 import HKernel.Ledger (Transaction, transactionDate)
-import HKernel.Period (periodEndExclusive)
+import HKernel.Period (Period, periodEndExclusive)
 import HKernel.Plan (CommittedOutgoingPlan, committedPlanDate)
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
@@ -55,7 +55,10 @@ import HKernel.Report.Config
   , reportConfigurationPlan
   )
 import HKernel.Report.CycleAccounts (currentCycleAccountsPeriod)
-import HKernel.Report.Plan (ReportPlanError, resolveReportPlan)
+import HKernel.Report.Plan
+  ( ReportPlanError
+  , resolveReportPlanWithCurrentCycle
+  )
 
 -- | Workspace-local visibility for the Household notebook.
 -- Canonical admission keeps every Issue regardless of this presentation choice.
@@ -96,16 +99,20 @@ workspaceOpenPlansAt observedOn planJournal actualJournal =
       identifiedPlanId identified `Set.notMember` inactivePlanIds
 
 -- | Report selection is a rebuildable projection of the admitted Actual journal
--- and report configuration. Delivery adapters do not own this resolution rule.
+-- and report configuration. Household-relative queries receive only the
+-- already-resolved current Period; delivery adapters do not reimplement cycle
+-- discovery.
 workspaceReportBookAt
   :: Day
   -> ActualJournal
+  -> Maybe Period
   -> ReportConfiguration
   -> Either ReportPlanError ReportBook
-workspaceReportBookAt observedOn actualJournal reportConfig = do
-  plan <- resolveReportPlan
+workspaceReportBookAt observedOn actualJournal currentCycle reportConfig = do
+  plan <- resolveReportPlanWithCurrentCycle
     observedOn
     (actualJournalValue actualJournal)
+    currentCycle
     (reportConfigurationPlan reportConfig)
   pure (reportBookWithPlan plan (actualJournalValue actualJournal))
 
