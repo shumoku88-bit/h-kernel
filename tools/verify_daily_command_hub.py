@@ -171,6 +171,12 @@ def main() -> None:
         if read_log(log) != ["cabal <build> <all>", "cabal <test> <all>", "cabal <run> <exe:repository-audit>"]:
             raise AssertionError(f"check delegation differed: {read_log(log)!r}")
 
+        log.write_text("", encoding="utf-8")
+        result = invoke(["--base", str(data_dir_1), "check-household"], base_env)
+        assert_success(result, "private Household check")
+        if read_log(log) != ["cabal <run> <exe:h-kernel> <--> <all>"]:
+            raise AssertionError(f"check-household delegation differed: {read_log(log)!r}")
+
         # 5. Help surface check
         result = invoke(["help"], base_env)
         assert_success(result, "help")
@@ -184,7 +190,9 @@ def main() -> None:
             "tools/hk [--base DIR] budget",
             "tools/hk [--base DIR] issue",
             "tools/hk [--base DIR] edit",
-            "tools/hk [--base DIR] check",
+            "tools/hk check",
+            "tools/hk check-report",
+            "tools/hk [--base DIR] check-household",
         )
         if not all(entry in result.stdout for entry in expected_help_entries):
             raise AssertionError(f"help surface incomplete:\n{result.stdout}")
@@ -201,6 +209,14 @@ def main() -> None:
         result = invoke(["check", "extra"], base_env)
         if result.returncode != 2 or "does not accept arguments" not in result.stderr:
             raise AssertionError("check argument rejection failed")
+
+        result = invoke(["check-report", "extra"], base_env)
+        if result.returncode != 2 or "does not accept arguments" not in result.stderr:
+            raise AssertionError("check-report argument rejection failed")
+
+        result = invoke(["check-household", "extra"], env_with_data)
+        if result.returncode != 2 or "does not accept arguments" not in result.stderr:
+            raise AssertionError("check-household argument rejection failed")
 
     print("daily command hub verification passed")
 
