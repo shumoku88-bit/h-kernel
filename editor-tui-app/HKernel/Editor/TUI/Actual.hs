@@ -39,13 +39,10 @@ import Text.Read (readMaybe)
 import qualified HKernel.Account
 import HKernel.Actual.Journal
   ( ActualTransactionEntry
-  , actualJournalReversalDeclarations
   , actualJournalTransactionEntries
   , actualJournalValue
   , actualTransactionEntryIdentity
   , actualTransactionEntryTransaction
-  , reversedTransactionId
-  , reversalTransactionId
   )
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
@@ -65,7 +62,11 @@ import HKernel.Editor.ActualReverse
   , prepareActualReverseInputFromResolvedJournal
   , suggestActualReverseEventIdText
   )
-import HKernel.Editor.ActualWorkspace (newestTransactionEntriesForAccount)
+import HKernel.Editor.ActualWorkspace
+  ( ActualReverseAvailability(..)
+  , actualReverseAvailability
+  , newestTransactionEntriesForAccount
+  )
 import HKernel.Editor.SourcePublication (publishActualBlockWithPathAdmission)
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
@@ -1061,22 +1062,17 @@ selectedWorkspaceReverseTarget
   -> Either Text (ActualTransactionId, Transaction)
 selectedWorkspaceReverseTarget context = case selectedWorkspaceEntry context of
   Nothing -> Left "No Actual transaction is selected."
-  Just entry -> case actualTransactionEntryIdentity entry of
-    Nothing -> Left
+  Just entry -> case actualReverseAvailability actualJournal entry of
+    ActualReverseIdentityMissing -> Left
       "Reverse unavailable: this transaction has no durable Actual identity."
-    Just targetId -> case directReversalFor context targetId of
-      Nothing -> Right (targetId, actualTransactionEntryTransaction entry)
-      Just reversalId -> Left
-        ("Already reversed by " <> actualTransactionIdText reversalId
-          <> ". Select that reversal if you need to restore the original effect.")
-
-directReversalFor :: AppContext -> ActualTransactionId -> Maybe ActualTransactionId
-directReversalFor context targetId = listToMaybe
-  [ reversalTransactionId declaration
-  | declaration <- actualJournalReversalDeclarations
-      (householdStateActualJournal (contextHouseholdState context))
-  , reversedTransactionId declaration == targetId
-  ]
+    ActualReverseAvailable targetId ->
+      Right (targetId, actualTransactionEntryTransaction entry)
+    ActualReverseAlreadyReversed _ reversalId -> Left
+      ("Already reversed by " <> actualTransactionIdText reversalId
+        <> ". Select that reversal if you need to restore the original effect.")
+  where
+    actualJournal =
+      householdStateActualJournal (contextHouseholdState context)
 
 renderWorkspaceTransaction :: Bool -> Transaction -> Widget Name
 renderWorkspaceTransaction selected transaction
@@ -1100,15 +1096,18 @@ renderWorkspaceSelection context = case selectedWorkspaceEntry context of
       )
 
 renderReverseAvailability :: AppContext -> ActualTransactionEntry -> Widget Name
-renderReverseAvailability context entry = case actualTransactionEntryIdentity entry of
-  Nothing -> withAttr (attrName "warning")
-    (str "Reverse unavailable: no durable Actual identity.")
-  Just targetId -> case directReversalFor context targetId of
-    Just reversalId -> withAttr (attrName "warning")
+renderReverseAvailability context entry =
+  case actualReverseAvailability actualJournal entry of
+    ActualReverseIdentityMissing -> withAttr (attrName "warning")
+      (str "Reverse unavailable: no durable Actual identity.")
+    ActualReverseAlreadyReversed _ reversalId -> withAttr (attrName "warning")
       (txt ("Already reversed by " <> actualTransactionIdText reversalId
         <> ". Select that reversal to reverse it."))
-    Nothing -> withAttr (attrName "success")
+    ActualReverseAvailable targetId -> withAttr (attrName "success")
       (txt ("[Enter] Reverse  event-id: " <> actualTransactionIdText targetId))
+  where
+    actualJournal =
+      householdStateActualJournal (contextHouseholdState context)
 
 renderPosting :: Posting -> Widget Name
 renderPosting posting =

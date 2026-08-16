@@ -10,6 +10,8 @@
 module HKernel.Editor.ActualWorkspace
   ( transactionEntriesForAccount
   , newestTransactionEntriesForAccount
+  , ActualReverseAvailability(..)
+  , actualReverseAvailability
   , ActualIdentityPromotionError(..)
   , ActualIdentityPromotionPreview(..)
   , prepareActualIdentityPromotion
@@ -17,6 +19,7 @@ module HKernel.Editor.ActualWorkspace
 
 import Data.Bifunctor (first)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -26,12 +29,15 @@ import HKernel.Actual.Journal
   , ActualJournalError
   , ActualTransactionEntry
   , actualJournalIdentifiedTransactions
+  , actualJournalReversalDeclarations
   , actualJournalTransactionEntries
   , actualJournalValue
   , actualTransactionEntryIdentity
   , actualTransactionEntrySource
   , actualTransactionEntryTransaction
   , admitActualJournalFromResolvedSources
+  , reversedTransactionId
+  , reversalTransactionId
   )
 import HKernel.Journal
   ( JournalError
@@ -69,6 +75,29 @@ newestTransactionEntriesForAccount
   -> [ActualTransactionEntry]
 newestTransactionEntriesForAccount selectedAccount =
   reverse . transactionEntriesForAccount selectedAccount
+
+-- | Whether one admitted Actual entry can be reversed from a delivery surface.
+--
+-- This is semantic workspace state rather than terminal state: every delivery
+-- needs the same distinction between identity-free Actual, an available target,
+-- and a target that already has a direct reversal. Reversing that reversal is
+-- still available when the reversal entry itself has not been reversed.
+data ActualReverseAvailability
+  = ActualReverseAvailable ActualTransactionId
+  | ActualReverseIdentityMissing
+  | ActualReverseAlreadyReversed ActualTransactionId ActualTransactionId
+  deriving (Eq, Show)
+
+actualReverseAvailability
+  :: ActualJournal
+  -> ActualTransactionEntry
+  -> ActualReverseAvailability
+actualReverseAvailability journal entry =
+  case actualTransactionEntryIdentity entry of
+    Nothing -> ActualReverseIdentityMissing
+    Just targetId -> case directReversalFor journal targetId of
+      Nothing -> ActualReverseAvailable targetId
+      Just reversalId -> ActualReverseAlreadyReversed targetId reversalId
 
 -- | Failure to add a durable identity to one selected ordinary Actual fact.
 --
@@ -170,6 +199,13 @@ prepareActualIdentityPromotion journal source selected requestedId = do
     existingIds =
       map identifiedActualId (actualJournalIdentifiedTransactions journal)
     headerLine = journalTransactionSourceHeaderLine selectedSource
+
+directReversalFor :: ActualJournal -> ActualTransactionId -> Maybe ActualTransactionId
+directReversalFor journal targetId = listToMaybe
+  [ reversalTransactionId declaration
+  | declaration <- actualJournalReversalDeclarations journal
+  , reversedTransactionId declaration == targetId
+  ]
 
 insertMetadataAfterLine :: Int -> Text -> Text -> Maybe Text
 insertMetadataAfterLine lineNumber metadata source
