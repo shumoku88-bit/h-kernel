@@ -141,7 +141,7 @@ executeCommand commitMode command = case command of
             registry = householdStateAccountsRegistry state
             policy = householdStatePolicy state
             existingSource = householdWriteSnapshotBudgetSource snapshot
-        case BudgetMovementAppend.prepareBudgetJournalMovementAppend
+        case BudgetMovementAppend.prepareCurrentBudgetJournalMovementAppend
             registry policy existingSource movement of
           Left errors -> validationFailed errors
           Right preview ->
