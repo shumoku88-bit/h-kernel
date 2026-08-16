@@ -69,6 +69,10 @@ Haskellの識別子、module名、型名、関数名、file path、CLI command�
 - historical snapshot、完了済みroadmap、作業ログ、互換性の記念碑を通常文書として保存しない
 - `archive/`を文書の捨て場所として作らない
 
+`observation`文書は、**まだ閉じていない具体的な設計上の問い**があり、その問いを解くための証拠を現在進行形で所有するときだけ置く。問いが閉じたら、将来も必要なlawだけをcurrent contract / architecture ownerへ反映し、観察記録そのものは同じchangeで削除する。
+
+日付、baseline SHA、完了済みPR一覧、実装sliceの作業記録、closed gateの検証表はcurrent authorityではない。それらを参照する必要がある場合はGit履歴とmerged PRを使い、`docs/INDEX.toml`のactive documentへ残さない。
+
 削除は現在の理解を一つに保ち、過去をGit履歴へ戻すための通常の保守である。
 
 ## 6. 作業完了時の文書確認
@@ -78,6 +82,7 @@ Haskellの識別子、module名、型名、関数名、file path、CLI command�
 - roadmap上の現在地が移動した場合、現在地を更新する
 - 文書変更が不要な場合は、現在の文書が引き続き正しいことを確認する
 - 古くなった説明を見つけた場合、安全に削除できる範囲を同じchangeで削除する
+- `observation`の問いが閉じた場合、その文書をactive setから削除する
 
 文書を増やすことは完了条件ではない。現在の意味を少ない文書で正確に保つことが完了条件である。
 
