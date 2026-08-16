@@ -133,6 +133,8 @@ Actualのdurable identityとreversal relationは`HKernel.Actual.Journal`がadmit
 
 Posting-grainの集計viewを作ることはよいが、それだけを唯一のFact ownerにしてTransaction boundaryやsource orderを回復不能にしない。Reportにおける具体的なfact grainとprojection ownershipは[`REPORT_PIPELINE_POLICY.md`](REPORT_PIPELINE_POLICY.md)が所有する。
 
+Durable relationは明示的なtyped identity / evidenceで表し、description、日付、金額の近似一致をauthorityにしない。この区分はJournalをappend-only event storeへ変更せず、universal event typeも要求しない。
+
 計算lawも区別する。Balanceのような順序不変のcontributionは可換なreductionとして結合できる。一方、Plan lifecycle、routing history、correction chainなど過去のstateとordered evidenceに依存する計算は順序を保持するtransitionとして扱う。どちらもfoldに見えるという理由だけで同じgeneric frameworkへ統一しない。
 
 ## 6. Report and Household projections
