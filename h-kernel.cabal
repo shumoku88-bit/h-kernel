@@ -463,8 +463,8 @@ test-suite h-kernel-envelope-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EnvelopeSpec.hs
-    other-modules:    EnvelopeBudgetSpec
-                    , EnvelopeCommitmentHeadroomSpec
+    other-modules:    EnvelopeCommitmentHeadroomSpec
+                    , EnvelopeConfigSpec
                     , EnvelopeConsumptionSpec
                     , EnvelopeEntitlementHistorySpec
                     , EnvelopeEntitlementSpec
