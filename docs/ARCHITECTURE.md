@@ -123,6 +123,20 @@ UIでも表示Textをidentityとして使わずtyped `Account`を保持する。
 
 Actualのdurable identityとreversal relationは`HKernel.Actual.Journal`がadmitする。reversalは元Transactionを変更せず、新しいdurable `event-id`とexplicit `reverses` relationを持つinverse Transactionとして追加する。
 
+### 5.6 Fact、Policy、Projection
+
+永続的な意味をFact / Declaration、Policy / Decision、Projectionへ分ける。
+
+- **Fact / Declaration** はadmitされた出来事、identity、参照証拠である。Transaction / Posting grain、source order、exact Amount / Commodity、identity、provenanceを必要なconsumerが失わず参照できる形に保つ。
+- **Policy / Decision** はFactそのものではない分類、選択、割合、method、観察条件である。意味が時間で変わり得る場合はeffective-dated evidenceとして表し、current policyからhistorical meaningを逆算しない。
+- **Projection** はFact / Declaration / Policyから純粋に導出されるBalance、Report、lifecycle stateなどである。Projection都合でFactを書き換えず、再生成可能な値を重複canonical authorityとして保存しない。
+
+Posting-grainの集計viewを作ることはよいが、それだけを唯一のFact ownerにしてTransaction boundaryやsource orderを回復不能にしない。Reportにおける具体的なfact grainとprojection ownershipは[`REPORT_PIPELINE_POLICY.md`](REPORT_PIPELINE_POLICY.md)が所有する。
+
+Durable relationは明示的なtyped identity / evidenceで表し、description、日付、金額の近似一致をauthorityにしない。この区分はJournalをappend-only event storeへ変更せず、universal event typeも要求しない。
+
+計算lawも区別する。Balanceのような順序不変のcontributionは可換なreductionとして結合できる。一方、Plan lifecycle、routing history、correction chainなど過去のstateとordered evidenceに依存する計算は順序を保持するtransitionとして扱う。どちらもfoldに見えるという理由だけで同じgeneric frameworkへ統一しない。
+
 ## 6. Report and Household projections
 
 Reportはvalidated factsから作るpure projectionである。合計はCommodity別の`Balance`を保ち、unknown classificationやunassigned evidenceを黙って消さない。
