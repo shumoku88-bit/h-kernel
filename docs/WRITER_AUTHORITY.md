@@ -21,16 +21,15 @@ Owner: source別writer authority、single-writer law、writer cutover gate
 ```text
 actual.journal
   canonical writer  h-kernel editor
-  readers           h-kernel and compatible external readers
 ```
 
-`h-kernel`以外のreaderを使うことと、canonical writerを切り替えることは別である。external readerはcurrent Actual source contractをsilent ignoreなしにadmitできなければならない。
+別implementationをreaderとして使うことと、canonical writerを切り替えることは別である。reader compatibilityからwriter authorityを推測しない。
 
 `actual.journal`固有のrollback / reader boundaryは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)、reversal identity / provenanceは[`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)が所有する。
 
 ### Other canonical sources
 
-このrepositoryには、`accounts.journal`、`plan.journal`、`budget.journal`、`budget.toml`、`household.toml`、`report.toml`、`issues.tsv`のwriter authorityを新しいimplementationへ移したと宣言するapproved current contractはない。
+このrepositoryには、`accounts.journal`、`plan.journal`、`budget.journal`、`budget.toml`、`household.toml`、`report.toml`、`issues.tsv`のwriter authorityを新しいimplementationへ移したと宣言するapproved cutover contractはない。
 
 したがって次を守る。
 
