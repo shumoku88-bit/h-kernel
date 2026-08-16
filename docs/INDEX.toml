@@ -26,10 +26,6 @@ path = "docs/DAILY_TARGET_POLICY.md"
 role = "contract"
 
 [[documents]]
-path = "docs/FACT_POLICY_PROJECTION_BOUNDARY.md"
-role = "architecture"
-
-[[documents]]
 path = "docs/EDITOR_DEVELOPMENT_PLAN.md"
 role = "architecture"
 
