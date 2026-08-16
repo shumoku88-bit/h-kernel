@@ -2,7 +2,7 @@
 
 ステータス: 承認済みcurrent contract  
 Owner: source別writer authority、single-writer law、writer cutover gate  
-更新日: 2026-08-12
+更新日: 2026-08-17
 
 ## 1. この文書の役割
 
@@ -21,21 +21,21 @@ Owner: source別writer authority、single-writer law、writer cutover gate
 ```text
 actual.journal
   canonical writer  h-kernel editor
-  readers           h-kernel and bqn-ledger
+  readers           h-kernel and compatible external readers
 ```
 
-このauthorityは2026-08-06のActual-only cutoverで明示的に移された。activation、daily operation、stop、rollbackの詳細は[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)が所有する。
+`h-kernel`以外のreaderを使うことと、canonical writerを切り替えることは別である。external readerはcurrent Actual source contractをsilent ignoreなしにadmitできなければならない。
 
-`bqn-ledger`をreaderまたはReport engineとして使うことはできるが、canonical `actual.journal`を変更するBQN operationへ切り替えない。
+`actual.journal`固有のrollback / reader boundaryは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)、reversal identity / provenanceは[`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)が所有する。
 
 ### Other canonical sources
 
-このrepositoryには、`accounts.journal`、`plan.journal`、`budget.journal`、`budget.toml`、`household.toml`、`report.toml`、`issues.tsv`のwriter authorityを新しいimplementationへ移したと宣言するapproved cutover contractはない。
+このrepositoryには、`accounts.journal`、`plan.journal`、`budget.journal`、`budget.toml`、`household.toml`、`report.toml`、`issues.tsv`のwriter authorityを新しいimplementationへ移したと宣言するapproved current contractはない。
 
 したがって次を守る。
 
 - h-kernelにAccount / Plan / Budget / Issueのwrite capabilityが存在しても、それだけからcanonical authority移動を推測しない。
-- Actual-only cutoverから他sourceのauthority移動を推測しない。
+- Actualのauthorityから他sourceのauthority移動を推測しない。
 - current operational writerを別implementationへ切り替える場合は、sourceごとのcutover evidenceと作者の明示承認を先に持つ。
 - capability追加、TUI/CLI追加、reader migration、source format migrationをwriter cutoverと同一視しない。
 
@@ -51,7 +51,7 @@ one canonical source
   -> zero alternating / dual writers
 ```
 
-- 同じsourceへh-kernelとbqn-ledgerを交互にwriteしない。
+- 同じsourceへ複数implementationを交互にwriteしない。
 - safe publication capabilityが複数engineにあっても、authorityは自動的に共有されない。
 - reader compatibilityはwriter authorityとは別に確認する。
 - source format migrationとwriter cutoverは別chapterとして扱う。
@@ -90,15 +90,16 @@ safe writerの具体的なpublication lawは[`EDITOR_DEVELOPMENT_PLAN.md`](EDITO
 
 ## 6. Authority変更時の文書更新
 
-writer cutoverを行うchangeでは、この文書のcurrent authorityを同じchangeで更新する。source固有のactivation / stop / rollbackに追加の意味がある場合だけ、`ACTUAL_WRITER_CUTOVER_001.md`のようなsource-specific contractを置く。
+writer cutoverを行うchangeでは、この文書のcurrent authorityを同じchangeで更新する。source固有のrollback、reader compatibility、recoveryに追加の意味がある場合だけ、source-specific contractを置く。
 
-完了済みmigrationの作業ログや旧source一覧をcurrent contractへ保存しない。過去の状態はGit履歴とmerged PRから確認する。
+完了済みmigrationの作業ログ、旧source一覧、activation checklist、当時のcommand一覧をcurrent contractへ保存しない。過去の状態はGit履歴とmerged PRから確認する。
 
 ## 7. Related owners
 
 - [`HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md): current canonical reader topology
 - [`HOUSEHOLD_CANONICAL_SOURCE.md`](HOUSEHOLD_CANONICAL_SOURCE.md): engine-neutral canonical source contract
-- [`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md): `actual.journal` authorityの具体的なactivation / stop / rollback
+- [`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md): `actual.journal`固有のrollback / reader boundary
+- [`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md): Actual reversal identity / provenance
 - [`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md): Editor capabilityとsafe writer law
 - [`REPOSITORY_POLICY.md`](REPOSITORY_POLICY.md): document lifecycleとauthority changeの作業単位
 - [`../SECURITY.md`](../SECURITY.md): private/public boundary
