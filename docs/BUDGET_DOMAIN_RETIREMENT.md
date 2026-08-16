@@ -17,21 +17,16 @@ Current household meaning is owned by the narrower native owners:
 No active calculation should reconstruct a `BudgetPolicy`, `BudgetObservation`,
 `BudgetEntitlement`, `BudgetRemaining`, or an equivalent renamed aggregate.
 
-## Historical documents
+## Historical evidence
 
-The following documents are retained only as design-history evidence:
-
-- `BUDGET_MODEL_OBSERVATION.md`
-- `BUDGET_BACKING_OBSERVATION.md`
-- `BUDGET_PLAN_COMMITMENT_OBSERVATION.md`
-
-They describe observations that helped produce the Envelope-native model. They
-are not current implementation targets, compatibility requirements, or authority
-for introducing a new Budget aggregate.
+The Budget-model observations that led to this retirement are historical evidence,
+not current implementation targets, compatibility requirements, or authority for
+introducing a new Budget aggregate. They are owned by Git history and merged PRs,
+not by the active documentation set.
 
 If a future requirement genuinely needs a concept called `Budget`, design it
 again from that requirement. Do not infer that the retired model should be
-restored merely because these historical observations still exist.
+restored from historical implementation or observation records.
 
 ## Names that intentionally remain
 
