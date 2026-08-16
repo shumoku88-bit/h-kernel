@@ -103,7 +103,7 @@ report app、editor app、Brick TUI、shell launcherは引数、環境変数、�
 
 `Commodity`はvalidated text identityであり、fiat currencyやISO codeの閉じた列挙ではない。表示名、symbol、locale、fraction digitsはpresentation policyであり、Commodity identityを変更しない。
 
-`Quantity`は`Scientific`による正確な10進数として保持する。`Amount`は一つの`Commodity`におけるnative magnitudeであり、異なるCommodityを一つの数値へ暗黙変換しない。Account default CommodityやHouseholdのprimary Commodityは入力・表示上のdefaultであって、explicit postingが持てるCommodityのdomain restrictionではない。
+`Quantity`は`Scientific`による正確な10進数として保持する。`Amount`は一つの`Commodity`におけるnative magnitudeであり、異なるCommodityを一つの数値へ暗黙変換しない。個々のAccount declarationはdefault Commodityを明示的constraintとして持ち得て、`Journal` admissionがその一致を検証する。ただしそのAccount-level constraintを理由に`Commodity`型そのものを閉じたcurrency universeへ変えない。
 
 Quantityとvaluationは別の意味である。将来reporting valueや換算が必要になっても、元`Amount`を書き換えず、explicit price evidenceとvaluation policyからProjectionとして導出する。Commodity identity、price observation、valuation policy、lot identityを一つの型や設定へ潰さない。
 
