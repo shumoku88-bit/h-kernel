@@ -259,7 +259,10 @@ loadCanonicalHouseholdWriteSnapshot root = runExceptT $ do
       envelopePolicy backingPolicy currentExpenses householdPolicySource
   envelopeHistory <- liftEither $
     admitRequiredEnvelopeHistory
-      accountsRegistry (planIds planJournal) envelopePolicy householdPolicySource
+      accountsRegistry
+      (planIds planJournal)
+      (householdConfigurationPolicy configuration)
+      householdPolicySource
 
   policy <- liftEither $
     validateHouseholdPolicyAndAccounts accountsRegistry configuration
@@ -310,10 +313,10 @@ validateAccountRegistryAgreement expected actual mkErr
 admitRequiredEnvelopeHistory
   :: AccountRegistry
   -> [PlanId]
-  -> CurrentEnvelopePolicy
+  -> HouseholdPolicy
   -> Text
   -> Either (NonEmpty HouseholdLoadError) HouseholdEnvelopeHistory
-admitRequiredEnvelopeHistory registry knownPlans envelopePolicy source = do
+admitRequiredEnvelopeHistory registry knownPlans policy source = do
   maybeHistory <- first (pure . HouseholdEnvelopeHistoryParseFailed)
     (parseHouseholdEnvelopeHistory source)
   history <- case maybeHistory of
@@ -321,7 +324,7 @@ admitRequiredEnvelopeHistory registry knownPlans envelopePolicy source = do
     Just value -> Right value
   first (fmap HouseholdEnvelopeHistoryReferenceFailed)
     (admitHouseholdEnvelopeHistoryReferences
-      registry knownPlans envelopePolicy history)
+      registry knownPlans policy history)
 
 planIds :: PlanJournal -> [PlanId]
 planIds = map identifiedPlanId . planJournalTransactions
@@ -485,7 +488,10 @@ admitCanonicalHousehold root accountsText actualText planText budgetText envelop
     (parseHouseholdConfiguration
       envelopePolicy backingPolicy currentExpenses householdPolicyText)
   envelopeHistory <- admitRequiredEnvelopeHistory
-    accountsRegistry (planIds planJournal) envelopePolicy householdPolicyText
+    accountsRegistry
+    (planIds planJournal)
+    (householdConfigurationPolicy configuration)
+    householdPolicyText
   policy <- validateHouseholdPolicyAndAccounts
     accountsRegistry configuration
   reportConfig <- first (pure . HouseholdReportConfigParseFailed)
