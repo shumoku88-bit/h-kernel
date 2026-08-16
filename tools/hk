@@ -31,6 +31,7 @@ usage() {
   cat <<'EOF'
 Usage:
   tools/hk [--base DIR]                         Open the Actual workspace.
+  tools/hk [--base DIR] dialogue                Open the guided Household dialogue.
   tools/hk [--base DIR] report [REPORT_ARGS...]
   tools/hk [--base DIR] actual-add [ACTUAL_JOURNAL]
   tools/hk [--base DIR] actual-multi [ARGS...]
@@ -46,6 +47,7 @@ Usage:
   tools/hk help
 
 Commands:
+  dialogue         Open the guided Haskeline flow for common Household writes.
   report           Run the existing Haskell report entrypoint.
   actual-add       Open the Actual workspace for an explicit journal path.
   actual-multi     Route multi-posting Actual transaction append directly to h-kernel-editor-cli.
@@ -77,6 +79,12 @@ command=$1
 shift
 
 case "$command" in
+  dialogue)
+    [ "$#" -eq 0 ] || { printf 'tools/hk dialogue does not accept arguments\n' >&2; exit 2; }
+    data_dir=$(require_data_dir)
+    cd "$ROOT"
+    exec "$CABAL" run exe:h-kernel-editor-haskeline -- "$data_dir"
+    ;;
   report)
     dir=$(get_data_dir || true)
     if [ -n "$dir" ]; then
