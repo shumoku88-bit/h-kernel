@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main (main) where
+module HouseholdIssueSpec (main) where
 
 import Test.Support (mustRight, assertEqual)
 import qualified Data.List.NonEmpty as NonEmpty
