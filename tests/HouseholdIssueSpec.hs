@@ -6,7 +6,6 @@ import Test.Support (mustRight, assertEqual)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Time.Calendar (fromGregorian)
 import HKernel.HouseholdIssue
-import HKernel.HouseholdIssue.Render
 import HKernel.Editor.HouseholdWorkspace
   ( IssueWorkspaceFilter(..)
   , homeIssuesDueOn
@@ -26,7 +25,6 @@ main = do
   characterizeIssueRelationReferences
   characterizeWorkspaceOrder
   characterizeHomeIssueProjection
-  characterizeCompleteLineRendering
 
 characterizeIssueIdentity :: IO ()
 characterizeIssueIdentity = do
@@ -329,47 +327,6 @@ characterizeHomeIssueProjection = do
   assertEqual "Home due projection includes only open Issues due on the selected day"
     [openDue]
     (homeIssuesDueOn dueDay [openDue, openOther, resolvedDue])
-
-characterizeCompleteLineRendering :: IO ()
-characterizeCompleteLineRendering = do
-  let issueId = mustRight (mkIssueId "issue-2026-001")
-      jpy = mustRight (mkCommodity "JPY")
-      issue = mustRight (mkHouseholdIssue
-        issueId
-        (fromGregorian 2026 8 1)
-        Open
-        (DueOn (fromGregorian 2026 8 8))
-        (Just (mkAmount jpy (quantityFromInteger 4810)))
-        "Wi-Fi支払いをゆうちょで埋めるか"
-        "節約中")
-
-  assertEqual "one-line rendering publishes every household-facing field"
-    "2026-08-01 | open | due 2026-08-08 | 4810 JPY | Wi-Fi支払いをゆうちょで埋めるか | 節約中"
-    (renderHouseholdIssueLine issue)
-
-  let noDue = mustRight (mkHouseholdIssue
-        issueId
-        (fromGregorian 2026 8 2)
-        Open
-        NoDueDate
-        Nothing
-        "本棚を探す"
-        "中古優先")
-  assertEqual "explicit no-due remains visible"
-    "2026-08-02 | open | no due date | no amount | 本棚を探す | 中古優先"
-    (renderHouseholdIssueLine noDue)
-
-  let noDateOrAmount = mustRight (mkHouseholdIssue
-        issueId
-        (fromGregorian 2026 8 2)
-        Resolved
-        DueUndetermined
-        Nothing
-        "契約を続けるか確認する"
-        "確認済み")
-  assertEqual "undetermined due date and absent amount remain visible"
-    "2026-08-02 | resolved | due undetermined | no amount | 契約を続けるか確認する | 確認済み"
-    (renderHouseholdIssueLine noDateOrAmount)
 
 assertLeft :: Show value => String -> Either error value -> IO ()
 assertLeft label result = case result of

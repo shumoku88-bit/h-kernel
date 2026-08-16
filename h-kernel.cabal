@@ -49,9 +49,7 @@ library
                     , HKernel.Envelope.Mode
                     , HKernel.Envelope.Policy
                     , HKernel.Envelope.Remaining
-                    , HKernel.Envelope.Render
                     , HKernel.HouseholdIssue
-                    , HKernel.HouseholdIssue.Render
                     , HKernel.Journal
                     , HKernel.Ledger
                     , HKernel.Loader
@@ -62,7 +60,6 @@ library
                     , HKernel.Plan.Completion
                     , HKernel.Plan.Open
                     , HKernel.Plan.Reservation
-                    , HKernel.Plan.Render
                     , HKernel.Render
                     , HKernel.Render.TerminalStyle
                     , HKernel.Report
