@@ -6,9 +6,12 @@
 
 1. remoteの最新`main` SHA、open PR、直近commit、関連branchを確認する。
 2. 対象fileと並行作業の変更fileを比較し、実在する重複を避ける。
-3. 対象領域のarchitecture、contract、source ownership文書と実コードを読む。
-4. editorまたはwriter effectへ触れる場合は、[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)でcurrent capabilityとsafe writer law、[`docs/WRITER_AUTHORITY.md`](docs/WRITER_AUTHORITY.md)でsource別authorityとcutover gateを確認する。
-5. private household sourceへ触れる場合は、[`docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md)でcurrent reader topologyを確認し、writer authority、公開境界、実データが維持されることを先に確認する。
+3. 対象領域がまだ広い場合は、`tools/hk context TERM`でcurrent source、test、active documentの候補を絞る。componentと公開境界の全体像が必要な場合だけ`tools/hk map`を見る。
+4. 対象領域のarchitecture、contract、source ownership文書と実コードを読む。
+5. editorまたはwriter effectへ触れる場合は、[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)でcurrent capabilityとsafe writer law、[`docs/WRITER_AUTHORITY.md`](docs/WRITER_AUTHORITY.md)でsource別authorityとcutover gateを確認する。
+6. private household sourceへ触れる場合は、[`docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md`](docs/HOUSEHOLD_SOURCE_ADMISSION_INVENTORY.md)でcurrent reader topologyを確認し、writer authority、公開境界、実データが維持されることを先に確認する。
+
+`tools/hk map`と`tools/hk context`の出力は、`h-kernel.cabal`、Haskell source、test、`docs/INDEX.toml`からその場で作る探索viewであり、設計上のauthorityではない。出力を文書として保存したり、別の手書き目録へ転記したりしない。
 
 ## 判断基準
 
@@ -37,6 +40,22 @@
 - 変更後に不要になった説明、互換入口、古いスケッチは同じcoherent changeで削除する。
 
 詳細な運用は[`docs/REPOSITORY_POLICY.md`](docs/REPOSITORY_POLICY.md)に従う。
+
+## 探索入口
+
+repository全体のcomponent、public/internal module、test-suite、active document ownershipを現在の正本から見る。
+
+```sh
+tools/hk map
+```
+
+特定のmodule、型、関数、domain語から、直接言及するsource、test、documentを絞る。
+
+```sh
+tools/hk context HKernel.Envelope.Remaining
+```
+
+これは検索開始点を狭くするためのviewであり、依存関係や意味論を推測して補完するものではない。必要なownerへ到達した後は、実コード、型、export、contractを正本として読む。
 
 ## 標準検証
 

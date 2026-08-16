@@ -27,6 +27,117 @@ require_data_dir() {
   echo "$dir"
 }
 
+repository_map() {
+  cd "$ROOT"
+  printf 'cabal-components\n'
+  awk '
+    function trim(value) {
+      sub(/^[ \t]+/, "", value)
+      sub(/[ \t]+$/, "", value)
+      return value
+    }
+    function start_component(kind, name) {
+      current_kind = kind
+      current_name = name
+      field = ""
+      printf "%s %s\n", kind, name
+    }
+    function emit(label, value) {
+      value = trim(value)
+      sub(/^,[ \t]*/, "", value)
+      if (value != "") {
+        printf "  %s %s\n", label, value
+      }
+    }
+    /^[^ \t]/ {
+      field = ""
+      if ($1 == "library") {
+        name = $2
+        if (name == "") name = "h-kernel"
+        start_component("library", name)
+      } else if ($1 == "executable") {
+        start_component("executable", $2)
+      } else if ($1 == "test-suite") {
+        start_component("test-suite", $2)
+      } else {
+        current_kind = ""
+        current_name = ""
+      }
+      next
+    }
+    current_kind != "" && /^[ \t]+[A-Za-z0-9-]+:/ {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      key = line
+      sub(/:.*/, "", key)
+      value = line
+      sub(/^[^:]+:[ \t]*/, "", value)
+      field = ""
+      if (key == "exposed-modules" && current_kind == "library") {
+        field = "public"
+        emit(field, value)
+      } else if (key == "other-modules") {
+        field = "internal"
+        emit(field, value)
+      } else if (key == "hs-source-dirs") {
+        field = "source"
+        emit(field, value)
+      } else if (key == "main-is") {
+        field = "main"
+        emit(field, value)
+      }
+      next
+    }
+    current_kind != "" && field != "" && /^[ \t]+,/ {
+      emit(field, $0)
+      next
+    }
+  ' h-kernel.cabal
+
+  printf '\nactive-documents\n'
+  awk '
+    /^\[\[documents\]\]/ { path = ""; role = ""; next }
+    /^path[ \t]*=[ \t]*"/ {
+      value = $0
+      sub(/^path[ \t]*=[ \t]*"/, "", value)
+      sub(/"[ \t]*$/, "", value)
+      path = value
+      next
+    }
+    /^role[ \t]*=[ \t]*"/ {
+      value = $0
+      sub(/^role[ \t]*=[ \t]*"/, "", value)
+      sub(/"[ \t]*$/, "", value)
+      role = value
+      if (path != "") printf "  %s %s\n", role, path
+      next
+    }
+  ' docs/INDEX.toml
+}
+
+repository_context() {
+  [ "$#" -eq 1 ] || { printf 'error: tools/hk context requires exactly one TERM\n' >&2; exit 2; }
+  term=$1
+  [ -n "$term" ] || { printf 'error: tools/hk context requires a non-empty TERM\n' >&2; exit 2; }
+
+  cd "$ROOT"
+  printf 'query %s\n\nmap-matches\n' "$term"
+  repository_map | awk -v query="$term" '
+    BEGIN { needle = tolower(query) }
+    index(tolower($0), needle) > 0 { print "  " $0 }
+  '
+
+  haskell_matches=$(git grep -l -i -F -e "$term" -- '*.hs' '*.lhs' || true)
+  printf '\nsource-haskell\n'
+  printf '%s\n' "$haskell_matches" | LC_ALL=C sort -u | awk 'NF && $0 !~ /^tests\// { print "  " $0 }'
+  printf '\ntest-haskell\n'
+  printf '%s\n' "$haskell_matches" | LC_ALL=C sort -u | awk 'NF && $0 ~ /^tests\// { print "  " $0 }'
+
+  document_matches=$(git grep -l -i -F -e "$term" -- 'docs/*.md' AGENTS.md README.md || true)
+  printf '\ndocuments\n'
+  printf '%s\n' "$document_matches" | LC_ALL=C sort -u | awk 'NF { print "  " $0 }'
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -41,6 +152,8 @@ Usage:
   tools/hk [--base DIR] budget [ARGS...]
   tools/hk [--base DIR] issue [ARGS...]
   tools/hk [--base DIR] edit [ARGS...]
+  tools/hk map
+  tools/hk context TERM
   tools/hk check
   tools/hk check-report
   tools/hk [--base DIR] check-household
@@ -57,6 +170,8 @@ Commands:
   budget           Route Household budget movement directly to h-kernel-editor-cli.
   issue            Route Issue operations directly to h-kernel-editor-cli.
   edit             Pass arguments directly to h-kernel-editor-cli.
+  map              Print a generated Cabal and active-document ownership map.
+  context          Select current source, tests, and documents that mention TERM.
   check            Run the standard build, test, and repository ownership audit.
   check-report     Run the complete fixture and corpus Report contract verification.
   check-household  Admit the configured private Household source without printing it.
@@ -104,9 +219,17 @@ case "$command" in
   budget) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- budget "$@" ;;
   issue) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- issue "$@" ;;
   edit) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- "$@" ;;
+  map)
+    [ "$#" -eq 0 ] || { printf 'error: tools/hk map does not accept arguments\n' >&2; exit 2; }
+    repository_map
+    ;;
+  context)
+    repository_context "$@"
+    ;;
   check)
     [ "$#" -eq 0 ] || { printf 'tools/hk check does not accept arguments\n' >&2; exit 2; }
     cd "$ROOT"
+    python3 tools/verify_repository_context.py
     "$CABAL" build all
     "$CABAL" test all
     exec "$CABAL" run exe:repository-audit
