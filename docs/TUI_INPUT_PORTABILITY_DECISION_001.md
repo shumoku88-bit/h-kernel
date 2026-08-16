@@ -2,7 +2,7 @@
 
 ステータス: current contract  
 Owner: h-kernel editor TUI input delivery  
-更新日: 2026-08-08
+更新日: 2026-08-16
 
 ## Decision
 
@@ -29,15 +29,17 @@ terminal emulator、multiplexer、shell、IME、remote sessionなどのdelivery�
 
 ## Current daily input shape
 
-### Ordinary Actual
+### Daily Actual shortcuts
+
+日常的な単純支出と収入には、一般Recordより短い入口を残す。
 
 ```text
 Actual workspace
-  -> a
+  -> a: Expense
+     or i: Income
   -> Amount
   -> Description
-  -> Category
-  -> Pay from
+  -> typed Account fields
   -> Date
   -> Enter: Preview
   -> Enter: Publish
@@ -45,11 +47,15 @@ Actual workspace
 
 TodayはDateの初期値である。別日付はDate fieldを直接編集する。Account名も通常のtext fieldから入力できるため、Account picker shortcutは必須ではない。
 
-### Multi-posting Actual
+`a`と`i`は一般記帳とは別のaccounting modelではない。頻度の高い2-posting操作への短いdelivery pathである。
+
+### General Record
+
+ordinary transactionと3-posting以上のtransactionを別modeへ分けない。一般記帳は一つのRecord flowを使う。
 
 ```text
 Actual workspace
-  -> m
+  -> r
   -> Date
   -> Description
   -> Posting count
@@ -59,6 +65,8 @@ Actual workspace
   -> Enter: Preview
   -> Enter: Publish
 ```
+
+Recordは2つのblank posting rowから始まり、必要ならPosting countを増やす。同じflowのまま2-posting transactionも3-posting以上のtransactionも記帳する。multi-posting専用のTUI modeや専用shortcutを必要条件にしない。
 
 Posting countを通常fieldとして編集できるため、row add/remove専用Function keyを必要としない。Accountも通常fieldから入力できる。
 
