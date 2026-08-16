@@ -4,9 +4,9 @@ module Main (main) where
 
 import Test.Support (mustRight, assertEqual)
 import qualified Data.Text as T
-import Data.Time.Calendar (fromGregorian)
+import Data.Time.Calendar (Day, fromGregorian)
 import HKernel.Engine (rangeEnd, rangeStart)
-import HKernel.Journal (parseJournal)
+import HKernel.Journal (Journal, parseJournal)
 import HKernel.Period (mkPeriod)
 import HKernel.Report (recentCountValue)
 import HKernel.Report.Config
@@ -253,7 +253,7 @@ main = do
     (parseReportConfiguration
       (T.replace "max-date-columns = 10" "max-date-columns = 0" validConfig))
 
-characterizeCurrentCycleRange :: HKernel.Journal.Journal -> Data.Time.Calendar.Day -> IO ()
+characterizeCurrentCycleRange :: Journal -> Day -> IO ()
 characterizeCurrentCycleRange journal latest = do
   let configuration = mustRight (parseReportConfiguration currentCycleConfig)
       plan = reportConfigurationPlan configuration
