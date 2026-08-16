@@ -62,10 +62,6 @@ path = "docs/LIABILITY_POSITION_DESIGN_SKETCH.md"
 role = "architecture"
 
 [[documents]]
-path = "docs/PLAN_JOURNAL_ADMISSION.md"
-role = "architecture"
-
-[[documents]]
 path = "docs/PLATFORM_NEUTRAL_APPLICATION_POLICY.md"
 role = "policy"
 
@@ -75,10 +71,6 @@ role = "contract"
 
 [[documents]]
 path = "docs/REPORT_FACTS_OWNER.md"
-role = "architecture"
-
-[[documents]]
-path = "docs/REPORT_FLOW_OWNER.md"
 role = "architecture"
 
 [[documents]]
