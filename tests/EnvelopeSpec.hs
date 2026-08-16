@@ -1,7 +1,7 @@
 module Main (main) where
 
-import qualified EnvelopeBudgetSpec
 import qualified EnvelopeCommitmentHeadroomSpec
+import qualified EnvelopeConfigSpec
 import qualified EnvelopeConsumptionSpec
 import qualified EnvelopeEntitlementHistorySpec
 import qualified EnvelopeEntitlementSpec
@@ -20,4 +20,4 @@ main = do
   EnvelopeEntitlementSpec.main
   EnvelopeEntitlementHistorySpec.main
   EnvelopeRemainingSpec.main
-  EnvelopeBudgetSpec.main
+  EnvelopeConfigSpec.main
