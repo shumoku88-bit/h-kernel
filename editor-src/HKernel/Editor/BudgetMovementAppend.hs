@@ -9,6 +9,7 @@ module HKernel.Editor.BudgetMovementAppend
 import Data.Bifunctor (first)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -28,6 +29,10 @@ import HKernel.Household.BudgetMovement
   , admitHouseholdBudgetMovementJournal
   , renderHouseholdBudgetMovementTransactions
   )
+import HKernel.Household.Policy
+  ( HouseholdPolicy
+  , householdRetiredAllocationAccounts
+  )
 import HKernel.Journal
   ( Journal
   , JournalError(..)
@@ -41,9 +46,12 @@ import HKernel.Journal
   )
 
 -- | Prepare one canonical @budget.journal@ movement append. The candidate is
--- admitted through the native Budget Journal owner before publication.
+-- admitted through the native Budget Journal owner before publication. Stable
+-- allocation Accounts for retired Envelopes remain readable historical evidence
+-- but are not writable current endpoints.
 data BudgetJournalMovementAppendError
   = BudgetJournalMovementNotBudgetAccount Account
+  | BudgetJournalMovementRetiredEnvelopeAccount Account
   | BudgetJournalRenderError (NonEmpty HouseholdBudgetMovementJournalRenderError)
   | BudgetJournalCandidateAdmitError (NonEmpty HouseholdBudgetMovementJournalError)
   | BudgetJournalCandidateParseError (NonEmpty JournalError)
@@ -56,12 +64,15 @@ data BudgetJournalMovementAppendPreview = BudgetJournalMovementAppendPreview
 
 prepareBudgetJournalMovementAppend
   :: AccountRegistry
+  -> HouseholdPolicy
   -> Text
   -> HouseholdBudgetMovement
   -> Either (NonEmpty BudgetJournalMovementAppendError) BudgetJournalMovementAppendPreview
-prepareBudgetJournalMovementAppend registry existingSource movement = do
+prepareBudgetJournalMovementAppend registry policy existingSource movement = do
   _ <- verifyBudgetAccount (householdBudgetMovementFrom movement)
   _ <- verifyBudgetAccount (householdBudgetMovementTo movement)
+  _ <- verifyCurrentEndpoint (householdBudgetMovementFrom movement)
+  _ <- verifyCurrentEndpoint (householdBudgetMovementTo movement)
   block <- first (pure . BudgetJournalRenderError)
     (renderHouseholdBudgetMovementTransactions [movement])
 
@@ -82,6 +93,10 @@ prepareBudgetJournalMovementAppend registry existingSource movement = do
     verifyBudgetAccount acc = case accountTypeFor acc registry of
       Just Budget -> Right ()
       _ -> Left (NonEmpty.singleton (BudgetJournalMovementNotBudgetAccount acc))
+    verifyCurrentEndpoint acc
+      | Set.member acc (householdRetiredAllocationAccounts policy) =
+          Left (NonEmpty.singleton (BudgetJournalMovementRetiredEnvelopeAccount acc))
+      | otherwise = Right ()
 
 resolveInMemoryJournal
   :: AccountRegistry
