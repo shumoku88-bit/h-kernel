@@ -25,23 +25,21 @@ module HKernel.Editor.TUI.Model
 import qualified Brick.Widgets.List as L
 import Data.List.NonEmpty (NonEmpty)
 import Lens.Micro (Lens')
-import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time.Calendar (Day)
 import qualified Data.Vector as Vec
 
-import HKernel.Account
-  ( Account
-  , accountDeclarations
-  , declaredAccount
-  )
-import HKernel.Actual.Journal
-  ( actualJournalTransactionEntries
-  , actualJournalValue
-  , actualTransactionEntryTransaction
-  )
+import HKernel.Account (Account)
 import HKernel.Application.Config (HouseholdSourcePaths(..))
-import HKernel.Editor.PlanLifecycle (planInactiveIdsAt)
+import HKernel.Editor.HouseholdWorkspace
+  ( IssueWorkspaceFilter(..)
+  , issuesForWorkspace
+  , workspaceAccounts
+  , workspaceIssueCounts
+  , workspaceOpenPlansAt
+  , workspaceReportBookAt
+  , workspaceTransactions
+  )
 import HKernel.Household.Application
   ( HouseholdLoadError
   , HouseholdState(..)
@@ -51,24 +49,11 @@ import HKernel.Household.Application
   )
 import HKernel.Household.Report (HouseholdReportSurface)
 import HKernel.Household.Report.Render (HouseholdReportSection)
-import HKernel.HouseholdIssue
-  ( HouseholdIssue
-  , IssueStatus(..)
-  , householdIssueStatus
-  )
-import HKernel.Editor.HouseholdWorkspace
-  ( IssueWorkspaceFilter(..)
-  , issuesForWorkspace
-  )
+import HKernel.HouseholdIssue (HouseholdIssue)
 import HKernel.Ledger (Transaction)
-import HKernel.Plan.Journal
-  ( IdentifiedPlanTransaction
-  , identifiedPlanId
-  , planJournalTransactions
-  )
-import HKernel.Report (ReportBook, reportBookWithPlan)
-import HKernel.Report.Config (reportConfigurationPlan)
-import HKernel.Report.Plan (ReportPlanError, resolveReportPlan)
+import HKernel.Plan.Journal (IdentifiedPlanTransaction)
+import HKernel.Report (ReportBook)
+import HKernel.Report.Plan (ReportPlanError)
 
 data Name
   = DateField
@@ -206,49 +191,30 @@ makeWorkspaceContext _focusLatest today snapshot =
     , contextCurrentSection = ActualSection
     , contextSelectedReport = ReportTrialBalance
     , contextObservationDay = today
-    , contextResolvedReportBook = resolvedReportBook
-    , contextHouseholdReportSurface = householdReportSurface
+    , contextResolvedReportBook =
+        workspaceReportBookAt today actualJournal reportConfig
+    , contextHouseholdReportSurface =
+        buildHouseholdReportSurfaceFromHousehold today state
     , contextEntryDay = today
-    , contextWorkspaceAccounts = workspaceAccounts
-    , contextWorkspaceList = workspaceList
+    , contextWorkspaceAccounts = L.list WorkspaceAccountList
+        (Vec.fromList (Nothing : map Just accounts)) 1
+    , contextWorkspaceList = L.list WorkspaceTransactionList
+        (Vec.fromList transactions) 1
     , contextWorkspaceFocus = TransactionsFocus
-    , contextPlanList = planList
+    , contextPlanList = L.list PlanList (Vec.fromList openPlans) 1
     , contextIssueFilter = OpenIssueFilter
-    , contextIssueList = issueList
+    , contextIssueList = L.list IssueList
+        (Vec.fromList (issuesForWorkspace OpenIssueFilter issues)) 1
     }
   where
     state = householdWriteSnapshotState snapshot
-    declarations = accountDeclarations (householdStateAccountsRegistry state)
-    transactions =
-      reverse
-        (map actualTransactionEntryTransaction
-          (actualJournalTransactionEntries (householdStateActualJournal state)))
-    workspaceAccounts = L.list WorkspaceAccountList
-      (Vec.fromList (Nothing : map (Just . declaredAccount) declarations)) 1
-    workspaceList = L.list WorkspaceTransactionList (Vec.fromList transactions) 1
-    planJournal = householdStatePlanJournal state
     actualJournal = householdStateActualJournal state
-    allPlans = planJournalTransactions planJournal
-    inactivePlanIds = case planInactiveIdsAt today planJournal actualJournal of
-      Right ids -> ids
-      -- HouseholdWriteSnapshot admission has already proved Plan lifecycle
-      -- validity. If that invariant is ever broken, expose no mutation target
-      -- rather than silently treating lifecycle-invalid Plans as open.
-      Left _ -> Set.fromList (map identifiedPlanId allPlans)
-    openPlans = filter
-      (\identified -> identifiedPlanId identified `Set.notMember` inactivePlanIds)
-      allPlans
-    planList = L.list PlanList (Vec.fromList openPlans) 1
-    issueList = L.list IssueList
-      (Vec.fromList
-        (issuesForWorkspace OpenIssueFilter (householdStateIssues state))) 1
-    journal = actualJournalValue (householdStateActualJournal state)
+    planJournal = householdStatePlanJournal state
     reportConfig = householdStateReportConfig state
-    resolvedReportBook = case resolveReportPlan
-        today journal (reportConfigurationPlan reportConfig) of
-      Left err -> Left err
-      Right plan -> Right (reportBookWithPlan plan journal)
-    householdReportSurface = buildHouseholdReportSurfaceFromHousehold today state
+    issues = householdStateIssues state
+    accounts = workspaceAccounts (householdStateAccountsRegistry state)
+    transactions = workspaceTransactions actualJournal
+    openPlans = workspaceOpenPlansAt today planJournal actualJournal
 
 reloadWorkspaceContext :: AppContext -> IO (Maybe AppContext)
 reloadWorkspaceContext context = do
@@ -280,12 +246,7 @@ contextPlanListL f context =
   (\updated -> context { contextPlanList = updated }) <$> f (contextPlanList context)
 
 contextIssueCounts :: AppContext -> (Int, Int)
-contextIssueCounts context =
-  ( length (filter ((== Open) . householdIssueStatus) issues)
-  , length (filter ((/= Open) . householdIssueStatus) issues)
-  )
-  where
-    issues = householdStateIssues (contextHouseholdState context)
+contextIssueCounts = workspaceIssueCounts . householdStateIssues . contextHouseholdState
 
 setIssueWorkspaceFilter :: IssueWorkspaceFilter -> AppContext -> AppContext
 setIssueWorkspaceFilter visibility context = context

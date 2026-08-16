@@ -2,18 +2,60 @@
 -- Canonical source order remains owned by the admitted source models.
 module HKernel.Editor.HouseholdWorkspace
   ( IssueWorkspaceFilter(..)
+  , homeActualTransactionsOn
+  , homeCycleEndDay
+  , homeIssuesDueOn
+  , homePlannedTransactionsOn
   , issuesForWorkspace
+  , workspaceAccounts
+  , workspaceIssueCounts
+  , workspaceOpenPlansAt
+  , workspaceReportBookAt
+  , workspaceTransactions
   ) where
 
 import Data.List (sortOn)
-import Data.Time.Calendar (toModifiedJulianDay)
+import qualified Data.Set as Set
+import Data.Time.Calendar (Day, addDays, toModifiedJulianDay)
 
+import HKernel.Account
+  ( Account
+  , AccountRegistry
+  , accountDeclarations
+  , declaredAccount
+  )
+import HKernel.Actual.Journal
+  ( ActualJournal
+  , actualJournalTransactionEntries
+  , actualJournalValue
+  , actualTransactionEntryTransaction
+  )
+import HKernel.Editor.PlanLifecycle (planInactiveIdsAt)
+import HKernel.Household.Report (HouseholdReportSurface(..))
 import HKernel.HouseholdIssue
   ( HouseholdIssue
+  , IssueDue(..)
   , IssueStatus(..)
+  , householdIssueDue
   , householdIssueRecordedOn
   , householdIssueStatus
   )
+import HKernel.Ledger (Transaction, transactionDate)
+import HKernel.Period (periodEndExclusive)
+import HKernel.Plan (CommittedOutgoingPlan, committedPlanDate)
+import HKernel.Plan.Journal
+  ( IdentifiedPlanTransaction
+  , PlanJournal
+  , identifiedPlanId
+  , planJournalTransactions
+  )
+import HKernel.Report (ReportBook, reportBookWithPlan)
+import HKernel.Report.Config
+  ( ReportConfiguration
+  , reportConfigurationPlan
+  )
+import HKernel.Report.CycleAccounts (currentCycleAccountsPeriod)
+import HKernel.Report.Plan (ReportPlanError, resolveReportPlan)
 
 -- | Workspace-local visibility for the Household notebook.
 -- Canonical admission keeps every Issue regardless of this presentation choice.
@@ -22,6 +64,56 @@ data IssueWorkspaceFilter
   | ClosedIssueFilter
   | AllIssueFilter
   deriving (Eq, Show)
+
+-- | Stable Account choices for delivery adapters. Presentation state such as a
+-- selected row belongs to the adapter, not to this projection.
+workspaceAccounts :: AccountRegistry -> [Account]
+workspaceAccounts = map declaredAccount . accountDeclarations
+
+-- | Newest Actual transactions first for workspace browsing. Canonical source
+-- order remains unchanged in the admitted Actual journal.
+workspaceTransactions :: ActualJournal -> [Transaction]
+workspaceTransactions =
+  reverse
+    . map actualTransactionEntryTransaction
+    . actualJournalTransactionEntries
+
+-- | Open Plan choices at one observation day. A lifecycle-invalid admitted
+-- state exposes no mutation targets rather than treating invalid Plans as open.
+workspaceOpenPlansAt
+  :: Day
+  -> PlanJournal
+  -> ActualJournal
+  -> [IdentifiedPlanTransaction]
+workspaceOpenPlansAt observedOn planJournal actualJournal =
+  filter isOpen allPlans
+  where
+    allPlans = planJournalTransactions planJournal
+    inactivePlanIds = case planInactiveIdsAt observedOn planJournal actualJournal of
+      Right ids -> ids
+      Left _ -> Set.fromList (map identifiedPlanId allPlans)
+    isOpen identified =
+      identifiedPlanId identified `Set.notMember` inactivePlanIds
+
+-- | Report selection is a rebuildable projection of the admitted Actual journal
+-- and report configuration. Delivery adapters do not own this resolution rule.
+workspaceReportBookAt
+  :: Day
+  -> ActualJournal
+  -> ReportConfiguration
+  -> Either ReportPlanError ReportBook
+workspaceReportBookAt observedOn actualJournal reportConfig = do
+  plan <- resolveReportPlan
+    observedOn
+    (actualJournalValue actualJournal)
+    (reportConfigurationPlan reportConfig)
+  pure (reportBookWithPlan plan (actualJournalValue actualJournal))
+
+workspaceIssueCounts :: [HouseholdIssue] -> (Int, Int)
+workspaceIssueCounts issues =
+  ( length (filter ((== Open) . householdIssueStatus) issues)
+  , length (filter ((/= Open) . householdIssueStatus) issues)
+  )
 
 -- | Select one explicit workspace view and keep newest matters first. Stable
 -- sorting preserves source order for ties without mutating issues.tsv.
@@ -45,3 +137,41 @@ visibleWith visibility issue = case visibility of
   OpenIssueFilter -> householdIssueStatus issue == Open
   ClosedIssueFilter -> householdIssueStatus issue /= Open
   AllIssueFilter -> True
+
+-- | Day-local Actual facts for calendar/detail deliveries.
+homeActualTransactionsOn :: Day -> ActualJournal -> [Transaction]
+homeActualTransactionsOn selectedDay actualJournal =
+  [ transaction
+  | entry <- actualJournalTransactionEntries actualJournal
+  , let transaction = actualTransactionEntryTransaction entry
+  , transactionDate transaction == selectedDay
+  ]
+
+-- | Day-local outgoing Plan projection from the already admitted Household
+-- report surface.
+homePlannedTransactionsOn
+  :: Day
+  -> HouseholdReportSurface
+  -> [CommittedOutgoingPlan]
+homePlannedTransactionsOn selectedDay surface =
+  [ plan
+  | plan <- householdPlannedTransactions surface
+  , committedPlanDate plan == selectedDay
+  ]
+
+-- | Open Issues due on one day. Closed history remains available through the
+-- canonical Issue source and explicit workspace filters.
+homeIssuesDueOn :: Day -> [HouseholdIssue] -> [HouseholdIssue]
+homeIssuesDueOn selectedDay issues =
+  [ issue
+  | issue <- issues
+  , householdIssueStatus issue == Open
+  , householdIssueDue issue == DueOn selectedDay
+  ]
+
+-- | Human-facing cycle end day for a half-open current cycle.
+homeCycleEndDay :: HouseholdReportSurface -> Day
+homeCycleEndDay surface =
+  addDays (-1)
+    (periodEndExclusive
+      (currentCycleAccountsPeriod (householdCurrentCycleAccounts surface)))

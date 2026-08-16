@@ -2,9 +2,8 @@
 
 -- | Quiet calendar-first observation of one admitted Household.
 --
--- This module owns no Household facts. It projects already admitted Actual,
--- Plan, Issue, cycle, and presentation values onto a month matrix and one
--- selected-day pane.
+-- This module owns no Household facts. It renders pure projections from the
+-- shared editor workspace boundary onto a month matrix and selected-day pane.
 module HKernel.Editor.TUI.Home
   ( draw
   ) where
@@ -16,7 +15,6 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Time.Calendar
   ( Day
-  , addDays
   , fromGregorian
   , gregorianMonthLength
   , toGregorian
@@ -26,9 +24,11 @@ import Data.Time.Format (defaultTimeLocale, formatTime)
 import Graphics.Vty qualified as V
 
 import HKernel.Account (accountName)
-import HKernel.Actual.Journal
-  ( actualJournalTransactionEntries
-  , actualTransactionEntryTransaction
+import HKernel.Editor.HouseholdWorkspace
+  ( homeActualTransactionsOn
+  , homeCycleEndDay
+  , homeIssuesDueOn
+  , homePlannedTransactionsOn
   )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
@@ -36,16 +36,10 @@ import HKernel.Editor.TUI.Model
   , contextHouseholdState
   )
 import HKernel.Household.Application (HouseholdState(..))
-import HKernel.Household.Report
-  ( HouseholdReportSurface(..)
-  )
+import HKernel.Household.Report (HouseholdReportSurface)
 import HKernel.HouseholdIssue
   ( HouseholdIssue
-  , IssueDue(..)
-  , IssueStatus(..)
   , householdIssueAmount
-  , householdIssueDue
-  , householdIssueStatus
   , householdIssueText
   )
 import HKernel.Ledger
@@ -53,7 +47,6 @@ import HKernel.Ledger
   , Transaction
   , postingAccount
   , postingAmount
-  , transactionDate
   , transactionDescription
   , transactionPostings
   )
@@ -64,16 +57,13 @@ import HKernel.Money
   , commodityCode
   , renderQuantity
   )
-import HKernel.Period (periodEndExclusive)
 import HKernel.Plan
   ( CommittedOutgoingPlan
   , committedPlanAmount
-  , committedPlanDate
   , committedPlanMemo
   , positiveAmountValue
   )
 import HKernel.Report.Config (reportConfigurationPresentation)
-import HKernel.Report.CycleAccounts (currentCycleAccountsPeriod)
 import HKernel.Report.Presentation
   ( CalendarMarker
   , CalendarMarkers(..)
@@ -162,35 +152,19 @@ isCycleEnd context day = cycleEndDay context == Just day
 
 actualsOn :: AppContext -> Day -> [Transaction]
 actualsOn context day =
-  [ transaction
-  | entry <- actualJournalTransactionEntries
-      (householdStateActualJournal (contextHouseholdState context))
-  , let transaction = actualTransactionEntryTransaction entry
-  , transactionDate transaction == day
-  ]
+  homeActualTransactionsOn day
+    (householdStateActualJournal (contextHouseholdState context))
 
 plansOn :: AppContext -> Day -> [CommittedOutgoingPlan]
 plansOn context day =
-  [ plan
-  | plan <- maybe [] householdPlannedTransactions (householdSurface context)
-  , committedPlanDate plan == day
-  ]
+  maybe [] (homePlannedTransactionsOn day) (householdSurface context)
 
 issuesDueOn :: AppContext -> Day -> [HouseholdIssue]
 issuesDueOn context day =
-  [ issue
-  | issue <- householdStateIssues (contextHouseholdState context)
-  , householdIssueStatus issue == Open
-  , householdIssueDue issue == DueOn day
-  ]
+  homeIssuesDueOn day (householdStateIssues (contextHouseholdState context))
 
 cycleEndDay :: AppContext -> Maybe Day
-cycleEndDay context = do
-  surface <- householdSurface context
-  pure
-    (addDays (-1)
-      (periodEndExclusive
-        (currentCycleAccountsPeriod (householdCurrentCycleAccounts surface))))
+cycleEndDay context = homeCycleEndDay <$> householdSurface context
 
 householdSurface :: AppContext -> Maybe HouseholdReportSurface
 householdSurface context = case contextHouseholdReportSurface context of
