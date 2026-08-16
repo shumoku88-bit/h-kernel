@@ -124,7 +124,7 @@ Source-specific parsers remain source-specific. One Household root does not impl
 
 ## 9. Writer and evolution boundary
 
-Read capability、write capability、canonical source ownership、operational writer authority are distinct. Source-specific writer authority and publication gates are owned by[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md).
+Read capability、write capability、canonical source ownership、operational writer authority are distinct. Source-specific writer authority and publication gates are owned by [`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md).
 
 A writer must not reconstruct facts from compatibility syntax、presentation config、another source's derived observation、or a retired coordinate.
 
