@@ -67,15 +67,11 @@ import HKernel.Envelope.Remaining
   , EnvelopeRemainingError
   , calculateEnvelopeRemaining
   )
-import HKernel.Household.AccountProfile
-  ( HouseholdAccountPolicy
-  , RetainedBudgetAccountKind(..)
-  , householdBudgetKindByAccount
-  )
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.Policy
   ( HouseholdPolicy
   , householdAllocationEnvelopes
+  , householdOpeningBudgetAccounts
   , householdUnassignedBudgetAccounts
   )
 import HKernel.Money
@@ -100,8 +96,7 @@ data HouseholdEnvelopeObservation = HouseholdEnvelopeObservation
 
 data HouseholdEnvelopeError
   = HouseholdEnvelopeConsumptionError EnvelopeConsumptionError
-  | HouseholdEnvelopeEntitlementKindMissing Int Int
-  | HouseholdEnvelopeEntitlementCoordinateMismatch Int Int
+  | HouseholdEnvelopeEntitlementCoordinateMissing Int Int
   | HouseholdEnvelopeEntitlementTransferError Int EnvelopeEntitlementTransferError
   | HouseholdEnvelopeEntitlementHistoryError EnvelopeEntitlementHistoryError
   | HouseholdEnvelopeEntitlementObservationError EnvelopeEntitlementError
@@ -115,7 +110,6 @@ data SourceEndpoint
   = SourceEnvelope EnvelopeId
   | SourceUnallocated
   | SourceOpening
-  | SourceExecution
 
 deriveHouseholdEnvelopeObservation
   :: Day
@@ -123,13 +117,12 @@ deriveHouseholdEnvelopeObservation
   -> ActualJournal
   -> PlanJournal
   -> HouseholdPolicy
-  -> HouseholdAccountPolicy
   -> ExpenseRoutingHistory
   -> FulfillmentRoutingHistory
   -> [HouseholdBudgetMovement]
   -> Either (NonEmpty HouseholdEnvelopeError) HouseholdEnvelopeObservation
-deriveHouseholdEnvelopeObservation observedThrough period actual plans policy accountPolicy expenseRouting fulfillmentRouting movements = do
-  history <- projectEntitlementHistory policy accountPolicy movements
+deriveHouseholdEnvelopeObservation observedThrough period actual plans policy expenseRouting fulfillmentRouting movements = do
+  history <- projectEntitlementHistory policy movements
   entitlement <- singleLeft HouseholdEnvelopeEntitlementObservationError
     (observeEnvelopeEntitlement period observedThrough history)
   consumption <- singleLeft HouseholdEnvelopeConsumptionError
@@ -158,10 +151,9 @@ deriveHouseholdEnvelopeObservation observedThrough period actual plans policy ac
 
 projectEntitlementHistory
   :: HouseholdPolicy
-  -> HouseholdAccountPolicy
   -> [HouseholdBudgetMovement]
   -> Either (NonEmpty HouseholdEnvelopeError) EnvelopeEntitlementHistory
-projectEntitlementHistory policy accountPolicy movements =
+projectEntitlementHistory policy movements =
   case partitionEithers (zipWith projectMovement [1..] movements) of
     ([], maybeTransfers) ->
       mapLeft (fmap HouseholdEnvelopeEntitlementHistoryError)
@@ -170,12 +162,6 @@ projectEntitlementHistory policy accountPolicy movements =
           [transfer | Just transfer <- maybeTransfers])
     (errorGroups, _) -> Left (NonEmpty.fromList (concat errorGroups))
   where
-    -- The admitted Entitlement source itself establishes when each Commodity
-    -- enters the Envelope stock world. Opening -> unallocated movement evidence
-    -- therefore survives even though it is not a native Envelope transfer.
-    -- This lets routed Actual use after source inception remain visible as
-    -- negative Remaining before the first grant, without scanning older
-    -- accounting history from negative infinity.
     sourceOrigins = Map.fromListWith min
       [ ( amountCommodity (householdBudgetMovementAmount movement)
         , householdBudgetMovementDate movement
@@ -184,8 +170,8 @@ projectEntitlementHistory policy accountPolicy movements =
       ]
 
     allocationByAccount = householdAllocationEnvelopes policy
+    openingAccounts = householdOpeningBudgetAccounts policy
     unassignedAccounts = householdUnassignedBudgetAccounts policy
-    kinds = householdBudgetKindByAccount accountPolicy
 
     projectMovement transactionIndex movement
       | amountQuantity sourceAmount == zeroQuantity = Right Nothing
@@ -210,18 +196,14 @@ projectEntitlementHistory policy accountPolicy movements =
         _ -> error "unreachable: exactly two entitlement endpoints are classified"
 
     classifyEndpoint transactionIndex postingIndex account =
-      case (Map.lookup account allocationByAccount, Set.member account unassignedAccounts, Map.lookup account kinds) of
-        (Just envelope, False, Just RetainedEnvelopeBudgetAccount) -> Right (SourceEnvelope envelope)
-        (Nothing, True, Just RetainedUnassignedBudgetAccount) -> Right SourceUnallocated
-        (Nothing, False, Just RetainedOpeningBudgetAccount) -> Right SourceOpening
-        (Nothing, False, Just RetainedSpentBudgetAccount) -> Right SourceExecution
-        (_, _, Nothing) -> Left (HouseholdEnvelopeEntitlementKindMissing transactionIndex postingIndex)
-        _ -> Left (HouseholdEnvelopeEntitlementCoordinateMismatch transactionIndex postingIndex)
+      case (Map.lookup account allocationByAccount, Set.member account openingAccounts, Set.member account unassignedAccounts) of
+        (Just envelope, False, False) -> Right (SourceEnvelope envelope)
+        (Nothing, True, False) -> Right SourceOpening
+        (Nothing, False, True) -> Right SourceUnallocated
+        _ -> Left (HouseholdEnvelopeEntitlementCoordinateMissing transactionIndex postingIndex)
 
     projectEndpoints transactionIndex movement amount fromEndpoint toEndpoint =
       case (fromEndpoint, toEndpoint) of
-        (SourceEnvelope _, SourceExecution) -> Right Nothing
-        (SourceExecution, SourceEnvelope _) -> Right Nothing
         (SourceEnvelope fromEnvelope, SourceEnvelope toEnvelope) ->
           makeTransfer (Spendable fromEnvelope) (Spendable toEnvelope)
         (SourceEnvelope fromEnvelope, _) -> makeTransfer (Spendable fromEnvelope) Unallocated

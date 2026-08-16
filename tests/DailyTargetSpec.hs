@@ -30,14 +30,14 @@ main = do
       cash = mustRight (mkAccount "assets:cash")
       wifi = mustRight (mkAccount "expenses:wifi")
       plan = outgoingPlan registry cash wifi jpy
-      (envelopePolicy, backingPolicy, currentExpenses) = mustRight
+      (envelopePolicy, backingPolicy) = mustRight
         (parseCurrentEnvelopeConfiguration nativeEnvelopeConfig)
       householdConfiguration = mustRight
         (parseHouseholdConfiguration
-          envelopePolicy backingPolicy currentExpenses nativeHouseholdConfig)
+          envelopePolicy backingPolicy nativeHouseholdConfig)
       preCutoverConfiguration = mustRight
         (parseHouseholdConfiguration
-          envelopePolicy backingPolicy currentExpenses nativeHouseholdConfigWithoutMoney)
+          envelopePolicy backingPolicy nativeHouseholdConfigWithoutMoney)
       planJournal = mustRight (parsePlanJournal nativePlanJournal)
       obligationSelections = mustRight
         (admitDailyTargetPlanJournalSelections planJournal)
@@ -60,7 +60,7 @@ main = do
     (Just jpy)
     (householdConfigurationPrimaryCommodity householdConfiguration)
   assertEqual
-    "pre-cutover household.toml remains valid without inventing a Commodity fallback"
+    "household.toml remains valid without inventing a Commodity fallback"
     Nothing
     (householdConfigurationPrimaryCommodity preCutoverConfiguration)
 
@@ -228,7 +228,6 @@ nativeEnvelopeConfig = T.unlines
   , "label = \"Daily\""
   , "pacing = \"daily\""
   , "backing-pool = \"operating\""
-  , "expense-accounts = [\"expenses:wifi\"]"
   ]
 
 nativeHouseholdConfig :: T.Text
@@ -247,12 +246,12 @@ nativeHouseholdConfigWithoutMoney = T.unlines
   , "income-account = \"income:benefit\""
   , ""
   , "[budget]"
+  , "opening-accounts = [\"budget:opening\"]"
   , "unassigned-accounts = [\"budget:unassigned\"]"
   , ""
   , "[[budget.envelopes]]"
   , "id = \"daily\""
   , "allocation-account = \"budget:daily\""
-  , "plan-destination-accounts = [\"assets:cash\"]"
   , ""
   , "[daily-target]"
   , ""

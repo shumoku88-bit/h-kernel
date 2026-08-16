@@ -1,5 +1,6 @@
--- | Stable household policy layered on independently admitted current Envelope,
--- current Expense assignment, and Backing owners.
+-- | Stable Household policy layered on independently admitted current Envelope
+-- and Backing owners. Historical Expense/Fulfillment meaning is admitted from
+-- explicit routing history, never reconstructed from current policy.
 module HKernel.Household.Policy
   ( HouseholdCyclePolicy
   , incomeAnchorCyclePolicy
@@ -11,15 +12,13 @@ module HKernel.Household.Policy
   , HouseholdPolicy
   , HouseholdPolicyError(..)
   , mkHouseholdPolicy
-  , withHouseholdAccountPolicy
-  , householdPolicyAccountPolicy
   , householdPolicyCycle
   , householdEnvelopePolicy
   , householdBackingPolicy
-  , householdCurrentExpenseAssignments
   , householdEnvelopeOrder
   , householdAllocationEnvelopes
   , householdRetiredAllocationAccounts
+  , householdOpeningBudgetAccounts
   , householdUnassignedBudgetAccounts
   , HouseholdPolicyAccountError(..)
   , validateHouseholdPolicyAccounts
@@ -46,14 +45,10 @@ import HKernel.Backing.Policy
   )
 import HKernel.Envelope
   ( CurrentEnvelopePolicy
-  , CurrentExpenseAssignments
-  , CurrentExpenseAssignmentsReferenceError
   , currentEnvelopePolicyDefinitions
   , envelopeDefinitionId
-  , validateCurrentExpenseAssignments
   )
 import HKernel.Envelope.Identity (EnvelopeId)
-import HKernel.Household.AccountProfile (HouseholdAccountPolicy)
 
 newtype HouseholdCyclePolicy = IncomeAnchorCyclePolicy
   { householdCycleIncomeAccount :: Account
@@ -77,29 +72,26 @@ defineHouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
 
 data HouseholdPolicyError
   = DuplicateHouseholdEnvelopeCoordinates EnvelopeId
-  | HouseholdCoordinatesReferenceUnknownEnvelope EnvelopeId
   | HouseholdEnvelopeMissingCoordinates EnvelopeId
   | DuplicateAllocationAccount Account EnvelopeId EnvelopeId
+  | HouseholdPolicyHasNoOpeningBudgetAccounts
+  | DuplicateOpeningBudgetAccount Account
   | HouseholdPolicyHasNoUnassignedBudgetAccounts
   | DuplicateUnassignedBudgetAccount Account
+  | AllocationAccountAlsoOpening Account EnvelopeId
   | AllocationAccountAlsoUnassigned Account EnvelopeId
+  | OpeningAccountAlsoUnassigned Account
   deriving (Eq, Show)
 
 data HouseholdPolicy = HouseholdPolicy
-  { householdPolicyCycle                 :: HouseholdCyclePolicy
-  , householdEnvelopePolicy              :: CurrentEnvelopePolicy
-  , householdBackingPolicy               :: BackingPolicy
-  , householdCurrentExpenseAssignments   :: CurrentExpenseAssignments
-  , householdEnvelopeOrder               :: [EnvelopeId]
-  , householdAllocationEnvelopes         :: Map Account EnvelopeId
-  , householdUnassignedBudgetAccounts    :: Set Account
-  , householdPolicyAccountPolicy         :: Maybe HouseholdAccountPolicy
+  { householdPolicyCycle              :: HouseholdCyclePolicy
+  , householdEnvelopePolicy           :: CurrentEnvelopePolicy
+  , householdBackingPolicy            :: BackingPolicy
+  , householdEnvelopeOrder            :: [EnvelopeId]
+  , householdAllocationEnvelopes      :: Map Account EnvelopeId
+  , householdOpeningBudgetAccounts    :: Set Account
+  , householdUnassignedBudgetAccounts :: Set Account
   } deriving (Eq, Show)
-
-withHouseholdAccountPolicy
-  :: Maybe HouseholdAccountPolicy -> HouseholdPolicy -> HouseholdPolicy
-withHouseholdAccountPolicy accountPolicy policy =
-  policy { householdPolicyAccountPolicy = accountPolicy }
 
 -- | Allocation Accounts whose stable Envelope identity is no longer present in
 -- current policy. Readers retain them for historical evidence; current writers
@@ -117,22 +109,21 @@ mkHouseholdPolicy
   :: HouseholdCyclePolicy
   -> CurrentEnvelopePolicy
   -> BackingPolicy
-  -> CurrentExpenseAssignments
   -> [HouseholdEnvelopeCoordinates]
   -> [Account]
+  -> [Account]
   -> Either (NonEmpty HouseholdPolicyError) HouseholdPolicy
-mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy currentExpenses coordinates unassignedAccounts =
+mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy coordinates openingAccounts unassignedAccounts =
   case NonEmpty.nonEmpty errors of
     Just found -> Left found
     Nothing -> Right HouseholdPolicy
       { householdPolicyCycle = cyclePolicy
       , householdEnvelopePolicy = envelopePolicy
       , householdBackingPolicy = backingPolicy
-      , householdCurrentExpenseAssignments = currentExpenses
       , householdEnvelopeOrder = currentEnvelopeIds
-      , householdAllocationEnvelopes = coordinateValues allocationObservation
-      , householdUnassignedBudgetAccounts = Set.fromList unassignedAccounts
-      , householdPolicyAccountPolicy = Nothing
+      , householdAllocationEnvelopes = allocationValues
+      , householdOpeningBudgetAccounts = openingSet
+      , householdUnassignedBudgetAccounts = unassignedSet
       }
   where
     definitions = currentEnvelopePolicyDefinitions envelopePolicy
@@ -150,28 +141,44 @@ mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy currentExpenses coord
     allocationObservation = observeCoordinates
       [ (householdEnvelopeAllocationAccount coordinate, householdEnvelopeCoordinateId coordinate)
       | coordinate <- canonicalCoordinates ]
+    allocationValues = coordinateValues allocationObservation
     allocationErrors =
       [ DuplicateAllocationAccount account firstEnvelope repeatedEnvelope
       | (account, firstEnvelope, repeatedEnvelope) <- coordinateConflicts allocationObservation ]
+    openingObservation = observeCoordinates [(account, ()) | account <- openingAccounts]
+    openingSet = Map.keysSet (coordinateValues openingObservation)
+    openingErrors =
+      [ DuplicateOpeningBudgetAccount account
+      | (account, _, _) <- coordinateConflicts openingObservation ]
     unassignedObservation = observeCoordinates [(account, ()) | account <- unassignedAccounts]
+    unassignedSet = Map.keysSet (coordinateValues unassignedObservation)
     unassignedErrors =
       [ DuplicateUnassignedBudgetAccount account
       | (account, _, _) <- coordinateConflicts unassignedObservation ]
-    presenceErrors = [HouseholdPolicyHasNoUnassignedBudgetAccounts | null unassignedAccounts]
+    presenceErrors =
+      [HouseholdPolicyHasNoOpeningBudgetAccounts | null openingAccounts]
+      ++ [HouseholdPolicyHasNoUnassignedBudgetAccounts | null unassignedAccounts]
     overlapErrors =
-      [ AllocationAccountAlsoUnassigned account envelope
-      | (account, envelope) <- Map.toAscList (coordinateValues allocationObservation)
-      , Set.member account (Set.fromList unassignedAccounts) ]
+      [ AllocationAccountAlsoOpening account envelope
+      | (account, envelope) <- Map.toAscList allocationValues
+      , Set.member account openingSet ]
+      ++ [ AllocationAccountAlsoUnassigned account envelope
+         | (account, envelope) <- Map.toAscList allocationValues
+         , Set.member account unassignedSet ]
+      ++ [ OpeningAccountAlsoUnassigned account
+         | account <- Set.toAscList (Set.intersection openingSet unassignedSet) ]
     errors = duplicateCoordinateErrors ++ missingCoordinateErrors
-      ++ allocationErrors ++ presenceErrors ++ unassignedErrors ++ overlapErrors
+      ++ allocationErrors ++ presenceErrors ++ openingErrors ++ unassignedErrors
+      ++ overlapErrors
 
 data HouseholdPolicyAccountError
-  = HouseholdCurrentExpenseAssignmentsReferenceError CurrentExpenseAssignmentsReferenceError
-  | HouseholdBackingPolicyAccountError BackingPolicyAccountError
+  = HouseholdBackingPolicyAccountError BackingPolicyAccountError
   | HouseholdCycleIncomeAccountUndeclared Account
   | HouseholdCycleIncomeAccountNotIncome Account AccountType
   | HouseholdAllocationAccountUndeclared EnvelopeId Account
   | HouseholdAllocationAccountNotBudget EnvelopeId Account AccountType
+  | HouseholdOpeningAccountUndeclared Account
+  | HouseholdOpeningAccountNotBudget Account AccountType
   | HouseholdUnassignedAccountUndeclared Account
   | HouseholdUnassignedAccountNotBudget Account AccountType
   deriving (Eq, Show)
@@ -188,13 +195,6 @@ validateHouseholdPolicyAccounts registry policy =
     Just found -> Left found
     Nothing -> Right ()
   where
-    currentExpenseErrors = case validateCurrentExpenseAssignments
-        registry
-        (householdEnvelopePolicy policy)
-        (householdCurrentExpenseAssignments policy) of
-      Left values ->
-        map HouseholdCurrentExpenseAssignmentsReferenceError (NonEmpty.toList values)
-      Right _ -> []
     backingErrors = case validateBackingPolicyAccounts registry (householdBackingPolicy policy) of
       Left values -> map HouseholdBackingPolicyAccountError (NonEmpty.toList values)
       Right _ -> []
@@ -209,13 +209,19 @@ validateHouseholdPolicyAccounts registry policy =
       Just declaration
         | declaredAccountType declaration == Budget -> []
         | otherwise -> [HouseholdAllocationAccountNotBudget envelope account (declaredAccountType declaration)]
+    validateOpening account = case lookupAccountDeclaration account registry of
+      Nothing -> [HouseholdOpeningAccountUndeclared account]
+      Just declaration
+        | declaredAccountType declaration == Budget -> []
+        | otherwise -> [HouseholdOpeningAccountNotBudget account (declaredAccountType declaration)]
     validateUnassigned account = case lookupAccountDeclaration account registry of
       Nothing -> [HouseholdUnassignedAccountUndeclared account]
       Just declaration
         | declaredAccountType declaration == Budget -> []
         | otherwise -> [HouseholdUnassignedAccountNotBudget account (declaredAccountType declaration)]
-    errors = currentExpenseErrors ++ backingErrors ++ validateCycle
+    errors = backingErrors ++ validateCycle
       ++ concatMap validateAllocation (Map.toAscList (householdAllocationEnvelopes policy))
+      ++ concatMap validateOpening (Set.toAscList (householdOpeningBudgetAccounts policy))
       ++ concatMap validateUnassigned (Set.toAscList (householdUnassignedBudgetAccounts policy))
 
 data CoordinateObservation key value = CoordinateObservation

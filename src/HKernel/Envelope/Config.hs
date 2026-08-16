@@ -20,14 +20,14 @@ import HKernel.Backing.Policy
   , backingPolicyPoolForEnvelope, backingPoolDefinitionAssetAccounts
   , backingPoolDefinitionId, defineBackingPool, mkBackingPolicy )
 import HKernel.Envelope.Identity
-  ( EnvelopeId, EnvelopeIdError(..), envelopeIdText, mkEnvelopeId )
+  ( EnvelopeIdError(..), envelopeIdText, mkEnvelopeId )
 import HKernel.Envelope.Policy
 import Toml (decode)
 import Toml.Schema (FromValue(..), Result(..), parseTableFromValue, reqKey)
 
 data RawConfiguration = RawConfiguration [RawBackingPool] [RawEnvelope]
 data RawBackingPool = RawBackingPool Text [Text]
-data RawEnvelope = RawEnvelope Text Text Text Text [Text]
+data RawEnvelope = RawEnvelope Text Text Text Text
 
 instance FromValue RawConfiguration where
   fromValue = parseTableFromValue
@@ -38,18 +38,14 @@ instance FromValue RawBackingPool where
 instance FromValue RawEnvelope where
   fromValue = parseTableFromValue
     (RawEnvelope <$> reqKey "id" <*> reqKey "label" <*> reqKey "pacing"
-      <*> reqKey "backing-pool" <*> reqKey "expense-accounts")
+      <*> reqKey "backing-pool")
 
--- | Admit three independent semantic/source owners from one retained physical
--- source. The tuple is only the parser boundary; none of the owners contains
--- either of the others.
---
--- Current Expense assignments remain source compatibility/current operational
--- policy. Historical Expense routing is admitted independently and never
--- reconstructed from this source.
+-- | Admit the two current semantic owners that share @budget.toml@ physically:
+-- current Envelope presentation/membership and current Backing topology.
+-- Expense-to-Envelope meaning belongs only to explicit ExpenseRoutingHistory.
 parseCurrentEnvelopeConfiguration
   :: Text
-  -> Either [Text] (CurrentEnvelopePolicy, BackingPolicy, CurrentExpenseAssignments)
+  -> Either [Text] (CurrentEnvelopePolicy, BackingPolicy)
 parseCurrentEnvelopeConfiguration input =
   case decode input :: Result String RawConfiguration of
     Failure errors -> Left (map T.pack errors)
@@ -59,7 +55,7 @@ parseCurrentEnvelopeConfiguration input =
 
 rawToPolicies
   :: RawConfiguration
-  -> Either [Text] (CurrentEnvelopePolicy, BackingPolicy, CurrentExpenseAssignments)
+  -> Either [Text] (CurrentEnvelopePolicy, BackingPolicy)
 rawToPolicies (RawConfiguration rawPools rawEnvelopes) =
   case syntaxErrors of
     _ : _ -> Left syntaxErrors
@@ -67,17 +63,14 @@ rawToPolicies (RawConfiguration rawPools rawEnvelopes) =
       Left errors -> Left (map renderBackingError (NonEmpty.toList errors))
       Right backing -> case mkCurrentEnvelopePolicy envelopeDefinitions of
         Left errors -> Left (map renderPolicyError (NonEmpty.toList errors))
-        Right policy -> case mkCurrentExpenseAssignments expenseAssignments of
-          Left errors -> Left (map renderCurrentExpenseAssignmentsError (NonEmpty.toList errors))
-          Right currentExpenses -> Right (policy, backing, currentExpenses)
+        Right policy -> Right (policy, backing)
   where
     (poolErrorGroups, poolDefinitions) = partitionEithers
       (zipWith parseRawBackingPool [0 :: Int ..] rawPools)
     (envelopeErrorGroups, parsedEnvelopes) = partitionEithers
       (zipWith parseRawEnvelope [0 :: Int ..] rawEnvelopes)
-    envelopeDefinitions = [definition | (definition, _, _) <- parsedEnvelopes]
-    backingAssignments = [assignment | (_, assignment, _) <- parsedEnvelopes]
-    expenseAssignments = concat [assignments | (_, _, assignments) <- parsedEnvelopes]
+    envelopeDefinitions = [definition | (definition, _) <- parsedEnvelopes]
+    backingAssignments = [assignment | (_, assignment) <- parsedEnvelopes]
     syntaxErrors = concat poolErrorGroups ++ concat envelopeErrorGroups
 
 parseRawBackingPool :: Int -> RawBackingPool -> Either [Text] BackingPoolDefinition
@@ -94,13 +87,12 @@ parseRawBackingPool index (RawBackingPool rawId rawAccounts) =
 parseRawEnvelope
   :: Int
   -> RawEnvelope
-  -> Either [Text] (EnvelopeDefinition, EnvelopeBackingAssignment, [(Account, EnvelopeId)])
-parseRawEnvelope index (RawEnvelope rawId rawLabel rawPacing rawPool rawAccounts) =
+  -> Either [Text] (EnvelopeDefinition, EnvelopeBackingAssignment)
+parseRawEnvelope index (RawEnvelope rawId rawLabel rawPacing rawPool) =
   case (idResult, labelResult, pacingResult, poolResult, errors) of
     (Right envelope, Right label, Right pacing, Right pool, []) -> Right
       ( defineEnvelope envelope label pacing
       , assignEnvelopeBackingPool envelope pool
-      , [(account, envelope) | account <- accounts]
       )
     _ -> Left errors
   where
@@ -109,12 +101,10 @@ parseRawEnvelope index (RawEnvelope rawId rawLabel rawPacing rawPool rawAccounts
     labelResult = mkEnvelopeLabel rawLabel
     pacingResult = parsePacing (path <> ".pacing") rawPacing
     poolResult = mkBackingPoolId rawPool
-    (accountErrors, accounts) = parseAccounts (path <> ".expense-accounts") rawAccounts
     errors = either (pure . renderEnvelopeIdError (path <> ".id")) (const []) idResult
       ++ either (pure . renderLabelError (path <> ".label")) (const []) labelResult
       ++ either id (const []) pacingResult
       ++ either (pure . renderPoolIdError (path <> ".backing-pool")) (const []) poolResult
-      ++ accountErrors
 
 parsePacing :: Text -> Text -> Either [Text] Pacing
 parsePacing _ "daily" = Right Daily
@@ -124,9 +114,8 @@ parsePacing path value = Left [path <> ": expected daily or flex; got " <> quote
 renderCurrentEnvelopeConfiguration
   :: CurrentEnvelopePolicy
   -> BackingPolicy
-  -> CurrentExpenseAssignments
   -> Text
-renderCurrentEnvelopeConfiguration policy backing currentExpenses =
+renderCurrentEnvelopeConfiguration policy backing =
   T.intercalate "\n"
     (map renderPool (backingPolicyPoolDefinitions backing)
       ++ map renderEnvelope (currentEnvelopePolicyDefinitions policy)) <> "\n"
@@ -141,14 +130,13 @@ renderCurrentEnvelopeConfiguration policy backing currentExpenses =
       , "label = " <> tomlString (envelopeLabelText (envelopeDefinitionLabel definition))
       , "pacing = " <> tomlString (renderPacing (envelopeDefinitionPacing definition))
       , "backing-pool = " <> maybe "\"\"" (tomlString . backingPoolIdText)
-          (backingPolicyPoolForEnvelope envelope backing)
-      , "expense-accounts = " <> renderAccountArray
-          (currentExpenseAccountsForEnvelope envelope currentExpenses) ]
+          (backingPolicyPoolForEnvelope envelope backing) ]
       where envelope = envelopeDefinitionId definition
 
 renderPacing :: Pacing -> Text
 renderPacing Daily = "daily"
 renderPacing Flex = "flex"
+
 renderCurrentEnvelopeConfigurationErrors :: [Text] -> Text
 renderCurrentEnvelopeConfigurationErrors = T.unlines . map ("  " <>)
 
@@ -203,11 +191,6 @@ renderPolicyError err = case err of
   DuplicateCurrentEnvelopeLabel label firstEnvelope secondEnvelope ->
     "envelopes: duplicate label " <> quoted (envelopeLabelText label)
       <> " for " <> quoted (envelopeIdText firstEnvelope) <> " and " <> quoted (envelopeIdText secondEnvelope)
-renderCurrentExpenseAssignmentsError :: CurrentExpenseAssignmentsError -> Text
-renderCurrentExpenseAssignmentsError err = case err of
-  DuplicateCurrentExpenseAccountAssignment account firstEnvelope secondEnvelope ->
-    "Expense account " <> quoted (accountName account) <> " is assigned to both "
-      <> quoted (envelopeIdText firstEnvelope) <> " and " <> quoted (envelopeIdText secondEnvelope)
 renderBackingError :: BackingPolicyError -> Text
 renderBackingError err = case err of
   DuplicateBackingPoolDefinition pool -> "backing-pools: duplicate identity " <> quoted (backingPoolIdText pool)

@@ -10,21 +10,19 @@ import HKernel.Envelope.Config
   )
 import HKernel.Envelope.Policy
   ( currentEnvelopePolicyDefinitions
-  , currentExpenseAssignmentPairs
   , envelopeDefinitionLabel
   , envelopeLabelText
   )
 
 main :: IO ()
 main = do
-  let (policy, backing, currentExpenses) =
-        mustRight (parseCurrentEnvelopeConfiguration source)
-      rendered = renderCurrentEnvelopeConfiguration policy backing currentExpenses
+  let (policy, backing) = mustRight (parseCurrentEnvelopeConfiguration source)
+      rendered = renderCurrentEnvelopeConfiguration policy backing
       reparsed = mustRight (parseCurrentEnvelopeConfiguration rendered)
 
   assertEqual
-    "current Envelope, Backing, and Expense assignment configuration round-trips as independent owners"
-    (policy, backing, currentExpenses)
+    "current Envelope and Backing configuration round-trips as independent owners"
+    (policy, backing)
     reparsed
 
   case currentEnvelopePolicyDefinitions policy of
@@ -35,10 +33,9 @@ main = do
         (envelopeLabelText (envelopeDefinitionLabel definition))
     other -> error ("expected one Envelope definition, got: " ++ show other)
 
-  assertEqual
-    "current Expense assignment is admitted by its own owner"
-    1
-    (length (currentExpenseAssignmentPairs currentExpenses))
+  case parseCurrentEnvelopeConfiguration legacyExpenseSource of
+    Left _ -> pure ()
+    Right _ -> error "expense-accounts must no longer be admitted by budget.toml"
 
 source :: T.Text
 source = T.unlines
@@ -51,5 +48,8 @@ source = T.unlines
   , "label = \"Everyday\""
   , "pacing = \"daily\""
   , "backing-pool = \"operating\""
-  , "expense-accounts = [\"expenses:food\"]"
   ]
+
+legacyExpenseSource :: T.Text
+legacyExpenseSource = source <>
+  "expense-accounts = [\"expenses:food\"]\n"

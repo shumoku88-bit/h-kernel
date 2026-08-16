@@ -78,7 +78,6 @@ import HKernel.Household.Policy
   , householdBackingPolicy
   , householdCycleIncomeAccount
   , householdEnvelopeOrder
-  , householdPolicyAccountPolicy
   , householdPolicyCycle
   , householdUnassignedBudgetAccounts
   )
@@ -179,11 +178,6 @@ buildHouseholdReportSurfaceFromAdmitted
   -> DailyTargetScope
   -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
 buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal policy expenseRouting fulfillmentRouting admittedPlans movements issues dailyScope = do
-  accountPolicy <- case householdPolicyAccountPolicy policy of
-    Just value -> Right value
-    Nothing -> Left (sourceError "household.toml" 0
-      "account-policy is required for native Envelope entitlement admission"
-      NonEmpty.:| [])
   let journal = actualJournalValue actualJournal
       cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
       retiredPlanIds = retiredPlanIdsAt observation
@@ -219,7 +213,6 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
       actualJournal
       planJournal
       policy
-      accountPolicy
       expenseRouting
       fulfillmentRouting
       movements)

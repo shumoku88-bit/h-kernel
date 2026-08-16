@@ -1,15 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | TOML admission for household coordinates layered on admitted current
--- Envelope, current Expense assignment, and Backing policy. Physical @budget@
--- section names remain source compatibility; no Budget domain value is
--- constructed here.
+-- | TOML admission for Household coordinates layered on independently admitted
+-- current Envelope and Backing policy. Expense and Fulfillment meaning belongs
+-- to explicit history in this same physical source, not to current policy.
 module HKernel.Household.Config
   ( HouseholdConfiguration
   , householdConfigurationPolicy
   , householdConfigurationPrimaryCommodity
   , householdConfigurationDailyTargetAssets
-  , householdConfigurationAccountPolicy
   , parseHouseholdConfiguration
   , parseHouseholdPolicy
   , renderHouseholdPolicyErrors
@@ -27,23 +25,11 @@ import HKernel.Account
   , mkAccount
   )
 import HKernel.Backing.Policy (BackingPolicy)
-import HKernel.Envelope
-  ( CurrentEnvelopePolicy
-  , CurrentExpenseAssignments
-  )
+import HKernel.Envelope (CurrentEnvelopePolicy)
 import HKernel.Envelope.Identity
   ( EnvelopeIdError(..)
   , envelopeIdText
   , mkEnvelopeId
-  )
-import HKernel.Household.AccountProfile
-  ( HouseholdAccountPolicy
-  , HouseholdAccountPolicyError(..)
-  , RetainedAssetClass(..)
-  , RetainedBudgetAccountKind(..)
-  , RetainedBudgetGroup(..)
-  , RetainedSpendClass(..)
-  , mkHouseholdAccountPolicy
   )
 import HKernel.Household.DailyTarget
   ( DailyTargetAssetSelection
@@ -70,7 +56,6 @@ data HouseholdConfiguration = HouseholdConfiguration
   { householdConfigurationPolicy            :: HouseholdPolicy
   , householdConfigurationPrimaryCommodity  :: Maybe Commodity
   , householdConfigurationDailyTargetAssets :: [DailyTargetAssetSelection]
-  , householdConfigurationAccountPolicy     :: Maybe HouseholdAccountPolicy
   } deriving (Eq, Show)
 
 data RawHouseholdPolicy = RawHouseholdPolicy
@@ -78,7 +63,6 @@ data RawHouseholdPolicy = RawHouseholdPolicy
   RawHouseholdEnvelopeCoordinates
   (Maybe RawMoney)
   (Maybe RawDailyTarget)
-  (Maybe RawAccountPolicy)
   (Maybe Value)
 
 data RawCycle = RawCycle Text Text
@@ -86,35 +70,15 @@ data RawCycle = RawCycle Text Text
 data RawHouseholdEnvelopeCoordinates = RawHouseholdEnvelopeCoordinates
   [RawEnvelopeCoordinates]
   [Text]
+  [Text]
 
 data RawMoney = RawMoney Text
 
-data RawEnvelopeCoordinates = RawEnvelopeCoordinates
-  Text
-  Text
-  (Maybe Value)
+data RawEnvelopeCoordinates = RawEnvelopeCoordinates Text Text
 
 data RawDailyTarget = RawDailyTarget [RawDailyTargetAsset]
 
 data RawDailyTargetAsset = RawDailyTargetAsset Text Text
-
-data RawAccountPolicy = RawAccountPolicy
-  RawAssetPolicy
-  RawBudgetAccountPolicy
-  RawExpensePolicy
-
-data RawAssetPolicy = RawAssetPolicy [Text] [Text] [Text]
-
-data RawBudgetAccountPolicy = RawBudgetAccountPolicy
-  RawBudgetKindPolicy
-  (Maybe Value)
-  RawBudgetGroupPolicy
-
-data RawBudgetKindPolicy = RawBudgetKindPolicy [Text] [Text] [Text] [Text]
-
-data RawBudgetGroupPolicy = RawBudgetGroupPolicy [Text] [Text] [Text]
-
-data RawExpensePolicy = RawExpensePolicy [Text] [Text]
 
 instance FromValue RawHouseholdPolicy where
   fromValue = parseTableFromValue
@@ -123,7 +87,6 @@ instance FromValue RawHouseholdPolicy where
       <*> reqKey "budget"
       <*> optKey "money"
       <*> optKey "daily-target"
-      <*> optKey "account-policy"
       <*> optKey "envelope-history")
 
 instance FromValue RawCycle where
@@ -136,6 +99,7 @@ instance FromValue RawHouseholdEnvelopeCoordinates where
   fromValue = parseTableFromValue
     (RawHouseholdEnvelopeCoordinates
       <$> reqKey "envelopes"
+      <*> reqKey "opening-accounts"
       <*> reqKey "unassigned-accounts")
 
 instance FromValue RawMoney where
@@ -146,8 +110,7 @@ instance FromValue RawEnvelopeCoordinates where
   fromValue = parseTableFromValue
     (RawEnvelopeCoordinates
       <$> reqKey "id"
-      <*> reqKey "allocation-account"
-      <*> optKey "plan-destination-accounts")
+      <*> reqKey "allocation-account")
 
 instance FromValue RawDailyTarget where
   fromValue = parseTableFromValue
@@ -159,71 +122,26 @@ instance FromValue RawDailyTargetAsset where
       <$> reqKey "id"
       <*> reqKey "account")
 
-instance FromValue RawAccountPolicy where
-  fromValue = parseTableFromValue
-    (RawAccountPolicy
-      <$> reqKey "assets"
-      <*> reqKey "budget"
-      <*> reqKey "expenses")
-
-instance FromValue RawAssetPolicy where
-  fromValue = parseTableFromValue
-    (RawAssetPolicy
-      <$> reqKey "liquid"
-      <*> reqKey "savings"
-      <*> reqKey "investment")
-
-instance FromValue RawBudgetAccountPolicy where
-  fromValue = parseTableFromValue
-    (RawBudgetAccountPolicy
-      <$> reqKey "kind"
-      <*> optKey "envelope-role"
-      <*> reqKey "group")
-
-instance FromValue RawBudgetKindPolicy where
-  fromValue = parseTableFromValue
-    (RawBudgetKindPolicy
-      <$> reqKey "opening"
-      <*> reqKey "unassigned"
-      <*> reqKey "spent"
-      <*> reqKey "envelope")
-
-instance FromValue RawBudgetGroupPolicy where
-  fromValue = parseTableFromValue
-    (RawBudgetGroupPolicy
-      <$> reqKey "daily"
-      <*> reqKey "flex"
-      <*> reqKey "reserve")
-
-instance FromValue RawExpensePolicy where
-  fromValue = parseTableFromValue
-    (RawExpensePolicy
-      <$> reqKey "fixed"
-      <*> reqKey "variable")
-
 parseHouseholdConfiguration
   :: CurrentEnvelopePolicy
   -> BackingPolicy
-  -> CurrentExpenseAssignments
   -> Text
   -> Either [Text] HouseholdConfiguration
-parseHouseholdConfiguration envelopePolicy backingPolicy currentExpenses input =
+parseHouseholdConfiguration envelopePolicy backingPolicy input =
   case (decode input :: Result String RawHouseholdPolicy) of
     Failure errors -> Left (map T.pack errors)
     Success warnings raw
-      | null warnings ->
-          rawToHouseholdConfiguration envelopePolicy backingPolicy currentExpenses raw
+      | null warnings -> rawToHouseholdConfiguration envelopePolicy backingPolicy raw
       | otherwise -> Left (map T.pack warnings)
 
 parseHouseholdPolicy
   :: CurrentEnvelopePolicy
   -> BackingPolicy
-  -> CurrentExpenseAssignments
   -> Text
   -> Either [Text] HouseholdPolicy
-parseHouseholdPolicy envelopePolicy backingPolicy currentExpenses =
+parseHouseholdPolicy envelopePolicy backingPolicy =
   fmap householdConfigurationPolicy
-    . parseHouseholdConfiguration envelopePolicy backingPolicy currentExpenses
+    . parseHouseholdConfiguration envelopePolicy backingPolicy
 
 renderHouseholdPolicyErrors :: [Text] -> Text
 renderHouseholdPolicyErrors = T.unlines . map ("  " <>)
@@ -231,22 +149,17 @@ renderHouseholdPolicyErrors = T.unlines . map ("  " <>)
 rawToHouseholdConfiguration
   :: CurrentEnvelopePolicy
   -> BackingPolicy
-  -> CurrentExpenseAssignments
   -> RawHouseholdPolicy
   -> Either [Text] HouseholdConfiguration
-rawToHouseholdConfiguration envelopePolicy backingPolicy currentExpenses
-    (RawHouseholdPolicy rawCycle rawCoordinates rawMoney rawDailyTarget rawAccountPolicy _rawEnvelopeHistory) = do
-  policy <- rawToHouseholdPolicy
-    envelopePolicy backingPolicy currentExpenses rawCycle rawCoordinates
+rawToHouseholdConfiguration envelopePolicy backingPolicy
+    (RawHouseholdPolicy rawCycle rawCoordinates rawMoney rawDailyTarget _rawEnvelopeHistory) = do
+  policy <- rawToHouseholdPolicy envelopePolicy backingPolicy rawCycle rawCoordinates
   primaryCommodity <- traverse parseRawMoney rawMoney
   dailyTargetAssets <- parseRawDailyTarget rawDailyTarget
-  accountPolicy <- traverse parseRawAccountPolicy rawAccountPolicy
-  let admittedPolicy = withHouseholdAccountPolicy accountPolicy policy
   Right HouseholdConfiguration
-    { householdConfigurationPolicy = admittedPolicy
+    { householdConfigurationPolicy = policy
     , householdConfigurationPrimaryCommodity = primaryCommodity
     , householdConfigurationDailyTargetAssets = dailyTargetAssets
-    , householdConfigurationAccountPolicy = accountPolicy
     }
 
 parseRawMoney :: RawMoney -> Either [Text] Commodity
@@ -270,18 +183,17 @@ parseRawDailyTarget rawDailyTarget =
 rawToHouseholdPolicy
   :: CurrentEnvelopePolicy
   -> BackingPolicy
-  -> CurrentExpenseAssignments
   -> RawCycle
   -> RawHouseholdEnvelopeCoordinates
   -> Either [Text] HouseholdPolicy
-rawToHouseholdPolicy envelopePolicy backingPolicy currentExpenses rawCycle rawCoordinates = do
+rawToHouseholdPolicy envelopePolicy backingPolicy rawCycle rawCoordinates = do
   cyclePolicy <- parseRawCycle rawCycle
   case rawCoordinates of
-    RawHouseholdEnvelopeCoordinates rawEnvelopes rawUnassigned ->
+    RawHouseholdEnvelopeCoordinates rawEnvelopes rawOpening rawUnassigned ->
       case syntaxErrors of
         [] -> case mkHouseholdPolicy
-            cyclePolicy envelopePolicy backingPolicy currentExpenses
-            envelopeCoordinates unassignedAccounts of
+            cyclePolicy envelopePolicy backingPolicy envelopeCoordinates
+            openingAccounts unassignedAccounts of
           Right policy -> Right policy
           Left errors -> Left
             (map renderHouseholdPolicyError (NonEmpty.toList errors))
@@ -289,83 +201,13 @@ rawToHouseholdPolicy envelopePolicy backingPolicy currentExpenses rawCycle rawCo
       where
         (envelopeErrorGroups, envelopeCoordinates) = partitionEithers
           (zipWith parseRawEnvelopeCoordinates [0 :: Int ..] rawEnvelopes)
+        (openingErrors, openingAccounts) = parseAccounts
+          "budget.opening-accounts"
+          rawOpening
         (unassignedErrors, unassignedAccounts) = parseAccounts
           "budget.unassigned-accounts"
           rawUnassigned
-        syntaxErrors = concat envelopeErrorGroups ++ unassignedErrors
-
-parseRawAccountPolicy
-  :: RawAccountPolicy
-  -> Either [Text] HouseholdAccountPolicy
-parseRawAccountPolicy
-    (RawAccountPolicy rawAssets rawBudget rawExpenses) =
-  case syntaxErrors of
-    _ : _ -> Left syntaxErrors
-    [] -> case mkHouseholdAccountPolicy
-        assetClasses budgetKinds [] budgetGroups spendClasses of
-      Left errors -> Left
-        (map renderHouseholdAccountPolicyError (NonEmpty.toList errors))
-      Right policy -> Right policy
-  where
-    RawAssetPolicy liquid savings investment = rawAssets
-    RawBudgetAccountPolicy rawKinds _rawEnvelopeRole rawGroups = rawBudget
-    RawBudgetKindPolicy opening unassigned spent envelope = rawKinds
-    RawBudgetGroupPolicy daily flex reserve = rawGroups
-    RawExpensePolicy fixed variable = rawExpenses
-
-    (liquidErrors, liquidAccounts) = axisAccounts
-      "account-policy.assets.liquid" liquid
-    (savingsErrors, savingsAccounts) = axisAccounts
-      "account-policy.assets.savings" savings
-    (investmentErrors, investmentAccounts) = axisAccounts
-      "account-policy.assets.investment" investment
-    assetClasses =
-      map (, RetainedLiquidAsset) liquidAccounts
-        ++ map (, RetainedSavingsAsset) savingsAccounts
-        ++ map (, RetainedInvestmentAsset) investmentAccounts
-
-    (openingErrors, openingAccounts) = axisAccounts
-      "account-policy.budget.kind.opening" opening
-    (unassignedErrors, unassignedAccounts) = axisAccounts
-      "account-policy.budget.kind.unassigned" unassigned
-    (spentErrors, spentAccounts) = axisAccounts
-      "account-policy.budget.kind.spent" spent
-    (envelopeErrors, envelopeAccounts) = axisAccounts
-      "account-policy.budget.kind.envelope" envelope
-    budgetKinds =
-      map (, RetainedOpeningBudgetAccount) openingAccounts
-        ++ map (, RetainedUnassignedBudgetAccount) unassignedAccounts
-        ++ map (, RetainedSpentBudgetAccount) spentAccounts
-        ++ map (, RetainedEnvelopeBudgetAccount) envelopeAccounts
-
-    (dailyErrors, dailyAccounts) = axisAccounts
-      "account-policy.budget.group.daily" daily
-    (flexErrors, flexAccounts) = axisAccounts
-      "account-policy.budget.group.flex" flex
-    (reserveErrors, reserveAccounts) = axisAccounts
-      "account-policy.budget.group.reserve" reserve
-    budgetGroups =
-      map (, RetainedDailyBudgetGroup) dailyAccounts
-        ++ map (, RetainedFlexBudgetGroup) flexAccounts
-        ++ map (, RetainedReserveBudgetGroup) reserveAccounts
-
-    (fixedErrors, fixedAccounts) = axisAccounts
-      "account-policy.expenses.fixed" fixed
-    (variableErrors, variableAccounts) = axisAccounts
-      "account-policy.expenses.variable" variable
-    spendClasses =
-      map (, RetainedFixedSpend) fixedAccounts
-        ++ map (, RetainedVariableSpend) variableAccounts
-
-    syntaxErrors = concat
-      [ liquidErrors, savingsErrors, investmentErrors
-      , openingErrors, unassignedErrors, spentErrors, envelopeErrors
-      , dailyErrors, flexErrors, reserveErrors
-      , fixedErrors, variableErrors
-      ]
-
-axisAccounts :: Text -> [Text] -> ([Text], [Account])
-axisAccounts = parseAccounts
+        syntaxErrors = concat envelopeErrorGroups ++ openingErrors ++ unassignedErrors
 
 parseRawCycle :: RawCycle -> Either [Text] HouseholdCyclePolicy
 parseRawCycle (RawCycle rawMode rawAccount)
@@ -380,7 +222,7 @@ parseRawEnvelopeCoordinates
   -> RawEnvelopeCoordinates
   -> Either [Text] HouseholdEnvelopeCoordinates
 parseRawEnvelopeCoordinates index
-    (RawEnvelopeCoordinates rawId rawAllocation _rawPlanDestinations) =
+    (RawEnvelopeCoordinates rawId rawAllocation) =
   case (envelopeIdResult, allocationResult, errors) of
     (Right envelopeId, Right allocationAccount, []) -> Right
       (defineHouseholdEnvelopeCoordinates envelopeId allocationAccount)
@@ -442,9 +284,6 @@ renderHouseholdPolicyError err = case err of
   DuplicateHouseholdEnvelopeCoordinates envelope ->
     "budget.envelopes: duplicate household coordinates for "
       <> quoted (envelopeIdText envelope)
-  HouseholdCoordinatesReferenceUnknownEnvelope envelope ->
-    "budget.envelopes: unknown Envelope "
-      <> quoted (envelopeIdText envelope)
   HouseholdEnvelopeMissingCoordinates envelope ->
     "budget.envelopes: missing household coordinates for "
       <> quoted (envelopeIdText envelope)
@@ -452,28 +291,25 @@ renderHouseholdPolicyError err = case err of
     "budget.envelopes: allocation Account " <> quoted (accountName account)
       <> " belongs to both " <> quoted (envelopeIdText firstEnvelope)
       <> " and " <> quoted (envelopeIdText repeatedEnvelope)
+  HouseholdPolicyHasNoOpeningBudgetAccounts ->
+    "budget.opening-accounts: expected at least one source Account identity"
+  DuplicateOpeningBudgetAccount account ->
+    "budget.opening-accounts: duplicate Account " <> quoted (accountName account)
   HouseholdPolicyHasNoUnassignedBudgetAccounts ->
-    "budget.unassigned-accounts: expected at least one retained allocation Account identity"
+    "budget.unassigned-accounts: expected at least one unallocated Account identity"
   DuplicateUnassignedBudgetAccount account ->
-    "budget.unassigned-accounts: duplicate Account "
-      <> quoted (accountName account)
+    "budget.unassigned-accounts: duplicate Account " <> quoted (accountName account)
+  AllocationAccountAlsoOpening account envelope ->
+    "budget.opening-accounts: allocation Account " <> quoted (accountName account)
+      <> " for envelope " <> quoted (envelopeIdText envelope)
+      <> " cannot also be an opening Account"
   AllocationAccountAlsoUnassigned account envelope ->
     "budget.unassigned-accounts: allocation Account " <> quoted (accountName account)
       <> " for envelope " <> quoted (envelopeIdText envelope)
       <> " cannot also be unassigned"
-
-renderHouseholdAccountPolicyError :: HouseholdAccountPolicyError -> Text
-renderHouseholdAccountPolicyError err = case err of
-  DuplicateHouseholdAssetClassCoordinate ->
-    "account-policy.assets: one Account occurs in more than one Asset class"
-  DuplicateHouseholdBudgetKindCoordinate ->
-    "account-policy.budget.kind: one Account occurs in more than one structural kind"
-  DuplicateHouseholdEnvelopeRoleCoordinate ->
-    "account-policy.budget.envelope-role: one Account occurs in more than one role"
-  DuplicateHouseholdBudgetGroupCoordinate ->
-    "account-policy.budget.group: one Account occurs in more than one household group"
-  DuplicateHouseholdSpendClassCoordinate ->
-    "account-policy.expenses: one Account occurs in more than one spend class"
+  OpeningAccountAlsoUnassigned account ->
+    "budget: Account " <> quoted (accountName account)
+      <> " cannot be both opening and unassigned"
 
 renderEnvelopeIdError :: Text -> EnvelopeIdError -> Text
 renderEnvelopeIdError path err = path <> ": " <> case err of
