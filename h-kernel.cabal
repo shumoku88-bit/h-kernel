@@ -551,6 +551,20 @@ executable h-kernel-editor-tui
     hs-source-dirs:   editor-tui-app
     ghc-options:      -threaded
 
+executable h-kernel-editor-haskeline
+    import:           common-defaults
+    main-is:          Main.hs
+    build-depends:    base >= 4.14 && < 5
+                    , containers >= 0.6 && < 0.8
+                    , haskeline >= 0.8.4 && < 0.9
+                    , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
+                    , h-kernel
+                    , h-kernel-household
+                    , h-kernel-household-application
+                    , h-kernel-editor
+    hs-source-dirs:   editor-haskeline-app
+
 test-suite h-kernel-editor-account-append-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
