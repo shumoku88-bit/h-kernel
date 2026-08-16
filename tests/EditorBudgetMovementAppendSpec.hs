@@ -32,7 +32,6 @@ import HKernel.Envelope
   ( Pacing(..)
   , defineEnvelope
   , mkCurrentEnvelopePolicy
-  , mkCurrentExpenseAssignments
   , mkEnvelopeLabel
   )
 import HKernel.Envelope.Identity (mkEnvelopeId)
@@ -122,15 +121,14 @@ testCurrentWriterRejectsRetiredEnvelope =
     currentPolicy = mustRight (mkCurrentEnvelopePolicy
       [defineEnvelope currentId (mustRight (mkEnvelopeLabel "Current")) Flex])
     backingPolicy = mustRight (mkBackingPolicy [] [])
-    currentExpenses = mustRight (mkCurrentExpenseAssignments [])
     retiredPolicy = mustRight (mkHouseholdPolicy
       (incomeAnchorCyclePolicy (account "income:pension"))
       currentPolicy
       backingPolicy
-      currentExpenses
       [ defineHouseholdEnvelopeCoordinates retiredId (account "budget:from")
       , defineHouseholdEnvelopeCoordinates currentId (account "budget:to")
       ]
+      [account "budget:opening"]
       [account "budget:unassigned"])
 
 testNativeJournalRoundTrip :: Bool
@@ -202,9 +200,6 @@ testRendererRejectsUnrepresentable =
       (account "budget:food")
       (mkAmount (mustRight (mkCommodity "JPY")) (quantityFromInteger 1))
 
--- The root source is intentionally just an include before the candidate is
--- appended. Pure Text admission cannot prove this graph; the path-aware writer
--- can load the sibling Account declarations after publication.
 testPathAwareJournalCommit :: IO Bool
 testPathAwareJournalCommit = do
   let rootPath = "tests/fixtures/test_editor_path_budget.journal"
