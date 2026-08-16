@@ -12,14 +12,14 @@ module HKernel.Household.EnvelopeHistory
 import Data.Either (partitionEithers)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import HKernel.Account (AccountRegistry, mkAccount)
 import HKernel.Envelope
-  ( CurrentEnvelopePolicy
-  , currentEnvelopePolicyDefinitions
+  ( currentEnvelopePolicyDefinitions
   , envelopeDefinitionId
   )
 import HKernel.Envelope.ExpenseRouting
@@ -50,6 +50,11 @@ import HKernel.Envelope.Identity
   , mkEnvelopeId
   , mkEnvelopeRegistry
   )
+import HKernel.Household.Policy
+  ( HouseholdPolicy
+  , householdAllocationEnvelopes
+  , householdEnvelopePolicy
+  )
 import HKernel.Plan (PlanId, mkPlanId)
 import Toml (Value, decode)
 import Toml.Schema
@@ -68,6 +73,7 @@ data HouseholdEnvelopeHistory = HouseholdEnvelopeHistory
 
 data HouseholdEnvelopeHistoryReferenceError
   = CurrentPolicyEnvelopeMissingFromRegistry EnvelopeId
+  | AllocationEnvelopeMissingFromRegistry EnvelopeId
   | HouseholdExpenseRoutingReferenceError ExpenseRoutingReferenceError
   | HouseholdFulfillmentRoutingReferenceError FulfillmentRoutingReferenceError
   deriving (Eq, Show)
@@ -281,21 +287,27 @@ parseFulfillmentRoute path rawRoute rawTarget = case (rawRoute, rawTarget) of
 admitHouseholdEnvelopeHistoryReferences
   :: AccountRegistry
   -> [PlanId]
-  -> CurrentEnvelopePolicy
+  -> HouseholdPolicy
   -> HouseholdEnvelopeHistory
   -> Either
       (NonEmpty HouseholdEnvelopeHistoryReferenceError)
       HouseholdEnvelopeHistory
-admitHouseholdEnvelopeHistoryReferences accountRegistry knownPlans envelopePolicy history =
+admitHouseholdEnvelopeHistoryReferences accountRegistry knownPlans policy history =
   case NonEmpty.nonEmpty errors of
     Nothing -> Right history
     Just found -> Left found
   where
     registry = householdEnvelopeRegistry history
+    envelopePolicy = householdEnvelopePolicy policy
     currentPolicyErrors =
       [ CurrentPolicyEnvelopeMissingFromRegistry envelope
       | definition <- currentEnvelopePolicyDefinitions envelopePolicy
       , let envelope = envelopeDefinitionId definition
+      , not (envelopeRegistryContains envelope registry)
+      ]
+    allocationErrors =
+      [ AllocationEnvelopeMissingFromRegistry envelope
+      | envelope <- Map.elems (householdAllocationEnvelopes policy)
       , not (envelopeRegistryContains envelope registry)
       ]
     expenseRoutingErrors = case admitExpenseRoutingReferences
@@ -308,7 +320,8 @@ admitHouseholdEnvelopeHistoryReferences accountRegistry knownPlans envelopePolic
       Right _ -> []
       Left found ->
         map HouseholdFulfillmentRoutingReferenceError (NonEmpty.toList found)
-    errors = currentPolicyErrors ++ expenseRoutingErrors ++ fulfillmentRoutingErrors
+    errors = currentPolicyErrors ++ allocationErrors
+      ++ expenseRoutingErrors ++ fulfillmentRoutingErrors
 
 collect :: [Either [Text] value] -> Either [Text] [value]
 collect values = case partitionEithers values of
