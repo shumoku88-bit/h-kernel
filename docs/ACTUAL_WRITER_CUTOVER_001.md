@@ -10,6 +10,8 @@ Owner: `actual.journal`固有のrollback / reader boundary
 
 この文書は、一般lawへ重複させる必要のない`actual.journal`固有のrollbackとreader compatibilityだけを追加する。daily command一覧、完了済みcutover手順、過去のactivation evidenceは所有しない。それらはcurrent entrypointまたはGit履歴から確認する。
 
+single-user operationではcross-process shared lockを必須mechanismとしない。同じcanonical sourceへ複数の並行writer operationを走らせず、preview後の変更はsafe writerのstale rejectionに委ねる。
+
 ## 2. Actual固有のrollback
 
 `actual.journal`のwriter authorityを別implementationへ戻す場合、自動fallbackやalternating writeにはしない。
