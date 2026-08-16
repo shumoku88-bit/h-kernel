@@ -1,86 +1,168 @@
 # レポート構成
 
-
-ステータス: 実装契約
-範囲: 現在 `ReportBook` が公開している6つのJournal-only Report
-
+ステータス: 実装契約  
+範囲: `ReportBook`が公開するJournal Reportの期間queryとpresentation
 
 ## 目的
 
+`report.toml`は、レポートごとの**query policy**とpresentationを宣言する。実際の取引日、現在サイクルの開始日、Account分類、Envelope membershipのようなHousehold事実・policy座標は所有しない。
 
-`all` コマンドを組み合わせても、すべてのレポートが 1 つの日付または 1 つの範囲を継承するように強制されるわけではありません。各レポートはその粒度に適した日付セマンティクスを宣言し、構成はレポート エンジンに到達する前に型指定された値に解決されます。
-
+設定はレポートengineへ到達する前にtyped valueへ変換される。
 
 ```text
 report.toml
   -> TOML syntax decoding
   -> symbolic ReportPlan
-  + one process-local calendar day
+  + one process-local observation day
   + validated Journal
+  + current Household Period when the query requires it
   -> ResolvedReportPlan
-  -> shared report basis
   -> typed report projections
 
 report.toml presentation values
   -> validated PresentationConfig
-  -> every Journal report entrypoint
-  -> pure terminal renderer
+  -> shared renderers
 ```
 
+通常の期間queryはJournalだけで解決できる。`current-cycle-to-date`だけは、Householdがすでに解決したcurrent `Period`を追加contextとして必要とする。Report層がincome anchorやcycle policyを再実装してはならない。
 
-TOML 値と構成パスはアカウンティング計算には含まれません。レンダラーは、検証されたプレゼンテーション座標のみを受け取ります。
+## 設定の探索
 
+Report configurationの探索はHaskell application entrypointが所有する。`tools/hk`はHousehold rootをdeliveryするだけで、`report.toml`の意味を再実装しない。
 
-## 発見
+通常は次の順で設定を探す。
 
+1. `HKERNEL_REPORT_CONFIG`で明示したpath
+2. `HKERNEL_LEDGER_DATA_DIR`または`ledger-data.local`でHousehold rootが設定され、そのrootにあるcanonical `report.toml`
+3. current working directoryの`report.toml`
+4. 設定なしの場合は既存のReport既定値
 
-Report configurationの探索はHaskell application entrypointが所有する。`tools/hk`はHousehold rootをdeliveryするだけで、`report.toml`の選択を意味付けしない。
+明示したpathが読めない、または設定がinvalidな場合はsilent fallbackしない。
 
-通常のJournal-only / standalone Reportでは、h-kernelは次の順序で設定を検索します。
+canonical Household rootから`all`を生成する場合、`loadCanonicalHousehold`がcanonical sourceを一度admitし、その`HouseholdState`からActual Journal、Report configuration、Household report surfaceを得る。Report appがcanonical `report.toml`を先読みして別のfailure orderを作らない。
 
+`HKERNEL_REPORT_CONFIG`がcanonical rootとは別pathを指定した場合、そのfileはReport query/presentation overrideとしてadmitする。ただしcanonical Household admission自体は迂回しない。
 
-1. `HKERNEL_REPORT_CONFIG` によって明示されたパス;
+## 期間query
 
-2. `HKERNEL_LEDGER_DATA_DIR`または`ledger-data.local`でHousehold rootが設定され、そのrootに`report.toml`が存在する場合、そのcanonical Report config;
+### `latest`
 
-3. 現在の作業ディレクトリ内の `report.toml`;
+`latest`はprocess開始時に一度得たローカル暦日を意味する。Journal内の最大transaction日ではない。
 
-4. 設定ファイルはなく、既存のデフォルトのレポート期間とpresentationが維持されます。
+```toml
+[reports.trial-balance]
+as-of = "latest"
+```
 
+### `beginning`
 
-明示的に構成されたパスは読み取り可能である必要があります。ファイルが見つからない場合や無効な場合でも、サイレントに次候補へフォールバックしません。Household rootの`report.toml`が存在しないstandalone Reportだけは、従来どおりcwd `report.toml`または設定なしへ進めます。
+`beginning`はexplicit rangeの開始境界だけで使える。解決済み終了日以前の最古transaction日へ解決する。該当transactionがなければ終了日そのものへ解決し、有効な空rangeを作る。
 
+```toml
+[reports.monthly-accounts]
+from = "beginning"
+through = "latest"
+```
 
-canonical Household rootから`all` / `ReportBook`を生成する場合は別のread topologyを持つ。`HKernel.Household.Application.loadCanonicalHousehold`が8 canonical sourceを一度admitし、その`HouseholdState`からActual Journal、canonical `ReportConfiguration`、Household Report surfaceを得る。canonical `report.toml`をReport appが先に別readしてからHousehold loaderでもう一度読む形へ戻さない。
+### 明示日付
 
-`HKERNEL_REPORT_CONFIG`がcanonical rootとは別のpathを明示する場合だけ、そのfileをexternal Report application overrideとして別にadmitする。このoverrideはReport query/presentationを置き換えるが、canonical Household admissionそのものを迂回しないため、rootの`report.toml`を含む8 sourceは引き続きvalidである必要がある。
+明示日付は`YYYY-MM-DD`で書く。rangeはinclusiveで、開始が終了より後ならreport名付きのresolution errorになる。
 
+```toml
+[reports.profit-and-loss]
+from = "2026-06-15"
+through = "2026-08-16"
+```
 
-standalone Journal Reportは検出された設定fileを1回読み取る。単一レポート コマンド (`pl`、`bs` など) に明示的な CLI 日付または範囲が指定されていない場合、`report.toml` から設定されたレポート期間が自動的に適用されます。明示的な CLI `START END` または日付座標は引き続き権限を持ち、構成されたプレゼンテーション設定を使用しながら、構成された期間をオーバーライドします。 `check` および別個の Envelope コマンドは、このレポート設定を読み取りません。
+明示日付は過去期間の再現、snapshot、fixture/golden、engine比較、特別な分析で引き続き第一級のqueryである。
 
+### `current-cycle-to-date`
 
-検出されたファイルは、1 つのアプリケーション構成として検証されます。無効な構文、不明なキー、無効な日付リテラル、または無効なプレゼンテーション値があると、部分的に受け入れられた構成で出力が生成されるのではなく、`all` とスタンドアロンのジャーナル レポート コマンドの両方が失敗します。
+日常のP&LとDaily Flowは、具体的なサイクル開始日を書き換える代わりに次を指定できる。
 
-canonical `all`のsource failure precedenceは`loadCanonicalHousehold`のfirst-failure orderに従う。Report adapterがActualやReport configだけを先読みして別のfailure orderを作らない。
+```toml
+[reports.profit-and-loss]
+range = "current-cycle-to-date"
 
+[reports.daily-flow]
+range = "current-cycle-to-date"
+max-date-columns = 10
+```
 
-## ReportBook とスタンドアロンの同等性
+意味は厳密に次である。
 
+```text
+start = already-resolved current Household Period start
+end   = the same process-local observation day
+```
 
-同じ解決されたレポート リクエストと同じ `PresentationConfig` の場合、`all` 内でレンダリングされるペイロードはスタンドアロン レポート ペイロードと等しくなければなりません。レポートブックの構成では、セクション間に区切り文字が追加される場合があります。 2 番目のレンダラー、数値形式、カラー ポリシー、または日付列ポリシーを選択してはなりません。
+current `Period`は`household.toml`のcycle policy、Actual income anchor、future Plan income anchor、observation dayからHousehold ownerが解決する。`report.toml`はcycle開始日やincome Accountを保持しない。
 
+`range = "current-cycle-to-date"`と`from` / `through`は排他的である。混在、`from`だけ、`through`だけはfail closedする。
+
+現在このsymbolic rangeを受理するのは次だけ。
+
+- Profit & Loss
+- Daily Flow
+
+Monthly Accountsへはまだ拡張しない。`current-cycle-complete`、previous-cycle系queryも現在のcontractには存在しない。
+
+## Household contextとstandalone Report
+
+Household-relative queryの解決は次のように分かれる。
+
+```text
+canonical Household all
+  -> Household report surface
+  -> current Period
+  -> resolve ReportPlan
+
+TUI
+  -> the same admitted Household surface
+  -> current Period
+  -> resolve ReportPlan
+
+standalone report + configured Household root
+  -> load Household cycle context only when ReportPlan needs it
+  -> resolve ReportPlan
+
+pure Journal + current-cycle-to-date
+  -> error: current Household cycle context is required
+```
+
+pure JournalからAccount名や日付類似でcycleを推測しない。月初などへのfallbackもしない。
+
+渡されたcurrent `Period`がobservation dayを含まない場合もfail closedする。これによりstaleなcycle contextを通常のDateRangeとして扱わない。
+
+## CLI override
+
+単一Report commandへ明示的なCLI日付・範囲を渡した場合、その座標が設定期間より優先する。presentation configは維持される。
+
+```text
+explicit CLI date/range
+  -> use explicit report request
+  -> do not require symbolic range resolution
+  -> keep PresentationConfig
+```
+
+そのため、`current-cycle-to-date`を含むconfigがあっても、明示的な過去期間Reportを再現するためにcycle contextを要求しない。
+
+`check`とEnvelope固有commandはReport configurationを読まない。
+
+## ReportBookとstandaloneの同等性
+
+同じ解決済みreport requestと同じ`PresentationConfig`なら、`all`内のpayloadとstandalone Report payloadは同じrenderer意味を使う。ReportBookだけ別のnumber formatting、color policy、date-column policyを持たない。
 
 ```text
 all        -> resolved report -> shared renderer + PresentationConfig
 standalone -> resolved report -> shared renderer + PresentationConfig
 ```
 
-
-レポート期間ポリシーとプレゼンテーションポリシーは独立しています。明示的な CLI 日付は、設定された期間座標のみを上書きします。設定されたプレゼンテーションは無効になりません。
-
+期間policyとpresentation policyは独立している。
 
 ## 例
 
+日常利用の例:
 
 ```toml
 [presentation.hierarchy]
@@ -99,12 +181,10 @@ as-of = "latest"
 as-of = "latest"
 
 [reports.profit-and-loss]
-from = "2026-06-15"
-through = "latest"
+range = "current-cycle-to-date"
 
 [reports.daily-flow]
-from = "2026-07-01"
-through = "latest"
+range = "current-cycle-to-date"
 max-date-columns = 10
 
 [reports.monthly-accounts]
@@ -116,204 +196,69 @@ through = "latest"
 count = 5
 ```
 
+`report.toml.example`もこの日常利用形を示す。
 
-`report.toml.example` には同じ完全な形状が含まれています。
+過去を固定期間で再現する場合はsymbolic queryを使わず、対象Reportへexplicit `from` / `through`を書く。
 
+## Presentation semantics
 
-## プレゼンテーションのセマンティクス
+`presentation.hierarchy`と`presentation.amounts`は独立してoptionalで、tableがない場合は既定値を使う。
 
+`presentation.hierarchy.heading-color`と`section-color`はreport hierarchyだけを変更する。既定値は`cyan`と`yellow`。
 
-`presentation.hierarchy` と `presentation.amounts` は独立してオプションです。どちらか一方だけを設定でき、テーブル自体がない場合はその意味の既定値が使われます。
+`presentation.amounts.negative-style`は次を受け付ける。
 
+- `parentheses`
+- `minus`
 
-`presentation.hierarchy.heading-color` と `presentation.hierarchy.section-color` は、レポート階層の表示色を選びます。heading はレポート見出し、section は Income / Expenses や Household report 内の小見出しなどを意味します。既定値はそれぞれ `"cyan"` と `"yellow"` です。
+既定値は`parentheses`。これは表示だけを変え、signed `Quantity`、`Amount`、`Balance`を変更しない。
 
+color座標は次を受け付ける。
 
-`presentation.amounts.negative-style` は以下を正確に受け入れます:
+- `red`
+- `bright-red`
+- `green`
+- `yellow`
+- `blue`
+- `magenta`
+- `cyan`
+- `white`
 
+status color、bold、dimはamount paletteとは別のpresentation意味を持つ。
 
-- `"parentheses"` `(1,000 JPY)` 用;
+`reports.daily-flow.max-date-columns`もpresentation coordinateであり、`all`とstandalone Daily Flowで共有する。既定値は`14`。
 
-- `"minus"` `-1,000 JPY`用。
+## Daily Flow calendar blocks
 
+configured rangeまたはexplicit rangeでは、activityがない日もinclusive range内の暦日として表示する。
 
-デフォルトは`"parentheses"`です。この値は端末表現のみを変更します。符号付きの `Quantity`、`Amount`、および `Balance` の値は変更されません。
+`max-date-columns`は一つのtable blockの日付列数を制限する。例えば31日rangeと`max-date-columns = 10`は10日、10日、10日、1日の4 blockになる。
 
+複数blockでは各行に`Block total`と`Period total`を表示する。`Block total`はそのblockだけ、`Period total`は解決済みrange全体を表す。単一blockでは重複する`Block total`を省略する。
 
-`presentation.amounts.positive-color` と `presentation.amounts.negative-color` は、金額表示の positive/green-tone と negative/red-tone を選びます。既定値はそれぞれ `"green"` と `"red"` です。negative tone は負値だけでなく、Expense・Liability など金額として同じ presentation role で描画される行と合計にも使われます。
+設定なしのlegacy default Daily Flowだけは、明示startのないthrough-windowを維持する。
 
+端末幅から`max-date-columns`を導くことはdelivery concernであり、この期間contractには含めない。
 
-4つの color 座標は、以下を正確に受け入れます:
+## Reportごとの期間型
 
-
-- `"red"`, `"bright-red"`, `"green"`, `"yellow"`, `"blue"`, `"magenta"`, `"cyan"`, `"white"`
-
-
-これらは report hierarchy と amount tone の ANSI 端末カラーだけを変更します。`Balanced: YES/NO` や `backed/under_backed` などの success/failure status は amount palette とは別の意味で、既存の固定 green/red を保ちます。
-
-
-bold と dim も色ではなく emphasis として固定です。現在の muted/metadata/zero 表示は端末既定foregroundに dim を適用するため、`muted = "bright-black"` のような色座標はこの schema にはありません。
-
-
-`reports.daily-flow.max-date-columns`もプレゼンテーションコーディネートです。現在の TOML の場所がデイリー フロー テーブル内に残っている場合でも、設定された `all` とスタンドアロンのデイリー フロー出力によって共有されます。
-
-
-## 日付セマンティクス
-
-
-### `latest`
-
-
-`latest` は、プログラムの開始時に一度取得されるプロセスのローカル暦日を意味します。これは、ジャーナル内の最大の取引日を意味するものではありません。 1 つのコマンド内のすべてのレポートで、同じ解決された日が表示されます。
-
-
-### `beginning`
-
-
-`beginning` は範囲開始の場合のみ有効です。これは、その範囲の解決された終了日またはそれ以前の最も早いトランザクション日付に解決されます。対象となるトランザクションが存在しない場合は、終了日まで解決され、無効なセンチネル日付ではなく、有効な空の日の範囲が生成されます。
-
-
-### 明示的な日付
-
-
-明示的な日付には `YYYY-MM-DD` を使用します。範囲は包括的です。終了後の開始は、影響を受けるレポートの名前を指定する構成エラーです。
-
-
-## デイリーフローカレンダーブロック
-
-
-設定または明示的な日次フロー範囲には、収入または支出アクティビティがない日も含め、その包括的な範囲内のすべての暦日が表示されます。
-
-
-`max-date-columns` は、1 つのテーブル ブロックに表示される日付列の数を制御します。デフォルトは`14`です。 `max-date-columns = 10` を使用した 31 日の範囲は、10 日、10 日、10 日、1 日という垂直方向に積み重ねられた 4 つのテーブルとしてレンダリングされます。
-
-
-すべてのブロックは同じ行順序を維持します。構成された範囲全体で合計がゼロである収入または支出の行は、すべてのブロックから除外されます。 1 つのブロック内でのみゼロである行は、その完全な期間の合計がゼロ以外の場合、表示されたままになります。
-
-
-範囲が複数のブロックにまたがる場合、各行は `Block total` で終わり、その後に `Period total` が続きます。 `Block total` は、その表に表示される日付のみをカバーしています。 `Period total` は TOML 範囲全体をカバーし、すべてのブロックで繰り返されます。単一ブロック範囲では、重複する `Block total` 列が省略されます。
-
-
-構成なしのデフォルトでは、明示的な開始日がない古い無制限の `through` 座標が使用されます。このフォームは、境界のある最近のフロー日ウィンドウを保持し、その右端の列に `Window total` というラベルを付けます。構成された範囲と明示的な `START END` リクエストでは、暦日ブロックが使用されます。
-
-
-端末幅の検出は意図的にこの契約の外にあります。将来の CLI アダプターは、端末の幅から `max-date-columns` 値を導出し、同じ検証済みの座標を純粋なレンダラーに渡す可能性があります。
-
-
-## レポート固有のタイプ
-
-
-|レポート |期間タイプ |
-
+| Report | 期間型 |
 |---|---|
+| Trial Balance | as-of |
+| Balance Sheet | as-of |
+| Profit & Loss | explicit inclusive range または `current-cycle-to-date` |
+| Daily Flow | explicit inclusive range または `current-cycle-to-date` |
+| Monthly Accounts | explicit inclusive range |
+| Recent Transactions | through day + positive count |
 
-|試算表 |当日現在 |
+## 境界
 
-|貸借対照表 |当日現在 |
+このschemaは次をしない。
 
-|損益 |包含範囲 |
+- `report.toml`をサイクルごとに自動書換えする
+- cycle policyやincome anchorをReport configへ複製する
+- `current-cycle-to-date`を具体日付へcanonical renderして履歴化する
+- pure JournalからHousehold cycleを推測する
+- future/previous cycle queryを先回りして追加する
 
-|一日の流れ | TOML の包含範囲。設定なしのデフォルトは、その日の時点まで履歴として残ります。
-
-|月次アカウント |包含範囲 |
-
-|最近の取引 |日中プラス厳密に正のカウント |
-
-
-この区別により、貸借対照表に意味のない開始日が設定されることがなくなり、最近の取引が期間合計と間違われることがなくなります。
-
-
-## 共有ベース
-
-
-構成された期間が異なると、各レンダラーまたはプロジェクションが個別にジャーナルを再読み取りすることは許可されません。
-
-
-- 試算表と貸借対照表の日付が同じであれば、1 ポイント基準を共有します。
-
-- 等しい損益および月次範囲は 1 期間ベースで共有されます。
-
-- 日次フローと月次アカウントは、範囲が異なる場合でも 1 つのフロー フォールドの座標のままです。
-
-- 日次フローの可視性を一致させると、すでに準備されたポイントまたは期間の分類が再利用されます。
-
-- 最近のトランザクションでは、トランザクション全体が保持されます。
-
-
-## Legacy Report manifestとの関係
-
-private canonical sourceの`report_all_human.tsv`、`report_all_compact.tsv`、`report_manifests.tsv`は、bqn-ledger daily workflowのlegacy execution configurationである。現在の`report.toml` schemaへそのままcopyするsourceではない。
-
-| legacy coordinate | owner |
-|---|---|
-| Report key | typed Report kind / future named preset |
-| human / compact surface | presentation preset |
-| date、month、count | Report query default |
-| Commodity | Report query coordinate |
-| comparison mode | typed comparison strategy |
-| source filename | Application source selection |
-| Account list | Household semantic scopeまたはReport-only filter |
-| manifest filename | legacy set selectionまたは不要なindirection |
-
-source filename、Household Account classification、Envelope membershipを`report.toml`へ埋め込まない。これらはApplication configまたはHousehold policyが所有する。
-
-将来`report.toml`は、typed entrypointがstableになったReportについてnamed presetとordered setを所有できる。
-
-```text
-named report preset
-  = report kind
-  + typed query defaults
-  + presentation selection
-  + optional reference to an already-validated Household scope
-
-named report set
-  = ordered preset references
-```
-
-exact TOML syntaxはまだ固定しない。Reportごとにtyped request、typed query coordinate、Household scope owner、source selectionの分離、legacy invocationとのsemantic parity、shared rendererを確認する。gate前にlegacy rowをgeneric argument arrayとしてTOML化しない。
-
-## Canonical dataとの境界
-
-`report.toml`はReport application configであり、Actual、Plan、Budget、Issue、Account declaration、Household policyの正本ではない。ただしcanonical Household rootでは8 sourceの一つとして`HouseholdState`へadmitされる。application configであることと、canonical observationの外に置くことを同一視しない。
-
-```text
-canonical HouseholdState
-  -> Actual / Plan / Budget / Household facts and policy
-  + admitted report.toml defaults/presentation
-  + optional explicit external Report config override
-  -> typed Report request
-  -> rendered Report
-```
-
-canonical `all`ではActualとcanonical Report configを同じ`HouseholdState`から取る。delivery adapterが同じcanonical fileを別時点に再readして、fact observationとpresentation/query observationを分裂させない。
-
-legacy manifestがprivate canonical directoryにあることを理由に、`report.toml`をcanonical household factへ格上げしない。legacy Report TSVは、対応するtyped entrypoint、Report preset、parity evidenceが揃った後にretireする。
-
-## エラー
-
-
-構成では次のものが拒否されます。
-
-
-- 必要なレポート テーブルまたはキーが欠落している。
-
-- 不明な TOML キー。
-
-- 無効な日付文字列。
-
-- `beginning` 意味がありません。
-
-- 解決された終了後の範囲の開始。
-
-- 最近のカウントがゼロ、負、または表現できないほど大きい。
-
-- ゼロ、負、または表現できないほど大きな `max-date-columns` 値。
-
-
-構成エラーは失敗として報告されます。これらは、デフォルトのプラン、デフォルトのプレゼンテーション、または空のレポートには変換されません。
-
-
-## このスライスのノンゴール
-
-
-この構成によって、会計計算式、勘定科目分類、商品の動作、月次勘定科目の形式、またはその他のレポート テーブルが変更されることはありません。エンベロープ、サイクル、計画、日次目標、または問題レポートは追加されません。動的な端末の幅の検出とサイズ変更の追跡は、将来のプレゼンテーション アダプターとして残ります。
+設定は長く維持するquery policyを所有し、実際のcurrent cycleはHouseholdの事実と観測から毎回解決する。
