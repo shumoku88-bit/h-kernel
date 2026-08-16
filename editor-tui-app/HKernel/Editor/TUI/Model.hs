@@ -47,12 +47,13 @@ import HKernel.Household.Application
   , buildHouseholdReportSurfaceFromHousehold
   , loadCanonicalHouseholdWriteSnapshot
   )
-import HKernel.Household.Report (HouseholdReportSurface)
+import HKernel.Household.Report (HouseholdReportSurface(..))
 import HKernel.Household.Report.Render (HouseholdReportSection)
 import HKernel.HouseholdIssue (HouseholdIssue)
 import HKernel.Ledger (Transaction)
 import HKernel.Plan.Journal (IdentifiedPlanTransaction)
 import HKernel.Report (ReportBook)
+import HKernel.Report.CycleAccounts (currentCycleAccountsPeriod)
 import HKernel.Report.Plan (ReportPlanError)
 
 data Name
@@ -192,9 +193,8 @@ makeWorkspaceContext _focusLatest today snapshot =
     , contextSelectedReport = ReportTrialBalance
     , contextObservationDay = today
     , contextResolvedReportBook =
-        workspaceReportBookAt today actualJournal reportConfig
-    , contextHouseholdReportSurface =
-        buildHouseholdReportSurfaceFromHousehold today state
+        workspaceReportBookAt today actualJournal currentCycle reportConfig
+    , contextHouseholdReportSurface = householdSurface
     , contextEntryDay = today
     , contextWorkspaceAccounts = L.list WorkspaceAccountList
         (Vec.fromList (Nothing : map Just accounts)) 1
@@ -215,6 +215,11 @@ makeWorkspaceContext _focusLatest today snapshot =
     accounts = workspaceAccounts (householdStateAccountsRegistry state)
     transactions = workspaceTransactions actualJournal
     openPlans = workspaceOpenPlansAt today planJournal actualJournal
+    householdSurface = buildHouseholdReportSurfaceFromHousehold today state
+    currentCycle = case householdSurface of
+      Left _ -> Nothing
+      Right surface -> Just
+        (currentCycleAccountsPeriod (householdCurrentCycleAccounts surface))
 
 reloadWorkspaceContext :: AppContext -> IO (Maybe AppContext)
 reloadWorkspaceContext context = do
