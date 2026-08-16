@@ -1,12 +1,12 @@
-# Actual reverse durable provenance decision 001
+# Actual reverse durable provenance contract
 
-ステータス: 承認済みのcurrent contract  
+ステータス: 承認済みcurrent contract  
 Owner: Actual reversal identity and provenance  
-更新日: 2026-08-06
+更新日: 2026-08-17
 
-## 1. Decision
+## 1. Reversal law
 
-Actual reverseのcanonical source contractは、元Transactionを変更または削除せず、Actual Journalへ一つの新しいTransactionを追加する形とする。
+Actual reverseは元Transactionを変更または削除せず、Actual Journalへ一つの新しいTransactionを追加する。
 
 1. 元Transactionの全Postingを、順序とCommodityを保ったままexactに反転する。
 2. reversal Transactionは新しいdurable `event-id`を持つ。
@@ -26,119 +26,48 @@ YYYY-MM-DD description
   account:b  INVERSE-AMOUNT COMMODITY
 ```
 
-raw indentationとstatus markerはsemantic identityではない。`event-id`、`reverses`、admitted Transactionが意味を所有する。
+raw indentation、status marker、descriptionはsemantic identityではない。`event-id`、`reverses`、admitted Transactionが意味を所有する。
 
-## 2. Why explicit provenance
+## 2. Explicit provenance
 
-reversalは「反対符号の似た取引」ではなく、「どのActual factを否定したか」というexplicit provenance edgeである。
+reversalは「反対符号の似た取引」ではなく、「どのActual factを否定したか」というexplicit provenance relationである。
 
-このrelationにより、source admissionは次を検証できる。
+このrelationによりsource admissionは次を検証できる。
 
 - target identityが存在する
 - reversal identityが一意である
 - targetとreversalが同一identityではない
 - direct duplicate reversalがない
-- reverse-of-reverseが別のexplicit edgeとして表現される
+- reverse-of-reverseが別のexplicit relationとして表現される
 - description変更や同額Transactionの存在に依存しない
 
-`[reverse]` prefixだけではoperator intentは示せても、typed target relationを再構築できない。
+`[reverse]`のようなdescription conventionだけをtarget relationとして扱わない。
 
-## 3. Current implementation
+## 3. Current implementation ownership
 
-`HKernel.Editor.ActualReverse`はこのcontractを実装している。
+`HKernel.Editor.ActualReverse`はtyped target identityとnew reversal identityからinverse postingsを持つcandidateを準備し、complete sourceをstrict admissionへ戻す。
 
-- explicit new Actual identityを要求する
-- explicit target Actual identityを要求する
-- target not foundを拒否する
-- duplicate reversal identityを拒否する
-- direct duplicate reversalを拒否する
-- inverse postingsを生成する
-- candidate complete sourceをstrict parse-backする
+`HKernel.Actual.Journal`は`event-id`と`reverses`をtyped projectionとしてadmitし、identity / relation invariantを検証する。
 
-`HKernel.Actual.Journal`は`event-id`と`reverses`をtyped projectionとしてadmitし、unknown target、self-reference、duplicate target relationを拒否する。
+UI、CLI、shell launcherはreversal identity ruleを再実装しない。writer publication lawとcanonical writer authorityはこの文書のownerではない。
 
-このdecisionはHaskell behaviorを弱めず、readerとwriterが共有するsource contractとして固定する。
+## 4. Reader compatibility boundary
 
-## 4. Current BQN compatibility
+canonical `actual.journal`を読むimplementationは、`event-id`と`reverses`をrecognized metadataとしてadmitし、この文書のrelation lawをsilent ignoreしてはならない。
 
-current BQN reverse pathはinverse postingsと`[reverse]` descriptionを追加するが、新しいdurable `event-id`とexplicit `reverses` relationを生成しない。
+別readerの互換性のためにdurable identity、explicit target relation、duplicate rejectionを弱めない。reader compatibilityとwriter authorityは別に判断する。
 
-また、current BQN Journal profileが`reverses`をrecognized metadataとしてadmitしない場合、h-kernel形式のreversalを含むcomplete sourceをBQN readerへそのまま渡せるとは扱わない。
+`actual.journal`固有のreader / rollback boundaryは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)、source別writer authorityは[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md)が所有する。
 
-これはraw formatting差ではなく、identity、provenance、reader admissionのcontract gapである。
+## 5. 境界
 
-BQN reader/editorをこのcontractへ対応させる場合は、少なくとも次が必要である。
+このcontractは次を変更しない。
 
-1. `reverses`をrecognized metadataとしてadmitする。
-2. target identityの存在とuniquenessを検証する。
-3. reversal自身のdurable `event-id`を要求する。
-4. self-referenceとduplicate direct reversalを拒否する。
-5. BQN reverse writerがnew identityとtarget relationを書く。
-6. semantic comparisonでidentityとreversal targetが一致する。
+- canonical writer authority
+- private canonical sourceの配置
+- Account / Plan / Envelope / Issue semantics
+- source format migration policy
+- Editor delivery implementation
+- historical identity-free transactionの自動rewrite
 
-このadaptationはbqn-ledger側の別sliceであり、この文書は実装を所有しない。
-
-## 5. Single-user writer law
-
-このprojectのcanonical editorは一人のoperatorが順番に使う。
-
-```text
-before h-kernel writer cutover
-  canonical reverse writer = bqn-ledger
-  h-kernel reverse = synthetic / explicit non-canonical rehearsal only
-
-after explicit h-kernel writer cutover
-  canonical reverse writer = h-kernel
-  bqn-ledger writer is not used against canonical source
-```
-
-cross-process shared lock、dual-editor alternating canonical write、lock contention testはcutover要件にしない。
-
-operatorがwriterを切り替えるときは、旧editorのoperationを終え、新しいeditorでlatest sourceを読み直す。preview後にsourceが変わった場合はcurrent stale-source rejectionがwriteを拒否する。
-
-reader compatibilityはwriter serializationとは別問題である。cutover後もBQN reportまたはreaderをcanonical sourceへ向けるなら、BQN Journal admissionが`reverses`を読める必要がある。BQNをcanonical readerとして使わないなら、そのadaptationはcutover後の互換sliceへ送れる。
-
-## 6. Daily-use command status
-
-日常利用を`bqn-ledger`から`h-kernel`へ切り替えるためのcommand hubはmainへ導入済みである。
-
-```text
-tools/hk
-  -> report
-  -> edit
-  -> check
-  -> help
-```
-
-command hubは会計計算、source admission、source mutation、repository audit ruleを再実装しない。既存report launcher、`h-kernel-editor-cli`、repository checksへ引数とexit statusを渡すだけのdoorwayである。
-
-したがって、この文書に以前置かれていた「次はcommand hubを実装する」という作業案は完了済みであり、current contractから削除する。
-
-## 7. Remaining before canonical cutover
-
-reverse implementationとcommand hubが存在することだけではwriter authorityは移らない。
-
-残る条件は次である。
-
-- explicit private non-canonical copyでh-kernel reverseを一度確認する
-- daily-use operation setをnon-canonical copyで確認する
-- canonical sourceがuntouchedであることを確認する
-- cutover後もBQN readerを使うか決める
-- readerを残す場合は`reverses` admissionへ対応させる
-- h-kernel source selection、rollback時の唯一writer、restore failure時のstop procedureを決める
-- 作者がcutoverを明示的に承認する
-
-次の有限sliceは[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)が所有する。
-
-## 8. Migration boundary
-
-このdecisionが変更しないもの:
-
-- current canonical writer authority
-- private canonical source
-- existing historical reversal block
-- Account、Plan、Budget、Issue、policy source topology
-- source format migration
-- UI implementation
-
-既存のidentity-free reversalを自動rewriteしない。historical cleanupは、別の明示的なprovenance migrationとしてだけ検討する。
+過去のcutover手順、command hub導入状況、実装slice、完了済みcompatibility作業はcurrent contractへ保存せずGit履歴とmerged PRが所有する。
