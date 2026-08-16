@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time.Calendar (fromGregorian)
 import HKernel.Account (mkAccount)
@@ -65,6 +66,7 @@ main = do
         (mkPeriod (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
       observed = fromGregorian 2026 8 10
       foodId = mustRight (mkEnvelopeId "food")
+      retiredId = mustRight (mkEnvelopeId "retired-savings")
       poolId = mustRight (mkBackingPoolId "cash")
       cash = mustRight (mkAccount "assets:cash")
       income = mustRight (mkAccount "income:pension")
@@ -73,6 +75,7 @@ main = do
       unassigned = mustRight (mkAccount "budget:unassigned")
       spent = mustRight (mkAccount "budget:spent")
       foodAllocation = mustRight (mkAccount "budget:food")
+      retiredAllocation = mustRight (mkAccount "budget:retired-savings")
       backingPolicy = mustRight (mkBackingPolicy
         [defineBackingPool poolId [cash]]
         [assignEnvelopeBackingPool foodId poolId])
@@ -85,7 +88,9 @@ main = do
         envelopePolicy
         backingPolicy
         currentExpenses
-        [defineHouseholdEnvelopeCoordinates foodId foodAllocation]
+        [ defineHouseholdEnvelopeCoordinates foodId foodAllocation
+        , defineHouseholdEnvelopeCoordinates retiredId retiredAllocation
+        ]
         [unassigned])
       accountPolicy = mustRight (mkHouseholdAccountPolicy
         []
@@ -93,6 +98,7 @@ main = do
         , (unassigned, RetainedUnassignedBudgetAccount)
         , (spent, RetainedSpentBudgetAccount)
         , (foodAllocation, RetainedEnvelopeBudgetAccount)
+        , (retiredAllocation, RetainedEnvelopeBudgetAccount)
         ]
         [] [] [])
       declarations = T.unlines
@@ -104,6 +110,7 @@ main = do
         , "account budget:unassigned", "  type: Budget"
         , "account budget:spent", "  type: Budget"
         , "account budget:food", "  type: Budget"
+        , "account budget:retired-savings", "  type: Budget"
         ]
       actual = mustRight (parseActualJournal
         (declarations <>
@@ -129,6 +136,13 @@ main = do
             , householdBudgetMovementFrom = unassigned
             , householdBudgetMovementTo = foodAllocation
             , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 50)
+            }
+        , HouseholdBudgetMovement
+            { householdBudgetMovementDate = fromGregorian 2026 7 5
+            , householdBudgetMovementMemo = "Historical grant to retired savings Envelope"
+            , householdBudgetMovementFrom = unassigned
+            , householdBudgetMovementTo = retiredAllocation
+            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 30)
             }
         , HouseholdBudgetMovement
             { householdBudgetMovementDate = fromGregorian 2026 7 20
@@ -186,6 +200,10 @@ main = do
       remaining = householdEnvelopeRemaining observation
       headroom = householdEnvelopeHeadroom observation
 
+  assertEqual "current Envelope order excludes retired stable allocation identity"
+    [foodId] (householdEnvelopeOrder policy)
+  assertEqual "stable allocation map retains retired identity for historical movements"
+    (Just retiredId) (Map.lookup retiredAllocation (householdAllocationEnvelopes policy))
   assertEqual "role-neutral Plan stays out of narrow outgoing report subset"
     [] (admittedOutgoingPlanValues narrowPlans)
   assertEqual "entitlement carries pre-period grant and release while ignoring legacy spent and cutting off future"
