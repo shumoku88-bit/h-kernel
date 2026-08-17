@@ -182,11 +182,10 @@ contextSourcePath =
   householdActualJournalPath . householdStatePaths . contextHouseholdState
 
 makeWorkspaceContext
-  :: Bool
-  -> Day
+  :: Day
   -> HouseholdWriteSnapshot
   -> AppContext
-makeWorkspaceContext _focusLatest today snapshot =
+makeWorkspaceContext today snapshot =
   AppContext
     { contextHouseholdSnapshot = snapshot
     , contextCurrentSection = ActualSection
@@ -231,7 +230,7 @@ reloadWorkspaceContext context = do
       pure (Just
         (setIssueWorkspaceFilter
           (contextIssueFilter context)
-          ((makeWorkspaceContext True
+          ((makeWorkspaceContext
               (contextObservationDay context)
               snapshot)
             { contextEntryDay = contextEntryDay context
