@@ -172,7 +172,7 @@ Commands:
   edit             Pass arguments directly to h-kernel-editor-cli.
   map              Print a generated Cabal and active-document ownership map.
   context          Select current source, tests, and documents that mention TERM.
-  check            Run the standard build, test, and repository ownership audit.
+  check            Run the standard build, test, and repository ownership verification.
   check-report     Run the complete fixture and corpus Report contract verification.
   check-household  Admit the configured private Household source without printing it.
   help             Show this help.
@@ -232,7 +232,7 @@ case "$command" in
     python3 tools/verify_repository_context.py
     "$CABAL" build all
     "$CABAL" test all
-    exec "$CABAL" run exe:repository-audit
+    exec python3 tools/verify_repository_context.py --ownership
     ;;
   check-report)
     [ "$#" -eq 0 ] || { printf 'tools/hk check-report does not accept arguments\n' >&2; exit 2; }
