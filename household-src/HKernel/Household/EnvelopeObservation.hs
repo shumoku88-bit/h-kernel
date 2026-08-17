@@ -4,6 +4,7 @@ module HKernel.Household.EnvelopeObservation
   ( HouseholdEnvelopeObservation
   , householdEnvelopeObservationPeriod
   , householdEnvelopeObservationObservedThrough
+  , householdEnvelopeObservationStockOrigins
   , householdEnvelopeConsumption
   , householdEnvelopeEntitlement
   , householdEnvelopeFulfillment
@@ -17,6 +18,7 @@ module HKernel.Household.EnvelopeObservation
 import Data.Either (partitionEithers)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time.Calendar (Day)
@@ -39,6 +41,7 @@ import HKernel.Envelope.Entitlement
 import HKernel.Envelope.EntitlementHistory
   ( EnvelopeEntitlementHistory
   , EnvelopeEntitlementHistoryError
+  , envelopeEntitlementHistoryOrigins
   , mkEnvelopeEntitlementHistoryWithOrigins
   )
 import HKernel.Envelope.EntitlementTransfer
@@ -75,7 +78,8 @@ import HKernel.Household.Policy
   , householdUnassignedBudgetAccounts
   )
 import HKernel.Money
-  ( amountCommodity
+  ( Commodity
+  , amountCommodity
   , amountQuantity
   , negateAmount
   , zeroQuantity
@@ -86,6 +90,7 @@ import HKernel.Plan.Journal (PlanJournal)
 data HouseholdEnvelopeObservation = HouseholdEnvelopeObservation
   { householdEnvelopeObservationPeriod          :: Period
   , householdEnvelopeObservationObservedThrough :: Day
+  , householdEnvelopeObservationStockOrigins    :: Map Commodity Day
   , householdEnvelopeConsumption                :: EnvelopeConsumption
   , householdEnvelopeEntitlement                :: EnvelopeEntitlement
   , householdEnvelopeFulfillment                :: EnvelopeFulfillment
@@ -141,6 +146,7 @@ deriveHouseholdEnvelopeObservation observedThrough period actual plans policy ex
   Right HouseholdEnvelopeObservation
     { householdEnvelopeObservationPeriod = period
     , householdEnvelopeObservationObservedThrough = observedThrough
+    , householdEnvelopeObservationStockOrigins = envelopeEntitlementHistoryOrigins history
     , householdEnvelopeConsumption = consumption
     , householdEnvelopeEntitlement = entitlement
     , householdEnvelopeFulfillment = fulfillment
@@ -158,17 +164,10 @@ projectEntitlementHistory policy movements =
     ([], maybeTransfers) ->
       mapLeft (fmap HouseholdEnvelopeEntitlementHistoryError)
         (mkEnvelopeEntitlementHistoryWithOrigins
-          sourceOrigins
+          (deriveEnvelopeStockOrigins movements)
           [transfer | Just transfer <- maybeTransfers])
     (errorGroups, _) -> Left (NonEmpty.fromList (concat errorGroups))
   where
-    sourceOrigins = Map.fromListWith min
-      [ ( amountCommodity (householdBudgetMovementAmount movement)
-        , householdBudgetMovementDate movement
-        )
-      | movement <- movements
-      ]
-
     allocationByAccount = householdAllocationEnvelopes policy
     openingAccounts = householdOpeningBudgetAccounts policy
     unassignedAccounts = householdUnassignedBudgetAccounts policy
@@ -219,6 +218,21 @@ projectEntitlementHistory policy movements =
               (householdBudgetMovementMemo movement) of
             Right transfer -> Right (Just transfer)
             Left err -> Left [HouseholdEnvelopeEntitlementTransferError transactionIndex err]
+
+-- | Opening boundary of the native Envelope stock world for each Commodity.
+--
+-- The earliest admitted Budget movement is provenance even when it does not
+-- move value into a spendable Envelope. Report Periods and current routing
+-- policy must never be substituted for this historical coordinate.
+deriveEnvelopeStockOrigins
+  :: [HouseholdBudgetMovement]
+  -> Map Commodity Day
+deriveEnvelopeStockOrigins = Map.fromListWith min . map origin
+  where
+    origin movement =
+      ( amountCommodity (householdBudgetMovementAmount movement)
+      , householdBudgetMovementDate movement
+      )
 
 singleLeft
   :: (error -> HouseholdEnvelopeError)

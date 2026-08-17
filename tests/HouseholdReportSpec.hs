@@ -187,6 +187,11 @@ main = do
 
   let renderedSurface = renderHouseholdReportSections
         defaultPresentationConfig surface
+  assertEqual "Envelope report exposes stock origin separately from current cycle"
+    True
+    ("Stock origins: JPY=2026-06-10" `T.isInfixOf` renderedSurface
+      && "Envelope consumption scope: routed Actual on/after each Commodity stock origin; pre-origin Actual excluded"
+        `T.isInfixOf` renderedSurface)
   assertEqual "Household cycle delivery publishes the precise current-cycle report"
     True
     ("Current Cycle Accounts" `T.isInfixOf` renderedSurface
@@ -380,7 +385,7 @@ budgetJournal = "include accounts.journal\n\n" <> T.unlines
   , "    budget:opening  -1000 JPY"
   , "    budget:food      1000 JPY"
   , ""
-  , "2026-06-15 unassigned"
+  , "2026-06-10 unassigned"
   , "    budget:opening     -50 JPY"
   , "    budget:unassigned   50 JPY"
   ]

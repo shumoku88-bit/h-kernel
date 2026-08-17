@@ -36,6 +36,7 @@ import Data.Either (partitionEithers)
 import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -68,6 +69,7 @@ import HKernel.Household.BudgetMovement (HouseholdBudgetMovement)
 import HKernel.Household.DailyTarget
 import HKernel.Household.EnvelopeObservation
   ( deriveHouseholdEnvelopeObservation
+  , householdEnvelopeObservationStockOrigins
   , householdEnvelopeConsumption
   , householdEnvelopeEntitlement
   , householdEnvelopeHeadroom
@@ -157,12 +159,13 @@ data HouseholdCycleComparisonUnavailable
   deriving (Eq, Show)
 
 data HouseholdReportSurface = HouseholdReportSurface
-  { householdCurrentCycleAccounts :: CurrentCycleAccounts
-  , householdCycleComparison      :: HouseholdCycleComparison
-  , householdPlannedTransactions  :: [CommittedOutgoingPlan]
-  , householdIssues               :: [HouseholdIssue]
-  , householdEnvelopeBacking      :: EnvelopeBacking
-  , householdDailyTarget          :: DailyTarget
+  { householdCurrentCycleAccounts  :: CurrentCycleAccounts
+  , householdCycleComparison       :: HouseholdCycleComparison
+  , householdPlannedTransactions   :: [CommittedOutgoingPlan]
+  , householdIssues                :: [HouseholdIssue]
+  , householdEnvelopeStockOrigins  :: Map Commodity Day
+  , householdEnvelopeBacking       :: EnvelopeBacking
+  , householdDailyTarget           :: DailyTarget
   } deriving (Eq, Show)
 
 buildHouseholdReportSurfaceFromAdmitted
@@ -249,6 +252,8 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
     , householdCycleComparison = comparison
     , householdPlannedTransactions = openPlans
     , householdIssues = issues
+    , householdEnvelopeStockOrigins =
+        householdEnvelopeObservationStockOrigins envelopeObservation
     , householdEnvelopeBacking = backing
     , householdDailyTarget = target
     }
