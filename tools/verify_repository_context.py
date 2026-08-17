@@ -1,21 +1,30 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from pathlib import Path
+import argparse
+import os
+from pathlib import Path, PurePosixPath
 import subprocess
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 HUB = ROOT / "tools" / "hk"
+CABAL = os.environ.get("HKERNEL_CABAL", "cabal")
+DOCUMENT_ROLES = {"policy", "architecture", "contract", "observation", "reference"}
 
 
-def invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
+def run(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [str(HUB), *args],
+        args,
         cwd=ROOT,
         text=True,
         capture_output=True,
         check=False,
     )
+
+
+def invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return run([str(HUB), *args])
 
 
 def assert_success(result: subprocess.CompletedProcess[str], label: str) -> None:
@@ -36,7 +45,7 @@ def assert_contains(output: str, fragments: tuple[str, ...], label: str) -> None
         )
 
 
-def main() -> None:
+def verify_generated_context() -> None:
     repository_map = invoke(["map"])
     assert_success(repository_map, "repository map")
     assert_contains(
@@ -96,6 +105,100 @@ def main() -> None:
         )
 
     print("repository context verification passed")
+
+
+def nul_paths(command: list[str], label: str) -> set[str]:
+    result = run(command)
+    assert_success(result, label)
+    return {path for path in result.stdout.split("\0") if path}
+
+
+def indexed_documents() -> set[str]:
+    path = ROOT / "docs" / "INDEX.toml"
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    if set(data) != {"documents"} or not isinstance(data["documents"], list):
+        raise AssertionError("docs/INDEX.toml must contain only [[documents]] entries")
+
+    documents: set[str] = set()
+    for index, entry in enumerate(data["documents"]):
+        if not isinstance(entry, dict) or set(entry) != {"path", "role"}:
+            raise AssertionError(
+                f"docs/INDEX.toml documents[{index}] must contain exactly path and role"
+            )
+        document_path = entry["path"]
+        role = entry["role"]
+        if not isinstance(document_path, str) or not isinstance(role, str):
+            raise AssertionError(
+                f"docs/INDEX.toml documents[{index}] path and role must be strings"
+            )
+        if role not in DOCUMENT_ROLES:
+            raise AssertionError(
+                f"docs/INDEX.toml documents[{index}] has unknown role {role!r}"
+            )
+
+        parsed = PurePosixPath(document_path)
+        if (
+            parsed.is_absolute()
+            or ".." in parsed.parts
+            or not document_path.startswith("docs/")
+            or parsed.suffix != ".md"
+        ):
+            raise AssertionError(
+                f"docs/INDEX.toml documents[{index}] has invalid document path {document_path!r}"
+            )
+        if document_path in documents:
+            raise AssertionError(
+                f"docs/INDEX.toml contains duplicate document path {document_path!r}"
+            )
+        documents.add(document_path)
+
+    return documents
+
+
+def verify_repository_ownership() -> None:
+    tracked = nul_paths(["git", "ls-files", "-z"], "git tracked-file inventory")
+    packaged = nul_paths(
+        [CABAL, "sdist", "-v0", "--list-only", "--null-sep"],
+        "Cabal source inventory",
+    )
+    indexed = indexed_documents()
+
+    tracked_haskell = {
+        path for path in tracked if path.endswith((".hs", ".lhs"))
+    }
+    tracked_documents = {
+        path for path in tracked if path.startswith("docs/") and path.endswith(".md")
+    }
+
+    findings = [
+        *(f"Cabal does not own tracked Haskell source: {path}"
+          for path in sorted(tracked_haskell - packaged)),
+        *(f"tracked Markdown document is absent from docs/INDEX.toml: {path}"
+          for path in sorted(tracked_documents - indexed)),
+        *(f"docs/INDEX.toml names a document that Git does not track: {path}"
+          for path in sorted(indexed - tracked_documents)),
+    ]
+    if findings:
+        raise AssertionError(
+            "repository ownership findings:\n  - " + "\n  - ".join(findings)
+        )
+
+    print("repository ownership verification passed")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--ownership",
+        action="store_true",
+        help="verify Git/Cabal/docs ownership instead of generated context views",
+    )
+    args = parser.parse_args()
+
+    if args.ownership:
+        verify_repository_ownership()
+    else:
+        verify_generated_context()
 
 
 if __name__ == "__main__":
