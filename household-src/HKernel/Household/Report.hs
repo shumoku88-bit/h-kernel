@@ -68,8 +68,8 @@ import HKernel.Household.Backing
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement)
 import HKernel.Household.DailyTarget
 import HKernel.Household.EnvelopeObservation
-  ( deriveEnvelopeStockOrigins
-  , deriveHouseholdEnvelopeObservation
+  ( deriveHouseholdEnvelopeObservation
+  , householdEnvelopeObservationStockOrigins
   , householdEnvelopeConsumption
   , householdEnvelopeEntitlement
   , householdEnvelopeHeadroom
@@ -252,7 +252,8 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
     , householdCycleComparison = comparison
     , householdPlannedTransactions = openPlans
     , householdIssues = issues
-    , householdEnvelopeStockOrigins = deriveEnvelopeStockOrigins movements
+    , householdEnvelopeStockOrigins =
+        householdEnvelopeObservationStockOrigins envelopeObservation
     , householdEnvelopeBacking = backing
     , householdDailyTarget = target
     }
