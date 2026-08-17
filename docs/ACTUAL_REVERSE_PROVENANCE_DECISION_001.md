@@ -55,9 +55,7 @@ UI、CLI、shell launcherはreversal identity ruleを再実装しない。writer
 
 canonical `actual.journal`を読むimplementationは、`event-id`と`reverses`をrecognized metadataとしてadmitし、この文書のrelation lawをsilent ignoreしてはならない。
 
-別readerの互換性のためにdurable identity、explicit target relation、duplicate rejectionを弱めない。reader compatibilityとwriter authorityは別に判断する。
-
-`actual.journal`固有のreader / rollback boundaryは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)、source別writer authorityは[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md)が所有する。
+別readerの互換性のためにdurable identity、explicit target relation、duplicate rejectionを弱めない。reader compatibilityとwriter authorityは別に判断する。writer authorityのcutover / rollbackは[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md)が所有する。
 
 ## 5. 境界
 
