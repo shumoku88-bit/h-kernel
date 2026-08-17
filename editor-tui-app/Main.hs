@@ -8,7 +8,7 @@ import Brick.Widgets.Center
 import qualified Brick.Widgets.List as L
 import qualified Graphics.Vty as V
 import Graphics.Vty.CrossPlatform (mkVty)
-import Lens.Micro (Lens', Traversal')
+import Lens.Micro (Lens', Traversal', singular)
 import Lens.Micro.Mtl ()
 
 import qualified Data.List.NonEmpty as NonEmpty
@@ -271,7 +271,7 @@ handleWorkspaceEvent context event = case event of
 
 handleReportPicker :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleReportPicker context event = do
-  action <- zoom zoomReportPicker (Report.handlePickerEvent event)
+  action <- zoom (singular zoomReportPicker) (Report.handlePickerEvent event)
   case action of
     Report.PickerMaintain -> pure ()
     Report.PickerBack -> put (AppWrapper context Workspace)
