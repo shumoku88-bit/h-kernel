@@ -619,7 +619,7 @@ syntheticPlanPartialReservation = T.unlines
 syntheticEntitlement :: Text
 syntheticEntitlement = T.unlines
   [ "2026-06-01 origin JPY"
-  , "2026-07-01 alloc unallocated -> Daily 100000 JPY"
+  , "2026-07-01 transfer unallocated -> Daily 100000 JPY"
   ]
 
 syntheticEnvelopeToml :: Text

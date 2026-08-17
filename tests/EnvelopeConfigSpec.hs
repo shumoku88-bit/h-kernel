@@ -35,7 +35,7 @@ main = do
 
   case parseCurrentEnvelopeConfiguration legacyExpenseSource of
     Left _ -> pure ()
-    Right _ -> error "expense-accounts must no longer be admitted by budget.toml"
+    Right _ -> error "expense-accounts must no longer be admitted by envelope.toml"
 
 source :: T.Text
 source = T.unlines

@@ -59,6 +59,7 @@ import HKernel.Envelope.Remaining
   , EnvelopeRemainingError
   , calculateEnvelopeRemaining
   )
+import HKernel.Envelope.StockOrigin (StockOrigin)
 import HKernel.Money (Commodity)
 import HKernel.Period (Period)
 import HKernel.Plan.Journal (PlanJournal)
@@ -66,7 +67,7 @@ import HKernel.Plan.Journal (PlanJournal)
 data HouseholdEnvelopeObservation = HouseholdEnvelopeObservation
   { householdEnvelopeObservationPeriod          :: Period
   , householdEnvelopeObservationObservedThrough :: Day
-  , householdEnvelopeObservationStockOrigins    :: Map Commodity Day
+  , householdEnvelopeObservationStockOrigins    :: Map Commodity StockOrigin
   , householdEnvelopeConsumption                :: EnvelopeConsumption
   , householdEnvelopeEntitlement                :: EnvelopeEntitlement
   , householdEnvelopeFulfillment                :: EnvelopeFulfillment

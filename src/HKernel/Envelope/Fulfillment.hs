@@ -26,7 +26,7 @@ import HKernel.Actual.Journal
   )
 import HKernel.Envelope.EntitlementHistory
   ( EnvelopeEntitlementHistory
-  , envelopeEntitlementHistoryOriginFor
+  , envelopeEntitlementHistoryOriginDateFor
   )
 import HKernel.Envelope.FulfillmentRouting
   ( FulfillmentRoute(..)
@@ -68,8 +68,7 @@ import HKernel.Plan.Journal
   , planJournalValue
   )
 import HKernel.Plan.Open
-  ( CompletedPlanTransaction
-  , PlanObservationError
+  ( PlanObservationError
   , completedActual
   , completedPlan
   , resolveCompletedPlanTransactionsAt
@@ -158,9 +157,9 @@ observeEnvelopeStockFulfillment history period observedThrough plans actual rout
     period observedThrough plans actual routing
   where
     targetInStock completionDay amount =
-      case envelopeEntitlementHistoryOriginFor (amountCommodity amount) history of
+      case envelopeEntitlementHistoryOriginDateFor (amountCommodity amount) history of
         Nothing -> False
-        Just origin -> completionDay >= origin
+        Just originDay -> completionDay >= originDay
 
 observeEnvelopeFulfillmentWith
   :: Bool

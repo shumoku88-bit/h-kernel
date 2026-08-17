@@ -24,6 +24,7 @@ import qualified Data.Text as T
 import Data.Time.Calendar (Day, diffDays)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import HKernel.Account (Account, accountName, declaredAccount)
+import HKernel.Envelope.StockOrigin (StockOrigin(..))
 import HKernel.HouseholdIssue
 import HKernel.Money
 import HKernel.Period
@@ -456,7 +457,7 @@ renderAmount amount =
 
 renderEnvelope
   :: PresentationConfig
-  -> Map.Map Commodity Day
+  -> Map.Map Commodity StockOrigin
   -> EnvelopeBacking
   -> Text
 renderEnvelope presentation origins report = T.intercalate "\n"
@@ -509,11 +510,11 @@ renderEnvelope presentation origins report = T.intercalate "\n"
           (envelopeBackingSurplus report)]
       ]
 
-renderStockOrigins :: Map.Map Commodity Day -> Text
+renderStockOrigins :: Map.Map Commodity StockOrigin -> Text
 renderStockOrigins origins
   | Map.null origins = "Stock origins: none (no admitted Entitlement source movement)"
   | otherwise = "Stock origins: " <> T.intercalate ", "
-      [ commodityCode commodity <> "=" <> renderDay origin
+      [ commodityCode commodity <> "=" <> renderDay (stockOriginDate origin)
       | (commodity, origin) <- Map.toAscList origins
       ]
 

@@ -50,6 +50,7 @@ library
                     , HKernel.Envelope.Mode
                     , HKernel.Envelope.Policy
                     , HKernel.Envelope.Remaining
+                    , HKernel.Envelope.StockOrigin
                     , HKernel.HouseholdIssue
                     , HKernel.Journal
                     , HKernel.Ledger

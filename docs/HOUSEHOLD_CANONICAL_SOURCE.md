@@ -58,7 +58,7 @@ Included Account declarations may contribute to a resolved Journal. Included Tra
 - `accounts.journal`: Account identity、AccountType (Asset, Liability, Equity, Income, Expense)、optional default Commodity
 - `actual.journal`: Actual Transaction、Posting、durable identity、completion / correction relation
 - `plan.journal`: Plan identity、schedule、recurrence、lifecycle relation
-- `entitlement.journal`: Envelope stock origin (`YYYY-MM-DD origin Commodity`) and transfer (`YYYY-MM-DD alloc Endpoint -> Endpoint Amount Commodity [memo]`) facts and provenance
+- `entitlement.journal`: Envelope stock origin (`YYYY-MM-DD origin Commodity [memo]`) and transfer (`YYYY-MM-DD transfer Endpoint -> Endpoint Amount Commodity [memo]`) facts and provenance
 
 ### Current policy and historical routing
 

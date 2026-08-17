@@ -2,12 +2,14 @@
 
 module EnvelopeEntitlementSpec (main) where
 
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, fromGregorian)
 import HKernel.Envelope.Entitlement
 import HKernel.Envelope.EntitlementHistory (mkEnvelopeEntitlementHistory)
 import HKernel.Envelope.EntitlementTransfer
 import HKernel.Envelope.Identity
+import HKernel.Envelope.StockOrigin (StockOrigin(..))
 import HKernel.Money
 import HKernel.Period
 import System.Exit (exitFailure)
@@ -19,7 +21,7 @@ main = do
 
 observationBoundary :: IO ()
 observationBoundary = do
-  let emptyHistory = mustRight (mkEnvelopeEntitlementHistory [])
+  let emptyHistory = mustRight (mkEnvelopeEntitlementHistory Map.empty [])
   left "observation before Period is rejected"
     (observeEnvelopeEntitlement period (day 14) emptyHistory)
   left "Period end remains exclusive"
@@ -33,6 +35,10 @@ projectionLaws = do
       absent = envelope "absent"
       jpy = commodity "JPY"
       usd = commodity "USD"
+      origins = Map.fromList
+        [ (jpy, StockOrigin (fromGregorian 2026 1 1) jpy "JPY stock origin")
+        , (usd, StockOrigin (fromGregorian 2026 1 1) usd "USD stock origin")
+        ]
       nextPeriod = mustRight
         (mkPeriod (fromGregorian 2026 10 15) (fromGregorian 2026 12 15))
       transfers =
@@ -48,7 +54,7 @@ projectionLaws = do
         , transfer (fromGregorian 2026 9 1) Unallocated (Spendable food) jpy 3000 "future within period"
         , transfer (fromGregorian 2026 10 20) Unallocated (Spendable food) jpy 999 "future in next period"
         ]
-      history = mustRight (mkEnvelopeEntitlementHistory transfers)
+      history = mustRight (mkEnvelopeEntitlementHistory origins transfers)
       observed = mustRight (observeEnvelopeEntitlement period (day 20) history)
       later = mustRight (observeEnvelopeEntitlement period (day 25) history)
       nextPeriodObserved = mustRight

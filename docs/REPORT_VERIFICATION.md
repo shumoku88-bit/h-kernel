@@ -64,7 +64,7 @@ sh ./report-verify --corpus
 ```
 
 
-`HKERNEL_LEDGER_DATA_DIR`またはGit管理外の`ledger-data.local`でcanonical Household rootを選択します。`report-real-snapshot`はcurrent 8-source contract (`accounts.journal`, `actual.journal`, `plan.journal`, `budget.journal`, `budget.toml`, `household.toml`, `report.toml`, `issues.tsv`) を要求します。
+`HKERNEL_LEDGER_DATA_DIR`またはGit管理外の`ledger-data.local`でcanonical Household rootを選択します。`report-real-snapshot`はcurrent 8-source contract (`accounts.journal`, `actual.journal`, `plan.journal`, `entitlement.journal`, `envelope.toml`, `household.toml`, `report.toml`, `issues.tsv`) を要求します。
 
 出力は無視された`.report-artifacts/real-household-report/`に残し、リポジトリのgoldenにはしません。CIはprivate sourceへ接続しません。
 

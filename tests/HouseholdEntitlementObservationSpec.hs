@@ -25,11 +25,12 @@ import HKernel.Envelope.Consumption
   , envelopeConsumptionFor
   )
 import HKernel.Envelope.Entitlement (envelopeEntitlementBalance)
-import HKernel.Envelope.EntitlementHistory (mkEnvelopeEntitlementHistoryWithOrigins)
+import HKernel.Envelope.EntitlementHistory (mkEnvelopeEntitlementHistory)
 import HKernel.Envelope.EntitlementTransfer
   ( EnvelopeEndpoint(..)
   , mkEnvelopeEntitlementTransfer
   )
+import HKernel.Envelope.StockOrigin (StockOrigin(..))
 import HKernel.Envelope.ExpenseRouting
   ( ExpenseRoute(..)
   , InitialExpenseRoutingDecision(..)
@@ -99,7 +100,8 @@ main = do
         (declarations <>
           "\n2026-08-09 save\n  ; plan-id: plan-save\n  assets:savings  20 JPY\n  assets:cash  -20 JPY\n"))
       narrowPlans = mustRight (admitPlanJournal plans)
-      origins = Map.singleton jpy (fromGregorian 2026 6 15)
+      origins = Map.singleton jpy
+        (StockOrigin (fromGregorian 2026 6 15) jpy "June stock origin")
       transfers =
         [ mustRight (mkEnvelopeEntitlementTransfer
             (fromGregorian 2026 7 1)
@@ -133,7 +135,7 @@ main = do
             "future grant after observation")
         ]
       entitlementHistory = mustRight
-        (mkEnvelopeEntitlementHistoryWithOrigins origins transfers)
+        (mkEnvelopeEntitlementHistory origins transfers)
       expenseRouting = mustRight (mkExpenseRoutingHistoryWithInitial
         [ InitialExpenseRoutingDecision
             foodExpense (ManagedByEnvelope foodId) "food initial route"

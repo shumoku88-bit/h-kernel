@@ -2,6 +2,7 @@
 
 module EnvelopeRemainingSpec (main) where
 
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, fromGregorian)
 import HKernel.Account (Account, mkAccount)
@@ -18,6 +19,7 @@ import HKernel.Envelope.Fulfillment
 import HKernel.Envelope.FulfillmentRouting
 import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
 import HKernel.Envelope.Remaining
+import HKernel.Envelope.StockOrigin (StockOrigin(..))
 import HKernel.Money
 import HKernel.Period (Period, mkPeriod, periodStart)
 import HKernel.Plan (PlanId, mkPlanId)
@@ -162,7 +164,8 @@ entitlementThrough observedThrough selectedPeriod =
   where
     jpy = commodity "JPY"
     start = periodStart selectedPeriod
-    history = mustRight (mkEnvelopeEntitlementHistory
+    origins = Map.singleton jpy (StockOrigin start jpy "JPY stock origin")
+    history = mustRight (mkEnvelopeEntitlementHistory origins
       [ grant start (envelope "food") jpy 100
       , grant start (envelope "stock") jpy 50
       , grant start (envelope "savings") jpy 10
@@ -190,10 +193,13 @@ fulfillmentThrough observedThrough selectedPeriod =
     actual = mustRight (parseActualJournal actualSource)
 
 stockHistory :: EnvelopeEntitlementHistory
-stockHistory = mustRight (mkEnvelopeEntitlementHistory
-  [ grant (fromGregorian 2026 8 1) (envelope "food-stock") (commodity "JPY") 100
-  , grant (fromGregorian 2026 8 1) (envelope "savings-stock") (commodity "JPY") 50
+stockHistory = mustRight (mkEnvelopeEntitlementHistory origins
+  [ grant (fromGregorian 2026 8 1) (envelope "food-stock") jpy 100
+  , grant (fromGregorian 2026 8 1) (envelope "savings-stock") jpy 50
   ])
+  where
+    jpy = commodity "JPY"
+    origins = Map.singleton jpy (StockOrigin (fromGregorian 2026 8 1) jpy "JPY stock origin")
 
 stockExpenseRouting :: ExpenseRoutingHistory
 stockExpenseRouting = mustRight (mkExpenseRoutingHistory

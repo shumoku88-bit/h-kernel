@@ -23,6 +23,7 @@ import HKernel.Envelope.Consumption
   , envelopeConsumptionUnmanaged
   , observeEnvelopeConsumption
   )
+import qualified Data.Map.Strict as Map
 import HKernel.Envelope.Entitlement
   ( observeEnvelopeEntitlement )
 import HKernel.Envelope.EntitlementHistory (mkEnvelopeEntitlementHistory)
@@ -30,6 +31,7 @@ import HKernel.Envelope.EntitlementTransfer
   ( EnvelopeEndpoint(..)
   , mkEnvelopeEntitlementTransfer
   )
+import HKernel.Envelope.StockOrigin (StockOrigin(..))
 import HKernel.Envelope.ExpenseRouting
   ( ExpenseRoute(..)
   , InitialExpenseRoutingDecision(..)
@@ -175,7 +177,9 @@ characterizeHouseholdBackingNativeDerivation = do
       actualJournal = mustRight (parseActualJournal journalSource)
       planJournal = mustRight (parsePlanJournal (T.unlines declarations))
       journal = actualJournalValue actualJournal
-      entitlementHistory = mustRight (mkEnvelopeEntitlementHistory
+      origins = Map.singleton jpy
+        (StockOrigin (fromGregorian 2026 8 1) jpy "JPY stock origin")
+      entitlementHistory = mustRight (mkEnvelopeEntitlementHistory origins
         [ mustRight (mkEnvelopeEntitlementTransfer
             (fromGregorian 2026 8 1) Unallocated (Spendable foodId)
             (mkAmount jpy (quantityFromInteger 150)) "food entitlement")

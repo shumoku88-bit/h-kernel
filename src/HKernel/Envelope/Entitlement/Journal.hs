@@ -3,11 +3,12 @@
 -- | Dedicated typed parser, admission, and canonical rendering for native
 -- @entitlement.journal@ sources.
 --
--- Entitlement history is sourced by two fact kinds:
--- 1. explicit stock origin per Commodity
--- 2. exact Entitlement transfer
+-- Entitlement history is sourced by two exact canonical fact kinds:
+-- 1. explicit stock origin per Commodity: @YYYY-MM-DD origin COMMODITY [memo]@
+-- 2. exact Entitlement transfer: @YYYY-MM-DD transfer <from> -> <to> QUANTITY COMMODITY [memo]@
 --
 -- Native transfer endpoints are 'Unallocated' or 'Spendable EnvelopeId'.
+-- Arbitrary keyword prefixes and aliases are rejected.
 -- This owner is decoupled from the accounting Journal parser and does not
 -- depend on 'AccountRegistry'.
 module HKernel.Envelope.Entitlement.Journal
@@ -25,7 +26,6 @@ module HKernel.Envelope.Entitlement.Journal
   ) where
 
 import Data.Either (partitionEithers)
-import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
@@ -38,7 +38,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import HKernel.Envelope.EntitlementHistory
   ( EnvelopeEntitlementHistory
   , EnvelopeEntitlementHistoryError(..)
-  , mkEnvelopeEntitlementHistoryWithOrigins
+  , mkEnvelopeEntitlementHistory
   )
 import HKernel.Envelope.EntitlementTransfer
   ( EnvelopeEndpoint(..)
@@ -54,9 +54,9 @@ import HKernel.Envelope.Identity
   , envelopeRegistryContains
   , mkEnvelopeId
   )
+import HKernel.Envelope.StockOrigin (StockOrigin(..), stockOrigin)
 import HKernel.Money
-  ( Amount
-  , Commodity
+  ( Commodity
   , CommodityError
   , amountCommodity
   , amountQuantity
@@ -67,16 +67,6 @@ import HKernel.Money
   , renderQuantity
   )
 
--- | Explicit stock origin evidence for one Commodity.
-data StockOrigin = StockOrigin
-  { stockOriginDate      :: Day
-  , stockOriginCommodity :: Commodity
-  , stockOriginNote      :: Text
-  } deriving (Eq, Show)
-
-stockOrigin :: Day -> Commodity -> Text -> StockOrigin
-stockOrigin = StockOrigin
-
 -- | One parsed line entry in @entitlement.journal@.
 data EntitlementJournalEntry
   = EntitlementOriginEntry StockOrigin
@@ -85,7 +75,7 @@ data EntitlementJournalEntry
 
 -- | Admitted native Entitlement source projection.
 data EntitlementJournal = EntitlementJournal
-  { entitlementJournalOrigins   :: Map Commodity Day
+  { entitlementJournalOrigins   :: Map Commodity StockOrigin
   , entitlementJournalTransfers :: [EnvelopeEntitlementTransfer]
   } deriving (Eq, Show)
 
@@ -147,23 +137,19 @@ parseStatement
   -> Either [EntitlementJournalError] [(Int, EntitlementJournalEntry)]
 parseStatement lineNum day tokens =
   case tokens of
-    keyword : commToken : memoTokens
-      | T.toCaseFold keyword `elem` ["origin", "stock-origin"] -> do
-          commodity <- case mkCommodity commToken of
-            Right c -> Right c
-            Left err -> Left [EntitlementJournalInvalidCommodity lineNum commToken err]
-          let note = cleanMemo (T.unwords memoTokens)
-          Right [(lineNum, EntitlementOriginEntry (StockOrigin day commodity note))]
+    "origin" : commToken : memoTokens -> do
+      commodity <- case mkCommodity commToken of
+        Right c -> Right c
+        Left err -> Left [EntitlementJournalInvalidCommodity lineNum commToken err]
+      let note = cleanMemo (T.unwords memoTokens)
+      Right [(lineNum, EntitlementOriginEntry (StockOrigin day commodity note))]
 
-    fromToken : arrowToken : toToken : qtyToken : commToken : memoTokens
-      | arrowToken == "->" -> parseTransfer fromToken toToken qtyToken commToken memoTokens
-
-    _keyword : fromToken : arrowToken : toToken : qtyToken : commToken : memoTokens
+    "transfer" : fromToken : arrowToken : toToken : qtyToken : commToken : memoTokens
       | arrowToken == "->" -> parseTransfer fromToken toToken qtyToken commToken memoTokens
 
     _ -> Left
       [ EntitlementJournalSyntaxError lineNum
-          ("syntax error; expected 'YYYY-MM-DD origin COMMODITY [memo]' or 'YYYY-MM-DD [<keyword>] <from> -> <to> QUANTITY COMMODITY [memo]', got: "
+          ("syntax error; expected 'YYYY-MM-DD origin COMMODITY [memo]' or 'YYYY-MM-DD transfer <from> -> <to> QUANTITY COMMODITY [memo]', got: "
             <> T.unwords tokens)
       ]
   where
@@ -198,7 +184,7 @@ cleanMemo text =
 
 partitionAndValidateOrigins
   :: [(Int, EntitlementJournalEntry)]
-  -> Either (NonEmpty EntitlementJournalError) (Map Commodity Day, [EnvelopeEntitlementTransfer])
+  -> Either (NonEmpty EntitlementJournalError) (Map Commodity StockOrigin, [EnvelopeEntitlementTransfer])
 partitionAndValidateOrigins entries =
   case NonEmpty.nonEmpty duplicateErrors of
     Just errors -> Left errors
@@ -211,14 +197,14 @@ partitionAndValidateOrigins entries =
       let comm = stockOriginCommodity origin
           day = stockOriginDate origin
       in case Map.lookup comm origins of
-           Just firstDay ->
-             ( EntitlementJournalDuplicateOrigin comm firstDay day : errs
+           Just firstOrigin ->
+             ( EntitlementJournalDuplicateOrigin comm (stockOriginDate firstOrigin) day : errs
              , origins
              , trs
              )
            Nothing ->
              ( errs
-             , Map.insert comm day origins
+             , Map.insert comm origin origins
              , trs
              )
 
@@ -249,7 +235,7 @@ admitEntitlementJournal registry input = do
     Just errors -> Left errors
     Nothing -> do
       let transfers = [tr | (_, EntitlementTransferEntry tr) <- rawEntries]
-      case mkEnvelopeEntitlementHistoryWithOrigins origins transfers of
+      case mkEnvelopeEntitlementHistory origins transfers of
         Right history -> Right history
         Left historyErrors ->
           Left (fmap EntitlementJournalHistoryError historyErrors)
@@ -277,7 +263,8 @@ renderStockOrigin origin
 renderEntitlementTransfer :: EnvelopeEntitlementTransfer -> Text
 renderEntitlementTransfer transfer =
   renderDay (entitlementTransferDate transfer)
-    <> " " <> renderEndpoint (entitlementTransferFrom transfer)
+    <> " transfer "
+    <> renderEndpoint (entitlementTransferFrom transfer)
     <> " -> " <> renderEndpoint (entitlementTransferTo transfer)
     <> " " <> renderQuantity (amountQuantity amount)
     <> " " <> commodityCode (amountCommodity amount)
@@ -292,16 +279,7 @@ renderEntitlementTransfer transfer =
 -- | Render a complete @entitlement.journal@ document.
 renderEntitlementJournal :: EntitlementJournal -> Text
 renderEntitlementJournal (EntitlementJournal origins transfers) =
-  T.intercalate "\n" $ filter (not . T.null)
-    [ renderOrigins
-    , renderTransfers
-    ]
-  where
-    renderOrigins = T.unlines
-      [ renderDay day <> " origin " <> commodityCode commodity
-      | (commodity, day) <- Map.toAscList origins
-      ]
-    renderTransfers = T.unlines (map renderEntitlementTransfer transfers)
+  T.unlines (map renderStockOrigin (Map.elems origins) ++ map renderEntitlementTransfer transfers)
 
 renderDay :: Day -> Text
 renderDay = T.pack . formatTime defaultTimeLocale "%F"

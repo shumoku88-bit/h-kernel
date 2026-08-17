@@ -27,8 +27,9 @@ import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 
 import HKernel.Application.Config (HouseholdSourcePaths(..))
-import HKernel.Envelope.Entitlement.Journal (renderEntitlementTransfer)
-import HKernel.Money (Commodity, commodityCode, mkAmount, mkCommodity, parseQuantity)
+import HKernel.Envelope.Entitlement.Journal (renderEntitlementTransfer, renderStockOrigin)
+import HKernel.Envelope.StockOrigin (StockOrigin(..))
+import HKernel.Money (mkAmount, mkCommodity, parseQuantity)
 import HKernel.Envelope.EntitlementHistory
   ( envelopeEntitlementHistoryOrigins
   , envelopeEntitlementHistoryTransfers
@@ -38,7 +39,7 @@ import HKernel.Envelope.EntitlementTransfer
   , EnvelopeEntitlementTransfer
   , mkEnvelopeEntitlementTransfer
   )
-import HKernel.Envelope.Identity (EnvelopeId, envelopeIdText, mkEnvelopeId)
+import HKernel.Envelope.Identity (envelopeIdText, mkEnvelopeId)
 import HKernel.Envelope.Policy
   ( EnvelopeDefinition
   , currentEnvelopePolicyDefinitions
@@ -269,7 +270,7 @@ drawWorkspace context =
           (viewport EntitlementViewport Vertical
             (vBox
               [ str "--- Stock Origins ---"
-              , vBox (map renderStockOrigin (Map.toList (envelopeEntitlementHistoryOrigins (householdStateEntitlementHistory state))))
+              , vBox (map renderStockOriginItem (Map.elems (envelopeEntitlementHistoryOrigins (householdStateEntitlementHistory state))))
               , str " "
               , str "--- Entitlement Transfers ---"
               , vBox (map renderTransfer (envelopeEntitlementHistoryTransfers (householdStateEntitlementHistory state)))
@@ -283,9 +284,8 @@ drawWorkspace context =
   where
     state = contextHouseholdState context
 
-renderStockOrigin :: (Commodity, Day) -> Widget Name
-renderStockOrigin (comm, day) =
-  txt (T.pack (show day) <> " origin " <> commodityCode comm)
+renderStockOriginItem :: StockOrigin -> Widget Name
+renderStockOriginItem = txt . renderStockOrigin
 
 renderTransfer :: EnvelopeEntitlementTransfer -> Widget Name
 renderTransfer = txt . renderEntitlementTransfer

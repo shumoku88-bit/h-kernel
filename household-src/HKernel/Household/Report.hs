@@ -50,6 +50,7 @@ import HKernel.Engine (LedgerEntry(..), journalEntries)
 import HKernel.Envelope.EntitlementHistory (EnvelopeEntitlementHistory)
 import HKernel.Envelope.ExpenseRouting (ExpenseRoutingHistory)
 import HKernel.Envelope.FulfillmentRouting (FulfillmentRoutingHistory)
+import HKernel.Envelope.StockOrigin (StockOrigin)
 import HKernel.Household.Backing
   ( HouseholdBackingPlan(..)
   , EnvelopeBackingLine(..)
@@ -159,7 +160,7 @@ data HouseholdReportSurface = HouseholdReportSurface
   , householdCycleComparison       :: HouseholdCycleComparison
   , householdPlannedTransactions   :: [CommittedOutgoingPlan]
   , householdIssues                :: [HouseholdIssue]
-  , householdEnvelopeStockOrigins  :: Map Commodity Day
+  , householdEnvelopeStockOrigins  :: Map Commodity StockOrigin
   , householdEnvelopeBacking       :: EnvelopeBacking
   , householdDailyTarget           :: DailyTarget
   } deriving (Eq, Show)

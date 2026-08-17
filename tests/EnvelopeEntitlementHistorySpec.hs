@@ -4,10 +4,12 @@ module EnvelopeEntitlementHistorySpec (main) where
 
 import Test.Support (mustRight)
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Map.Strict as Map
 import Data.Time.Calendar (Day, addDays, fromGregorian)
 import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Envelope.EntitlementHistory
 import HKernel.Envelope.EntitlementTransfer
+import HKernel.Envelope.StockOrigin (StockOrigin(..), stockOrigin)
 import HKernel.Money
 import System.Exit (exitFailure)
 
@@ -47,6 +49,8 @@ historyLaws :: IO ()
 historyLaws = do
   let food = mustRight (mkEnvelopeId "food")
       stock = mustRight (mkEnvelopeId "stock-food")
+      origins = Map.singleton jpyCommodity
+        (StockOrigin (day 1) jpyCommodity "JPY opening stock")
       grant n effectiveDay note = mustRight
         (mkEnvelopeEntitlementTransfer
           effectiveDay Unallocated (Spendable food) (jpy n) note)
@@ -56,7 +60,7 @@ historyLaws = do
       initial = grant 10000 (day 15) "initial"
       laterMove = move 5000 (day 32) "later"
       sourceOrder = [laterMove, initial]
-      admitted = mustRight (mkEnvelopeEntitlementHistory sourceOrder)
+      admitted = mustRight (mkEnvelopeEntitlementHistory origins sourceOrder)
       sameDay =
         [ move 5000 (day 20) "move"
         , grant 5000 (day 20) "grant"
@@ -69,13 +73,38 @@ historyLaws = do
   equal "history preserves source order"
     sourceOrder
     (envelopeEntitlementHistoryTransfers admitted)
+  equal "history preserves explicit origins with note"
+    origins
+    (envelopeEntitlementHistoryOrigins admitted)
   right "effective date, not source order, governs admission"
-    (mkEnvelopeEntitlementHistory sourceOrder)
+    (mkEnvelopeEntitlementHistory origins sourceOrder)
   right "same-day deltas combine before validation"
-    (mkEnvelopeEntitlementHistory sameDay)
+    (mkEnvelopeEntitlementHistory origins sameDay)
   right "Unallocated has no stored balance in history"
-    (mkEnvelopeEntitlementHistory [grant 1000000 (day 15) "large claim"])
-  case mkEnvelopeEntitlementHistory overdrawn of
+    (mkEnvelopeEntitlementHistory origins [grant 1000000 (day 15) "large claim"])
+
+  -- Missing origin law
+  case mkEnvelopeEntitlementHistory Map.empty [initial] of
+    Left errors -> case NonEmpty.toList errors of
+      [EnvelopeEntitlementOriginMissing actualCommodity actualDay] -> do
+        equal "missing origin retains commodity" jpyCommodity actualCommodity
+        equal "missing origin retains transfer day" (day 15) actualDay
+      other -> failTest ("unexpected missing origin errors: " ++ show other)
+    Right value -> failTest ("unexpectedly accepted missing origin: " ++ show value)
+
+  -- Origin after transfer law
+  let lateOrigin = Map.singleton jpyCommodity (StockOrigin (day 20) jpyCommodity "late origin")
+  case mkEnvelopeEntitlementHistory lateOrigin [initial] of
+    Left errors -> case NonEmpty.toList errors of
+      [EnvelopeEntitlementOriginAfterTransfer actualCommodity originDay transferDay] -> do
+        equal "origin after transfer commodity" jpyCommodity actualCommodity
+        equal "origin date" (day 20) originDay
+        equal "transfer date" (day 15) transferDay
+      other -> failTest ("unexpected origin after transfer errors: " ++ show other)
+    Right value -> failTest ("unexpectedly accepted origin after transfer: " ++ show value)
+
+  -- Overdrawn negative state law
+  case mkEnvelopeEntitlementHistory origins overdrawn of
     Left errors -> case NonEmpty.toList errors of
       [EnvelopeEntitlementBecameNegative actualEnvelope actualCommodity actualDay actualQuantity] -> do
         equal "negative error retains Envelope" food actualEnvelope

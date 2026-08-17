@@ -92,8 +92,8 @@ testNativeEntitlementTransferAppend :: Bool
 testNativeEntitlementTransferAppend =
   case prepareEntitlementTransferAppend testRegistry existingSource testTransfer of
     Right preview ->
-      entitlementCandidateBlock preview == "2026-08-04 unallocated -> current 500 JPY alloc"
-        && entitlementCandidateCompleteSource preview == (existingSource <> "\n2026-08-04 unallocated -> current 500 JPY alloc")
+      entitlementCandidateBlock preview == "2026-08-04 transfer unallocated -> current 500 JPY alloc"
+        && entitlementCandidateCompleteSource preview == (existingSource <> "\n2026-08-04 transfer unallocated -> current 500 JPY alloc")
     Left err -> error (show err)
 
 testCurrentWriterRejectsRetiredEnvelope :: Bool

@@ -40,7 +40,7 @@ instance FromValue RawEnvelope where
     (RawEnvelope <$> reqKey "id" <*> reqKey "label" <*> reqKey "pacing"
       <*> reqKey "backing-pool")
 
--- | Admit the two current semantic owners that share @budget.toml@ physically:
+-- | Admit the two current semantic owners that share @envelope.toml@ physically:
 -- current Envelope presentation/membership and current Backing topology.
 -- Expense-to-Envelope meaning belongs only to explicit ExpenseRoutingHistory.
 parseCurrentEnvelopeConfiguration

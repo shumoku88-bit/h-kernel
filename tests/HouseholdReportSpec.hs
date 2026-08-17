@@ -367,7 +367,7 @@ declarations = T.unlines
 entitlementJournalText :: Text
 entitlementJournalText = T.unlines
   [ "2026-06-10 origin JPY"
-  , "2026-06-15 alloc unallocated -> Food 1000 JPY"
+  , "2026-06-15 transfer unallocated -> Food 1000 JPY"
   ]
 
 envelopePolicyTOML :: Text

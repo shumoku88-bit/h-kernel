@@ -93,12 +93,13 @@ Envelope    -> Envelope
 Envelope    -> Unallocated
 ```
 
-- `StockOrigin`: an independent historical fact per Commodity (`Map Commodity Day`), declared explicitly as `YYYY-MM-DD origin COMMODITY`.
-- Endpoints are strictly `Unallocated` and `Spendable EnvelopeId`. `Unallocated` is a boundary endpoint, not a balance-owning account/pool.
+- `StockOrigin`: an independent historical fact per Commodity (`Map Commodity StockOrigin`), declared explicitly as `YYYY-MM-DD origin COMMODITY [memo]`.
+- `transfer`: an explicit native movement declared as `YYYY-MM-DD transfer FROM -> TO QUANTITY COMMODITY [memo]`. Endpoints are strictly `unallocated` and `Spendable EnvelopeId`. `unallocated` is a boundary endpoint, not a balance-owning account/pool. `alloc`, `move`, and `release` are UI/presentation verbs derived from endpoints, not source syntax.
 - Transfer amounts must be strictly positive exact `Amount`.
 - Duplicate `StockOrigin` fails closed.
 - Origin after transfer fails closed.
 - Transfer without origin fails closed.
+- Arbitrary keyword prefixes and aliases fail closed.
 - Same-day effects combine before cumulative non-negative validation.
 
 ## Expense routing and Consumption

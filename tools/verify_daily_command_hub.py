@@ -156,10 +156,10 @@ def main() -> None:
             raise AssertionError(f"plan delegation differed: {read_log(log)!r}")
 
         log.write_text("", encoding="utf-8")
-        result = invoke(["budget", "budget.journal", "2026-08-06", "memo", "Expenses:Food", "Expenses:Dining", "1000", "JPY"], base_env)
-        assert_success(result, "budget delegation")
-        if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <budget> <budget.journal> <2026-08-06> <memo> <Expenses:Food> <Expenses:Dining> <1000> <JPY>"]:
-            raise AssertionError(f"budget delegation differed: {read_log(log)!r}")
+        result = invoke(["entitlement", "entitlement.journal", "2026-08-06", "memo", "unallocated", "daily", "1000", "JPY"], base_env)
+        assert_success(result, "entitlement delegation")
+        if read_log(log) != ["cabal <run> <exe:h-kernel-editor-cli> <--> <entitlement> <entitlement.journal> <2026-08-06> <memo> <unallocated> <daily> <1000> <JPY>"]:
+            raise AssertionError(f"entitlement delegation differed: {read_log(log)!r}")
 
         log.write_text("", encoding="utf-8")
         result = invoke(["issue", "issues.tsv", "ISS-1", "open", "2026-08-06", "cat", "title", "-", "-", "details"], base_env)
@@ -199,7 +199,7 @@ def main() -> None:
             "tools/hk [--base DIR] actual-reverse",
             "tools/hk [--base DIR] account",
             "tools/hk [--base DIR] plan",
-            "tools/hk [--base DIR] budget",
+            "tools/hk [--base DIR] entitlement",
             "tools/hk [--base DIR] issue",
             "tools/hk [--base DIR] edit",
             "tools/hk check",
