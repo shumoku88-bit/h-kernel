@@ -4,13 +4,13 @@ module HKernel.Household.EnvelopeObservation
   ( HouseholdEnvelopeObservation
   , householdEnvelopeObservationPeriod
   , householdEnvelopeObservationObservedThrough
+  , householdEnvelopeObservationStockOrigins
   , householdEnvelopeConsumption
   , householdEnvelopeEntitlement
   , householdEnvelopeFulfillment
   , householdEnvelopeRemaining
   , householdEnvelopeCommitment
   , householdEnvelopeHeadroom
-  , deriveEnvelopeStockOrigins
   , HouseholdEnvelopeError(..)
   , deriveHouseholdEnvelopeObservation
   ) where
@@ -41,6 +41,7 @@ import HKernel.Envelope.Entitlement
 import HKernel.Envelope.EntitlementHistory
   ( EnvelopeEntitlementHistory
   , EnvelopeEntitlementHistoryError
+  , envelopeEntitlementHistoryOrigins
   , mkEnvelopeEntitlementHistoryWithOrigins
   )
 import HKernel.Envelope.EntitlementTransfer
@@ -89,6 +90,7 @@ import HKernel.Plan.Journal (PlanJournal)
 data HouseholdEnvelopeObservation = HouseholdEnvelopeObservation
   { householdEnvelopeObservationPeriod          :: Period
   , householdEnvelopeObservationObservedThrough :: Day
+  , householdEnvelopeObservationStockOrigins    :: Map Commodity Day
   , householdEnvelopeConsumption                :: EnvelopeConsumption
   , householdEnvelopeEntitlement                :: EnvelopeEntitlement
   , householdEnvelopeFulfillment                :: EnvelopeFulfillment
@@ -113,21 +115,6 @@ data SourceEndpoint
   = SourceEnvelope EnvelopeId
   | SourceUnallocated
   | SourceOpening
-
--- | Opening boundary of the native Envelope stock world for each Commodity.
---
--- The earliest admitted Budget movement is provenance even when it does not
--- move value into a spendable Envelope. Report Periods and current routing
--- policy must never be substituted for this historical coordinate.
-deriveEnvelopeStockOrigins
-  :: [HouseholdBudgetMovement]
-  -> Map Commodity Day
-deriveEnvelopeStockOrigins = Map.fromListWith min . map origin
-  where
-    origin movement =
-      ( amountCommodity (householdBudgetMovementAmount movement)
-      , householdBudgetMovementDate movement
-      )
 
 deriveHouseholdEnvelopeObservation
   :: Day
@@ -159,6 +146,7 @@ deriveHouseholdEnvelopeObservation observedThrough period actual plans policy ex
   Right HouseholdEnvelopeObservation
     { householdEnvelopeObservationPeriod = period
     , householdEnvelopeObservationObservedThrough = observedThrough
+    , householdEnvelopeObservationStockOrigins = envelopeEntitlementHistoryOrigins history
     , householdEnvelopeConsumption = consumption
     , householdEnvelopeEntitlement = entitlement
     , householdEnvelopeFulfillment = fulfillment
@@ -230,6 +218,21 @@ projectEntitlementHistory policy movements =
               (householdBudgetMovementMemo movement) of
             Right transfer -> Right (Just transfer)
             Left err -> Left [HouseholdEnvelopeEntitlementTransferError transactionIndex err]
+
+-- | Opening boundary of the native Envelope stock world for each Commodity.
+--
+-- The earliest admitted Budget movement is provenance even when it does not
+-- move value into a spendable Envelope. Report Periods and current routing
+-- policy must never be substituted for this historical coordinate.
+deriveEnvelopeStockOrigins
+  :: [HouseholdBudgetMovement]
+  -> Map Commodity Day
+deriveEnvelopeStockOrigins = Map.fromListWith min . map origin
+  where
+    origin movement =
+      ( amountCommodity (householdBudgetMovementAmount movement)
+      , householdBudgetMovementDate movement
+      )
 
 singleLeft
   :: (error -> HouseholdEnvelopeError)
