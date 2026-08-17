@@ -340,21 +340,18 @@ characterizeIssueRealizationFailures = do
     (prepareIssueRealize realizationActualJournal realizationPlanJournal
       realizationActualSource "" realizationIssuesSource
       realizationIntent { realizeRecordedOn = fromGregorian 2026 7 31 })
-  assertRealizeLeft "Issue closure cannot predate relation recording"
-    isCloseBeforeRelation
-    (prepareIssueRealize realizationActualJournal realizationPlanJournal
+  assertEqual "Issue close remains independent from later relation recording"
+    True
+    (case prepareIssueRealize realizationActualJournal realizationPlanJournal
       realizationActualSource "" realizationIssuesSource
-      realizationIntent { realizeClosedOn = fromGregorian 2026 8 16 })
+      realizationIntent { realizeClosedOn = fromGregorian 2026 8 16 } of
+        Right _ -> True
+        Left _ -> False)
   where
     isRelationBeforeIssue err = case err of
       RealizeRelationBeforeIssueRecorded recorded relationDay ->
         recorded == fromGregorian 2026 8 1
           && relationDay == fromGregorian 2026 7 31
-      _ -> False
-    isCloseBeforeRelation err = case err of
-      RealizeCloseBeforeRelation relationDay closedDay ->
-        relationDay == fromGregorian 2026 8 17
-          && closedDay == fromGregorian 2026 8 16
       _ -> False
 
 characterizeIssueRealizationPublication :: IO ()
