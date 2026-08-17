@@ -41,19 +41,236 @@ import HKernel.Report.Presentation
 import System.Directory (doesFileExist)
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitFailure)
-import System.FilePath ((</>), normalise)
+import System.FilePath ((</>), normalise, takeFileName)
 import System.IO (stderr)
-import System.IO.Error (tryIOError)
+import System.IO.Error (isDoesNotExistError, tryIOError)
 
 main :: IO ()
 main = do
   today <- localDay . zonedTimeToLocalTime <$> getZonedTime
   arguments <- getArgs
-  case parseArguments today arguments of
-    Left message -> dieWithUsage message
-    Right (journalPath, command) -> do
-      (resolvedPath, householdDirectory) <- resolveJournalInput journalPath
-      run today resolvedPath householdDirectory command
+  case arguments of
+    "concierge" : conciergeArguments ->
+      runConcierge today conciergeArguments
+    _ -> case parseArguments today arguments of
+      Left message -> dieWithUsage message
+      Right (journalPath, command) -> do
+        (resolvedPath, householdDirectory) <- resolveJournalInput journalPath
+        run today resolvedPath householdDirectory command
+
+-- Read-only AI consultation ---------------------------------------------------
+
+data ConciergeSnapshot = ConciergeSnapshot
+  { conciergeCanonicalSources :: [(FilePath, Text)]
+  , conciergeRelationSidecar  :: (FilePath, Maybe Text)
+  } deriving (Eq, Show)
+
+data ConciergeObservation = ConciergeObservation
+  { conciergeObservationSnapshot :: ConciergeSnapshot
+  , conciergeObservationReport   :: Text
+  }
+
+conciergeProtocol :: Text
+conciergeProtocol = T.unlines
+  [ "HKERNEL_CONCIERGE_PROTOCOL v1"
+  , "mode: read-only"
+  , "authority: canonical Household admission and explicit source evidence"
+  , "write_capability: none"
+  , "writer_commands: forbidden during consultation"
+  , "relationship_policy: use explicit relation rows and source-durable identities only"
+  , "inference_policy: never infer identity or relation from date, memo, amount, Account shape, or source position"
+  , "epistemic_policy: distinguish observed fact, plan, configuration, relation/history, report projection, and recommendation"
+  , "recommendation_policy: recommendations are advisory and never become Household facts"
+  , "staleness_policy: if the observation fence fails, discard the packet and request a fresh observation"
+  , "source_scope: eight canonical root coordinates plus the explicit issue-relations provenance sidecar"
+  , "sidecar_status: issue-relations.tsv is explicit provenance evidence but is not a ninth canonical Household source"
+  , "sidecar_admission: concierge-v1 fences sidecar source text but does not independently re-admit relation references; do not invent or repair relations from similarity"
+  ]
+
+conciergeUsage :: Text
+conciergeUsage = T.unlines
+  [ "Usage:"
+  , "  h-kernel concierge protocol"
+  , "  h-kernel concierge overview"
+  , "  h-kernel concierge export"
+  , "  h-kernel concierge packet"
+  ]
+
+runConcierge :: Day -> [String] -> IO ()
+runConcierge today arguments = case arguments of
+  ["protocol"] -> TIO.putStr conciergeProtocol
+  ["self-check"] -> conciergeSelfCheck
+  [command]
+    | command `elem` ["overview", "export", "packet"] -> do
+        directory <- requireConciergeHouseholdDirectory
+        observation <- stableConciergeObservation today directory
+        rendered <- renderConciergeObservation command observation
+        TIO.putStr rendered
+  _ -> dieText conciergeUsage
+
+conciergeSelfCheck :: IO ()
+conciergeSelfCheck = do
+  let requiredClauses =
+        [ "mode: read-only"
+        , "write_capability: none"
+        , "writer_commands: forbidden during consultation"
+        , "relationship_policy:"
+        , "recommendation_policy:"
+        , "sidecar_admission:"
+        ]
+      missing = filter (not . (`T.isInfixOf` conciergeProtocol)) requiredClauses
+  if null missing
+    then TIO.putStrLn "concierge Haskell observation self-check passed"
+    else dieText
+      ("concierge protocol missing required clauses: " <> T.intercalate ", " missing)
+
+requireConciergeHouseholdDirectory :: IO FilePath
+requireConciergeHouseholdDirectory = do
+  configured <- resolveConfiguredLedgerDataDirectory
+  case configured of
+    Just directory -> pure directory
+    Nothing -> dieText
+      "concierge Household root is not configured; use tools/hk --base DIR, HKERNEL_LEDGER_DATA_DIR, or ledger-data.local"
+
+stableConciergeObservation :: Day -> FilePath -> IO ConciergeObservation
+stableConciergeObservation today directory = do
+  before <- readConciergeSnapshot directory
+  firstState <- loadCanonicalReportState directory
+  firstReport <- canonicalDefaultReportText
+    today firstState (householdStateReportConfig firstState)
+  middle <- readConciergeSnapshot directory
+  secondState <- loadCanonicalReportState directory
+  secondReport <- canonicalDefaultReportText
+    today secondState (householdStateReportConfig secondState)
+  after <- readConciergeSnapshot directory
+
+  if before /= middle
+      || middle /= after
+      || firstState /= secondState
+      || firstReport /= secondReport
+    then dieText
+      "Household changed during concierge observation; discard this observation and retry"
+    else pure ConciergeObservation
+      { conciergeObservationSnapshot = before
+      , conciergeObservationReport = firstReport
+      }
+
+readConciergeSnapshot :: FilePath -> IO ConciergeSnapshot
+readConciergeSnapshot directory = do
+  root <- case mkHouseholdRoot directory of
+    Left _ -> dieText "invalid Household root directory"
+    Right value -> pure value
+  let paths = householdSourcePaths root
+      canonicalPaths =
+        [ householdAccountsJournalPath paths
+        , householdActualJournalPath paths
+        , householdPlanJournalPath paths
+        , householdBudgetJournalPath paths
+        , householdBudgetConfigPath paths
+        , householdPolicyConfigPath paths
+        , householdReportConfigPath paths
+        , householdIssuesPath paths
+        ]
+      relationPath = householdIssueRelationsPath paths
+  canonicalSources <- traverse readCanonicalSource canonicalPaths
+  relationSource <- readOptionalConciergeSource relationPath
+  pure ConciergeSnapshot
+    { conciergeCanonicalSources = canonicalSources
+    , conciergeRelationSidecar = (relationPath, relationSource)
+    }
+  where
+    readCanonicalSource path = do
+      source <- readRequiredConciergeSource path
+      pure (path, source)
+
+readRequiredConciergeSource :: FilePath -> IO Text
+readRequiredConciergeSource path = do
+  result <- tryIOError (TIO.readFile path)
+  case result of
+    Left err -> dieText
+      ("cannot read concierge source ‘" <> T.pack path <> "’: " <> tshow err)
+    Right value -> pure value
+
+readOptionalConciergeSource :: FilePath -> IO (Maybe Text)
+readOptionalConciergeSource path = do
+  result <- tryIOError (TIO.readFile path)
+  case result of
+    Left err
+      | isDoesNotExistError err -> pure Nothing
+      | otherwise -> dieText
+          ("cannot read concierge provenance source ‘" <> T.pack path <> "’: "
+            <> tshow err)
+    Right value -> pure (Just value)
+
+renderConciergeObservation
+  :: String
+  -> ConciergeObservation
+  -> IO Text
+renderConciergeObservation command observation = do
+  generatedAt <- T.pack . show <$> getZonedTime
+  let header kind = T.unlines
+        [ "HKERNEL_CONCIERGE_" <> kind <> " v1"
+        , "generated_at: " <> generatedAt
+        , "mode: read-only"
+        , "canonical_household_admission: passed"
+        , "observation_fence: passed"
+        ]
+      reportBlock =
+        "\n@@CANONICAL_REPORT\n"
+          <> ensureTrailingNewline (conciergeObservationReport observation)
+          <> "@@END_CANONICAL_REPORT\n"
+      sourceBlock = renderConciergeSources
+        (conciergeObservationSnapshot observation)
+  pure $ conciergeProtocol <> "\n" <> case command of
+    "overview" ->
+      header "OVERVIEW"
+        <> "evidence_level: canonical-report\n"
+        <> "next: use `tools/hk concierge export` only when exact root-source evidence is needed\n"
+        <> reportBlock
+    "export" ->
+      header "EVIDENCE"
+        <> "evidence_level: exact-root-source-text\n"
+        <> "canonical_sources: 8\n"
+        <> "provenance_sidecars: 1\n"
+        <> sourceBlock
+    "packet" ->
+      header "PACKET"
+        <> "evidence_level: canonical-report-plus-exact-root-source-text\n"
+        <> reportBlock
+        <> sourceBlock
+    _ -> conciergeUsage
+
+renderConciergeSources :: ConciergeSnapshot -> Text
+renderConciergeSources snapshot =
+  T.concat
+    [ renderConciergeSource "canonical" path True source
+    | (path, source) <- conciergeCanonicalSources snapshot
+    ]
+  <> case conciergeRelationSidecar snapshot of
+    (path, Nothing) -> renderConciergeSource "provenance-sidecar" path False ""
+    (path, Just source) -> renderConciergeSource
+      "provenance-sidecar" path True source
+
+renderConciergeSource
+  :: Text
+  -> FilePath
+  -> Bool
+  -> Text
+  -> Text
+renderConciergeSource sourceClass path present source =
+  let presentText = if present then "true" else "false"
+  in "\n@@SOURCE name=" <> T.pack (takeFileName path)
+      <> " class=" <> sourceClass
+      <> " present=" <> presentText
+      <> " characters=" <> tshow (T.length source) <> "\n"
+      <> ensureTrailingNewline source
+      <> "@@END_SOURCE\n"
+
+ensureTrailingNewline :: Text -> Text
+ensureTrailingNewline value
+  | T.null value = value
+  | "\n" `T.isSuffixOf` value = value
+  | otherwise = value <> "\n"
 
 resolveJournalInput :: FilePath -> IO (FilePath, Maybe FilePath)
 resolveJournalInput requestedPath = do
@@ -133,6 +350,14 @@ runCanonicalDefaultReportBook :: FilePath -> Day -> IO ()
 runCanonicalDefaultReportBook directory latest = do
   state <- loadCanonicalReportState directory
   configuration <- loadCanonicalReportConfiguration state
+  TIO.putStr =<< canonicalDefaultReportText latest state configuration
+
+canonicalDefaultReportText
+  :: Day
+  -> HouseholdState
+  -> ReportConfiguration
+  -> IO Text
+canonicalDefaultReportText latest state configuration = do
   let journal = actualJournalValue (householdStateActualJournal state)
       plan = reportConfigurationPlan configuration
   (currentCycle, latestSurface) <-
@@ -150,10 +375,11 @@ runCanonicalDefaultReportBook directory latest = do
       | resolvedTrialBalanceAsOf resolvedPlan == latest -> pure surface
     _ -> buildCanonicalHouseholdSurface
       (resolvedTrialBalanceAsOf resolvedPlan) state
-  renderCanonicalReportBook
-    (reportConfigurationPresentation configuration)
-    (reportBookWithPlan resolvedPlan journal)
-    reportSurface
+  pure
+    (renderReportBookWithHouseholdPresentation
+      (reportConfigurationPresentation configuration)
+      (reportBookWithPlan resolvedPlan journal)
+      reportSurface)
 
 runCanonicalReportBook :: FilePath -> DateRange -> IO ()
 runCanonicalReportBook directory dateRange = do

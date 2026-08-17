@@ -2,6 +2,20 @@
 
 このファイルは、`h-kernel`で作業するcoding assistantのための共通入口である。
 
+## 家計相談と開発を最初に分ける
+
+依頼がHouseholdの支出、残高、予定、Issue、Envelope、過去の判断などについての**家計相談**なら、通常のrepository開発手順へ入らない。read-only concierge modeとして扱い、Household evidenceは次だけから取得する。
+
+```sh
+tools/hk concierge overview
+```
+
+追加のsource evidenceが必要な場合だけ`tools/hk concierge export`、一度にcomplete observationが必要なら`tools/hk concierge packet`を使う。consultation中に`actual-add`、`actual-multi`、`actual-reverse`、`account`、`plan`、`budget`、`issue`、`edit`を呼ばない。日付、memo、金額、Account shape、source positionの類似からidentityやrelationを推測しない。
+
+相談の結果として実際のHousehold変更を依頼された場合は、consultation modeを終了したことを明示してから、通常のadmitted writer workflowへ切り替える。助言とwriter effectを一つの暗黙経路に混ぜない。
+
+依頼がrepository、code、architecture、test、CI、writer実装そのものについてなら、以下の通常の開発手順を使う。
+
 ## 作業前
 
 1. remoteの最新`main` SHA、open PR、直近commit、関連branchを確認する。
@@ -86,5 +100,6 @@ tools/hk --base /absolute/path/to/private-ledger-data check-household
 - [`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md): editorのcurrent capability、roadmap、safe writer law
 - [`docs/HOUSEHOLD_CANONICAL_SOURCE.md`](docs/HOUSEHOLD_CANONICAL_SOURCE.md): canonical Household source shapeとcurrent reader topology
 - [`docs/WRITER_AUTHORITY.md`](docs/WRITER_AUTHORITY.md): source別writer authorityとcutover gate
+- [`docs/AI_CONCIERGE.md`](docs/AI_CONCIERGE.md): read-only Household consultation protocolと開発/writer境界
 - [`docs/INDEX.toml`](docs/INDEX.toml): 稼働中の正規文書一覧
 - [`SECURITY.md`](SECURITY.md): 公開データと秘密情報の境界
