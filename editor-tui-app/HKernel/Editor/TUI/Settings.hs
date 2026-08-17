@@ -23,11 +23,9 @@ import HKernel.Editor.TUI.Model
   )
 import HKernel.Household.Application (HouseholdState(..))
 import HKernel.Household.Policy
-  ( householdAllocationEnvelopes
-  , householdCycleIncomeAccount
+  ( householdCycleIncomeAccount
   , householdEnvelopeOrder
   , householdPolicyCycle
-  , householdUnassignedBudgetAccounts
   )
 import HKernel.Report.Config
   ( reportConfigurationPlan
@@ -41,7 +39,7 @@ drawWorkspace context =
         (vLimit 18
           (viewport SettingsViewport Vertical
             (vBox
-              [ str "=== [budget.toml] Envelope Policy ==="
+              [ str "=== [envelope.toml] Envelope Policy ==="
               , str ("Envelopes count: "
                   <> show (length (householdEnvelopeOrder
                     (householdStatePolicy state))))
@@ -50,14 +48,6 @@ drawWorkspace context =
               , txt ("Income Cycle Account: "
                   <> accountName (householdCycleIncomeAccount
                     (householdPolicyCycle (householdStatePolicy state))))
-              , txt ("Allocation Envelopes: "
-                  <> T.pack (show (householdAllocationEnvelopes
-                    (householdStatePolicy state))))
-              , txt ("Unassigned Accounts: "
-                  <> T.intercalate ", "
-                    (map accountName
-                      (Set.toAscList (householdUnassignedBudgetAccounts
-                        (householdStatePolicy state)))))
               , str " "
               , str "=== [report.toml] Report Configuration ==="
               , txt ("Report Plan: "

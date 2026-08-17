@@ -123,14 +123,14 @@ drawNavigationBar currentSection =
           | otherwise = str ("  " <> sectionNum section <> ": " <> sectionName section <> "  ")
     sectionNum ActualSection = "1"
     sectionNum PlansSection = "2"
-    sectionNum BudgetSection = "3"
+    sectionNum EntitlementSection = "3"
     sectionNum AccountsSection = "4"
     sectionNum IssuesSection = "5"
     sectionNum ReportsSection = "6"
     sectionNum SettingsSection = "7"
     sectionName ActualSection = "Actual"
     sectionName PlansSection = "Plans"
-    sectionName BudgetSection = "Budget"
+    sectionName EntitlementSection = "Envelopes"
     sectionName AccountsSection = "Accounts"
     sectionName IssuesSection = "Issues"
     sectionName ReportsSection = "Reports"
@@ -140,7 +140,7 @@ drawSectionBody :: AppContext -> Widget Name
 drawSectionBody context = case contextCurrentSection context of
   ActualSection -> Actual.drawWorkspace context
   PlansSection -> Plan.drawWorkspace context
-  BudgetSection -> Maintenance.drawBudgetWorkspace context
+  EntitlementSection -> Maintenance.drawEntitlementWorkspace context
   AccountsSection -> Maintenance.drawAccountsWorkspace context
   IssuesSection -> Maintenance.drawIssuesWorkspace context
   ReportsSection -> Report.drawWorkspace context
@@ -171,7 +171,7 @@ handleHomeEvent context selectedDay event = case event of
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
   VtyEvent (V.EvKey (V.KChar '1') []) -> switchSection ActualSection
   VtyEvent (V.EvKey (V.KChar '2') []) -> switchSection PlansSection
-  VtyEvent (V.EvKey (V.KChar '3') []) -> switchSection BudgetSection
+  VtyEvent (V.EvKey (V.KChar '3') []) -> switchSection EntitlementSection
   VtyEvent (V.EvKey (V.KChar '4') []) -> switchSection AccountsSection
   VtyEvent (V.EvKey (V.KChar '5') []) -> switchSection IssuesSection
   VtyEvent (V.EvKey (V.KChar '6') []) -> switchSection ReportsSection
@@ -199,7 +199,7 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey (V.KChar 'H') []) -> openHome
   VtyEvent (V.EvKey (V.KChar '1') []) -> switchSection ActualSection
   VtyEvent (V.EvKey (V.KChar '2') []) -> switchSection PlansSection
-  VtyEvent (V.EvKey (V.KChar '3') []) -> switchSection BudgetSection
+  VtyEvent (V.EvKey (V.KChar '3') []) -> switchSection EntitlementSection
   VtyEvent (V.EvKey (V.KChar '4') []) -> switchSection AccountsSection
   VtyEvent (V.EvKey (V.KChar '5') []) -> switchSection IssuesSection
   VtyEvent (V.EvKey (V.KChar '6') []) -> switchSection ReportsSection
@@ -228,12 +228,12 @@ handleWorkspaceEvent context event = case event of
       case action of
         Plan.MaintainContext -> pure ()
         Plan.StartFlow flow -> put (AppWrapper currentContext (PlanFlow flow))
-    BudgetSection -> do
-      action <- Maintenance.handleBudgetWorkspaceEvent event
+    EntitlementSection -> do
+      action <- Maintenance.handleEntitlementWorkspaceEvent event
       case action of
-        Maintenance.BudgetActionMaintain -> pure ()
-        Maintenance.BudgetActionStartMovement ->
-          put (AppWrapper context (MaintenanceFlow Maintenance.startBudgetMovement))
+        Maintenance.EntitlementActionMaintain -> pure ()
+        Maintenance.EntitlementActionStartTransfer ->
+          put (AppWrapper context (MaintenanceFlow Maintenance.startEntitlementTransfer))
     AccountsSection -> do
       action <- Maintenance.handleAccountsWorkspaceEvent event
       case action of

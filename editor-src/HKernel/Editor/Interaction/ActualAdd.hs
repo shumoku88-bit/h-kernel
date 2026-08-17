@@ -132,7 +132,7 @@ groupAccountCandidates
   -> [(AccountType, [Account])]
 groupAccountCandidates registry candidates =
   [ (accountType, matching)
-  | accountType <- [Asset, Liability, Equity, Income, Expense, Budget]
+  | accountType <- [Asset, Liability, Equity, Income, Expense]
   , let matching = filter ((== Just accountType) . (`accountTypeFor` registry)) candidates
   , not (null matching)
   ]

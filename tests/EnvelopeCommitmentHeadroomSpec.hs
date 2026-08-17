@@ -22,6 +22,7 @@ import HKernel.Envelope.FulfillmentRouting
 import HKernel.Envelope.Headroom
 import HKernel.Envelope.Identity (EnvelopeId, mkEnvelopeId)
 import HKernel.Envelope.Remaining (calculateEnvelopeRemaining)
+import HKernel.Envelope.StockOrigin (StockOrigin(..))
 import HKernel.Money
 import HKernel.Period (Period, mkPeriod, periodStart)
 import HKernel.Plan (PlanId, mkPlanId)
@@ -199,18 +200,20 @@ fulfillmentRouting = mustRight (mkFulfillmentRoutingHistory
   ])
 
 entitlementHistory :: EnvelopeEntitlementHistory
-entitlementHistory = mustRight (mkEnvelopeEntitlementHistory
+entitlementHistory = mustRight (mkEnvelopeEntitlementHistory origins
   [ grant (envelope "groceries") 300
   , grant (envelope "stock") 100
   , grant (envelope "savings") 50
   ])
   where
+    jpy = commodity "JPY"
+    origins = Map.singleton jpy (StockOrigin (periodStart period) jpy "JPY stock origin")
     grant target quantity = mustRight
       (mkEnvelopeEntitlementTransfer
         (periodStart period)
         Unallocated
         (Spendable target)
-        (mkAmount (commodity "JPY") (quantityFromInteger quantity))
+        (mkAmount jpy (quantityFromInteger quantity))
         "grant")
 
 planSource :: T.Text

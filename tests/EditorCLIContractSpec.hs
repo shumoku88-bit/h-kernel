@@ -24,7 +24,9 @@ import HKernel.Editor.PlanLifecycle
   , editPlanId
   , positivePlanEditAmountQuantity
   )
-import HKernel.Household.BudgetMovement (householdBudgetMovementMemo)
+import HKernel.Envelope.EntitlementTransfer
+  ( EnvelopeEntitlementTransfer(..)
+  )
 import HKernel.HouseholdIssue (issueIdText)
 import HKernel.Money (quantityFromInteger)
 import HKernel.Plan.Completion (actualTransactionIdText)
@@ -32,9 +34,9 @@ import HKernel.Plan.Completion (actualTransactionIdText)
 main :: IO ()
 main = do
   let results =
-        [ ("budget usage shape is admitted", testBudgetUsageShape)
-        , ("budget extra argument is rejected", testBudgetExtraArgument)
-        , ("budget memo named --commit remains data", testBudgetCommitTextIsData)
+        [ ("entitlement usage shape is admitted", testEntitlementUsageShape)
+        , ("entitlement extra argument is rejected", testEntitlementExtraArgument)
+        , ("entitlement memo named --commit remains data", testEntitlementCommitTextIsData)
         , ("commit is admitted after the leaf command", testCommandLocalCommit)
         , ("reverse admits new and target identities", testReverseIdentityAdmission)
         , ("Issue amount pair rejects one-sided omission", testIssueAmountPair)
@@ -59,48 +61,48 @@ main = do
     then exitSuccess
     else exitFailure
 
-testBudgetUsageShape :: Bool
-testBudgetUsageShape = case parseEditorCommand
-  [ "budget"
-  , "budget.journal"
+testEntitlementUsageShape :: Bool
+testEntitlementUsageShape = case parseEditorCommand
+  [ "entitlement"
+  , "entitlement.journal"
   , "2026-08-05"
   , "move"
-  , "budget:daily"
-  , "budget:flex"
+  , "daily"
+  , "flex"
   , "100"
   , "JPY"
   ] of
-    Right (PreviewOnly, BudgetMovementCmd "budget.journal" movement) ->
-      householdBudgetMovementMemo movement == "move"
+    Right (PreviewOnly, EntitlementTransferCmd "entitlement.journal" transfer) ->
+      entitlementTransferNote transfer == "move"
     _ -> False
 
-testBudgetExtraArgument :: Bool
-testBudgetExtraArgument =
+testEntitlementExtraArgument :: Bool
+testEntitlementExtraArgument =
   parseEditorCommand
-    [ "budget"
-    , "budget.journal"
+    [ "entitlement"
+    , "entitlement.journal"
     , "2026-08-05"
     , "move"
-    , "budget:daily"
-    , "budget:flex"
+    , "daily"
+    , "flex"
     , "100"
     , "JPY"
     , "extra"
-    ] == Left CliInvalidBudgetArguments
+    ] == Left CliInvalidEntitlementArguments
 
-testBudgetCommitTextIsData :: Bool
-testBudgetCommitTextIsData = case parseEditorCommand
-  [ "budget"
-  , "budget.journal"
+testEntitlementCommitTextIsData :: Bool
+testEntitlementCommitTextIsData = case parseEditorCommand
+  [ "entitlement"
+  , "entitlement.journal"
   , "2026-08-05"
   , "--commit"
-  , "budget:daily"
-  , "budget:flex"
+  , "daily"
+  , "flex"
   , "100"
   , "JPY"
   ] of
-    Right (PreviewOnly, BudgetMovementCmd _ movement) ->
-      householdBudgetMovementMemo movement == "--commit"
+    Right (PreviewOnly, EntitlementTransferCmd _ transfer) ->
+      entitlementTransferNote transfer == "--commit"
     _ -> False
 
 testCommandLocalCommit :: Bool

@@ -60,7 +60,6 @@ data AccountType
   | Equity
   | Income
   | Expense
-  | Budget
   deriving (Eq, Ord, Show)
 
 -- | Metadata attached to one declared account.

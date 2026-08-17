@@ -30,7 +30,7 @@ import HKernel.Actual.Journal
   )
 import HKernel.Envelope.EntitlementHistory
   ( EnvelopeEntitlementHistory
-  , envelopeEntitlementHistoryOriginFor
+  , envelopeEntitlementHistoryOriginDateFor
   )
 import HKernel.Envelope.ExpenseRouting
   ( ExpenseRoute(..)
@@ -137,9 +137,9 @@ observeEnvelopeStockConsumption history period observedThrough actual routingRes
     period observedThrough actual routingResolver
   where
     included _ownDay routeDay amount =
-      case envelopeEntitlementHistoryOriginFor (amountCommodity amount) history of
+      case envelopeEntitlementHistoryOriginDateFor (amountCommodity amount) history of
         Nothing -> False
-        Just origin -> routeDay >= origin
+        Just originDay -> routeDay >= originDay
 
 observeEnvelopeConsumptionWith
   :: (Day -> Day -> Amount -> Bool)

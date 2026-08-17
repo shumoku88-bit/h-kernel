@@ -213,7 +213,6 @@ parseAccountType value = case T.toCaseFold value of
   "equity" -> Right Equity
   "income" -> Right Income
   "expense" -> Right Expense
-  "budget" -> Right Budget
   _ -> Left "Unknown Account type."
 
 publishCandidate :: AppContext -> Text -> AccountJournalAppendPreview -> IO PublishResult

@@ -37,20 +37,14 @@ main = do
     (parseHouseholdConfiguration envelopePolicy backingPolicy planDestinationSource)
   assertLeft "retired account-policy section is rejected"
     (parseHouseholdConfiguration envelopePolicy backingPolicy accountPolicySource)
+  assertLeft "retired [budget] section is rejected"
+    (parseHouseholdConfiguration envelopePolicy backingPolicy budgetSectionSource)
 
 cleanSource :: T.Text
 cleanSource = T.unlines
   [ "[cycle]"
   , "mode = \"income-anchor\""
   , "income-account = \"income:pension\""
-  , ""
-  , "[budget]"
-  , "opening-accounts = [\"budget:opening\"]"
-  , "unassigned-accounts = [\"budget:unassigned\"]"
-  , ""
-  , "[[budget.envelopes]]"
-  , "id = \"food\""
-  , "allocation-account = \"budget:food\""
   ]
 
 planDestinationSource :: T.Text
@@ -65,6 +59,14 @@ accountPolicySource = cleanSource <> T.unlines
   , "unassigned = [\"budget:unassigned\"]"
   , "spent = []"
   , "envelope = [\"budget:food\"]"
+  ]
+
+budgetSectionSource :: T.Text
+budgetSectionSource = cleanSource <> T.unlines
+  [ ""
+  , "[budget]"
+  , "opening-accounts = [\"budget:opening\"]"
+  , "unassigned-accounts = [\"budget:unassigned\"]"
   ]
 
 mustRight :: Show error => Either error value -> value

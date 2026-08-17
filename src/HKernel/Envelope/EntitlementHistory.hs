@@ -3,9 +3,9 @@ module HKernel.Envelope.EntitlementHistory
   , envelopeEntitlementHistoryTransfers
   , envelopeEntitlementHistoryOrigins
   , envelopeEntitlementHistoryOriginFor
+  , envelopeEntitlementHistoryOriginDateFor
   , EnvelopeEntitlementHistoryError(..)
   , mkEnvelopeEntitlementHistory
-  , mkEnvelopeEntitlementHistoryWithOrigins
   ) where
 
 import Data.List (find, mapAccumL)
@@ -16,6 +16,7 @@ import qualified Data.Map.Strict as Map
 import Data.Time.Calendar (Day)
 import HKernel.Envelope.EntitlementTransfer
 import HKernel.Envelope.Identity (EnvelopeId)
+import HKernel.Envelope.StockOrigin (StockOrigin(..))
 import HKernel.Money
   ( Commodity
   , Quantity
@@ -26,17 +27,11 @@ import HKernel.Money
   , zeroQuantity
   )
 
--- | Native Entitlement history together with the opening boundary of the
--- Envelope stock world for each Commodity.
---
--- A source adapter may know that the Envelope system existed before the first
--- transfer into a Spendable Envelope, for example because admitted opening or
--- unallocated movement evidence already existed. Keeping that boundary here
--- prevents report Periods or current policy from becoming retrospective stock
--- authority.
+-- | Native Entitlement history together with explicit StockOrigin evidence
+-- for each Commodity.
 data EnvelopeEntitlementHistory = EnvelopeEntitlementHistory
   { envelopeEntitlementHistoryTransfers :: [EnvelopeEntitlementTransfer]
-  , envelopeEntitlementHistoryOrigins   :: Map Commodity Day
+  , envelopeEntitlementHistoryOrigins   :: Map Commodity StockOrigin
   } deriving (Eq, Show)
 
 data EnvelopeEntitlementHistoryError
@@ -45,43 +40,29 @@ data EnvelopeEntitlementHistoryError
   | EnvelopeEntitlementBecameNegative EnvelopeId Commodity Day Quantity
   deriving (Eq, Show)
 
--- | Lookup the native Envelope stock origin for one Commodity.
+-- | Lookup the explicit StockOrigin for one Commodity.
 envelopeEntitlementHistoryOriginFor
   :: Commodity
   -> EnvelopeEntitlementHistory
-  -> Maybe Day
+  -> Maybe StockOrigin
 envelopeEntitlementHistoryOriginFor commodity =
   Map.lookup commodity . envelopeEntitlementHistoryOrigins
 
--- | Construct a self-contained history when transfers are the only opening
--- evidence available. Each Commodity begins on its first transfer day.
---
--- Household production uses 'mkEnvelopeEntitlementHistoryWithOrigins' instead,
--- because the admitted Entitlement source can establish an earlier stock origin
--- with opening/unallocated movements that do not themselves create a native
--- Envelope transfer.
-mkEnvelopeEntitlementHistory
-  :: [EnvelopeEntitlementTransfer]
-  -> Either (NonEmpty EnvelopeEntitlementHistoryError) EnvelopeEntitlementHistory
-mkEnvelopeEntitlementHistory transfers =
-  mkEnvelopeEntitlementHistoryWithOrigins inferredOrigins transfers
-  where
-    inferredOrigins = Map.fromListWith min
-      [ ( amountCommodity (entitlementTransferAmount transfer)
-        , entitlementTransferDate transfer
-        )
-      | transfer <- transfers
-      ]
+-- | Lookup the origin date for one Commodity.
+envelopeEntitlementHistoryOriginDateFor
+  :: Commodity
+  -> EnvelopeEntitlementHistory
+  -> Maybe Day
+envelopeEntitlementHistoryOriginDateFor commodity =
+  fmap stockOriginDate . envelopeEntitlementHistoryOriginFor commodity
 
--- | Construct Entitlement history with an independently admitted stock opening
--- boundary. An origin-only Commodity is valid: routed Actual use after that day
--- may produce negative Remaining before the first grant. Every transfer must,
--- however, have an origin no later than its own effective day.
-mkEnvelopeEntitlementHistoryWithOrigins
-  :: Map Commodity Day
+-- | Construct Entitlement history with explicit StockOrigin evidence.
+-- Every transfer must have an explicit StockOrigin no later than its own effective day.
+mkEnvelopeEntitlementHistory
+  :: Map Commodity StockOrigin
   -> [EnvelopeEntitlementTransfer]
   -> Either (NonEmpty EnvelopeEntitlementHistoryError) EnvelopeEntitlementHistory
-mkEnvelopeEntitlementHistoryWithOrigins origins transfers =
+mkEnvelopeEntitlementHistory origins transfers =
   case NonEmpty.nonEmpty errors of
     Just found -> Left found
     Nothing -> Right EnvelopeEntitlementHistory
@@ -96,9 +77,9 @@ mkEnvelopeEntitlementHistoryWithOrigins origins transfers =
       case Map.lookup commodity origins of
         Nothing -> [EnvelopeEntitlementOriginMissing commodity transferDay]
         Just origin
-          | origin <= transferDay -> []
+          | stockOriginDate origin <= transferDay -> []
           | otherwise ->
-              [EnvelopeEntitlementOriginAfterTransfer commodity origin transferDay]
+              [EnvelopeEntitlementOriginAfterTransfer commodity (stockOriginDate origin) transferDay]
       where
         commodity = amountCommodity (entitlementTransferAmount transfer)
         transferDay = entitlementTransferDate transfer

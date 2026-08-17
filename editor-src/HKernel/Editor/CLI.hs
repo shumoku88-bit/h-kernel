@@ -38,7 +38,12 @@ import HKernel.Editor.PlanLifecycle
   , mkPositivePlanEditAmount
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
-import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
+import HKernel.Envelope.EntitlementTransfer
+  ( EnvelopeEndpoint(..)
+  , EnvelopeEntitlementTransfer
+  , mkEnvelopeEntitlementTransfer
+  )
+import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.HouseholdIssue (IssueId, IssueStatus(..), mkIssueId)
 import HKernel.Money
   ( Amount
@@ -59,7 +64,7 @@ data EditorCommand
   = AppendCmd FilePath ActualEditIntent
   | ReverseCmd FilePath ActualReverseIntent
   | AccountCmd FilePath AccountDeclaration
-  | BudgetMovementCmd FilePath HouseholdBudgetMovement
+  | EntitlementTransferCmd FilePath EnvelopeEntitlementTransfer
   | IssueCmd FilePath IssueAppendIntent
   | IssueRealizeCmd FilePath IssueRealizeIntent
   | PlanAddCmd FilePath FilePath PlanAddIntent
@@ -71,6 +76,8 @@ data CliError
   = CliUsage
   | CliInvalidDate
   | CliInvalidAccount
+  | CliInvalidEnvelopeId
+  | CliInvalidEntitlementTransfer
   | CliInvalidQuantity
   | CliInvalidCommodity
   | CliInvalidActualTransactionId
@@ -80,7 +87,7 @@ data CliError
   | CliPostingTripletsRequired
   | CliPostingRequired
   | CliInvalidAccountArguments
-  | CliInvalidBudgetArguments
+  | CliInvalidEntitlementArguments
   | CliInvalidIssueArguments
   | CliIssueAmountPairRequired
   | CliIssueRealizeIdRequired
@@ -109,7 +116,7 @@ parseEditorCommand :: [String] -> Either CliError (CommitMode, EditorCommand)
 parseEditorCommand ("append":args) = parseLeaf parseAppend args
 parseEditorCommand ("reverse":args) = parseLeaf parseReverse args
 parseEditorCommand ("account":args) = parseLeaf parseAccount args
-parseEditorCommand ("budget":args) = parseLeaf parseBudget args
+parseEditorCommand ("entitlement":args) = parseLeaf parseEntitlement args
 parseEditorCommand ("issue":"realize":args) = parseLeaf parseIssueRealize args
 parseEditorCommand ("issue":args) = parseLeaf parseIssue args
 parseEditorCommand ("plan":"add":args) = parseLeaf parsePlanAdd args
@@ -173,22 +180,23 @@ parseAccount (journalFile:accountText:typeText:rest) = do
   pure (AccountCmd journalFile declaration)
 parseAccount _ = Left CliInvalidAccountArguments
 
-parseBudget :: [String] -> Either CliError EditorCommand
-parseBudget [journalFile, dateText, memo, fromText, toText, quantityText, commodityText] = do
+parseEntitlement :: [String] -> Either CliError EditorCommand
+parseEntitlement [journalFile, dateText, memo, fromText, toText, quantityText, commodityText] = do
   date <- parseDate dateText
-  fromAccount <- parseAccountValue fromText
-  toAccount <- parseAccountValue toText
+  fromEndpoint <- parseEndpointText fromText
+  toEndpoint <- parseEndpointText toText
   quantity <- parseQuantityValue quantityText
   commodity <- parseCommodity commodityText
-  pure
-    (BudgetMovementCmd journalFile
-      (HouseholdBudgetMovement
-        date
-        (T.pack memo)
-        fromAccount
-        toAccount
-        (mkAmount commodity quantity)))
-parseBudget _ = Left CliInvalidBudgetArguments
+  transfer <- mapDomainError CliInvalidEntitlementTransfer
+    (mkEnvelopeEntitlementTransfer date fromEndpoint toEndpoint (mkAmount commodity quantity) (T.pack memo))
+  pure (EntitlementTransferCmd journalFile transfer)
+parseEntitlement _ = Left CliInvalidEntitlementArguments
+
+parseEndpointText :: String -> Either CliError EnvelopeEndpoint
+parseEndpointText text
+  | T.toCaseFold (T.pack text) == "unallocated" = Right Unallocated
+  | otherwise = mapDomainError CliInvalidEnvelopeId
+      (Spendable <$> mkEnvelopeId (T.pack text))
 
 parseIssue :: [String] -> Either CliError EditorCommand
 parseIssue (tsvFile:idText:statusText:dateText:category:title:quantityText:commodityText:detailsWords) = do
@@ -497,7 +505,6 @@ parseAccountType value = case T.toCaseFold (T.pack value) of
   "equity" -> Right Equity
   "income" -> Right Income
   "expense" -> Right Expense
-  "budget" -> Right Budget
   _ -> Left CliInvalidAccountType
 
 mapDomainError :: CliError -> Either domainError value -> Either CliError value
@@ -510,6 +517,8 @@ renderCliError errorValue = case errorValue of
   CliUsage -> "command does not match the Editor CLI grammar"
   CliInvalidDate -> "invalid date; expected YYYY-MM-DD"
   CliInvalidAccount -> "invalid Account"
+  CliInvalidEnvelopeId -> "invalid Envelope identity"
+  CliInvalidEntitlementTransfer -> "invalid Entitlement transfer"
   CliInvalidQuantity -> "invalid Quantity"
   CliInvalidCommodity -> "invalid Commodity"
   CliInvalidActualTransactionId -> "invalid Actual transaction identity"
@@ -519,7 +528,7 @@ renderCliError errorValue = case errorValue of
   CliPostingTripletsRequired -> "postings must be account/quantity/commodity triplets"
   CliPostingRequired -> "at least one posting is required"
   CliInvalidAccountArguments -> "invalid Account command arguments"
-  CliInvalidBudgetArguments -> "invalid Budget command arguments"
+  CliInvalidEntitlementArguments -> "invalid Entitlement command arguments"
   CliInvalidIssueArguments -> "invalid Issue command arguments"
   CliIssueAmountPairRequired -> "Issue amount requires both quantity and commodity, or '-' for both"
   CliIssueRealizeIdRequired -> "--id is required for issue realize"
@@ -549,7 +558,7 @@ usageText = unlines
   , "  h-kernel-editor-cli append [--commit] <journal.txt> <YYYY-MM-DD> <desc> [<acct> <qty> <comm> ...]"
   , "  h-kernel-editor-cli reverse [--commit] <journal.txt> <new-event-id> <target-event-id> <YYYY-MM-DD> <desc...>"
   , "  h-kernel-editor-cli account [--commit] <journal.txt> <account> <type> [<commodity>]"
-  , "  h-kernel-editor-cli budget [--commit] <budget.journal> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm>"
+  , "  h-kernel-editor-cli entitlement [--commit] <entitlement.journal> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm>"
   , "  h-kernel-editor-cli issue [--commit] <issues.tsv> <id> <status> <YYYY-MM-DD> <category> <title> <qty|-> <comm|-> <details...>"
   , "  h-kernel-editor-cli issue realize [--commit] <household-root> --id ID --actual-date YYYY-MM-DD --recorded-on YYYY-MM-DD --closed-on YYYY-MM-DD --description DESC --posting ACCT QTY COMM ... --memo MEMO"
   , "  h-kernel-editor-cli plan add [--commit] <plan.journal> <actual.journal> --date YYYY-MM-DD --description DESC --posting ACCT QTY COMM ... [--id ID] [--series SERIES]"

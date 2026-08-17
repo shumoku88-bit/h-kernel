@@ -112,7 +112,6 @@ renderAccountType accountType = case accountType of
   Equity    -> "Equity"
   Income    -> "Income"
   Expense   -> "Expense"
-  Budget    -> "Budget"
 
 data AccountBlockState
   = OutsideAccountBlock

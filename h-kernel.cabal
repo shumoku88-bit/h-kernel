@@ -37,6 +37,7 @@ library
                     , HKernel.Envelope.Config
                     , HKernel.Envelope.Consumption
                     , HKernel.Envelope.Entitlement
+                    , HKernel.Envelope.Entitlement.Journal
                     , HKernel.Envelope.EntitlementHistory
                     , HKernel.Envelope.EntitlementTransfer
                     , HKernel.Envelope.ExpenseRouting
@@ -49,6 +50,7 @@ library
                     , HKernel.Envelope.Mode
                     , HKernel.Envelope.Policy
                     , HKernel.Envelope.Remaining
+                    , HKernel.Envelope.StockOrigin
                     , HKernel.HouseholdIssue
                     , HKernel.Journal
                     , HKernel.Ledger
@@ -85,7 +87,6 @@ library h-kernel-household
     import:           common-defaults
     exposed-modules:  HKernel.Household.AccountProfile
                     , HKernel.Household.Backing
-                    , HKernel.Household.BudgetMovement
                     , HKernel.Household.Config
                     , HKernel.Household.DailyTarget
                     , HKernel.Household.EnvelopeHistory
@@ -110,7 +111,7 @@ library h-kernel-editor
                     , HKernel.Editor.ActualReverse
                     , HKernel.Editor.ActualWorkspace
                     , HKernel.Editor.SourcePublication
-                    , HKernel.Editor.BudgetMovementAppend
+                    , HKernel.Editor.EntitlementTransferAppend
                     , HKernel.Editor.CLI
                     , HKernel.Editor.Interaction.ActualAdd
                     , HKernel.Editor.Interaction.PlanCompleteAdvance
@@ -254,10 +255,10 @@ test-suite h-kernel-household-backing-test
                     , text
                     , time
 
-test-suite h-kernel-household-budget-observation-test
+test-suite h-kernel-household-entitlement-observation-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
-    main-is:          HouseholdBudgetObservationSpec.hs
+    main-is:          HouseholdEntitlementObservationSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
                     , h-kernel
@@ -453,6 +454,7 @@ test-suite h-kernel-envelope-test
                     , EnvelopeConfigSpec
                     , EnvelopeConsumptionSpec
                     , EnvelopeEntitlementHistorySpec
+                    , EnvelopeEntitlementJournalSpec
                     , EnvelopeEntitlementSpec
                     , EnvelopeExpenseRoutingSpec
                     , EnvelopeFulfillmentRoutingTSVSpec
@@ -508,7 +510,7 @@ executable h-kernel-editor-tui
                     , HKernel.Editor.TUI.Home
                     , HKernel.Editor.TUI.Maintenance
                     , HKernel.Editor.TUI.Maintenance.Accounts
-                    , HKernel.Editor.TUI.Maintenance.Budget
+                    , HKernel.Editor.TUI.Maintenance.Entitlement
                     , HKernel.Editor.TUI.Maintenance.Issues
                     , HKernel.Editor.TUI.Model
                     , HKernel.Editor.TUI.Plan
@@ -561,10 +563,10 @@ test-suite h-kernel-editor-account-append-test
                     , text
                     , time
 
-test-suite h-kernel-editor-budget-movement-append-test
+test-suite h-kernel-editor-entitlement-transfer-append-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
-    main-is:          EditorBudgetMovementAppendSpec.hs
+    main-is:          EditorEntitlementTransferAppendSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-household

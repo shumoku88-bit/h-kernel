@@ -28,6 +28,11 @@ import HKernel.Editor.AccountAppend
   ( accountCandidateBlock
   , prepareAccountJournalAppend
   )
+import HKernel.Editor.EntitlementTransferAppend
+  ( entitlementCandidateBlock
+  , entitlementCandidateCompleteSource
+  , prepareEntitlementTransferAppend
+  )
 import HKernel.Editor.SourcePublication
   ( CandidateSource(..)
   , ExpectedSource(..)
@@ -36,12 +41,13 @@ import HKernel.Editor.SourcePublication
   , publishActualBlockWithPathAdmission
   , publishWithPathAdmission
   )
-import HKernel.Editor.BudgetMovementAppend
-  ( budgetJournalCandidateBlock
-  , budgetJournalCandidateCompleteSource
-  , prepareBudgetJournalMovementAppend
-  )
 import qualified HKernel.Editor.IssueAppend as IssueAppend
+import HKernel.Envelope.EntitlementTransfer
+  ( EnvelopeEndpoint(..)
+  , EnvelopeEntitlementTransfer
+  , mkEnvelopeEntitlementTransfer
+  )
+import HKernel.Envelope.Identity (mkEnvelopeId, mkEnvelopeRegistry)
 import HKernel.Household.Application
   ( HouseholdLoadError(..)
   , HouseholdState(..)
@@ -51,7 +57,6 @@ import HKernel.Household.Application
   , loadCanonicalHousehold
   , loadCanonicalHouseholdWriteSnapshot
   )
-import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.Config
   ( householdConfigurationDailyTargetAssets
   )
@@ -64,8 +69,8 @@ main = do
   testSyntheticRootLoading
   testActualWholeHouseholdRollback
   testAccountWriteSnapshotOwnership
-  testBudgetWriteSnapshotOwnership
-  testBudgetWholeHouseholdRollback
+  testEntitlementWriteSnapshotOwnership
+  testEntitlementWholeHouseholdRollback
   testIssueWriteSnapshotOwnership
   testIssueWholeHouseholdRollback
   testRegistryDisagreementFailure
@@ -75,14 +80,14 @@ main = do
   testMissingSourceFailure
   testUnknownIncludeRejected
   testNativeAccountAppend
-  testNativeBudgetMovementAppend
+  testNativeEntitlementTransferAppend
   putStrLn "CanonicalHouseholdSpec PASSED."
 
 testSyntheticRootLoading :: IO ()
 testSyntheticRootLoading = do
   let dir = "/tmp/synthetic_household_spec"
   resetDirectory dir
-  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues
 
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
@@ -108,30 +113,39 @@ testActualWholeHouseholdRollback = do
   let dir = "/tmp/synthetic_household_actual_rollback_spec"
       actualPath = dir </> "actual.journal"
       reportPath = dir </> "report.toml"
-      block = T.unlines
-        [ "2026-07-16 * Rollback probe"
-        , "  Assets:Bank  -100 JPY"
-        , "  Expenses:Groceries"
-        ]
   resetDirectory dir
-  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues
 
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
     Right r -> pure r
 
+  snapshotResult <- loadCanonicalHouseholdWriteSnapshot root
+  snapshot <- case snapshotResult of
+    Left errs -> die
+      ("loadCanonicalHouseholdWriteSnapshot failed:\n"
+        <> unlines (map show (NonEmpty.toList errs)))
+    Right value -> pure value
+
+  let existingSource = householdWriteSnapshotActualSource snapshot
+      candidateBlock = T.unlines
+        [ "2026-07-20 * Probe"
+        , "  Assets:Bank  -100 JPY"
+        , "  Expenses:Groceries"
+        ]
+
   TIO.writeFile reportPath "[reports.trial-balance\n"
   result <- publishActualBlockWithPathAdmission
     (\_ -> loadCanonicalHousehold root)
     actualPath
-    syntheticActual
-    block
+    existingSource
+    candidateBlock
   case result of
     Left (PostAdmissionFailed _ True) -> pure ()
-    other -> die ("Expected checked whole-Household rollback, got: " <> show other)
+    other -> die ("Expected checked Actual Household rollback, got: " <> show other)
 
   restoredActual <- TIO.readFile actualPath
-  unless (restoredActual == syntheticActual)
+  unless (restoredActual == existingSource)
     (die "Whole-Household admission failure did not restore actual.journal")
 
   removeDirectoryRecursive dir
@@ -140,7 +154,7 @@ testAccountWriteSnapshotOwnership :: IO ()
 testAccountWriteSnapshotOwnership = do
   let dir = "/tmp/synthetic_household_account_snapshot_spec"
   resetDirectory dir
-  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues
 
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
@@ -158,11 +172,11 @@ testAccountWriteSnapshotOwnership = do
 
   removeDirectoryRecursive dir
 
-testBudgetWriteSnapshotOwnership :: IO ()
-testBudgetWriteSnapshotOwnership = do
-  let dir = "/tmp/synthetic_household_budget_snapshot_spec"
+testEntitlementWriteSnapshotOwnership :: IO ()
+testEntitlementWriteSnapshotOwnership = do
+  let dir = "/tmp/synthetic_household_entitlement_snapshot_spec"
   resetDirectory dir
-  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues
 
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
@@ -175,29 +189,34 @@ testBudgetWriteSnapshotOwnership = do
         <> unlines (map show (NonEmpty.toList errs)))
     Right value -> pure value
 
-  unless (householdWriteSnapshotBudgetSource snapshot == syntheticBudget)
-    (die "Household write snapshot did not retain exact budget.journal root bytes")
+  unless (householdWriteSnapshotEntitlementSource snapshot == syntheticEntitlement)
+    (die "Household write snapshot did not retain exact entitlement.journal root bytes")
 
-  movement <- syntheticBudgetMovement
-  let registry = householdStateAccountsRegistry (householdWriteSnapshotState snapshot)
-  case prepareBudgetJournalMovementAppend
+  transfer <- syntheticEntitlementTransfer
+  dailyId <- case mkEnvelopeId "Daily" of
+    Left err -> die ("mkEnvelopeId failed: " <> show err)
+    Right e -> pure e
+  registry <- case mkEnvelopeRegistry [dailyId] of
+    Left err -> die ("mkEnvelopeRegistry failed: " <> show err)
+    Right r -> pure r
+  case prepareEntitlementTransferAppend
       registry
-      (householdWriteSnapshotBudgetSource snapshot)
-      movement of
-    Left errs -> die ("Snapshot-owned Budget preparation failed: " <> show errs)
+      (householdWriteSnapshotEntitlementSource snapshot)
+      transfer of
+    Left errs -> die ("Snapshot-owned Entitlement preparation failed: " <> show errs)
     Right preview ->
-      unless ("Budget:Living" `T.isInfixOf` budgetJournalCandidateBlock preview)
-        (die "Snapshot-owned Budget candidate did not use admitted Budget accounts")
+      unless ("Daily" `T.isInfixOf` entitlementCandidateBlock preview)
+        (die "Snapshot-owned Entitlement candidate did not use admitted Envelope")
 
   removeDirectoryRecursive dir
 
-testBudgetWholeHouseholdRollback :: IO ()
-testBudgetWholeHouseholdRollback = do
-  let dir = "/tmp/synthetic_household_budget_rollback_spec"
-      budgetPath = dir </> "budget.journal"
+testEntitlementWholeHouseholdRollback :: IO ()
+testEntitlementWholeHouseholdRollback = do
+  let dir = "/tmp/synthetic_household_entitlement_rollback_spec"
+      entitlementPath = dir </> "entitlement.journal"
       reportPath = dir </> "report.toml"
   resetDirectory dir
-  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues
 
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
@@ -210,29 +229,34 @@ testBudgetWholeHouseholdRollback = do
         <> unlines (map show (NonEmpty.toList errs)))
     Right value -> pure value
 
-  movement <- syntheticBudgetMovement
-  let existingSource = householdWriteSnapshotBudgetSource snapshot
-      registry = householdStateAccountsRegistry (householdWriteSnapshotState snapshot)
-  preview <- case prepareBudgetJournalMovementAppend registry existingSource movement of
-    Left errs -> die ("Budget movement preparation failed: " <> show errs)
+  transfer <- syntheticEntitlementTransfer
+  let existingSource = householdWriteSnapshotEntitlementSource snapshot
+  dailyId <- case mkEnvelopeId "Daily" of
+    Left err -> die ("mkEnvelopeId failed: " <> show err)
+    Right e -> pure e
+  registry <- case mkEnvelopeRegistry [dailyId] of
+    Left err -> die ("mkEnvelopeRegistry failed: " <> show err)
+    Right r -> pure r
+  preview <- case prepareEntitlementTransferAppend registry existingSource transfer of
+    Left errs -> die ("Entitlement transfer preparation failed: " <> show errs)
     Right value -> pure value
 
   TIO.writeFile reportPath "[reports.trial-balance\n"
   result <- publishWithPathAdmission
     (\_ -> loadCanonicalHousehold root)
     WriteIntent
-      { targetFilePath = budgetPath
+      { targetFilePath = entitlementPath
       , expectedOldBytes = ExpectedSource existingSource
       , candidateNewBytes = CandidateSource
-          (budgetJournalCandidateCompleteSource preview)
+          (entitlementCandidateCompleteSource preview)
       }
   case result of
     Left (PostAdmissionFailed _ True) -> pure ()
-    other -> die ("Expected checked Budget Household rollback, got: " <> show other)
+    other -> die ("Expected checked Entitlement Household rollback, got: " <> show other)
 
-  restoredBudget <- TIO.readFile budgetPath
-  unless (restoredBudget == existingSource)
-    (die "Whole-Household admission failure did not restore budget.journal")
+  restoredEntitlement <- TIO.readFile entitlementPath
+  unless (restoredEntitlement == existingSource)
+    (die "Whole-Household admission failure did not restore entitlement.journal")
 
   removeDirectoryRecursive dir
 
@@ -240,7 +264,7 @@ testIssueWriteSnapshotOwnership :: IO ()
 testIssueWriteSnapshotOwnership = do
   let dir = "/tmp/synthetic_household_issue_snapshot_spec"
   resetDirectory dir
-  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues
 
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
@@ -264,7 +288,7 @@ testIssueWholeHouseholdRollback = do
       issuesPath = dir </> "issues.tsv"
       reportPath = dir </> "report.toml"
   resetDirectory dir
-  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues
 
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
@@ -321,7 +345,7 @@ testRegistryDisagreementFailure = do
       actualAccountsText = syntheticAccounts <> "\naccount Assets:Crypto\n  type: Asset\n  commodity: ETH\n"
       actualText = "include actual_accounts.journal\n\n2026-06-01 * Income anchor\n  Income:Salary  -300000 JPY\n  Assets:Bank\n"
   TIO.writeFile (dir </> "actual_accounts.journal") actualAccountsText
-  writeSyntheticFiles dir accountsText actualText syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+  writeSyntheticFiles dir accountsText actualText syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues
 
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
@@ -340,7 +364,7 @@ testInMemoryAdmission :: IO ()
 testInMemoryAdmission = do
   let dir = "/tmp/synthetic_household_inmemory_spec"
   resetDirectory dir
-  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues
 
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
@@ -351,7 +375,7 @@ testInMemoryAdmission = do
     Left errs -> die ("loadCanonicalHousehold failed:\n" <> unlines (map show (NonEmpty.toList errs)))
     Right s -> pure s
 
-  pureState <- case admitCanonicalHousehold root syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues of
+  pureState <- case admitCanonicalHousehold root syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues of
     Left errs -> die ("admitCanonicalHousehold failed:\n" <> unlines (map show (NonEmpty.toList errs)))
     Right s -> pure s
 
@@ -378,21 +402,11 @@ testFirstFailurePrecedence = do
         , "[budget]"
         , "opening-accounts = [\"Budget:Opening\"]"
         , "unassigned-accounts = [\"Budget:Living\"]"
-        , ""
-        , "[[budget.envelopes]]"
-        , "id = \"Daily\""
-        , "allocation-account = \"Budget:Daily\""
-        , ""
-        , "[account-policy.budget.kind]"
-        , "opening = [\"Budget:Opening\"]"
-        , "unassigned = [\"Budget:Living\"]"
-        , "spent = []"
-        , "envelope = [\"Budget:Daily\"]"
         ]
       invalidReportToml = "[reports.trial-balance\n"
 
   resetDirectory dir
-  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml invalidHouseholdToml invalidReportToml syntheticIssues
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml invalidHouseholdToml invalidReportToml syntheticIssues
 
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
@@ -405,7 +419,7 @@ testFirstFailurePrecedence = do
       other -> die ("Expected retired Household policy syntax to fail before report admission, got: " <> show other <> "\nFull errors: " <> show (NonEmpty.toList errs))
     Right _ -> die "Expected failure on retired household policy syntax, but succeeded"
 
-  let pureResult = admitCanonicalHousehold root syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml invalidHouseholdToml invalidReportToml syntheticIssues
+  let pureResult = admitCanonicalHousehold root syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml invalidHouseholdToml invalidReportToml syntheticIssues
   case pureResult of
     Left errs -> case NonEmpty.head errs of
       HouseholdPolicyParseFailed _ -> pure ()
@@ -419,7 +433,7 @@ testNativePlanMetadataFailsClosed = do
   let root = case mkHouseholdRoot "." of
         Right r -> r
         Left _ -> error "unreachable"
-  case admitCanonicalHousehold root syntheticAccounts syntheticActual syntheticPlanPartialReservation syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues of
+  case admitCanonicalHousehold root syntheticAccounts syntheticActual syntheticPlanPartialReservation syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues of
     Left errs -> case NonEmpty.head errs of
       HouseholdDailyTargetPlanMetadataFailed _ -> pure ()
       other -> die ("Expected HouseholdDailyTargetPlanMetadataFailed, got: " <> show other)
@@ -430,7 +444,7 @@ testMissingSourceFailure = do
   let dir = "/tmp/synthetic_household_missing_spec"
       missingPath = dir </> "report.toml"
   resetDirectory dir
-  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues
+  writeSyntheticFiles dir syntheticAccounts syntheticActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues
   removeFile missingPath
   root <- case mkHouseholdRoot dir of
     Left err -> die ("mkHouseholdRoot failed: " <> show err)
@@ -449,7 +463,7 @@ testUnknownIncludeRejected = do
         Right r -> r
         Left _ -> error "unreachable"
       unknownActual = T.replace "include accounts.journal" "include typo-accounts.journal" syntheticActual
-  case admitCanonicalHousehold root syntheticAccounts unknownActual syntheticPlan syntheticBudget syntheticBudgetToml syntheticHouseholdToml syntheticReportToml syntheticIssues of
+  case admitCanonicalHousehold root syntheticAccounts unknownActual syntheticPlan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues of
     Left errs -> case NonEmpty.head errs of
       HouseholdActualParseFailed _ -> pure ()
       other -> die ("Expected unknown include rejection, got: " <> show other)
@@ -471,57 +485,48 @@ testNativeAccountAppend = do
       unless ("account Assets:Cash" `T.isInfixOf` candidate)
         (die "Account candidate block missing account name")
 
-testNativeBudgetMovementAppend :: IO ()
-testNativeBudgetMovementAppend = do
-  registry <- case parseAccountJournal syntheticAccounts of
-    Left errs -> die ("parseAccountJournal failed: " <> show errs)
+testNativeEntitlementTransferAppend :: IO ()
+testNativeEntitlementTransferAppend = do
+  dailyId <- case mkEnvelopeId "Daily" of
+    Left err -> die ("mkEnvelopeId failed: " <> show err)
+    Right e -> pure e
+  registry <- case mkEnvelopeRegistry [dailyId] of
+    Left err -> die ("mkEnvelopeRegistry failed: " <> show err)
     Right r -> pure r
-  fromAcc <- case mkAccount "Budget:Daily" of
-    Left err -> die ("mkAccount from failed: " <> show err)
-    Right a -> pure a
-  toAcc <- case mkAccount "Budget:Daily" of
-    Left err -> die ("mkAccount to failed: " <> show err)
-    Right a -> pure a
   comm <- case mkCommodity "JPY" of
     Left err -> die ("mkCommodity failed: " <> show err)
     Right c -> pure c
-  let movement = HouseholdBudgetMovement
-        { householdBudgetMovementDate = fromGregorian 2026 7 1
-        , householdBudgetMovementMemo = "Allocate"
-        , householdBudgetMovementFrom = fromAcc
-        , householdBudgetMovementTo = toAcc
-        , householdBudgetMovementAmount = mkAmount comm (quantityFromInteger 10000)
-        }
-  case prepareBudgetJournalMovementAppend registry syntheticBudget movement of
-    Left errs -> die ("prepareBudgetJournalMovementAppend failed: " <> show errs)
+  transfer <- case mkEnvelopeEntitlementTransfer
+      (fromGregorian 2026 7 1)
+      Unallocated
+      (Spendable dailyId)
+      (mkAmount comm (quantityFromInteger 10000))
+      "Allocate" of
+    Left err -> die ("mkEnvelopeEntitlementTransfer failed: " <> show err)
+    Right t -> pure t
+  case prepareEntitlementTransferAppend registry syntheticEntitlement transfer of
+    Left errs -> die ("prepareEntitlementTransferAppend failed: " <> show errs)
     Right preview -> do
-      let candidate = budgetJournalCandidateBlock preview
-      unless ("Budget:Daily" `T.isInfixOf` candidate)
-        (die "Budget candidate block missing account name")
+      let candidate = entitlementCandidateBlock preview
+      unless ("Daily" `T.isInfixOf` candidate)
+        (die "Entitlement candidate block missing envelope id")
 
-  let badInclude = T.replace "include accounts.journal" "include typo-accounts.journal" syntheticBudget
-  case prepareBudgetJournalMovementAppend registry badInclude movement of
-    Left _ -> pure ()
-    Right _ -> die "Budget preview unexpectedly accepted an unknown include"
-
-syntheticBudgetMovement :: IO HouseholdBudgetMovement
-syntheticBudgetMovement = do
-  fromAcc <- case mkAccount "Budget:Daily" of
-    Left err -> die ("mkAccount from failed: " <> show err)
-    Right account -> pure account
-  toAcc <- case mkAccount "Budget:Living" of
-    Left err -> die ("mkAccount to failed: " <> show err)
-    Right account -> pure account
+syntheticEntitlementTransfer :: IO EnvelopeEntitlementTransfer
+syntheticEntitlementTransfer = do
+  dailyId <- case mkEnvelopeId "Daily" of
+    Left err -> die ("mkEnvelopeId failed: " <> show err)
+    Right e -> pure e
   commodity <- case mkCommodity "JPY" of
     Left err -> die ("mkCommodity failed: " <> show err)
     Right value -> pure value
-  pure HouseholdBudgetMovement
-    { householdBudgetMovementDate = fromGregorian 2026 7 2
-    , householdBudgetMovementMemo = "Reallocate"
-    , householdBudgetMovementFrom = fromAcc
-    , householdBudgetMovementTo = toAcc
-    , householdBudgetMovementAmount = mkAmount commodity (quantityFromInteger 10000)
-    }
+  case mkEnvelopeEntitlementTransfer
+      (fromGregorian 2026 7 2)
+      Unallocated
+      (Spendable dailyId)
+      (mkAmount commodity (quantityFromInteger 10000))
+      "Reallocate" of
+    Left err -> die ("mkEnvelopeEntitlementTransfer failed: " <> show err)
+    Right t -> pure t
 
 resetDirectory :: FilePath -> IO ()
 resetDirectory dir = do
@@ -533,12 +538,12 @@ writeSyntheticFiles
   :: FilePath
   -> Text -> Text -> Text -> Text -> Text -> Text -> Text -> Text
   -> IO ()
-writeSyntheticFiles dir accounts actual plan budget budgetToml householdToml reportToml issues = do
+writeSyntheticFiles dir accounts actual plan entitlement envelopeToml householdToml reportToml issues = do
   TIO.writeFile (dir </> "accounts.journal") accounts
   TIO.writeFile (dir </> "actual.journal") actual
   TIO.writeFile (dir </> "plan.journal") plan
-  TIO.writeFile (dir </> "budget.journal") budget
-  TIO.writeFile (dir </> "budget.toml") budgetToml
+  TIO.writeFile (dir </> "entitlement.journal") entitlement
+  TIO.writeFile (dir </> "envelope.toml") envelopeToml
   TIO.writeFile (dir </> "household.toml") householdToml
   TIO.writeFile (dir </> "report.toml") reportToml
   TIO.writeFile (dir </> "issues.tsv") issues
@@ -558,18 +563,6 @@ syntheticAccounts = T.unlines
   , ""
   , "account Expenses:Groceries"
   , "  type: Expense"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Opening"
-  , "  type: Budget"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Living"
-  , "  type: Budget"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Daily"
-  , "  type: Budget"
   , "  commodity: JPY"
   ]
 
@@ -623,17 +616,14 @@ syntheticPlanPartialReservation = T.unlines
   , "  Expenses:Groceries"
   ]
 
-syntheticBudget :: Text
-syntheticBudget = T.unlines
-  [ "include accounts.journal"
-  , ""
-  , "2026-07-01 * Allocate Daily"
-  , "  Budget:Daily  100000 JPY"
-  , "  Budget:Living"
+syntheticEntitlement :: Text
+syntheticEntitlement = T.unlines
+  [ "2026-06-01 origin JPY"
+  , "2026-07-01 transfer unallocated -> Daily 100000 JPY"
   ]
 
-syntheticBudgetToml :: Text
-syntheticBudgetToml = T.unlines
+syntheticEnvelopeToml :: Text
+syntheticEnvelopeToml = T.unlines
   [ "[[backing-pools]]"
   , "id = \"main\""
   , "asset-accounts = [\"Assets:Bank\"]"
@@ -650,14 +640,6 @@ syntheticHouseholdToml = T.unlines
   [ "[cycle]"
   , "mode = \"income-anchor\""
   , "income-account = \"Income:Salary\""
-  , ""
-  , "[budget]"
-  , "opening-accounts = [\"Budget:Opening\"]"
-  , "unassigned-accounts = [\"Budget:Living\"]"
-  , ""
-  , "[[budget.envelopes]]"
-  , "id = \"Daily\""
-  , "allocation-account = \"Budget:Daily\""
   , ""
   , "[daily-target]"
   , ""

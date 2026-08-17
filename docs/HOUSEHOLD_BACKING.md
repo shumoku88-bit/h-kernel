@@ -1,7 +1,7 @@
 # Household Backing契約
 
 ステータス: アクティブな domain contract  
-更新日: 2026-08-15
+更新日: 2026-08-17
 
 ## 目的
 
@@ -32,7 +32,7 @@ Gross Surplus
 Available Surplus
 ```
 
-`HKernel.Household.Backing` は admitted Household policy、Journal facts、native Envelope projections、allocation movement facts、open funding Plan evidence を解決して `HKernel.Backing` へ渡す composition owner である。pool 算術を再実装しない。
+`HKernel.Household.Backing` は admitted Household policy、Journal facts、native Envelope projections、open funding Plan evidence を解決して `HKernel.Backing` へ渡す composition owner である。pool 算術を再実装しない。
 
 ## Current inputs
 
@@ -41,8 +41,6 @@ observation day + Period
 Journal Account balances
 BackingPolicy
 Envelope identities
-unassigned allocation Accounts
-HouseholdBudgetMovement facts
 EnvelopeEntitlement
 EnvelopeConsumption
 EnvelopeRemaining
@@ -61,19 +59,9 @@ open HouseholdBackingPlan funding evidence
 - Envelope -> BackingPool
 - BackingPool -> Asset Account membership
 
-canonical `budget.toml` は `HKernel.Envelope.Config.parseCurrentEnvelopeConfiguration` を通じて native `BackingPolicy` を直接 admit する。`BudgetPolicy` compatibility aggregate を経由しない。
+canonical `envelope.toml` は `HKernel.Envelope.Config.parseCurrentEnvelopeConfiguration` を通じて native `BackingPolicy` を直接 admit する。`BudgetPolicy` compatibility aggregate を経由しない。
 
 Household Backing は Asset Account の名前や残高から pool membership を推測しない。
-
-### HouseholdBudgetMovement
-
-`HKernel.Household.BudgetMovement` は日付、memo、from Account、to Account、正確な Amount を持つ source-independent な allocation movement fact である。
-
-current canonical source は `budget.journal`。`HKernel.Household.BudgetMovement` が resolved Journal から ordered movement を admit する。
-
-historical `budget_alloc.tsv` adapter は current canonical reader でも Editor fallback でもない。2026-08-15 に completed migration shell から撤去した。
-
-allocation movement は current Envelope claim 算術そのものを所有しない。Backing では unassigned allocation Account の reconciliation evidence に使う。
 
 ### Open Plan funding evidence
 
@@ -175,8 +163,6 @@ Available Backing Surplus
 
 `Signed Total` は Envelope の signed Remaining をそのまま足すので overspending evidence を負のまま保持する。
 
-`Reconciliation Delta` は allocation journal の unassigned evidence と Gross Backing Surplus を別座標で照合する。
-
 ## exact arithmetic
 
 すべての計算は Commodity を分離した正確な `Balance` 上で行う。
@@ -200,7 +186,6 @@ Available Backing Surplus
 - stable PlanId fulfillment semantics と Backing の source-Asset funding commitment の分離
 - overdue open Plan を funding horizon から落とさないこと
 - aggregate summary と pool-local adequacy の分離
-- `budget.journal` movement を source-era reconciliation evidence として扱うこと
 
 current architecture に存在しない bridge:
 
@@ -208,10 +193,10 @@ current architecture に存在しない bridge:
 - legacy `BudgetRemaining` -> Envelope claim
 - destination Account -> Envelope Plan reserve lookup
 - `budget_alloc.tsv` -> canonical movement admission
+- `budget.journal` / `budget.toml` -> legacy source bridge
 
 ここでは決めない:
 
-- `budget.journal` や Budget AccountType の将来の physical naming
 - Commodity conversion や市場価値
 - Asset -> BackingPool assignment の historical source shape
 - writer authority の将来変更

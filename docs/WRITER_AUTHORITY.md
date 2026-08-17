@@ -29,11 +29,11 @@ Actual reversalのdurable identity / provenanceと、そのmetadataをsilent ign
 
 ### Other canonical sources
 
-このrepositoryには、`accounts.journal`、`plan.journal`、`budget.journal`、`budget.toml`、`household.toml`、`report.toml`、`issues.tsv`のwriter authorityを新しいimplementationへ移したと宣言するapproved cutover contractはない。
+このrepositoryには、`accounts.journal`、`plan.journal`、`entitlement.journal`、`envelope.toml`、`household.toml`、`report.toml`、`issues.tsv`のwriter authorityを新しいimplementationへ移したと宣言するapproved cutover contractはない。
 
 したがって次を守る。
 
-- h-kernelにAccount / Plan / Budget / Issueのwrite capabilityが存在しても、それだけからcanonical authority移動を推測しない。
+- h-kernelにAccount / Plan / Entitlement / Issueのwrite capabilityが存在しても、それだけからcanonical authority移動を推測しない。
 - Actualのauthorityから他sourceのauthority移動を推測しない。
 - current operational writerを別implementationへ切り替える場合は、sourceごとのcutover evidenceと作者の明示承認を先に持つ。
 - capability追加、TUI/CLI追加、reader migration、source format migrationをwriter cutoverと同一視しない。

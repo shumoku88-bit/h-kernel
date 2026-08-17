@@ -88,7 +88,6 @@ data ClassifiedAccountLines = ClassifiedAccountLines
   , classifiedEquityLines       :: [AccountLine]
   , classifiedIncomeLines       :: [AccountLine]
   , classifiedExpenseLines      :: [AccountLine]
-  , classifiedBudgetLines       :: [AccountLine]
   , classifiedUnclassifiedLines :: [AccountLine]
   }
 
@@ -642,8 +641,6 @@ addClassifiedAccountLine registry line classified =
       { classifiedIncomeLines = line : classifiedIncomeLines classified }
     Just Expense -> classified
       { classifiedExpenseLines = line : classifiedExpenseLines classified }
-    Just Budget -> classified
-      { classifiedBudgetLines = line : classifiedBudgetLines classified }
     Nothing -> classified
       { classifiedUnclassifiedLines =
           line : classifiedUnclassifiedLines classified }
@@ -655,7 +652,6 @@ emptyClassifiedAccountLines = ClassifiedAccountLines
   , classifiedEquityLines = []
   , classifiedIncomeLines = []
   , classifiedExpenseLines = []
-  , classifiedBudgetLines = []
   , classifiedUnclassifiedLines = []
   }
 

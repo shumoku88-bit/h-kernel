@@ -11,7 +11,7 @@ The Household separates four meanings:
 - Envelopes: capacity granted to a purpose,
 - Backing: real Asset funding supporting outstanding Envelope claims.
 
-`Budget` is not a second domain object beside Envelope. `budget.journal`, `budget.toml`, `budget:*` Accounts, and BudgetMovement writer vocabulary are physical source vocabulary around the native Envelope model.
+Budget domain is completely retired: `AccountType` has no `Budget`, `Envelope` is not an `Account`, and native `entitlement.journal` / `envelope.toml` own Envelope Entitlement and Backing without double-entry Account mapping.
 
 ## Ownership graph
 
@@ -51,7 +51,7 @@ There is no intermediate Budget calculation state.
 - Actual Expense use belongs to `ActualJournal`.
 - Plan intent belongs to `PlanJournal` plus explicit routing evidence.
 - Plan completion belongs to Plan/Actual relation evidence.
-- Envelope grants and reallocations belong to `EnvelopeEntitlementHistory`.
+- Envelope stock origins and transfers belong to `EnvelopeEntitlementHistory`.
 - Expense-to-Envelope meaning belongs to `ExpenseRoutingHistory`.
 - non-Expense Envelope intent belongs to `FulfillmentRoutingHistory` keyed by stable `PlanId`.
 - current funding topology belongs to `BackingPolicy`.
@@ -67,34 +67,40 @@ Savings, investment, liability payment, and other non-Expense targets remain ord
 
 ## Current policy
 
-`budget.toml` has exactly two semantic owners:
+`envelope.toml` has exactly two semantic owners:
 
 - `CurrentEnvelopePolicy`: current Envelope definition and presentation such as identity membership, label, pacing, order, and visibility;
 - `BackingPolicy`: current Asset-pool and Envelope-pool topology.
 
 It does not own Expense routing.
 
-`household.toml` owns explicit Budget source coordinates:
+`household.toml` owns:
 
-- opening Budget Accounts,
-- unassigned Budget Accounts,
-- stable allocation Account -> Envelope identity coordinates.
+- cycle anchor policy,
+- money presentation,
+- Daily Target asset selection,
+- `[envelope-history]`: stable `EnvelopeRegistry` identities, historical Expense routing, and Fulfillment routing.
 
-These coordinates classify admitted `budget.journal` endpoints. There is no `spent` or `execution` endpoint in the native entitlement model.
+It does not own Budget account coordinates or mapping tables.
 
 ## Entitlement and clean epoch
 
-Envelope Entitlement comes from explicit movements:
+Envelope Entitlement comes from explicit movements in `entitlement.journal`:
 
 ```text
-Opening/Unassigned -> Envelope
-Envelope           -> Envelope
-Envelope           -> Unassigned
+Unallocated -> Envelope
+Envelope    -> Envelope
+Envelope    -> Unallocated
 ```
 
-An empty canonical `budget.journal` is valid. Before the first explicit source movement there is no Entitlement stock origin and no claim is inferred from Actual history or current Asset balances.
-
-Entitlement history is admitted globally rather than reset by report Period. Same-day effects combine before cumulative nonnegative validation. The stock origin comes from the earliest admitted Entitlement-source movement for the Commodity, including opening or unassigned evidence that creates no Envelope transfer.
+- `StockOrigin`: an independent historical fact per Commodity (`Map Commodity StockOrigin`), declared explicitly as `YYYY-MM-DD origin COMMODITY [memo]`.
+- `transfer`: an explicit native movement declared as `YYYY-MM-DD transfer FROM -> TO QUANTITY COMMODITY [memo]`. Endpoints are strictly `unallocated` and `Spendable EnvelopeId`. `unallocated` is a boundary endpoint, not a balance-owning account/pool. `alloc`, `move`, and `release` are UI/presentation verbs derived from endpoints, not source syntax.
+- Transfer amounts must be strictly positive exact `Amount`.
+- Duplicate `StockOrigin` fails closed.
+- Origin after transfer fails closed.
+- Transfer without origin fails closed.
+- Arbitrary keyword prefixes and aliases fail closed.
+- Same-day effects combine before cumulative non-negative validation.
 
 ## Expense routing and Consumption
 
@@ -103,7 +109,7 @@ Expense Account @ effective day -> ManagedByEnvelope EnvelopeId
 Expense Account @ effective day -> NotEnvelopeManaged
 ```
 
-Missing routing is attention evidence. Conflicting routing fails closed. Historical routing is never reconstructed from `budget.toml`, Account names, or today's configuration.
+Missing routing is attention evidence. Conflicting routing fails closed. Historical routing is never reconstructed from `envelope.toml`, Account names, or today's configuration.
 
 Refunds and typed reversals affect Consumption through Actual evidence. No compensating Envelope movement is written.
 
@@ -184,8 +190,8 @@ Current configuration is not retrospective truth. Changing today's label, pacing
 
 Historical owners exist where history changes semantics:
 
-- stable Envelope identity,
-- Entitlement stock origins and transfers,
+- stable Envelope identity (`EnvelopeRegistry`),
+- Entitlement stock origins and transfers (`EnvelopeEntitlementHistory`),
 - Expense routing,
 - PlanId Fulfillment routing.
 
@@ -200,4 +206,4 @@ Historical owners exist where history changes semantics:
 - no Account-name inference
 - no implicit allocation or amount splitting
 
-Retired `account-policy.*`, `plan-destination-accounts`, Expense-assignment compatibility, `spent`, and `execution` semantics are not adapters in the current model. Completed migration history belongs to Git, not to a compatibility type or current architecture document.
+Retired `account-policy.*`, `[budget]`, `budget.journal`, `budget.toml`, `plan-destination-accounts`, Expense-assignment compatibility, `spent`, and `execution` semantics are not adapters in the current model. Completed migration history belongs to Git, not to a compatibility type or current architecture document.

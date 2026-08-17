@@ -108,7 +108,7 @@ Envelope money:
 > 
 ```
 
-通常の操作で`budget:*` Account名を入力する必要はありません。現在の`HouseholdPolicy`にあるEnvelope identityとallocation coordinateから、必要なBudget Accountをh-kernelが解決します。未割当coordinateが複数ある場合だけ、どのcoordinateを使うか選択肢が表示されます。
+通常の操作でAccount名を入力する必要はありません。現在の`CurrentEnvelopePolicy`にあるEnvelope identityから、必要なEntitlement endpointをh-kernelが解決します。
 
 #### 未割当からEnvelopeへ配分する
 
@@ -164,7 +164,7 @@ memoを空Enterにすると、操作に応じた既定memoが使われます。
 - `Publish? [y/N]`は`y`または`yes`だけがpublicationを実行する
 - publication後のHousehold再admissionに失敗した場合は、追加writeを続けずdialogueを停止する
 
-このdialogueは新しい会計ruleやwriter authorityを所有しません。Actual candidate、Envelope identity/current policy、Budget movement admission、safe publicationは既存のdomain/editor ownerへ委譲し、Haskelineは質問、選択、preview、confirmationというdeliveryだけを担当します。
+このdialogueは新しい会計ruleやwriter authorityを所有しません。Actual candidate、Envelope identity/current policy、Entitlement transfer admission、safe publicationは既存のdomain/editor ownerへ委譲し、Haskelineは質問、選択、preview、confirmationというdeliveryだけを担当します。
 
 ## 内部の仕組み
 
@@ -184,7 +184,7 @@ edit intent
 主なcomponent:
 
 - `h-kernel`: Account、Money、Ledger、Journal、Actual、Plan、Envelope、Backing、Engine、Report
-- `h-kernel-household`: Household policy、Daily Target、Backing、Envelope observation、Budget movement source admission、Issue admission
+- `h-kernel-household`: Household policy、Daily Target、Backing、Envelope observation、Household Issue admission、Household Report
 - `h-kernel-editor`: edit intent、candidate preparation、source placement、safe writer
 - report CLI、editor CLI、Household TUI、guided Haskeline dialogue、daily entrypoint
 
@@ -199,11 +199,9 @@ edit intent
 - typed `DateRange`とpure Report projections
 - preview、stale rejection、backup、atomic publication、post-admission、restore-capable failure
 
-### Budget domainについて
+### Budget domainの完全退役について
 
-`Budget`は、Envelopeと並ぶ第二のdomain state modelとしては退役しています。現在の意味は、Envelope identity/current policy、historical Expense routing、Entitlement、Actual consumption/refund、Plan commitment/fulfillment、Backingという狭いownerに分けて保持します。
-
-一方で、会計上の`Budget` AccountType、`budget:*` Account、`budget.journal`、`budget.toml`、`BudgetMovement`のような名前は、canonical sourceやwriter contractの語彙として残る場合があります。これらは`BudgetPolicy`や`BudgetObservation`の存在を意味しません。境界は[`docs/BUDGET_DOMAIN_RETIREMENT.md`](docs/BUDGET_DOMAIN_RETIREMENT.md)を参照してください。
+`Budget`は、domain state modelおよび会計上のAccountType / physical source語彙として完全に退役しました。EnvelopeはAccountではなく、独立した`entitlement.journal`と`envelope.toml`がEnvelope EntitlementとBackingを所有します。境界は[`docs/BUDGET_DOMAIN_RETIREMENT.md`](docs/BUDGET_DOMAIN_RETIREMENT.md)を参照してください。
 
 ## Build and verification
 

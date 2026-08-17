@@ -25,7 +25,7 @@ import qualified HKernel.Editor.AccountAppend as AccountAppend
 import qualified HKernel.Editor.ActualAppend as ActualAppend
 import qualified HKernel.Editor.ActualReverse as ActualReverse
 import HKernel.Editor.SourcePublication
-import qualified HKernel.Editor.BudgetMovementAppend as BudgetMovementAppend
+import qualified HKernel.Editor.EntitlementTransferAppend as EntitlementTransferAppend
 import HKernel.Editor.CLI
 import qualified HKernel.Editor.HouseholdWorkspace as HouseholdWorkspace
 import qualified HKernel.Editor.IssueAppend as IssueAppend
@@ -37,6 +37,7 @@ import HKernel.Household.Application
   , loadCanonicalHousehold
   , loadCanonicalHouseholdWriteSnapshot
   )
+import HKernel.Household.EnvelopeHistory (householdEnvelopeRegistry)
 import HKernel.Household.Issue.TSV (parseHouseholdIssues)
 import HKernel.Journal (Journal)
 import HKernel.Loader (loadJournal, loadJournalFromRootSource)
@@ -127,32 +128,32 @@ executeCommand commitMode command = case command of
             (AccountAppend.candidateCompleteSource preview)
             commitMode
 
-  BudgetMovementCmd targetFile movement -> do
+  EntitlementTransferCmd targetFile transfer -> do
     root <- case resolveHouseholdRoot targetFile of
       Left err -> die ("Invalid Household root: " <> show err)
       Right r -> pure r
     let paths = householdSourcePaths root
-    if normalise targetFile /= normalise (householdBudgetJournalPath paths)
-      then die "Budget movement command only accepts canonical budget.journal"
+    if normalise targetFile /= normalise (householdEntitlementJournalPath paths)
+      then die "Entitlement transfer command only accepts canonical entitlement.journal"
       else do
         snapshotResult <- loadCanonicalHouseholdWriteSnapshot root
         snapshot <- case snapshotResult of
           Left errors -> validationFailed errors
           Right value -> pure value
         let state = householdWriteSnapshotState snapshot
-            registry = householdStateAccountsRegistry state
-            policy = householdStatePolicy state
-            existingSource = householdWriteSnapshotBudgetSource snapshot
-        case BudgetMovementAppend.prepareCurrentBudgetJournalMovementAppend
-            registry policy existingSource movement of
+            envelopePolicy = householdStateEnvelopePolicy state
+            registry = householdEnvelopeRegistry (householdStateEnvelopeHistory state)
+            existingSource = householdWriteSnapshotEntitlementSource snapshot
+        case EntitlementTransferAppend.prepareCurrentEntitlementTransferAppend
+            envelopePolicy registry existingSource transfer of
           Left errors -> validationFailed errors
           Right preview ->
             executePreview
               (publishWithPathAdmission (\_ -> loadCanonicalHousehold root))
               targetFile
               existingSource
-              (BudgetMovementAppend.budgetJournalCandidateBlock preview)
-              (BudgetMovementAppend.budgetJournalCandidateCompleteSource preview)
+              (EntitlementTransferAppend.entitlementCandidateBlock preview)
+              (EntitlementTransferAppend.entitlementCandidateCompleteSource preview)
               commitMode
 
   IssueCmd tsvFile intent -> do

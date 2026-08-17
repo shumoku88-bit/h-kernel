@@ -15,12 +15,9 @@ module HKernel.Household.EnvelopeObservation
   , deriveHouseholdEnvelopeObservation
   ) where
 
-import Data.Either (partitionEithers)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import Data.Time.Calendar (Day)
 import HKernel.Actual.Journal (ActualJournal)
 import HKernel.Envelope.Commitment
@@ -40,14 +37,7 @@ import HKernel.Envelope.Entitlement
   )
 import HKernel.Envelope.EntitlementHistory
   ( EnvelopeEntitlementHistory
-  , EnvelopeEntitlementHistoryError
   , envelopeEntitlementHistoryOrigins
-  , mkEnvelopeEntitlementHistoryWithOrigins
-  )
-import HKernel.Envelope.EntitlementTransfer
-  ( EnvelopeEndpoint(..)
-  , EnvelopeEntitlementTransferError
-  , mkEnvelopeEntitlementTransfer
   )
 import HKernel.Envelope.ExpenseRouting
   ( ExpenseRoutingHistory
@@ -64,33 +54,20 @@ import HKernel.Envelope.Headroom
   , EnvelopeHeadroomError
   , calculateEnvelopeHeadroom
   )
-import HKernel.Envelope.Identity (EnvelopeId)
 import HKernel.Envelope.Remaining
   ( EnvelopeRemaining
   , EnvelopeRemainingError
   , calculateEnvelopeRemaining
   )
-import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
-import HKernel.Household.Policy
-  ( HouseholdPolicy
-  , householdAllocationEnvelopes
-  , householdOpeningBudgetAccounts
-  , householdUnassignedBudgetAccounts
-  )
-import HKernel.Money
-  ( Commodity
-  , amountCommodity
-  , amountQuantity
-  , negateAmount
-  , zeroQuantity
-  )
+import HKernel.Envelope.StockOrigin (StockOrigin)
+import HKernel.Money (Commodity)
 import HKernel.Period (Period)
 import HKernel.Plan.Journal (PlanJournal)
 
 data HouseholdEnvelopeObservation = HouseholdEnvelopeObservation
   { householdEnvelopeObservationPeriod          :: Period
   , householdEnvelopeObservationObservedThrough :: Day
-  , householdEnvelopeObservationStockOrigins    :: Map Commodity Day
+  , householdEnvelopeObservationStockOrigins    :: Map Commodity StockOrigin
   , householdEnvelopeConsumption                :: EnvelopeConsumption
   , householdEnvelopeEntitlement                :: EnvelopeEntitlement
   , householdEnvelopeFulfillment                :: EnvelopeFulfillment
@@ -101,9 +78,6 @@ data HouseholdEnvelopeObservation = HouseholdEnvelopeObservation
 
 data HouseholdEnvelopeError
   = HouseholdEnvelopeConsumptionError EnvelopeConsumptionError
-  | HouseholdEnvelopeEntitlementCoordinateMissing Int Int
-  | HouseholdEnvelopeEntitlementTransferError Int EnvelopeEntitlementTransferError
-  | HouseholdEnvelopeEntitlementHistoryError EnvelopeEntitlementHistoryError
   | HouseholdEnvelopeEntitlementObservationError EnvelopeEntitlementError
   | HouseholdEnvelopeFulfillmentError EnvelopeFulfillmentError
   | HouseholdEnvelopeRemainingError EnvelopeRemainingError
@@ -111,23 +85,16 @@ data HouseholdEnvelopeError
   | HouseholdEnvelopeHeadroomError EnvelopeHeadroomError
   deriving (Eq, Show)
 
-data SourceEndpoint
-  = SourceEnvelope EnvelopeId
-  | SourceUnallocated
-  | SourceOpening
-
 deriveHouseholdEnvelopeObservation
   :: Day
   -> Period
   -> ActualJournal
   -> PlanJournal
-  -> HouseholdPolicy
   -> ExpenseRoutingHistory
   -> FulfillmentRoutingHistory
-  -> [HouseholdBudgetMovement]
+  -> EnvelopeEntitlementHistory
   -> Either (NonEmpty HouseholdEnvelopeError) HouseholdEnvelopeObservation
-deriveHouseholdEnvelopeObservation observedThrough period actual plans policy expenseRouting fulfillmentRouting movements = do
-  history <- projectEntitlementHistory policy movements
+deriveHouseholdEnvelopeObservation observedThrough period actual plans expenseRouting fulfillmentRouting history = do
   entitlement <- singleLeft HouseholdEnvelopeEntitlementObservationError
     (observeEnvelopeEntitlement period observedThrough history)
   consumption <- singleLeft HouseholdEnvelopeConsumptionError
@@ -154,85 +121,6 @@ deriveHouseholdEnvelopeObservation observedThrough period actual plans policy ex
     , householdEnvelopeCommitment = commitment
     , householdEnvelopeHeadroom = headroom
     }
-
-projectEntitlementHistory
-  :: HouseholdPolicy
-  -> [HouseholdBudgetMovement]
-  -> Either (NonEmpty HouseholdEnvelopeError) EnvelopeEntitlementHistory
-projectEntitlementHistory policy movements =
-  case partitionEithers (zipWith projectMovement [1..] movements) of
-    ([], maybeTransfers) ->
-      mapLeft (fmap HouseholdEnvelopeEntitlementHistoryError)
-        (mkEnvelopeEntitlementHistoryWithOrigins
-          (deriveEnvelopeStockOrigins movements)
-          [transfer | Just transfer <- maybeTransfers])
-    (errorGroups, _) -> Left (NonEmpty.fromList (concat errorGroups))
-  where
-    allocationByAccount = householdAllocationEnvelopes policy
-    openingAccounts = householdOpeningBudgetAccounts policy
-    unassignedAccounts = householdUnassignedBudgetAccounts policy
-
-    projectMovement transactionIndex movement
-      | amountQuantity sourceAmount == zeroQuantity = Right Nothing
-      | otherwise = do
-          let (fromAccount, toAccount, amount)
-                | amountQuantity sourceAmount > zeroQuantity =
-                    (householdBudgetMovementFrom movement, householdBudgetMovementTo movement, sourceAmount)
-                | otherwise =
-                    (householdBudgetMovementTo movement, householdBudgetMovementFrom movement, negateAmount sourceAmount)
-          (fromEndpoint, toEndpoint) <- classifyEndpoints transactionIndex fromAccount toAccount
-          projectEndpoints transactionIndex movement amount fromEndpoint toEndpoint
-      where
-        sourceAmount = householdBudgetMovementAmount movement
-
-    classifyEndpoints transactionIndex fromAccount toAccount =
-      case partitionEithers
-        [ classifyEndpoint transactionIndex 1 fromAccount
-        , classifyEndpoint transactionIndex 2 toAccount
-        ] of
-        ([], [fromEndpoint, toEndpoint]) -> Right (fromEndpoint, toEndpoint)
-        (errors, _) -> Left errors
-        _ -> error "unreachable: exactly two entitlement endpoints are classified"
-
-    classifyEndpoint transactionIndex postingIndex account =
-      case (Map.lookup account allocationByAccount, Set.member account openingAccounts, Set.member account unassignedAccounts) of
-        (Just envelope, False, False) -> Right (SourceEnvelope envelope)
-        (Nothing, True, False) -> Right SourceOpening
-        (Nothing, False, True) -> Right SourceUnallocated
-        _ -> Left (HouseholdEnvelopeEntitlementCoordinateMissing transactionIndex postingIndex)
-
-    projectEndpoints transactionIndex movement amount fromEndpoint toEndpoint =
-      case (fromEndpoint, toEndpoint) of
-        (SourceEnvelope fromEnvelope, SourceEnvelope toEnvelope) ->
-          makeTransfer (Spendable fromEnvelope) (Spendable toEnvelope)
-        (SourceEnvelope fromEnvelope, _) -> makeTransfer (Spendable fromEnvelope) Unallocated
-        (_, SourceEnvelope toEnvelope) -> makeTransfer Unallocated (Spendable toEnvelope)
-        _ -> Right Nothing
-      where
-        makeTransfer fromNative toNative =
-          case mkEnvelopeEntitlementTransfer
-              (householdBudgetMovementDate movement)
-              fromNative
-              toNative
-              amount
-              (householdBudgetMovementMemo movement) of
-            Right transfer -> Right (Just transfer)
-            Left err -> Left [HouseholdEnvelopeEntitlementTransferError transactionIndex err]
-
--- | Opening boundary of the native Envelope stock world for each Commodity.
---
--- The earliest admitted Budget movement is provenance even when it does not
--- move value into a spendable Envelope. Report Periods and current routing
--- policy must never be substituted for this historical coordinate.
-deriveEnvelopeStockOrigins
-  :: [HouseholdBudgetMovement]
-  -> Map Commodity Day
-deriveEnvelopeStockOrigins = Map.fromListWith min . map origin
-  where
-    origin movement =
-      ( amountCommodity (householdBudgetMovementAmount movement)
-      , householdBudgetMovementDate movement
-      )
 
 singleLeft
   :: (error -> HouseholdEnvelopeError)

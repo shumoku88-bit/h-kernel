@@ -15,7 +15,7 @@ if [ -z "$DATA_DIR" ]; then
   exit 2
 fi
 
-for source in accounts.journal actual.journal plan.journal budget.journal budget.toml household.toml report.toml issues.tsv; do
+for source in accounts.journal actual.journal plan.journal entitlement.journal envelope.toml household.toml report.toml issues.tsv; do
   if [ ! -f "$DATA_DIR/$source" ]; then
     printf 'required household source is missing: %s\n' "$source" >&2
     exit 1

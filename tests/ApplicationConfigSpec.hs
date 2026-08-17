@@ -25,12 +25,12 @@ main = do
   assertEqual "Plan facts resolve from the canonical root"
     "private/household/plan.journal"
     (householdPlanJournalPath sources)
-  assertEqual "Budget movements resolve from the canonical root"
-    "private/household/budget.journal"
-    (householdBudgetJournalPath sources)
-  assertEqual "Budget policy resolves from the canonical root"
-    "private/household/budget.toml"
-    (householdBudgetConfigPath sources)
+  assertEqual "Entitlement transfers resolve from the canonical root"
+    "private/household/entitlement.journal"
+    (householdEntitlementJournalPath sources)
+  assertEqual "Envelope policy resolves from the canonical root"
+    "private/household/envelope.toml"
+    (householdEnvelopeConfigPath sources)
   assertEqual "Household policy resolves from the canonical root"
     "private/household/household.toml"
     (householdPolicyConfigPath sources)

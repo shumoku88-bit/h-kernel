@@ -2,22 +2,22 @@
 
 module HKernel.Editor.TUI.Maintenance
   ( AccountsWorkspaceAction(..)
-  , BudgetWorkspaceAction(..)
+  , EntitlementWorkspaceAction(..)
   , IssuesWorkspaceAction(..)
   , PublishRequest(..)
   , PublishResult(..)
   , State(..)
   , drawAccountsWorkspace
-  , drawBudgetWorkspace
+  , drawEntitlementWorkspace
   , drawIssuesWorkspace
   , drawFlow
   , handleAccountsWorkspaceEvent
-  , handleBudgetWorkspaceEvent
+  , handleEntitlementWorkspaceEvent
   , handleFlowEvent
   , handleIssuesWorkspaceEvent
   , publishCandidate
   , startAccountAdd
-  , startBudgetMovement
+  , startEntitlementTransfer
   , startIssueAdd
   ) where
 
@@ -30,14 +30,14 @@ import Lens.Micro (Traversal', singular)
 import Data.Text (Text)
 
 import HKernel.Editor.AccountAppend (AccountJournalAppendPreview)
-import HKernel.Editor.BudgetMovementAppend (BudgetJournalMovementAppendPreview)
+import HKernel.Editor.EntitlementTransferAppend (EntitlementTransferAppendPreview)
 import HKernel.Editor.IssueAppend
   ( IssueAppendPreview
   , IssueClosePreview
   , IssueDueUpdatePreview
   )
 import qualified HKernel.Editor.TUI.Maintenance.Accounts as Accounts
-import qualified HKernel.Editor.TUI.Maintenance.Budget as Budget
+import qualified HKernel.Editor.TUI.Maintenance.Entitlement as Entitlement
 import qualified HKernel.Editor.TUI.Maintenance.Issues as Issues
 import HKernel.Editor.TUI.Model
   ( AppContext
@@ -47,7 +47,7 @@ import HKernel.Editor.TUI.Model
 import HKernel.HouseholdIssue (HouseholdIssue)
 
 data State event
-  = BudgetFlow (Budget.State event)
+  = EntitlementFlow (Entitlement.State event)
   | AccountFlow (Accounts.State event)
   | IssueFlow (Issues.State event)
   | WriteOutcome Text
@@ -56,7 +56,7 @@ data State event
   | QuitRequested
 
 data PublishRequest
-  = PublishBudget BudgetJournalMovementAppendPreview
+  = PublishEntitlement EntitlementTransferAppendPreview
   | PublishAccount Text AccountJournalAppendPreview
   | PublishIssueAdd IssueAppendPreview
   | PublishIssueDueUpdate IssueDueUpdatePreview
@@ -67,9 +67,9 @@ data PublishResult
   | PublicationFailed Text
   | ReloadFailed
 
-data BudgetWorkspaceAction
-  = BudgetActionMaintain
-  | BudgetActionStartMovement
+data EntitlementWorkspaceAction
+  = EntitlementActionMaintain
+  | EntitlementActionStartTransfer
   deriving (Eq, Show)
 
 data AccountsWorkspaceAction
@@ -84,8 +84,8 @@ data IssuesWorkspaceAction
   | IssuesActionStartClose (State AppEvent)
   | IssuesActionStartRealize HouseholdIssue
 
-startBudgetMovement :: State event
-startBudgetMovement = BudgetFlow Budget.start
+startEntitlementTransfer :: State event
+startEntitlementTransfer = EntitlementFlow Entitlement.start
 
 startAccountAdd :: State event
 startAccountAdd = AccountFlow Accounts.start
@@ -93,8 +93,8 @@ startAccountAdd = AccountFlow Accounts.start
 startIssueAdd :: State event
 startIssueAdd = IssueFlow Issues.startAdd
 
-drawBudgetWorkspace :: AppContext -> Widget Name
-drawBudgetWorkspace = Budget.drawWorkspace
+drawEntitlementWorkspace :: AppContext -> Widget Name
+drawEntitlementWorkspace = Entitlement.drawWorkspace
 
 drawAccountsWorkspace :: AppContext -> Widget Name
 drawAccountsWorkspace = Accounts.drawWorkspace
@@ -104,7 +104,7 @@ drawIssuesWorkspace = Issues.drawWorkspace
 
 drawFlow :: State AppEvent -> Widget Name
 drawFlow state = case state of
-  BudgetFlow budgetState -> Budget.drawFlow budgetState
+  EntitlementFlow entitlementState -> Entitlement.drawFlow entitlementState
   AccountFlow accountState -> Accounts.drawFlow accountState
   IssueFlow issueState -> Issues.drawFlow issueState
   WriteOutcome message ->
@@ -114,9 +114,9 @@ drawFlow state = case state of
   PublishRequested _ -> emptyWidget
   QuitRequested -> emptyWidget
 
-zoomBudgetFlow :: Traversal' (State AppEvent) (Budget.State AppEvent)
-zoomBudgetFlow f (BudgetFlow state) = BudgetFlow <$> f state
-zoomBudgetFlow _ state = pure state
+zoomEntitlementFlow :: Traversal' (State AppEvent) (Entitlement.State AppEvent)
+zoomEntitlementFlow f (EntitlementFlow state) = EntitlementFlow <$> f state
+zoomEntitlementFlow _ state = pure state
 
 zoomAccountFlow :: Traversal' (State AppEvent) (Accounts.State AppEvent)
 zoomAccountFlow f (AccountFlow state) = AccountFlow <$> f state
@@ -133,13 +133,13 @@ handleFlowEvent
 handleFlowEvent context event = do
   state <- get
   case state of
-    BudgetFlow _ -> do
-      action <- zoom (singular zoomBudgetFlow) (Budget.handleFlowEvent context event)
+    EntitlementFlow _ -> do
+      action <- zoom (singular zoomEntitlementFlow) (Entitlement.handleFlowEvent context event)
       case action of
-        Budget.FlowMaintain -> pure ()
-        Budget.FlowReturn -> put ReturnToWorkspace
-        Budget.FlowQuit -> put QuitRequested
-        Budget.FlowPublish preview -> put (PublishRequested (PublishBudget preview))
+        Entitlement.FlowMaintain -> pure ()
+        Entitlement.FlowReturn -> put ReturnToWorkspace
+        Entitlement.FlowQuit -> put QuitRequested
+        Entitlement.FlowPublish preview -> put (PublishRequested (PublishEntitlement preview))
     AccountFlow _ -> do
       action <- zoom (singular zoomAccountFlow) (Accounts.handleFlowEvent context event)
       case action of
@@ -170,14 +170,14 @@ fromIssueRequest request = case request of
   Issues.PublishDueUpdate preview -> PublishIssueDueUpdate preview
   Issues.PublishClose preview -> PublishIssueClose preview
 
-handleBudgetWorkspaceEvent
+handleEntitlementWorkspaceEvent
   :: BrickEvent Name AppEvent
-  -> EventM Name s BudgetWorkspaceAction
-handleBudgetWorkspaceEvent event = do
-  action <- Budget.handleWorkspaceEvent event
+  -> EventM Name s EntitlementWorkspaceAction
+handleEntitlementWorkspaceEvent event = do
+  action <- Entitlement.handleWorkspaceEvent event
   pure $ case action of
-    Budget.WorkspaceMaintain -> BudgetActionMaintain
-    Budget.WorkspaceStartMovement -> BudgetActionStartMovement
+    Entitlement.WorkspaceMaintain -> EntitlementActionMaintain
+    Entitlement.WorkspaceStartTransfer -> EntitlementActionStartTransfer
 
 handleAccountsWorkspaceEvent
   :: BrickEvent Name AppEvent
@@ -206,12 +206,12 @@ handleIssuesWorkspaceEvent event = do
 
 publishCandidate :: AppContext -> PublishRequest -> IO PublishResult
 publishCandidate context request = case request of
-  PublishBudget preview -> do
-    result <- Budget.publishCandidate context preview
+  PublishEntitlement preview -> do
+    result <- Entitlement.publishCandidate context preview
     pure $ case result of
-      Budget.Published fresh -> Published fresh
-      Budget.PublicationFailed message -> PublicationFailed message
-      Budget.ReloadFailed -> ReloadFailed
+      Entitlement.Published fresh -> Published fresh
+      Entitlement.PublicationFailed message -> PublicationFailed message
+      Entitlement.ReloadFailed -> ReloadFailed
   PublishAccount source preview -> do
     result <- Accounts.publishCandidate context source preview
     pure $ case result of

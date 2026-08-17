@@ -467,7 +467,6 @@ parseAccountType located value =
     "equity"    -> Right Equity
     "income"    -> Right Income
     "expense"   -> Right Expense
-    "budget"    -> Right Budget
     _           -> Left (at located (InvalidAccountType value))
 
 parseAccountCommodity :: LocatedLine -> Text -> Either JournalError Commodity

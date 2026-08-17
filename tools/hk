@@ -153,7 +153,7 @@ Usage:
   tools/hk [--base DIR] actual-reverse [ARGS...]
   tools/hk [--base DIR] account [ARGS...]
   tools/hk [--base DIR] plan [ARGS...]
-  tools/hk [--base DIR] budget [ARGS...]
+  tools/hk [--base DIR] entitlement [ARGS...]
   tools/hk [--base DIR] issue [ARGS...]
   tools/hk [--base DIR] edit [ARGS...]
   tools/hk map
@@ -172,7 +172,7 @@ Commands:
   actual-reverse   Route an explicit Actual reversal intent directly to h-kernel-editor-cli.
   account          Route Account declaration directly to h-kernel-editor-cli.
   plan             Route Plan operations (add / finish) directly to h-kernel-editor-cli.
-  budget           Route Household budget movement directly to h-kernel-editor-cli.
+  entitlement      Route Household Entitlement transfer directly to h-kernel-editor-cli.
   issue            Route Issue operations directly to h-kernel-editor-cli.
   edit             Pass arguments directly to h-kernel-editor-cli.
   map              Print a generated Cabal and active-document ownership map.
@@ -244,7 +244,7 @@ case "$command" in
   actual-reverse) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- reverse "$@" ;;
   account) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- account "$@" ;;
   plan) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- plan "$@" ;;
-  budget) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- budget "$@" ;;
+  entitlement) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- entitlement "$@" ;;
   issue) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- issue "$@" ;;
   edit) cd "$ROOT"; exec "$CABAL" run exe:h-kernel-editor-cli -- "$@" ;;
   map)
