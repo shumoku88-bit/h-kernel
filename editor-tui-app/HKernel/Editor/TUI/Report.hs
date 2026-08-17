@@ -2,9 +2,13 @@
 
 module HKernel.Editor.TUI.Report
   ( WorkspaceAction(..)
+  , PickerAction(..)
+  , PickerState
   , drawWorkspace
   , drawPicker
   , handleWorkspaceEvent
+  , handlePickerEvent
+  , openPicker
   , reportChoices
   , reportChoiceIndex
   , reportChoiceAt
@@ -19,6 +23,7 @@ import qualified Graphics.Vty as V
 
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Vector as Vec
 
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
@@ -59,8 +64,24 @@ drawWorkspace context =
   where
     selected = contextSelectedReport context
 
+type PickerState = L.List Name ReportChoice
+
+data PickerAction
+  = PickerMaintain
+  | PickerBack
+  | PickerQuit
+  | PickerOpen ReportChoice
+  deriving (Eq, Show)
+
+openPicker :: ReportChoice -> PickerState
+openPicker selected =
+  L.listMoveTo selectedIndex
+    (L.list ReportPickerList (Vec.fromList reportChoices) 1)
+  where
+    selectedIndex = reportChoiceIndex selected
+
 -- | Render the modal picker for the named Household reports.
-drawPicker :: L.List Name ReportChoice -> Widget Name
+drawPicker :: PickerState -> Widget Name
 drawPicker choices =
   center
     (borderWithLabel (str "Choose Household Report")
@@ -70,6 +91,33 @@ drawPicker choices =
             (L.renderList renderReportChoice True choices
               <=> str " "
               <=> str "[wheel/↑/↓ or j/k] Move   [click/Enter] Open   [Esc] Back   [Q] Quit")))))
+
+-- | Keep picker-local list movement and selection inside the Report owner.
+-- Main only interprets the resulting application transition.
+handlePickerEvent
+  :: BrickEvent Name AppEvent
+  -> EventM Name PickerState PickerAction
+handlePickerEvent event = case event of
+  MouseDown ReportPickerList V.BScrollUp _ _ -> do
+    L.handleListEvent (V.EvKey V.KUp [])
+    pure PickerMaintain
+  MouseDown ReportPickerList V.BScrollDown _ _ -> do
+    L.handleListEvent (V.EvKey V.KDown [])
+    pure PickerMaintain
+  MouseDown ReportPickerList V.BLeft _ (Location (_, row)) ->
+    pure (maybe PickerMaintain PickerOpen (reportChoiceAt row))
+  VtyEvent (V.EvKey V.KEsc []) -> pure PickerBack
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> pure PickerQuit
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> pure PickerQuit
+  VtyEvent (V.EvKey V.KEnter []) -> do
+    choices <- get
+    pure $ case L.listSelectedElement choices of
+      Nothing -> PickerBack
+      Just (_, choice) -> PickerOpen choice
+  VtyEvent vtyEvent -> do
+    L.handleListEventVi L.handleListEvent vtyEvent
+    pure PickerMaintain
+  _ -> pure PickerMaintain
 
 -- | Reports exposed by the interactive TUI. Object-oriented views such as
 -- Actual history, Plans, and Issues stay in their owning workspace sections;
