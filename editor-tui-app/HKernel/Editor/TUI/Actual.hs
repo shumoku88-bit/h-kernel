@@ -535,7 +535,7 @@ drawFlow context state = case state of
           (padAll 1
             ( withAttr (attrName "warning") (txt message)
               <=> str " "
-              <=> str "[Enter/Esc] Back to Actual | [Q] Quit")))))
+              <=> str "[Enter/Esc] Back to Actual | [Q] Quit"))))
   WriteOutcome outcome ->
     center
       (borderWithLabel (str "Actual Write Result")
@@ -546,7 +546,7 @@ drawFlow context state = case state of
         (hLimit 86
           (padAll 1
             (withAttr (attrName "error") (txt message)
-              <=> str " " <=> str "[Esc] Issues | [Q] Quit")))))
+              <=> str " " <=> str "[Esc] Issues | [Q] Quit"))))
   ReturnToWorkspace -> emptyWidget
   PublishRequested _ -> emptyWidget
   QuitRequested -> emptyWidget
