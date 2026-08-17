@@ -68,7 +68,3 @@ role = "policy"
 [[documents]]
 path = "docs/REPORT_VERIFICATION.md"
 role = "contract"
-
-[[documents]]
-path = "docs/TUI_INPUT_PORTABILITY_DECISION_001.md"
-role = "contract"
