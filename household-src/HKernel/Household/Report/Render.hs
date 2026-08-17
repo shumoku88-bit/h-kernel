@@ -17,6 +17,7 @@ module HKernel.Household.Report.Render
 
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Map.Strict as Map
 import Data.Ratio (denominator, numerator)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -87,7 +88,10 @@ renderHouseholdReportSection presentation section surface =
       renderHouseholdIssuesWithPresentation
         presentation visibility (householdIssues surface)
     HouseholdEnvelopeBacking ->
-      renderEnvelope presentation (householdEnvelopeBacking surface)
+      renderEnvelope
+        presentation
+        (householdEnvelopeStockOrigins surface)
+        (householdEnvelopeBacking surface)
 
 renderHouseholdReportSections
   :: PresentationConfig
@@ -450,12 +454,18 @@ renderAmount amount =
   renderQuantity (amountQuantity amount)
     <> " " <> commodityCode (amountCommodity amount)
 
-renderEnvelope :: PresentationConfig -> EnvelopeBacking -> Text
-renderEnvelope presentation report = T.intercalate "\n"
+renderEnvelope
+  :: PresentationConfig
+  -> Map.Map Commodity Day
+  -> EnvelopeBacking
+  -> Text
+renderEnvelope presentation origins report = T.intercalate "\n"
   [ terminalHeaderWith presentation "Envelope & Backing"
   , terminalMeta ("Cycle: [" <> renderDay (periodStart period)
       <> ", " <> renderDay (periodEndExclusive period) <> ")"
       <> " | Observed through: " <> renderDay (envelopeBackingObservedOn report))
+  , terminalMeta (renderStockOrigins origins)
+  , terminalMeta "Envelope consumption scope: routed Actual on/after each Commodity stock origin; pre-origin Actual excluded"
   , ""
   , renderTerminalTable envelopeColumns envelopeRows Nothing
   , renderUnassignedExpenses presentation
@@ -501,6 +511,14 @@ renderEnvelope presentation report = T.intercalate "\n"
           (envelopeLedgerUnassigned report)]
       , [plainCell "Reconciliation delta", signedBalanceCellWith presentation
           (envelopeReconciliationDelta report)]
+      ]
+
+renderStockOrigins :: Map.Map Commodity Day -> Text
+renderStockOrigins origins
+  | Map.null origins = "Stock origins: none (no admitted Entitlement source movement)"
+  | otherwise = "Stock origins: " <> T.intercalate ", "
+      [ commodityCode commodity <> "=" <> renderDay origin
+      | (commodity, origin) <- Map.toAscList origins
       ]
 
 renderUnassignedExpenses
