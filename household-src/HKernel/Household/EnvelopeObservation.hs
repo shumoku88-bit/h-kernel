@@ -10,6 +10,7 @@ module HKernel.Household.EnvelopeObservation
   , householdEnvelopeRemaining
   , householdEnvelopeCommitment
   , householdEnvelopeHeadroom
+  , deriveEnvelopeStockOrigins
   , HouseholdEnvelopeError(..)
   , deriveHouseholdEnvelopeObservation
   ) where
@@ -17,6 +18,7 @@ module HKernel.Household.EnvelopeObservation
 import Data.Either (partitionEithers)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time.Calendar (Day)
@@ -75,7 +77,8 @@ import HKernel.Household.Policy
   , householdUnassignedBudgetAccounts
   )
 import HKernel.Money
-  ( amountCommodity
+  ( Commodity
+  , amountCommodity
   , amountQuantity
   , negateAmount
   , zeroQuantity
@@ -110,6 +113,21 @@ data SourceEndpoint
   = SourceEnvelope EnvelopeId
   | SourceUnallocated
   | SourceOpening
+
+-- | Opening boundary of the native Envelope stock world for each Commodity.
+--
+-- The earliest admitted Budget movement is provenance even when it does not
+-- move value into a spendable Envelope. Report Periods and current routing
+-- policy must never be substituted for this historical coordinate.
+deriveEnvelopeStockOrigins
+  :: [HouseholdBudgetMovement]
+  -> Map Commodity Day
+deriveEnvelopeStockOrigins = Map.fromListWith min . map origin
+  where
+    origin movement =
+      ( amountCommodity (householdBudgetMovementAmount movement)
+      , householdBudgetMovementDate movement
+      )
 
 deriveHouseholdEnvelopeObservation
   :: Day
@@ -158,17 +176,10 @@ projectEntitlementHistory policy movements =
     ([], maybeTransfers) ->
       mapLeft (fmap HouseholdEnvelopeEntitlementHistoryError)
         (mkEnvelopeEntitlementHistoryWithOrigins
-          sourceOrigins
+          (deriveEnvelopeStockOrigins movements)
           [transfer | Just transfer <- maybeTransfers])
     (errorGroups, _) -> Left (NonEmpty.fromList (concat errorGroups))
   where
-    sourceOrigins = Map.fromListWith min
-      [ ( amountCommodity (householdBudgetMovementAmount movement)
-        , householdBudgetMovementDate movement
-        )
-      | movement <- movements
-      ]
-
     allocationByAccount = householdAllocationEnvelopes policy
     openingAccounts = householdOpeningBudgetAccounts policy
     unassignedAccounts = householdUnassignedBudgetAccounts policy
