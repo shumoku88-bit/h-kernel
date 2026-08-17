@@ -86,11 +86,9 @@ jobs:
       - name: Test
         run: cabal test all -j --test-show-details=direct
 
-      # These checks are cheap once the executable is built, so retain them on
-      # the PR gate as well as the canonical full qualification on main.
-      - name: Audit repository ownership
+      - name: Verify repository ownership
         if: github.event_name == 'pull_request' || matrix.ghc == '9.10.3'
-        run: cabal run exe:repository-audit
+        run: python3 tools/verify_repository_context.py --ownership
 
       - name: Verify complete report contracts
         if: github.event_name == 'pull_request' || matrix.ghc == '9.10.3'
