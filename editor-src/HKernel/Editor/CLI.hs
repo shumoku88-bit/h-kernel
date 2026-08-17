@@ -25,6 +25,7 @@ import HKernel.Account
   )
 import HKernel.Editor.ActualAppend (ActualEditIntent(..))
 import HKernel.Editor.ActualReverse (ActualReverseIntent(..))
+import HKernel.Editor.HouseholdWorkspace (IssueRealizeIntent(..))
 import HKernel.Editor.IssueAppend (IssueAppendIntent(..))
 import HKernel.Editor.PlanCompleteAdvance
   ( PositivePlanMagnitude
@@ -38,7 +39,7 @@ import HKernel.Editor.PlanLifecycle
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
 import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
-import HKernel.HouseholdIssue (IssueStatus(..), mkIssueId)
+import HKernel.HouseholdIssue (IssueId, IssueStatus(..), mkIssueId)
 import HKernel.Money
   ( Amount
   , Commodity
@@ -60,6 +61,7 @@ data EditorCommand
   | AccountCmd FilePath AccountDeclaration
   | BudgetMovementCmd FilePath HouseholdBudgetMovement
   | IssueCmd FilePath IssueAppendIntent
+  | IssueRealizeCmd FilePath IssueRealizeIntent
   | PlanAddCmd FilePath FilePath PlanAddIntent
   | PlanEditCmd FilePath FilePath PlanEditIntent
   | PlanFinishCmd FilePath FilePath Text Day (Maybe PositivePlanMagnitude)
@@ -81,6 +83,14 @@ data CliError
   | CliInvalidBudgetArguments
   | CliInvalidIssueArguments
   | CliIssueAmountPairRequired
+  | CliIssueRealizeIdRequired
+  | CliIssueRealizeActualDateRequired
+  | CliIssueRealizeRecordedOnRequired
+  | CliIssueRealizeClosedOnRequired
+  | CliIssueRealizeDescriptionRequired
+  | CliIssueRealizePostingRequired
+  | CliIssueRealizeMemoRequired
+  | CliIssueRealizeOptionInvalid
   | CliPlanAddDateRequired
   | CliPlanAddDescriptionRequired
   | CliPlanAddPostingRequired
@@ -100,6 +110,7 @@ parseEditorCommand ("append":args) = parseLeaf parseAppend args
 parseEditorCommand ("reverse":args) = parseLeaf parseReverse args
 parseEditorCommand ("account":args) = parseLeaf parseAccount args
 parseEditorCommand ("budget":args) = parseLeaf parseBudget args
+parseEditorCommand ("issue":"realize":args) = parseLeaf parseIssueRealize args
 parseEditorCommand ("issue":args) = parseLeaf parseIssue args
 parseEditorCommand ("plan":"add":args) = parseLeaf parsePlanAdd args
 parseEditorCommand ("plan":"edit":args) = parseLeaf parsePlanEdit args
@@ -205,6 +216,88 @@ parseIssueAmount quantityText commodityText = do
   quantity <- parseQuantityValue quantityText
   commodity <- parseCommodity commodityText
   pure (Just (mkAmount commodity quantity))
+
+data IssueRealizeFields = IssueRealizeFields
+  { issueRealizeIdField               :: Maybe IssueId
+  , issueRealizeActualDateField       :: Maybe Day
+  , issueRealizeRecordedOnField       :: Maybe Day
+  , issueRealizeClosedOnField         :: Maybe Day
+  , issueRealizeDescriptionField      :: Maybe Text
+  , issueRealizePostingsReversedField :: [IntentPosting]
+  , issueRealizeMemoField             :: Maybe Text
+  }
+
+emptyIssueRealizeFields :: IssueRealizeFields
+emptyIssueRealizeFields = IssueRealizeFields
+  Nothing Nothing Nothing Nothing Nothing [] Nothing
+
+parseIssueRealize :: [String] -> Either CliError EditorCommand
+parseIssueRealize (householdRoot:optionArgs) = do
+  fields <- parseIssueRealizeOptions emptyIssueRealizeFields optionArgs
+  issueId <- maybe (Left CliIssueRealizeIdRequired) Right
+    (issueRealizeIdField fields)
+  actualDate <- maybe (Left CliIssueRealizeActualDateRequired) Right
+    (issueRealizeActualDateField fields)
+  recordedOn <- maybe (Left CliIssueRealizeRecordedOnRequired) Right
+    (issueRealizeRecordedOnField fields)
+  closedOn <- maybe (Left CliIssueRealizeClosedOnRequired) Right
+    (issueRealizeClosedOnField fields)
+  description <- case issueRealizeDescriptionField fields of
+    Just value | not (T.null value) -> Right value
+    _ -> Left CliIssueRealizeDescriptionRequired
+  postings <- maybe (Left CliIssueRealizePostingRequired) Right
+    (NonEmpty.nonEmpty (reverse (issueRealizePostingsReversedField fields)))
+  memo <- case issueRealizeMemoField fields of
+    Just value | not (T.null value) -> Right value
+    _ -> Left CliIssueRealizeMemoRequired
+  pure
+    (IssueRealizeCmd householdRoot
+      (IssueRealizeIntent
+        issueId
+        recordedOn
+        closedOn
+        (ActualEditIntent actualDate description postings [])
+        memo))
+parseIssueRealize _ = Left CliUsage
+
+parseIssueRealizeOptions
+  :: IssueRealizeFields
+  -> [String]
+  -> Either CliError IssueRealizeFields
+parseIssueRealizeOptions fields [] = Right fields
+parseIssueRealizeOptions fields ("--id":idText:rest) = do
+  issueId <- mapDomainError CliInvalidIssueId (mkIssueId (T.pack idText))
+  parseIssueRealizeOptions fields { issueRealizeIdField = Just issueId } rest
+parseIssueRealizeOptions fields ("--actual-date":dateText:rest) = do
+  date <- parseDate dateText
+  parseIssueRealizeOptions fields { issueRealizeActualDateField = Just date } rest
+parseIssueRealizeOptions fields ("--recorded-on":dateText:rest) = do
+  date <- parseDate dateText
+  parseIssueRealizeOptions fields { issueRealizeRecordedOnField = Just date } rest
+parseIssueRealizeOptions fields ("--closed-on":dateText:rest) = do
+  date <- parseDate dateText
+  parseIssueRealizeOptions fields { issueRealizeClosedOnField = Just date } rest
+parseIssueRealizeOptions fields ("--description":description:rest) =
+  parseIssueRealizeOptions fields
+    { issueRealizeDescriptionField = Just (T.pack description) }
+    rest
+parseIssueRealizeOptions fields ("--posting":accountText:quantityText:commodityText:rest) = do
+  account <- parseAccountValue accountText
+  quantity <- parseQuantityValue quantityText
+  commodity <- if commodityText == "-"
+    then Right Nothing
+    else Just <$> parseCommodity commodityText
+  let posting = IntentPosting account quantity commodity
+  parseIssueRealizeOptions fields
+    { issueRealizePostingsReversedField =
+        posting : issueRealizePostingsReversedField fields
+    }
+    rest
+parseIssueRealizeOptions fields ("--memo":memo:rest) =
+  parseIssueRealizeOptions fields
+    { issueRealizeMemoField = Just (T.pack memo) }
+    rest
+parseIssueRealizeOptions _ _ = Left CliIssueRealizeOptionInvalid
 
 data PlanAddFields = PlanAddFields
   { planAddDateField        :: Maybe Day
@@ -429,6 +522,14 @@ renderCliError errorValue = case errorValue of
   CliInvalidBudgetArguments -> "invalid Budget command arguments"
   CliInvalidIssueArguments -> "invalid Issue command arguments"
   CliIssueAmountPairRequired -> "Issue amount requires both quantity and commodity, or '-' for both"
+  CliIssueRealizeIdRequired -> "--id is required for issue realize"
+  CliIssueRealizeActualDateRequired -> "--actual-date is required for issue realize"
+  CliIssueRealizeRecordedOnRequired -> "--recorded-on is required for issue realize"
+  CliIssueRealizeClosedOnRequired -> "--closed-on is required for issue realize"
+  CliIssueRealizeDescriptionRequired -> "--description is required for issue realize"
+  CliIssueRealizePostingRequired -> "at least one --posting is required for issue realize"
+  CliIssueRealizeMemoRequired -> "--memo is required for issue realize"
+  CliIssueRealizeOptionInvalid -> "invalid or incomplete issue realize option"
   CliPlanAddDateRequired -> "--date is required for plan add"
   CliPlanAddDescriptionRequired -> "--description is required for plan add"
   CliPlanAddPostingRequired -> "at least one --posting is required for plan add"
@@ -450,6 +551,7 @@ usageText = unlines
   , "  h-kernel-editor-cli account [--commit] <journal.txt> <account> <type> [<commodity>]"
   , "  h-kernel-editor-cli budget [--commit] <budget.journal> <YYYY-MM-DD> <memo> <from> <to> <qty> <comm>"
   , "  h-kernel-editor-cli issue [--commit] <issues.tsv> <id> <status> <YYYY-MM-DD> <category> <title> <qty|-> <comm|-> <details...>"
+  , "  h-kernel-editor-cli issue realize [--commit] <household-root> --id ID --actual-date YYYY-MM-DD --recorded-on YYYY-MM-DD --closed-on YYYY-MM-DD --description DESC --posting ACCT QTY COMM ... --memo MEMO"
   , "  h-kernel-editor-cli plan add [--commit] <plan.journal> <actual.journal> --date YYYY-MM-DD --description DESC --posting ACCT QTY COMM ... [--id ID] [--series SERIES]"
   , "  h-kernel-editor-cli plan edit [--commit] <plan.journal> <actual.journal> --id ID [--date YYYY-MM-DD] [--amount POSITIVE_QTY]"
   , "  h-kernel-editor-cli plan finish [--commit] <plan.journal> <actual.journal> --id ID --actual-date YYYY-MM-DD [--actual-amount POSITIVE_QTY]"
