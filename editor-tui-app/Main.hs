@@ -32,6 +32,7 @@ import HKernel.Editor.TUI.Model
   )
 import qualified HKernel.Editor.TUI.Plan as Plan
 import qualified HKernel.Editor.TUI.Report as Report
+import qualified HKernel.Editor.TUI.Settings as Settings
 import HKernel.Household.Application (loadCanonicalHouseholdWriteSnapshot)
 
 data ActualReturn
@@ -143,7 +144,7 @@ drawSectionBody context = case contextCurrentSection context of
   AccountsSection -> Maintenance.drawAccountsWorkspace context
   IssuesSection -> Maintenance.drawIssuesWorkspace context
   ReportsSection -> Report.drawWorkspace context
-  SettingsSection -> Maintenance.drawSettingsWorkspace context
+  SettingsSection -> Settings.drawWorkspace context
 
 appEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 appEvent event = do
@@ -262,7 +263,7 @@ handleWorkspaceEvent context event = case event of
         Report.OpenPicker ->
           put (AppWrapper context
             (ReportPicker (Report.openPicker (contextSelectedReport context))))
-    SettingsSection -> Maintenance.handleSettingsWorkspaceEvent event
+    SettingsSection -> Settings.handleWorkspaceEvent event
   where
     openHome = put (AppWrapper context (Home (contextObservationDay context)))
     switchSection :: HouseholdSection -> EventM Name AppWrapper ()
