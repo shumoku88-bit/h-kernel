@@ -496,7 +496,7 @@ drawFlow context state = case state of
                    , str " "
                    , str "Validation: press Enter outside the Account field to check admission and balance."
                    , multiInputControls form
-                   ]))))
+                   ])))))
   RecordPreview preview form ->
     center
       (borderWithLabel (str (recordPreviewTitle (formState form)))
