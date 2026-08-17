@@ -264,9 +264,9 @@ homeCycleEndDay surface =
 -- | One household decision to turn an open Issue into explicit Actual evidence.
 --
 -- The Actual date belongs to 'realizeActualIntent'. @recordedOn@ is when the
--- relation assertion was recorded, and @closedOn@ is Issue lifecycle evidence;
--- the coordinates remain separate so backdated Actual evidence never rewrites
--- when the relation or closure was recorded.
+-- relation assertion was recorded, while @closedOn@ remains independent Issue
+-- lifecycle evidence. Existing Issue close admission validates the close date
+-- against the Issue's own recorded date without coupling it to relation time.
 data IssueRealizeIntent = IssueRealizeIntent
   { realizeIssueId      :: IssueId
   , realizeRecordedOn   :: Day
@@ -281,7 +281,6 @@ data IssueRealizeError
   | RealizeIssueNotFound IssueId
   | RealizeIssueNotOpen IssueStatus
   | RealizeRelationBeforeIssueRecorded Day Day
-  | RealizeCloseBeforeRelation Day Day
   | RealizeActualMetadataOwnsEventId
   | RealizeActualIdentityError ActualTransactionIdError
   | RealizeActualCandidateError ActualAppend.ActualEditError
@@ -354,10 +353,6 @@ prepareIssueRealize actualJournal planJournal actualSource relationSource issues
   if realizeRecordedOn intent < householdIssueRecordedOn target
     then Left (pure (RealizeRelationBeforeIssueRecorded
       (householdIssueRecordedOn target) (realizeRecordedOn intent)))
-    else Right ()
-  if realizeClosedOn intent < realizeRecordedOn intent
-    then Left (pure (RealizeCloseBeforeRelation
-      (realizeRecordedOn intent) (realizeClosedOn intent)))
     else Right ()
   if any ((== "event-id") . T.toCaseFold . fst)
       (ActualAppend.intentMetadata (realizeActualIntent intent))
@@ -788,7 +783,7 @@ installAndAdmit fileSystem postAdmission intent staged =
         else pure (Left (recoveryFailure stale safe))
 
     recoverIO ioMessage = do
-      safe@(actualSafe, relationSafe, issuesSafe) <-
+      (actualSafe, relationSafe, issuesSafe) <-
         recoverExpectedSources fileSystem intent staged
       cleanupCandidatePaths fileSystem staged
       pure (Left (IssueRealizeFileIOError
