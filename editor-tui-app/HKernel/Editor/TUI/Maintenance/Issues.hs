@@ -140,7 +140,9 @@ data WorkspaceAction
   = WorkspaceMaintain
   | WorkspaceStartAdd
   | WorkspaceStartDueUpdate (State AppEvent)
+  | WorkspaceDueUpdateUnavailable Text
   | WorkspaceStartClose (State AppEvent)
+  | WorkspaceCloseUnavailable Text
   | WorkspaceStartRealize HouseholdIssue
 
 data PublishResult
@@ -216,20 +218,6 @@ mkIssueCloseForm =
 
 startAdd :: State event
 startAdd = AddInput mkIssueForm
-
-startSelectedClose :: AppContext -> Maybe (State event)
-startSelectedClose context = do
-  (_, issue) <- L.listSelectedElement (contextIssueList context)
-  pure $ case householdIssueStatus issue of
-    Open -> CloseChoice issue
-    _ -> CloseChoice issue
-
-startSelectedDueUpdate :: AppContext -> Maybe (State event)
-startSelectedDueUpdate context = do
-  (_, issue) <- L.listSelectedElement (contextIssueList context)
-  case householdIssueStatus issue of
-    Open -> pure (DueInput issue (mkIssueDueForm issue))
-    _ -> Nothing
 
 zoomIssueForm :: Traversal' (State AppEvent) (Form IssueInput AppEvent Name)
 zoomIssueForm f (AddInput form) = AddInput <$> f form
@@ -616,14 +604,19 @@ handleWorkspaceEvent event = case event of
     openSelectedIssueClose = do
       context <- get
       case L.listSelectedElement (contextIssueList context) of
-        Just (_, issue) | householdIssueStatus issue == Open ->
-          pure (WorkspaceStartClose (CloseChoice issue))
-        _ -> pure WorkspaceMaintain
+        Just (_, issue) -> case householdIssueStatus issue of
+          Open -> pure (WorkspaceStartClose (CloseChoice issue))
+          status -> pure (WorkspaceCloseUnavailable
+            ("Selected Issue is already " <> T.pack (show status) <> "."))
+        Nothing -> pure WorkspaceMaintain
     openSelectedIssueDueUpdate = do
       context <- get
-      case startSelectedDueUpdate context of
+      case L.listSelectedElement (contextIssueList context) of
+        Just (_, issue) -> case householdIssueStatus issue of
+          Open -> pure (WorkspaceStartDueUpdate (DueInput issue (mkIssueDueForm issue)))
+          status -> pure (WorkspaceDueUpdateUnavailable
+            ("Selected Issue is already " <> T.pack (show status) <> "."))
         Nothing -> pure WorkspaceMaintain
-        Just flow -> pure (WorkspaceStartDueUpdate flow)
     openSelectedIssueRealize = do
       context <- get
       case L.listSelectedElement (contextIssueList context) of
