@@ -502,6 +502,9 @@ executable h-kernel-editor-tui
     other-modules:    HKernel.Editor.TUI.Actual
                     , HKernel.Editor.TUI.Home
                     , HKernel.Editor.TUI.Maintenance
+                    , HKernel.Editor.TUI.Maintenance.Accounts
+                    , HKernel.Editor.TUI.Maintenance.Budget
+                    , HKernel.Editor.TUI.Maintenance.Issues
                     , HKernel.Editor.TUI.Model
                     , HKernel.Editor.TUI.Plan
                     , HKernel.Editor.TUI.Report
