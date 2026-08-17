@@ -51,7 +51,7 @@ role = "architecture"
 
 [[documents]]
 path = "docs/LIABILITY_POSITION_DESIGN_SKETCH.md"
-role = "architecture"
+role = "observation"
 
 [[documents]]
 path = "docs/PLATFORM_NEUTRAL_APPLICATION_POLICY.md"
