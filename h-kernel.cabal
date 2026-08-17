@@ -512,6 +512,9 @@ executable h-kernel-editor-tui
                     , HKernel.Editor.TUI.Maintenance.Issues
                     , HKernel.Editor.TUI.Model
                     , HKernel.Editor.TUI.Plan
+                    , HKernel.Editor.TUI.Plan.CompleteAdvance
+                    , HKernel.Editor.TUI.Plan.Lifecycle
+                    , HKernel.Editor.TUI.Plan.Workspace
                     , HKernel.Editor.TUI.Report
                     , HKernel.Editor.TUI.ReportStyle
     build-depends:    base >= 4.14 && < 5
