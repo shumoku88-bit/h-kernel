@@ -144,6 +144,10 @@ Usage:
   tools/hk [--base DIR]                         Open the Actual workspace.
   tools/hk [--base DIR] dialogue                Open the guided Household dialogue.
   tools/hk [--base DIR] report [REPORT_ARGS...]
+  tools/hk [--base DIR] concierge protocol
+  tools/hk [--base DIR] concierge overview
+  tools/hk [--base DIR] concierge export
+  tools/hk [--base DIR] concierge packet
   tools/hk [--base DIR] actual-add [ACTUAL_JOURNAL]
   tools/hk [--base DIR] actual-multi [ARGS...]
   tools/hk [--base DIR] actual-reverse [ARGS...]
@@ -162,6 +166,7 @@ Usage:
 Commands:
   dialogue         Open the guided Haskeline flow for common Household writes.
   report           Run the existing Haskell report entrypoint.
+  concierge        Enter the read-only AI consultation lane (protocol / overview / export / packet).
   actual-add       Open the Actual workspace for an explicit journal path.
   actual-multi     Route multi-posting Actual transaction append directly to h-kernel-editor-cli.
   actual-reverse   Route an explicit Actual reversal intent directly to h-kernel-editor-cli.
@@ -206,6 +211,29 @@ case "$command" in
       export HKERNEL_LEDGER_DATA_DIR="$dir"
     fi
     exec "$REPORT" "$@"
+    ;;
+  concierge)
+    [ "$#" -ge 1 ] || { printf 'error: tools/hk concierge requires protocol, overview, export, or packet\n' >&2; exit 2; }
+    concierge_command=$1
+    shift
+    case "$concierge_command" in
+      protocol)
+        [ "$#" -eq 0 ] || { printf 'error: tools/hk concierge protocol does not accept arguments\n' >&2; exit 2; }
+        cd "$ROOT"
+        exec "$CABAL" run -v0 exe:h-kernel -- concierge protocol
+        ;;
+      overview|export|packet)
+        [ "$#" -eq 0 ] || { printf 'error: tools/hk concierge %s does not accept arguments\n' "$concierge_command" >&2; exit 2; }
+        data_dir=$(require_data_dir)
+        cd "$ROOT"
+        export HKERNEL_LEDGER_DATA_DIR="$data_dir"
+        exec "$CABAL" run -v0 exe:h-kernel -- concierge "$concierge_command"
+        ;;
+      *)
+        printf 'error: unknown tools/hk concierge command: %s\n' "$concierge_command" >&2
+        exit 2
+        ;;
+    esac
     ;;
   actual-add)
     if [ "$#" -eq 1 ]; then journal=$1
