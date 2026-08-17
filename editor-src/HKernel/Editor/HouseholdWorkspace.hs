@@ -7,6 +7,8 @@ module HKernel.Editor.HouseholdWorkspace
   , IssueRealizeIntent(..)
   , IssueRealizeError(..)
   , IssueRealizePreview(..)
+  , IssueRelationHouseholdAdmissionError(..)
+  , admitIssueRelationSource
   , prepareIssueRealize
   , IssueRealizeWriteIntent(..)
   , IssueRealizeWriteError(..)
@@ -44,6 +46,8 @@ import HKernel.Editor.IssueRealize
   ( IssueRealizeError(..)
   , IssueRealizeIntent(..)
   , IssueRealizePreview(..)
+  , IssueRelationHouseholdAdmissionError(..)
+  , admitIssueRelationSource
   , prepareIssueRealize
   )
 import HKernel.Editor.IssueRealizePublication
