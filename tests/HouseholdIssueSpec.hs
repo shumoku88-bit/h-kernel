@@ -368,7 +368,7 @@ characterizeIssueRealizationPublication = case preparedRealization of
     TIO.writeFile realizationActualPath realizationActualSource
     TIO.writeFile realizationIssuesPath realizationIssuesSource
     success <- publishIssueRealize
-      (pure (Right ()))
+      (pure (Right ()) :: IO (Either String ()))
       (realizationWriteIntent preview)
     actualAfter <- TIO.readFile realizationActualPath
     relationAfter <- TIO.readFile realizationRelationPath
