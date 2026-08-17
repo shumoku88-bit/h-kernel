@@ -40,6 +40,16 @@ wire typeとdomain typeを区別する。
 - opaque constructorの内部表現をwire contractへ固定しない
 - parse / validation / application errorを区別する
 
+## TUI input portability
+
+Terminal emulator、multiplexer、IME、remote sessionなどのdelivery差を、日常operationへ到達できるかどうかの差にしない。
+
+`h-kernel-editor-tui`の日常workflowはordinary text、unmodified character key、Enter、Esc、Tab、arrow keyだけで完結できる経路を持つ。Function key、Ctrl-modified key、terminal-specific prefix sequenceは補助shortcutとして使ってもよいが、それだけをoperationへの必須経路にしない。
+
+候補pickerやshortcutを追加する場合もportable pathを残す。入力補助の有無をdomain capabilityやwriter authorityの差へ変換せず、AccountやAmountのadmissionはshared editor/domain ownerへ戻す。
+
+具体的なworkspace key、form field、画面遷移はTUI implementationとtestが所有し、このpolicyへcurrent UI snapshotとして複製しない。
+
 ## 抽象化
 
 将来のplatformを想像してgeneric repository/service/frameworkを先に作らない。実在するuse caseから必要な境界だけを追加する。
@@ -56,5 +66,6 @@ Applicationまたはadapter変更では次を確認する。
 4. domain typeとtransport typeを不必要に同一視していないか
 5. adapterを外してもpure accounting testが成立するか
 6. 同じ会計ruleを別adapterへ複製していないか
+7. TUIの日常operationがterminal-specific key sequenceだけに依存していないか
 
 このpolicyは将来のplatform対応を約束するものではない。現在の家計簿システムを不必要に複雑化せず、delivery surfaceが会計核を歪めないことだけを要求する。
