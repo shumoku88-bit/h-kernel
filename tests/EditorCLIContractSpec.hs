@@ -5,12 +5,16 @@ module Main (main) where
 import Data.Time.Calendar (fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
+import qualified HKernel.Editor.ActualAppend as ActualAppend
 import HKernel.Editor.ActualReverse
   ( reverseDescription
   , reverseEventId
   , reverseTargetId
   )
 import HKernel.Editor.CLI
+import HKernel.Editor.HouseholdWorkspace
+  ( IssueRealizeIntent(..)
+  )
 import HKernel.Editor.IssueAppend (intentAmount, intentDetails)
 import HKernel.Editor.PlanCompleteAdvance (positivePlanMagnitudeQuantity)
 import HKernel.Editor.PlanLifecycle
@@ -21,6 +25,7 @@ import HKernel.Editor.PlanLifecycle
   , positivePlanEditAmountQuantity
   )
 import HKernel.Household.BudgetMovement (householdBudgetMovementMemo)
+import HKernel.HouseholdIssue (issueIdText)
 import HKernel.Money (quantityFromInteger)
 import HKernel.Plan.Completion (actualTransactionIdText)
 
@@ -34,6 +39,9 @@ main = do
         , ("reverse admits new and target identities", testReverseIdentityAdmission)
         , ("Issue amount pair rejects one-sided omission", testIssueAmountPair)
         , ("Issue blank amount and details are preserved", testIssueBlankAmount)
+        , ("Issue realize admits separate time coordinates and Actual intent", testIssueRealizeAdmission)
+        , ("Issue realize admits command-local commit", testIssueRealizeCommit)
+        , ("Issue realize requires decision memo", testIssueRealizeMemoRequired)
         , ("Plan add requires explicit date", testPlanAddDateRequired)
         , ("Plan edit admits identity date and amount", testPlanEditAdmission)
         , ("Plan edit requires identity", testPlanEditIdRequired)
@@ -156,6 +164,100 @@ testIssueBlankAmount = case parseEditorCommand
       intentAmount intent == Nothing
         && intentDetails intent == "keep --commit"
     _ -> False
+
+testIssueRealizeAdmission :: Bool
+testIssueRealizeAdmission = case parseEditorCommand
+  [ "issue"
+  , "realize"
+  , "household"
+  , "--id"
+  , "ISSUE-2"
+  , "--actual-date"
+  , "2026-08-16"
+  , "--recorded-on"
+  , "2026-08-17"
+  , "--closed-on"
+  , "2026-08-17"
+  , "--description"
+  , "Algebra history"
+  , "--posting"
+  , "assets:bank"
+  , "-1800"
+  , "JPY"
+  , "--posting"
+  , "expenses:books"
+  , "1800"
+  , "JPY"
+  , "--memo"
+  , "purchased"
+  ] of
+    Right (PreviewOnly, IssueRealizeCmd "household" intent) ->
+      issueIdText (realizeIssueId intent) == "ISSUE-2"
+        && realizeRecordedOn intent == fromGregorian 2026 8 17
+        && realizeClosedOn intent == fromGregorian 2026 8 17
+        && realizeDecisionMemo intent == "purchased"
+        && ActualAppend.intentDate (realizeActualIntent intent)
+          == fromGregorian 2026 8 16
+        && ActualAppend.intentDescription (realizeActualIntent intent)
+          == "Algebra history"
+        && length (ActualAppend.intentPostings (realizeActualIntent intent)) == 2
+    _ -> False
+
+testIssueRealizeCommit :: Bool
+testIssueRealizeCommit = case parseEditorCommand
+  [ "issue"
+  , "realize"
+  , "--commit"
+  , "household"
+  , "--id"
+  , "ISSUE-2"
+  , "--actual-date"
+  , "2026-08-17"
+  , "--recorded-on"
+  , "2026-08-17"
+  , "--closed-on"
+  , "2026-08-17"
+  , "--description"
+  , "book"
+  , "--posting"
+  , "assets:bank"
+  , "-1800"
+  , "JPY"
+  , "--posting"
+  , "expenses:books"
+  , "1800"
+  , "JPY"
+  , "--memo"
+  , "purchased"
+  ] of
+    Right (CommitRequested, IssueRealizeCmd "household" _) -> True
+    _ -> False
+
+testIssueRealizeMemoRequired :: Bool
+testIssueRealizeMemoRequired =
+  parseEditorCommand
+    [ "issue"
+    , "realize"
+    , "household"
+    , "--id"
+    , "ISSUE-2"
+    , "--actual-date"
+    , "2026-08-17"
+    , "--recorded-on"
+    , "2026-08-17"
+    , "--closed-on"
+    , "2026-08-17"
+    , "--description"
+    , "book"
+    , "--posting"
+    , "assets:bank"
+    , "-1800"
+    , "JPY"
+    , "--posting"
+    , "expenses:books"
+    , "1800"
+    , "JPY"
+    ] == Left CliIssueRealizeMemoRequired
 
 testPlanAddDateRequired :: Bool
 testPlanAddDateRequired =
