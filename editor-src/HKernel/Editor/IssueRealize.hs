@@ -12,12 +12,13 @@ module HKernel.Editor.IssueRealize
   ( IssueRealizeIntent(..)
   , IssueRealizeError(..)
   , IssueRealizePreview(..)
+  , IssueRelationHouseholdAdmissionError(..)
+  , admitIssueRelationSource
   , prepareIssueRealize
   ) where
 
 import Data.Bifunctor (first)
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -37,6 +38,7 @@ import HKernel.Editor.IssueAppend
   , IssueCloseError
   , IssueCloseIntent(..)
   , closeCandidateCompleteSource
+  , closeCandidateRow
   , prepareIssueCloseOn
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
@@ -120,14 +122,40 @@ data IssueRealizeError
   deriving (Eq, Show)
 
 data IssueRealizePreview = IssueRealizePreview
-  { realizedActualId               :: ActualTransactionId
-  , realizedRelationEventId        :: IssueRelationEventId
-  , realizedActualBlock            :: Text
-  , realizedRelationBlock          :: Text
-  , realizedActualCandidateSource  :: Text
+  { realizedActualId                :: ActualTransactionId
+  , realizedRelationEventId         :: IssueRelationEventId
+  , realizedActualBlock             :: Text
+  , realizedRelationBlock           :: Text
+  , realizedIssueBlock              :: Text
+  , realizedActualCandidateSource   :: Text
   , realizedRelationCandidateSource :: Text
-  , realizedIssuesCandidateSource  :: Text
+  , realizedIssuesCandidateSource   :: Text
   } deriving (Eq, Show)
+
+-- | Source-level relation admission against one already admitted Household.
+--
+-- Only explicit source-durable Actual @event-id@ coordinates are admitted as
+-- relation targets. Plan-derived runtime identities are deliberately excluded.
+data IssueRelationHouseholdAdmissionError
+  = IssueRelationAdmissionSourceError (NonEmpty IssueRelationTSVError)
+  | IssueRelationAdmissionReferenceError IssueRelationReferenceError
+  deriving (Eq, Show)
+
+admitIssueRelationSource
+  :: ActualJournal
+  -> PlanJournal
+  -> [HouseholdIssue]
+  -> Text
+  -> Either (NonEmpty IssueRelationHouseholdAdmissionError) [IssueRelationEvent]
+admitIssueRelationSource actualJournal planJournal issues source = do
+  relations <- first (pure . IssueRelationAdmissionSourceError)
+    (parseIssueRelations source)
+  first (fmap IssueRelationAdmissionReferenceError)
+    (admitIssueRelationReferences
+      (map householdIssueId issues)
+      (map identifiedPlanId (planJournalTransactions planJournal))
+      (sourceDurableActualIds actualJournal)
+      relations)
 
 -- | Prepare the three complete sources for one explicit Issue realization.
 --
@@ -223,6 +251,7 @@ prepareIssueRealize actualJournal planJournal actualSource relationSource issues
     , realizedRelationEventId = relationEventId
     , realizedActualBlock = ActualAppend.candidateBlock actualPreview
     , realizedRelationBlock = relationBlock
+    , realizedIssueBlock = closeCandidateRow closePreview
     , realizedActualCandidateSource = ActualAppend.candidateCompleteSource actualPreview
     , realizedRelationCandidateSource = relationCandidate
     , realizedIssuesCandidateSource = closeCandidateCompleteSource closePreview
