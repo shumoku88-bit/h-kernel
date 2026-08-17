@@ -21,7 +21,7 @@
 2. 今回end-to-endで完成させるdomain capabilityまたはmigration chapterを言葉にする。
 3. 採用する方向、採用しない方向、semantic rollback boundary、非目標、検証方法を確認する。
 4. 一つのcoherent changeを持つbranchとDraft PRで作業する。
-5. 実装、focused test、full test、repository audit、必要なreport contract検証を行う。
+5. 実装、focused test、full test、repository consistency check、必要なreport contract検証を行う。
 6. 最終差分を、合意した範囲と維持すべき意味に照らして確認する。
 7. 変わった現在の契約、現在地、運用方法だけを文書へ反映する。
 8. 不要になった文書、節、参照、互換説明を同じ作業内で削除する。
@@ -43,7 +43,7 @@ functionやmodule、parserとoperation、readerとwriter、test fileが別であ
 - destructive retirement / deletion
 - 無関係なrenderer / UI redesign
 
-PRの小ささを安全性の代理指標にしない。安全性はdomain type、明示的ownership、invariant、focused regression、full test、CI、repository audit、final diff review、rollback clarityで確保する。
+PRの小ささを安全性の代理指標にしない。安全性はdomain type、明示的ownership、invariant、focused regression、full test、CI、repository consistency check、final diff review、rollback clarityで確保する。
 
 既存PRの境界は将来の設計境界ではない。不自然なstackになっている場合は`consolidate`、`supersede`、`rebase`、`reconstruct`を選んでよい。
 
