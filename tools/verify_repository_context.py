@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import posixpath
 from pathlib import Path, PurePosixPath
 import subprocess
 import tomllib
@@ -107,10 +108,25 @@ def verify_generated_context() -> None:
     print("repository context verification passed")
 
 
+def normalize_repository_path(raw: str, label: str) -> str:
+    value = raw.replace("\\", "/")
+    parsed = PurePosixPath(value)
+    if parsed.is_absolute() or ".." in parsed.parts:
+        raise AssertionError(f"{label} produced invalid repository path {raw!r}")
+    normalized = posixpath.normpath(value)
+    if normalized in {"", "."} or normalized.startswith("../"):
+        raise AssertionError(f"{label} produced invalid repository path {raw!r}")
+    return normalized
+
+
 def nul_paths(command: list[str], label: str) -> set[str]:
     result = run(command)
     assert_success(result, label)
-    return {path for path in result.stdout.split("\0") if path}
+    return {
+        normalize_repository_path(path, label)
+        for path in result.stdout.split("\0")
+        if path
+    }
 
 
 def indexed_documents() -> set[str]:
@@ -136,21 +152,19 @@ def indexed_documents() -> set[str]:
                 f"docs/INDEX.toml documents[{index}] has unknown role {role!r}"
             )
 
-        parsed = PurePosixPath(document_path)
-        if (
-            parsed.is_absolute()
-            or ".." in parsed.parts
-            or not document_path.startswith("docs/")
-            or parsed.suffix != ".md"
-        ):
+        normalized = normalize_repository_path(
+            document_path, f"docs/INDEX.toml documents[{index}]"
+        )
+        parsed = PurePosixPath(normalized)
+        if not normalized.startswith("docs/") or parsed.suffix != ".md":
             raise AssertionError(
                 f"docs/INDEX.toml documents[{index}] has invalid document path {document_path!r}"
             )
-        if document_path in documents:
+        if normalized in documents:
             raise AssertionError(
                 f"docs/INDEX.toml contains duplicate document path {document_path!r}"
             )
-        documents.add(document_path)
+        documents.add(normalized)
 
     return documents
 
