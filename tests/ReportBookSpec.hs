@@ -165,8 +165,6 @@ main = do
       , "== Envelope & Backing =="
       ])
 
-  budgetAccountTests dateRange
-
 configuredPeriodTests :: Journal -> IO ()
 configuredPeriodTests journal = do
   let trialDay = fromGregorian 2026 8 10
@@ -219,51 +217,6 @@ configuredPeriodTests journal = do
     (monthlyAccounts monthlyRange journal)
     monthly
 
-budgetAccountTests :: DateRange -> IO ()
-budgetAccountTests dateRange = do
-  let journal = mustRight (parseJournal budgetJournalInput)
-      budgetFood = mustRight (mkAccount "budget:food")
-      budgetOffset = mustRight (mkAccount "budget:offset")
-      ReportBook trialBalance balanceSheet profitAndLossReport dailyFlowReport _ monthlyAccountsReport =
-        reportBook dateRange journal
-
-  assertEqual
-    "budget accounts remain visible in the trial balance"
-    [budgetFood, budgetOffset]
-    (map lineAccount (trialBalanceLines trialBalance))
-  assertEqual
-    "budget accounts are not treated as unclassified balance-sheet evidence"
-    []
-    (balanceSheetUnclassified balanceSheet)
-  assertEqual
-    "budget accounts are not treated as unclassified profit-and-loss evidence"
-    []
-    (profitAndLossUnclassified profitAndLossReport)
-  assertEqual
-    "budget accounts do not become daily flow"
-    []
-    (dailyFlowLines dailyFlowReport)
-  assertEqual
-    "budget accounts do not become daily expense rows"
-    []
-    (dailyFlowExpenseRows dailyFlowReport)
-  assertEqual
-    "budget accounts are not treated as unclassified daily-flow evidence"
-    []
-    (dailyFlowUnclassified dailyFlowReport)
-  assertEqual
-    "budget accounts do not become monthly income rows"
-    []
-    (monthlyAccountsIncomeRows monthlyAccountsReport)
-  assertEqual
-    "budget accounts do not become monthly expense rows"
-    []
-    (monthlyAccountsExpenseRows monthlyAccountsReport)
-  assertEqual
-    "budget accounts are not treated as unclassified monthly evidence"
-    []
-    (monthlyAccountsUnclassified monthlyAccountsReport)
-
 expectedHeadings :: [T.Text]
 expectedHeadings =
   [ "\ESC[1;36m== Account Balances (h-kernel Engine) ==\ESC[0m"
@@ -307,21 +260,6 @@ journalInput = T.unlines
   , "2026-08-15 Salary"
   , "    assets:cash  500 JPY"
   , "    income:salary"
-  ]
-
-budgetJournalInput :: T.Text
-budgetJournalInput = T.unlines
-  [ "account budget:food"
-  , "    type: budget"
-  , "    commodity: JPY"
-  , ""
-  , "account budget:offset"
-  , "    type: budget"
-  , "    commodity: JPY"
-  , ""
-  , "2026-08-01 Budget coordinates"
-  , "    budget:food  1000 JPY"
-  , "    budget:offset"
   ]
 
 

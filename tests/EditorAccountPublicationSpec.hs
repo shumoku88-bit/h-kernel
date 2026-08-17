@@ -120,8 +120,8 @@ writeSyntheticFiles dir = do
   TIO.writeFile (dir </> "accounts.journal") syntheticAccounts
   TIO.writeFile (dir </> "actual.journal") syntheticActual
   TIO.writeFile (dir </> "plan.journal") syntheticPlan
-  TIO.writeFile (dir </> "budget.journal") syntheticBudget
-  TIO.writeFile (dir </> "budget.toml") syntheticBudgetToml
+  TIO.writeFile (dir </> "entitlement.journal") syntheticEntitlement
+  TIO.writeFile (dir </> "envelope.toml") syntheticEnvelopeToml
   TIO.writeFile (dir </> "household.toml") syntheticHouseholdToml
   TIO.writeFile (dir </> "report.toml") syntheticReportToml
   TIO.writeFile (dir </> "issues.tsv") syntheticIssues
@@ -138,18 +138,6 @@ syntheticAccounts = T.unlines
   , ""
   , "account Expenses:Groceries"
   , "  type: Expense"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Opening"
-  , "  type: Budget"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Living"
-  , "  type: Budget"
-  , "  commodity: JPY"
-  , ""
-  , "account Budget:Daily"
-  , "  type: Budget"
   , "  commodity: JPY"
   ]
 
@@ -185,17 +173,14 @@ syntheticPlan = T.unlines
   , "  Expenses:Groceries"
   ]
 
-syntheticBudget :: Text
-syntheticBudget = T.unlines
-  [ "include accounts.journal"
-  , ""
-  , "2026-07-01 * Allocate Daily"
-  , "  Budget:Daily  100000 JPY"
-  , "  Budget:Living"
+syntheticEntitlement :: Text
+syntheticEntitlement = T.unlines
+  [ "2026-06-01 origin JPY"
+  , "2026-07-01 alloc unallocated -> Daily 100000 JPY"
   ]
 
-syntheticBudgetToml :: Text
-syntheticBudgetToml = T.unlines
+syntheticEnvelopeToml :: Text
+syntheticEnvelopeToml = T.unlines
   [ "[[backing-pools]]"
   , "id = \"main\""
   , "asset-accounts = [\"Assets:Bank\"]"
@@ -212,14 +197,6 @@ syntheticHouseholdToml = T.unlines
   [ "[cycle]"
   , "mode = \"income-anchor\""
   , "income-account = \"Income:Salary\""
-  , ""
-  , "[budget]"
-  , "opening-accounts = [\"Budget:Opening\"]"
-  , "unassigned-accounts = [\"Budget:Living\"]"
-  , ""
-  , "[[budget.envelopes]]"
-  , "id = \"Daily\""
-  , "allocation-account = \"Budget:Daily\""
   , ""
   , "[daily-target]"
   , ""

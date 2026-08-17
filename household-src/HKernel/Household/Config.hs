@@ -14,23 +14,15 @@ module HKernel.Household.Config
   ) where
 
 import Data.Either (partitionEithers)
-import Data.List (foldl')
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import HKernel.Account
-  ( Account
-  , AccountError(..)
-  , accountName
+  ( AccountError(..)
   , mkAccount
   )
 import HKernel.Backing.Policy (BackingPolicy)
 import HKernel.Envelope (CurrentEnvelopePolicy)
-import HKernel.Envelope.Identity
-  ( EnvelopeIdError(..)
-  , envelopeIdText
-  , mkEnvelopeId
-  )
 import HKernel.Household.DailyTarget
   ( DailyTargetAssetSelection
   , DailyTargetScopeIdError(..)
@@ -60,21 +52,13 @@ data HouseholdConfiguration = HouseholdConfiguration
 
 data RawHouseholdPolicy = RawHouseholdPolicy
   RawCycle
-  RawHouseholdEnvelopeCoordinates
   (Maybe RawMoney)
   (Maybe RawDailyTarget)
   (Maybe Value)
 
 data RawCycle = RawCycle Text Text
 
-data RawHouseholdEnvelopeCoordinates = RawHouseholdEnvelopeCoordinates
-  [RawEnvelopeCoordinates]
-  [Text]
-  [Text]
-
 data RawMoney = RawMoney Text
-
-data RawEnvelopeCoordinates = RawEnvelopeCoordinates Text Text
 
 data RawDailyTarget = RawDailyTarget [RawDailyTargetAsset]
 
@@ -84,7 +68,6 @@ instance FromValue RawHouseholdPolicy where
   fromValue = parseTableFromValue
     (RawHouseholdPolicy
       <$> reqKey "cycle"
-      <*> reqKey "budget"
       <*> optKey "money"
       <*> optKey "daily-target"
       <*> optKey "envelope-history")
@@ -95,22 +78,9 @@ instance FromValue RawCycle where
       <$> reqKey "mode"
       <*> reqKey "income-account")
 
-instance FromValue RawHouseholdEnvelopeCoordinates where
-  fromValue = parseTableFromValue
-    (RawHouseholdEnvelopeCoordinates
-      <$> reqKey "envelopes"
-      <*> reqKey "opening-accounts"
-      <*> reqKey "unassigned-accounts")
-
 instance FromValue RawMoney where
   fromValue = parseTableFromValue
     (RawMoney <$> reqKey "primary-commodity")
-
-instance FromValue RawEnvelopeCoordinates where
-  fromValue = parseTableFromValue
-    (RawEnvelopeCoordinates
-      <$> reqKey "id"
-      <*> reqKey "allocation-account")
 
 instance FromValue RawDailyTarget where
   fromValue = parseTableFromValue
@@ -152,8 +122,8 @@ rawToHouseholdConfiguration
   -> RawHouseholdPolicy
   -> Either [Text] HouseholdConfiguration
 rawToHouseholdConfiguration envelopePolicy backingPolicy
-    (RawHouseholdPolicy rawCycle rawCoordinates rawMoney rawDailyTarget _rawEnvelopeHistory) = do
-  policy <- rawToHouseholdPolicy envelopePolicy backingPolicy rawCycle rawCoordinates
+    (RawHouseholdPolicy rawCycle rawMoney rawDailyTarget _rawEnvelopeHistory) = do
+  policy <- rawToHouseholdPolicy envelopePolicy backingPolicy rawCycle
   primaryCommodity <- traverse parseRawMoney rawMoney
   dailyTargetAssets <- parseRawDailyTarget rawDailyTarget
   Right HouseholdConfiguration
@@ -184,30 +154,13 @@ rawToHouseholdPolicy
   :: CurrentEnvelopePolicy
   -> BackingPolicy
   -> RawCycle
-  -> RawHouseholdEnvelopeCoordinates
   -> Either [Text] HouseholdPolicy
-rawToHouseholdPolicy envelopePolicy backingPolicy rawCycle rawCoordinates = do
+rawToHouseholdPolicy envelopePolicy backingPolicy rawCycle = do
   cyclePolicy <- parseRawCycle rawCycle
-  case rawCoordinates of
-    RawHouseholdEnvelopeCoordinates rawEnvelopes rawOpening rawUnassigned ->
-      case syntaxErrors of
-        [] -> case mkHouseholdPolicy
-            cyclePolicy envelopePolicy backingPolicy envelopeCoordinates
-            openingAccounts unassignedAccounts of
-          Right policy -> Right policy
-          Left errors -> Left
-            (map renderHouseholdPolicyError (NonEmpty.toList errors))
-        _ -> Left syntaxErrors
-      where
-        (envelopeErrorGroups, envelopeCoordinates) = partitionEithers
-          (zipWith parseRawEnvelopeCoordinates [0 :: Int ..] rawEnvelopes)
-        (openingErrors, openingAccounts) = parseAccounts
-          "budget.opening-accounts"
-          rawOpening
-        (unassignedErrors, unassignedAccounts) = parseAccounts
-          "budget.unassigned-accounts"
-          rawUnassigned
-        syntaxErrors = concat envelopeErrorGroups ++ openingErrors ++ unassignedErrors
+  case mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy of
+    Right policy -> Right policy
+    Left errors -> Left
+      (map renderHouseholdPolicyError (NonEmpty.toList errors))
 
 parseRawCycle :: RawCycle -> Either [Text] HouseholdCyclePolicy
 parseRawCycle (RawCycle rawMode rawAccount)
@@ -216,30 +169,6 @@ parseRawCycle (RawCycle rawMode rawAccount)
   | otherwise = case mkAccount rawAccount of
       Right account -> Right (incomeAnchorCyclePolicy account)
       Left err -> Left [renderAccountError "cycle.income-account" err]
-
-parseRawEnvelopeCoordinates
-  :: Int
-  -> RawEnvelopeCoordinates
-  -> Either [Text] HouseholdEnvelopeCoordinates
-parseRawEnvelopeCoordinates index
-    (RawEnvelopeCoordinates rawId rawAllocation) =
-  case (envelopeIdResult, allocationResult, errors) of
-    (Right envelopeId, Right allocationAccount, []) -> Right
-      (defineHouseholdEnvelopeCoordinates envelopeId allocationAccount)
-    _ -> Left errors
-  where
-    path = indexedPath "budget.envelopes" index
-    envelopeIdResult = mkEnvelopeId rawId
-    allocationResult = mkAccount rawAllocation
-    errors =
-      either
-        (pure . renderEnvelopeIdError (path <> ".id"))
-        (const [])
-        envelopeIdResult
-        ++ either
-          (pure . renderAccountError (path <> ".allocation-account"))
-          (const [])
-          allocationResult
 
 parseRawDailyTargetAsset
   :: Int
@@ -264,64 +193,13 @@ parseRawDailyTargetAsset index (RawDailyTargetAsset rawId rawAccount) =
           (const [])
           accountResult
 
-parseAccounts :: Text -> [Text] -> ([Text], [Account])
-parseAccounts path = finish . foldl' add ([], []) . zip [0 :: Int ..]
-  where
-    add (errors, accounts) (index, rawAccount) =
-      case mkAccount rawAccount of
-        Right account -> (errors, account : accounts)
-        Left err ->
-          ( renderAccountError (indexedPath path index) err : errors
-          , accounts
-          )
-    finish (errors, accounts) = (reverse errors, reverse accounts)
-
 indexedPath :: Text -> Int -> Text
 indexedPath path index = path <> "[" <> T.pack (show index) <> "]"
 
 renderHouseholdPolicyError :: HouseholdPolicyError -> Text
 renderHouseholdPolicyError err = case err of
-  DuplicateHouseholdEnvelopeCoordinates envelope ->
-    "budget.envelopes: duplicate household coordinates for "
-      <> quoted (envelopeIdText envelope)
-  HouseholdEnvelopeMissingCoordinates envelope ->
-    "budget.envelopes: missing household coordinates for "
-      <> quoted (envelopeIdText envelope)
-  DuplicateAllocationAccount account firstEnvelope repeatedEnvelope ->
-    "budget.envelopes: allocation Account " <> quoted (accountName account)
-      <> " belongs to both " <> quoted (envelopeIdText firstEnvelope)
-      <> " and " <> quoted (envelopeIdText repeatedEnvelope)
-  HouseholdPolicyHasNoOpeningBudgetAccounts ->
-    "budget.opening-accounts: expected at least one source Account identity"
-  DuplicateOpeningBudgetAccount account ->
-    "budget.opening-accounts: duplicate Account " <> quoted (accountName account)
-  HouseholdPolicyHasNoUnassignedBudgetAccounts ->
-    "budget.unassigned-accounts: expected at least one unallocated Account identity"
-  DuplicateUnassignedBudgetAccount account ->
-    "budget.unassigned-accounts: duplicate Account " <> quoted (accountName account)
-  AllocationAccountAlsoOpening account envelope ->
-    "budget.opening-accounts: allocation Account " <> quoted (accountName account)
-      <> " for envelope " <> quoted (envelopeIdText envelope)
-      <> " cannot also be an opening Account"
-  AllocationAccountAlsoUnassigned account envelope ->
-    "budget.unassigned-accounts: allocation Account " <> quoted (accountName account)
-      <> " for envelope " <> quoted (envelopeIdText envelope)
-      <> " cannot also be unassigned"
-  OpeningAccountAlsoUnassigned account ->
-    "budget: Account " <> quoted (accountName account)
-      <> " cannot be both opening and unassigned"
-
-renderEnvelopeIdError :: Text -> EnvelopeIdError -> Text
-renderEnvelopeIdError path err = path <> ": " <> case err of
-  EmptyEnvelopeId -> "expected a non-empty envelope identity"
-  EnvelopeIdHasSurroundingWhitespace value ->
-    "surrounding whitespace is not allowed; got " <> quoted value
-  EnvelopeIdContainsControlCharacter value ->
-    "control characters are not allowed; got " <> quoted value
-  EnvelopeIdContainsWhitespace value ->
-    "whitespace is not allowed; got " <> quoted value
-  ReservedEnvelopeId value ->
-    quoted value <> " is derived and cannot be a spendable envelope identity"
+  HouseholdPolicyInvalid ->
+    "household policy is invalid"
 
 renderDailyTargetScopeIdError :: Text -> DailyTargetScopeIdError -> Text
 renderDailyTargetScopeIdError path err = path <> ": " <> case err of

@@ -2,40 +2,27 @@
 
 ## Status
 
-The `Budget` domain model is retired from active h-kernel architecture.
+The `Budget` domain model and physical accounting vocabulary are retired from active h-kernel architecture.
 
-This decision removes `Budget` as a second state model beside `Envelope`.
-Current household meaning is owned by the narrower native owners:
+This decision removes `Budget` as a second state model beside `Envelope`, retires `AccountType` `Budget`, and migrates physical source vocabulary (`budget.journal`, `budget.toml`, `HouseholdBudgetMovement`) into native Entitlement source (`entitlement.journal`, `envelope.toml`, `EnvelopeEntitlementHistory`, `EntitlementTransfer`).
 
-- stable Envelope identity and current Envelope policy
-- historical Expense routing
-- Envelope entitlement history and transfers
-- Actual consumption and refunds
-- Plan commitments and fulfillment
-- Backing policy and Backing positions
+Current household meaning is owned by the native owners:
 
-No active calculation should reconstruct a `BudgetPolicy`, `BudgetObservation`,
-`BudgetEntitlement`, `BudgetRemaining`, or an equivalent renamed aggregate.
+- stable Envelope identity (`EnvelopeRegistry`) and current Envelope policy (`CurrentEnvelopePolicy`)
+- historical Expense routing (`ExpenseRoutingHistory`)
+- Envelope entitlement history and transfers (`EnvelopeEntitlementHistory`)
+- Actual consumption and refunds (`EnvelopeConsumption`)
+- Plan commitments and fulfillment (`EnvelopeCommitment`, `EnvelopeFulfillment`)
+- Backing policy and Backing positions (`BackingPolicy`, `BackingPoolPosition`)
+
+No active calculation should reconstruct a `BudgetPolicy`, `BudgetObservation`, `BudgetEntitlement`, `BudgetRemaining`, `AccountType` `Budget`, or an equivalent renamed aggregate.
 
 ## Historical evidence
 
-The Budget-model observations that led to this retirement are historical evidence,
-not current implementation targets, compatibility requirements, or authority for
-introducing a new Budget aggregate. They are owned by Git history and merged PRs,
-not by the active documentation set.
+The Budget-model observations that led to this retirement are historical evidence, not current implementation targets, compatibility requirements, or authority for introducing a new Budget aggregate. They are owned by Git history and merged PRs, not by the active documentation set.
 
-If a future requirement genuinely needs a concept called `Budget`, design it
-again from that requirement. Do not infer that the retired model should be
-restored from historical implementation or observation records.
+If a future requirement genuinely needs a concept called `Budget`, design it again from that requirement. Do not infer that the retired model should be restored from historical implementation or observation records.
 
-## Names that intentionally remain
+## Accounting boundary
 
-This retirement does not rename existing accounting/source vocabulary by
-itself. In particular, names such as the accounting `Budget` AccountType,
-`budget:*` Account identities, `budget.journal`, `budget.toml`, and
-`HouseholdBudgetMovement` may remain while they describe current source or
-writer contracts.
-
-Those names do not authorize a separate Budget state model. Any source-name or
-accounting-vocabulary migration is a separate change and must preserve canonical
-Household data and writer authority.
+Accounting accounts are strictly double-entry: `Asset`, `Liability`, `Equity`, `Income`, `Expense`. Envelopes are not Accounts. Native entitlement transfers operate over `Unallocated` and `Spendable EnvelopeId` endpoints without opening or intermediate double-entry account coordinates.

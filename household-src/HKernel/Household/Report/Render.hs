@@ -507,10 +507,6 @@ renderEnvelope presentation origins report = T.intercalate "\n"
           (envelopeBackingRequired report)]
       , [plainCell "Backing surplus", signedBalanceCellWith presentation
           (envelopeBackingSurplus report)]
-      , [plainCell "Ledger unassigned", signedBalanceCellWith presentation
-          (envelopeLedgerUnassigned report)]
-      , [plainCell "Reconciliation delta", signedBalanceCellWith presentation
-          (envelopeReconciliationDelta report)]
       ]
 
 renderStockOrigins :: Map.Map Commodity Day -> Text

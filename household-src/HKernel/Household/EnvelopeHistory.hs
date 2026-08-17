@@ -12,7 +12,6 @@ module HKernel.Household.EnvelopeHistory
 import Data.Either (partitionEithers)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -52,7 +51,6 @@ import HKernel.Envelope.Identity
   )
 import HKernel.Household.Policy
   ( HouseholdPolicy
-  , householdAllocationEnvelopes
   , householdEnvelopePolicy
   )
 import HKernel.Plan (PlanId, mkPlanId)
@@ -73,13 +71,12 @@ data HouseholdEnvelopeHistory = HouseholdEnvelopeHistory
 
 data HouseholdEnvelopeHistoryReferenceError
   = CurrentPolicyEnvelopeMissingFromRegistry EnvelopeId
-  | AllocationEnvelopeMissingFromRegistry EnvelopeId
   | HouseholdExpenseRoutingReferenceError ExpenseRoutingReferenceError
   | HouseholdFulfillmentRoutingReferenceError FulfillmentRoutingReferenceError
   deriving (Eq, Show)
 
 data RawSharedHouseholdRoot = RawSharedHouseholdRoot
-  Value Value (Maybe Value) (Maybe Value) (Maybe RawEnvelopeHistory)
+  Value (Maybe Value) (Maybe Value) (Maybe RawEnvelopeHistory)
 
 data RawEnvelopeHistory = RawEnvelopeHistory
   [Text]
@@ -100,7 +97,6 @@ instance FromValue RawSharedHouseholdRoot where
   fromValue = parseTableFromValue
     (RawSharedHouseholdRoot
       <$> reqKey "cycle"
-      <*> reqKey "budget"
       <*> optKey "money"
       <*> optKey "daily-target"
       <*> optKey "envelope-history")
@@ -143,7 +139,7 @@ parseHouseholdEnvelopeHistory input =
 rawToEnvelopeHistory
   :: RawSharedHouseholdRoot
   -> Either [Text] (Maybe HouseholdEnvelopeHistory)
-rawToEnvelopeHistory (RawSharedHouseholdRoot _ _ _ _ maybeRawHistory) =
+rawToEnvelopeHistory (RawSharedHouseholdRoot _ _ _ maybeRawHistory) =
   traverse parseRawEnvelopeHistory maybeRawHistory
 
 parseRawEnvelopeHistory
@@ -304,11 +300,6 @@ admitHouseholdEnvelopeHistoryReferences accountRegistry knownPlans policy histor
       , let envelope = envelopeDefinitionId definition
       , not (envelopeRegistryContains envelope registry)
       ]
-    allocationErrors =
-      [ AllocationEnvelopeMissingFromRegistry envelope
-      | envelope <- Map.elems (householdAllocationEnvelopes policy)
-      , not (envelopeRegistryContains envelope registry)
-      ]
     expenseRoutingErrors = case admitExpenseRoutingReferences
         accountRegistry registry (householdExpenseRoutingHistory history) of
       Right _ -> []
@@ -319,7 +310,7 @@ admitHouseholdEnvelopeHistoryReferences accountRegistry knownPlans policy histor
       Right _ -> []
       Left found ->
         map HouseholdFulfillmentRoutingReferenceError (NonEmpty.toList found)
-    errors = currentPolicyErrors ++ allocationErrors
+    errors = currentPolicyErrors
       ++ expenseRoutingErrors ++ fulfillmentRoutingErrors
 
 collect :: [Either [Text] value] -> Either [Text] [value]

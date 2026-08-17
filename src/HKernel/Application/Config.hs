@@ -46,15 +46,15 @@ mkHouseholdRoot path
 -- independently. The record says where a semantic owner lives; it does not
 -- imply that all files share one parser or writer.
 data HouseholdSourcePaths = HouseholdSourcePaths
-  { householdAccountsJournalPath :: FilePath
-  , householdActualJournalPath   :: FilePath
-  , householdPlanJournalPath     :: FilePath
-  , householdBudgetJournalPath   :: FilePath
-  , householdBudgetConfigPath    :: FilePath
-  , householdPolicyConfigPath    :: FilePath
-  , householdReportConfigPath    :: FilePath
-  , householdIssuesPath          :: FilePath
-  , householdIssueRelationsPath  :: FilePath
+  { householdAccountsJournalPath    :: FilePath
+  , householdActualJournalPath      :: FilePath
+  , householdPlanJournalPath        :: FilePath
+  , householdEntitlementJournalPath :: FilePath
+  , householdEnvelopeConfigPath     :: FilePath
+  , householdPolicyConfigPath       :: FilePath
+  , householdReportConfigPath       :: FilePath
+  , householdIssuesPath             :: FilePath
+  , householdIssueRelationsPath     :: FilePath
   } deriving (Eq, Show)
 
 householdSourcePaths :: HouseholdRoot -> HouseholdSourcePaths
@@ -62,8 +62,8 @@ householdSourcePaths root = HouseholdSourcePaths
   { householdAccountsJournalPath = at "accounts.journal"
   , householdActualJournalPath = at "actual.journal"
   , householdPlanJournalPath = at "plan.journal"
-  , householdBudgetJournalPath = at "budget.journal"
-  , householdBudgetConfigPath = at "budget.toml"
+  , householdEntitlementJournalPath = at "entitlement.journal"
+  , householdEnvelopeConfigPath = at "envelope.toml"
   , householdPolicyConfigPath = at "household.toml"
   , householdReportConfigPath = at "report.toml"
   , householdIssuesPath = at "issues.tsv"

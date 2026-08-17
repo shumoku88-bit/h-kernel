@@ -5,10 +5,6 @@ module HKernel.Household.Policy
   ( HouseholdCyclePolicy
   , incomeAnchorCyclePolicy
   , householdCycleIncomeAccount
-  , HouseholdEnvelopeCoordinates
-  , defineHouseholdEnvelopeCoordinates
-  , householdEnvelopeCoordinateId
-  , householdEnvelopeAllocationAccount
   , HouseholdPolicy
   , HouseholdPolicyError(..)
   , mkHouseholdPolicy
@@ -16,21 +12,12 @@ module HKernel.Household.Policy
   , householdEnvelopePolicy
   , householdBackingPolicy
   , householdEnvelopeOrder
-  , householdAllocationEnvelopes
-  , householdRetiredAllocationAccounts
-  , householdOpeningBudgetAccounts
-  , householdUnassignedBudgetAccounts
   , HouseholdPolicyAccountError(..)
   , validateHouseholdPolicyAccounts
   ) where
 
-import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import Data.Set (Set)
-import qualified Data.Set as Set
 import HKernel.Account
   ( Account
   , AccountRegistry
@@ -57,130 +44,37 @@ newtype HouseholdCyclePolicy = IncomeAnchorCyclePolicy
 incomeAnchorCyclePolicy :: Account -> HouseholdCyclePolicy
 incomeAnchorCyclePolicy = IncomeAnchorCyclePolicy
 
--- | Stable allocation coordinates for one Envelope identity. Current Envelope
--- membership is owned independently by 'CurrentEnvelopePolicy'. Coordinates may
--- therefore outlive a current Envelope so historical budget.journal movements
--- remain interpretable without rewriting their evidence.
-data HouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
-  { householdEnvelopeCoordinateId      :: EnvelopeId
-  , householdEnvelopeAllocationAccount :: Account
-  } deriving (Eq, Show)
-
-defineHouseholdEnvelopeCoordinates
-  :: EnvelopeId -> Account -> HouseholdEnvelopeCoordinates
-defineHouseholdEnvelopeCoordinates = HouseholdEnvelopeCoordinates
-
 data HouseholdPolicyError
-  = DuplicateHouseholdEnvelopeCoordinates EnvelopeId
-  | HouseholdEnvelopeMissingCoordinates EnvelopeId
-  | DuplicateAllocationAccount Account EnvelopeId EnvelopeId
-  | HouseholdPolicyHasNoOpeningBudgetAccounts
-  | DuplicateOpeningBudgetAccount Account
-  | HouseholdPolicyHasNoUnassignedBudgetAccounts
-  | DuplicateUnassignedBudgetAccount Account
-  | AllocationAccountAlsoOpening Account EnvelopeId
-  | AllocationAccountAlsoUnassigned Account EnvelopeId
-  | OpeningAccountAlsoUnassigned Account
+  = HouseholdPolicyInvalid
   deriving (Eq, Show)
 
 data HouseholdPolicy = HouseholdPolicy
-  { householdPolicyCycle              :: HouseholdCyclePolicy
-  , householdEnvelopePolicy           :: CurrentEnvelopePolicy
-  , householdBackingPolicy            :: BackingPolicy
-  , householdEnvelopeOrder            :: [EnvelopeId]
-  , householdAllocationEnvelopes      :: Map Account EnvelopeId
-  , householdOpeningBudgetAccounts    :: Set Account
-  , householdUnassignedBudgetAccounts :: Set Account
+  { householdPolicyCycle    :: HouseholdCyclePolicy
+  , householdEnvelopePolicy :: CurrentEnvelopePolicy
+  , householdBackingPolicy  :: BackingPolicy
+  , householdEnvelopeOrder  :: [EnvelopeId]
   } deriving (Eq, Show)
-
--- | Allocation Accounts whose stable Envelope identity is no longer present in
--- current policy. Readers retain them for historical evidence; current writers
--- must not create new movements through them.
-householdRetiredAllocationAccounts :: HouseholdPolicy -> Set Account
-householdRetiredAllocationAccounts policy = Set.fromList
-  [ account
-  | (account, envelope) <- Map.toAscList (householdAllocationEnvelopes policy)
-  , envelope `Set.notMember` currentEnvelopes
-  ]
-  where
-    currentEnvelopes = Set.fromList (householdEnvelopeOrder policy)
 
 mkHouseholdPolicy
   :: HouseholdCyclePolicy
   -> CurrentEnvelopePolicy
   -> BackingPolicy
-  -> [HouseholdEnvelopeCoordinates]
-  -> [Account]
-  -> [Account]
   -> Either (NonEmpty HouseholdPolicyError) HouseholdPolicy
-mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy coordinates openingAccounts unassignedAccounts =
-  case NonEmpty.nonEmpty errors of
-    Just found -> Left found
-    Nothing -> Right HouseholdPolicy
-      { householdPolicyCycle = cyclePolicy
-      , householdEnvelopePolicy = envelopePolicy
-      , householdBackingPolicy = backingPolicy
-      , householdEnvelopeOrder = currentEnvelopeIds
-      , householdAllocationEnvelopes = allocationValues
-      , householdOpeningBudgetAccounts = openingSet
-      , householdUnassignedBudgetAccounts = unassignedSet
-      }
+mkHouseholdPolicy cyclePolicy envelopePolicy backingPolicy =
+  Right HouseholdPolicy
+    { householdPolicyCycle = cyclePolicy
+    , householdEnvelopePolicy = envelopePolicy
+    , householdBackingPolicy = backingPolicy
+    , householdEnvelopeOrder = currentEnvelopeIds
+    }
   where
     definitions = currentEnvelopePolicyDefinitions envelopePolicy
     currentEnvelopeIds = map envelopeDefinitionId definitions
-    currentEnvelopes = Set.fromList currentEnvelopeIds
-    envelopeCoordinateObservation = observeCoordinates
-      [ (householdEnvelopeCoordinateId coordinate, coordinate) | coordinate <- coordinates ]
-    canonicalCoordinates = Map.elems (coordinateValues envelopeCoordinateObservation)
-    coordinateEnvelopes = Map.keysSet (coordinateValues envelopeCoordinateObservation)
-    duplicateCoordinateErrors =
-      [ DuplicateHouseholdEnvelopeCoordinates envelope
-      | (envelope, _, _) <- coordinateConflicts envelopeCoordinateObservation ]
-    missingCoordinateErrors = map HouseholdEnvelopeMissingCoordinates
-      (Set.toAscList (Set.difference currentEnvelopes coordinateEnvelopes))
-    allocationObservation = observeCoordinates
-      [ (householdEnvelopeAllocationAccount coordinate, householdEnvelopeCoordinateId coordinate)
-      | coordinate <- canonicalCoordinates ]
-    allocationValues = coordinateValues allocationObservation
-    allocationErrors =
-      [ DuplicateAllocationAccount account firstEnvelope repeatedEnvelope
-      | (account, firstEnvelope, repeatedEnvelope) <- coordinateConflicts allocationObservation ]
-    openingObservation = observeCoordinates [(account, ()) | account <- openingAccounts]
-    openingSet = Map.keysSet (coordinateValues openingObservation)
-    openingErrors =
-      [ DuplicateOpeningBudgetAccount account
-      | (account, _, _) <- coordinateConflicts openingObservation ]
-    unassignedObservation = observeCoordinates [(account, ()) | account <- unassignedAccounts]
-    unassignedSet = Map.keysSet (coordinateValues unassignedObservation)
-    unassignedErrors =
-      [ DuplicateUnassignedBudgetAccount account
-      | (account, _, _) <- coordinateConflicts unassignedObservation ]
-    presenceErrors =
-      [HouseholdPolicyHasNoOpeningBudgetAccounts | null openingAccounts]
-      ++ [HouseholdPolicyHasNoUnassignedBudgetAccounts | null unassignedAccounts]
-    overlapErrors =
-      [ AllocationAccountAlsoOpening account envelope
-      | (account, envelope) <- Map.toAscList allocationValues
-      , Set.member account openingSet ]
-      ++ [ AllocationAccountAlsoUnassigned account envelope
-         | (account, envelope) <- Map.toAscList allocationValues
-         , Set.member account unassignedSet ]
-      ++ [ OpeningAccountAlsoUnassigned account
-         | account <- Set.toAscList (Set.intersection openingSet unassignedSet) ]
-    errors = duplicateCoordinateErrors ++ missingCoordinateErrors
-      ++ allocationErrors ++ presenceErrors ++ openingErrors ++ unassignedErrors
-      ++ overlapErrors
 
 data HouseholdPolicyAccountError
   = HouseholdBackingPolicyAccountError BackingPolicyAccountError
   | HouseholdCycleIncomeAccountUndeclared Account
   | HouseholdCycleIncomeAccountNotIncome Account AccountType
-  | HouseholdAllocationAccountUndeclared EnvelopeId Account
-  | HouseholdAllocationAccountNotBudget EnvelopeId Account AccountType
-  | HouseholdOpeningAccountUndeclared Account
-  | HouseholdOpeningAccountNotBudget Account AccountType
-  | HouseholdUnassignedAccountUndeclared Account
-  | HouseholdUnassignedAccountNotBudget Account AccountType
   deriving (Eq, Show)
 
 -- | Validate all Account references owned by Household policy. Success is a
@@ -204,35 +98,4 @@ validateHouseholdPolicyAccounts registry policy =
       Just declaration
         | declaredAccountType declaration == Income -> []
         | otherwise -> [HouseholdCycleIncomeAccountNotIncome cycleAccount (declaredAccountType declaration)]
-    validateAllocation (account, envelope) = case lookupAccountDeclaration account registry of
-      Nothing -> [HouseholdAllocationAccountUndeclared envelope account]
-      Just declaration
-        | declaredAccountType declaration == Budget -> []
-        | otherwise -> [HouseholdAllocationAccountNotBudget envelope account (declaredAccountType declaration)]
-    validateOpening account = case lookupAccountDeclaration account registry of
-      Nothing -> [HouseholdOpeningAccountUndeclared account]
-      Just declaration
-        | declaredAccountType declaration == Budget -> []
-        | otherwise -> [HouseholdOpeningAccountNotBudget account (declaredAccountType declaration)]
-    validateUnassigned account = case lookupAccountDeclaration account registry of
-      Nothing -> [HouseholdUnassignedAccountUndeclared account]
-      Just declaration
-        | declaredAccountType declaration == Budget -> []
-        | otherwise -> [HouseholdUnassignedAccountNotBudget account (declaredAccountType declaration)]
     errors = backingErrors ++ validateCycle
-      ++ concatMap validateAllocation (Map.toAscList (householdAllocationEnvelopes policy))
-      ++ concatMap validateOpening (Set.toAscList (householdOpeningBudgetAccounts policy))
-      ++ concatMap validateUnassigned (Set.toAscList (householdUnassignedBudgetAccounts policy))
-
-data CoordinateObservation key value = CoordinateObservation
-  { coordinateValues :: Map key value
-  , coordinateConflicts :: [(key, value, value)]
-  }
-
-observeCoordinates :: Ord key => [(key, value)] -> CoordinateObservation key value
-observeCoordinates = foldl' observe (CoordinateObservation Map.empty [])
-  where
-    observe observation (key, value) = case Map.lookup key (coordinateValues observation) of
-      Nothing -> observation { coordinateValues = Map.insert key value (coordinateValues observation) }
-      Just firstValue -> observation
-        { coordinateConflicts = coordinateConflicts observation ++ [(key, firstValue, value)] }

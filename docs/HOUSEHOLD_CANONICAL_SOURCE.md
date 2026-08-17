@@ -17,8 +17,8 @@ private `household-ledger-data` repository の root を、`h-kernel` と `bqn-le
 accounts.journal
 actual.journal
 plan.journal
-budget.journal
-budget.toml
+entitlement.journal
+envelope.toml
 household.toml
 report.toml
 issues.tsv
@@ -39,15 +39,15 @@ Issue relation sourceを `HouseholdState` / `HouseholdWriteSnapshot` の通常�
 | `accounts.journal` | `HKernel.Account.Journal.parseAccountJournal` | `AccountRegistry` |
 | `actual.journal` | `HKernel.Loader` + `HKernel.Actual.Journal` | `ActualJournal` |
 | `plan.journal` | `HKernel.Loader` + `HKernel.Plan.Journal` | `PlanJournal` |
-| `budget.journal` | `HKernel.Loader` + `HKernel.Household.BudgetMovement` | ordered Envelope allocation movement evidence |
-| `budget.toml` | `HKernel.Envelope.Config.parseCurrentEnvelopeConfiguration` | `CurrentEnvelopePolicy` + `BackingPolicy` |
+| `entitlement.journal` | `HKernel.Envelope.Entitlement.Journal` | `EnvelopeEntitlementHistory` (dedicated parser/admission) |
+| `envelope.toml` | `HKernel.Envelope.Config.parseCurrentEnvelopeConfiguration` | `CurrentEnvelopePolicy` + `BackingPolicy` |
 | `household.toml` | `HKernel.Household.Config` + `HKernel.Household.EnvelopeHistory` | Household policy + explicit historical routing |
 | `report.toml` | `HKernel.Report.Config.parseReportConfiguration` | `ReportConfiguration` |
 | `issues.tsv` | `HKernel.Household.Issue.TSV.parseHouseholdIssues` | `[HouseholdIssue]` |
 
-`actual.journal`、`plan.journal`、`budget.journal`のroot textは`HKernel.Loader`で一度観察し、named domain admissionがその結果を使う。同じroot sourceをfeatureごとに再parseして別authorityを作らない。
+`actual.journal`と`plan.journal`のroot textは`HKernel.Loader`で一度観察し、named domain admissionがその結果を使う。`entitlement.journal`はaccounting Journal parserや`AccountRegistry`を経由せず、専用の型付けパーサー・admissionが`EnvelopeRegistry`に対して直接検証する。
 
-Included Account declarations may contribute to a resolved Journal. Included Transactions must not masquerade as root-local Actual、Plan、Budget evidence.
+Included Account declarations may contribute to a resolved Journal. Included Transactions must not masquerade as root-local Actual or Plan evidence.
 
 `issue-relations.tsv` のsource-local syntaxは `HKernel.Household.Issue.Relation.TSV`、cross-source Issue / Plan / source-durable Actual reference admissionは `HKernel.HouseholdIssue` が所有する。Daily-use `IssueRealizedAs` candidate / publication orchestrationは `HKernel.Editor.IssueRealize` が所有する。
 
@@ -55,20 +55,20 @@ Included Account declarations may contribute to a resolved Journal. Included Tra
 
 ### Facts and declarations
 
-- `accounts.journal`: Account identity、AccountType、optional default Commodity
+- `accounts.journal`: Account identity、AccountType (Asset, Liability, Equity, Income, Expense)、optional default Commodity
 - `actual.journal`: Actual Transaction、Posting、durable identity、completion / correction relation
 - `plan.journal`: Plan identity、schedule、recurrence、lifecycle relation
-- `budget.journal`: ordered Envelope allocation movement evidence and provenance
+- `entitlement.journal`: Envelope stock origin (`YYYY-MM-DD origin Commodity`) and transfer (`YYYY-MM-DD alloc Endpoint -> Endpoint Amount Commodity [memo]`) facts and provenance
 
 ### Current policy and historical routing
 
-`budget.toml` admits current active Envelope definition / presentation and current Backing topology only. Expense Account classificationやhistorical routingを所有しない。
+`envelope.toml` admits current active Envelope definition / presentation and current Backing topology only. Expense Account classificationやhistorical routingを所有しない。
 
-`household.toml` owns Cycle、explicit opening / unassigned Budget Account coordinates、stable allocation Account -> Envelope identity coordinates、Daily Target selection、explicit Expense / Fulfillment routing history.
+`household.toml` owns Cycle、money presentation、Daily Target selection、`[envelope-history]` (stable `EnvelopeRegistry` identities, historical Expense routing, Fulfillment routing). Budget tableやAccount-to-Envelope coordinate mappingは所有しない。
 
 Daily Target selection comes from `household.toml`; reservation evidence comes from admitted `plan.journal`. Retired TSV is not re-read or inferred.
 
-Missing Expense routing never falls back to current Envelope configuration. Budget movement endpoint meaning is derived only from explicit opening / unassigned / allocation coordinates. `spent` endpoint、Account名、`account-policy.*` はauthorityではない。
+Missing Expense routing never falls back to current Envelope configuration. Entitlement transfer endpoint meaning is strictly `Unallocated` or `Spendable EnvelopeId`. `Unallocated` is a boundary endpoint, not a balance-owning account.
 
 Plan-to-Envelope intent belongs to effective-dated Fulfillment routing keyed by stable `PlanId`. Destination Account names are not authority.
 
@@ -90,7 +90,7 @@ HouseholdRoot
 - `accounts.journal`
 - `actual.journal`
 - `plan.journal`
-- `budget.journal`
+- `entitlement.journal`
 - `issues.tsv`
 
 This is one coordinated Household observation boundary, not a generic repository/session abstraction.
@@ -99,17 +99,17 @@ This is one coordinated Household observation boundary, not a generic repository
 
 ## 6. Envelope lifetime law
 
-Current Envelope membership and stable historical identity have different lifetimes. Every current Envelope needs a stable allocation coordinate and identity. Historical identity may remain after an Envelope leaves current presentation policy while retained source evidence still refers to it.
+Current Envelope membership and stable historical identity have different lifetimes. Every current Envelope needs a stable identity in `EnvelopeRegistry` (`household.toml [envelope-history]`). Historical identity may remain after an Envelope leaves current presentation policy while retained source evidence still refers to it.
 
-A retired allocation coordinate is historical evidence, not current writer authority. Current writers must not create new movements through an Envelope absent from current `budget.toml`.
+A retired Envelope identity in `EnvelopeRegistry` is historical evidence, not current writer authority. Current writers must not create new transfers involving an Envelope absent from current `envelope.toml` (`CurrentEnvelopePolicy`).
 
-A clean Envelope epoch may begin with an empty `budget.journal`. Entitlement or stock origin does not exist until explicit source movement evidence exists. Initial money is not inferred from Actual history or current configuration.
+A clean Envelope epoch may begin with an empty `entitlement.journal`. Entitlement or stock origin does not exist until explicit source origin / transfer evidence exists. Initial money is not inferred from Actual history or current configuration.
 
 ## 7. Retired source law
 
-Legacy sources such as `accounts.tsv`, `plan.tsv`, `budget_alloc.tsv`, `cycle.tsv`, `config.tsv`, `daily_target_scope.tsv`, and legacy report manifests are not current bootstrap inputs and have no fallback path.
+Legacy sources such as `budget.journal`, `budget.toml`, `accounts.tsv`, `plan.tsv`, `budget_alloc.tsv`, `cycle.tsv`, `config.tsv`, `daily_target_scope.tsv`, and legacy report manifests are not current bootstrap inputs and have no fallback path.
 
-Retired TOML syntax, including `account-policy.*`, `plan-destination-accounts`, and current Expense assignment compatibility fields, is rejected rather than preserved as opaque compatibility state.
+Retired TOML syntax, including `[budget]`, `account-policy.*`, `plan-destination-accounts`, and current Expense assignment compatibility fields, is rejected rather than preserved as opaque compatibility state.
 
 ## 8. Engine-neutral semantic contract
 

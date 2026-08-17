@@ -19,7 +19,7 @@ TUIはcommand一覧の移植先ではない。現在見えているHousehold obj
 Actual -> record / reverse
 Plan   -> complete / advance / edit
 Issue  -> maintain / realize as explicit Actual evidence
-Budget -> movement
+Entitlement -> transfer
 Account -> add
 ```
 
@@ -80,7 +80,7 @@ Issue relationのtyped coreと最初の実用workflowが存在する。
 
 最初のdeliveryはsource pathを人間へ分散させないHousehold-root based CLIからこのownerを呼ぶ。TUIのselected Issue -> Realize pathもexisting Record flowのtyped intentを保持したまま同じownerへ渡す。rendered preview Text、amount、date、memo、Account resemblanceからActual intentやrelation targetを再構築してはならない。
 
-Budget movementは現在stable movement identityを持たないため、date / memo / amount / row positionの近似一致でrelation targetを捏造しない。relation eventが存在することとIssue lifecycleは別であり、universal relation graphやgeneral event frameworkへ拡張しない。
+Entitlement transferは現在stable movement identityを持たないため、date / memo / amount / row positionの近似一致でrelation targetを捏造しない。relation eventが存在することとIssue lifecycleは別であり、universal relation graphやgeneral event frameworkへ拡張しない。
 
 ## CLI boundary
 
@@ -95,7 +95,7 @@ CLIを整理する場合はcurrent usageの具体的摩擦から始め、見た�
 優先順位は実際のHousehold利用で観察した頻度と摩擦から決める。
 
 1. Home / TUIを日常利用し、視認性、repeated typing、不要なmodal traversal、canonical-string recallを減らす
-2. Record、Plan completion / successor、Budget movement、Issue maintenanceをvisible objectから短く完了できる状態を保つ
+2. Record、Plan completion / successor、Entitlement transfer、Issue maintenanceをvisible objectから短く完了できる状態を保つ
 3. Issue relationの次のmeaningは具体的なHousehold workflowとdurable target identityが揃った場合だけ追加する
 4. Editor CLIは具体的なoperational frictionが確認された場合だけ整理する
 5. performanceは実測で問題になったruntime pathだけ改善する

@@ -96,7 +96,6 @@ characterizeHouseholdBackingLines = do
         , envelopeBackingObservedOn = fromGregorian 2026 8 10
         , envelopeBackingLines = [food, travel]
         , envelopeBackingPools = [cashPool, reservePool]
-        , envelopeLedgerUnassigned = one jpy 10 <> one usd 1
         , envelopeUnassignedExpenses = []
         }
 
@@ -124,9 +123,6 @@ characterizeHouseholdBackingNativeDerivation = do
       cash = mustRight (mkAccount "assets:cash")
       bank = mustRight (mkAccount "assets:bank")
       income = mustRight (mkAccount "income:salary")
-      unassigned = mustRight (mkAccount "budget:unassigned")
-      foodAlloc = mustRight (mkAccount "budget:food")
-      travelAlloc = mustRight (mkAccount "budget:travel")
       foodExpense = mustRight (mkAccount "expenses:food")
       travelExpense = mustRight (mkAccount "expenses:travel")
       taxExpense = mustRight (mkAccount "expenses:tax")
@@ -146,9 +142,6 @@ characterizeHouseholdBackingNativeDerivation = do
         , "account expenses:travel", "  type: Expense"
         , "account expenses:tax", "  type: Expense"
         , "account expenses:unrouted", "  type: Expense"
-        , "account budget:unassigned", "  type: Budget"
-        , "account budget:food", "  type: Budget"
-        , "account budget:travel", "  type: Budget"
         ]
       journalSource = T.unlines
         (declarations ++
@@ -177,6 +170,7 @@ characterizeHouseholdBackingNativeDerivation = do
         , "2026-08-06 unrouted refund"
         , "  expenses:unrouted  -5 JPY"
         , "  assets:cash  5 JPY"
+        , ""
         ])
       actualJournal = mustRight (parseActualJournal journalSource)
       planJournal = mustRight (parsePlanJournal (T.unlines declarations))
@@ -219,7 +213,7 @@ characterizeHouseholdBackingNativeDerivation = do
       backing = mustRight
         (deriveHouseholdBacking
           obsDay period journal backingPolicy [foodId, travelId]
-          (Set.singleton unassigned) [] entitlement consumption remaining headroom plans)
+          entitlement consumption remaining headroom plans)
 
   case envelopeBackingLines backing of
     [foodLine, travelLine] -> do

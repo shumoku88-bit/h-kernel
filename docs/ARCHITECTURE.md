@@ -41,14 +41,14 @@ pure coreはfile path、process exit、interactive event loop、atomic renameを
 ```text
 h-kernel
   source: src/
-  owns: Account, Money, Ledger, Journal, Actual, Plan,
+  owns: Account, Money, Ledger, Journal, Actual, Plan, Envelope,
         Engine, Report, rendering primitives, application config admission
 
 h-kernel-household
   source: household-src/
   depends on: h-kernel
   owns: HouseholdPolicy, DailyTarget, HouseholdBacking,
-        BudgetMovement, Household Issue admission, Household Report
+        Household Issue admission, Household Report
 
 h-kernel-household-application
   source: household-app-src/
@@ -155,7 +155,7 @@ External evidenceやworkflow capabilityはcore accounting primitiveへoptional f
 
 Reportはvalidated factsから作るpure projectionである。合計はCommodity別の`Balance`を保ち、unknown classificationやunassigned evidenceを黙って消さない。
 
-Household policy、Daily Target、Backing、Budget movement、Issueはそれぞれnamed ownerが意味を所有する。Household Reportのstable ownerは`HKernel.Household.Report`と`HKernel.Household.Report.Render`であり、canonical Householdからのcomposition entrypointは`HKernel.Household.Application`が所有する。
+Household policy、Daily Target、Backing、Entitlement transfer、Issueはそれぞれnamed ownerが意味を所有する。Household Reportのstable ownerは`HKernel.Household.Report`と`HKernel.Household.Report.Render`であり、canonical Householdからのcomposition entrypointは`HKernel.Household.Application`が所有する。
 
 ## 7. Dependency direction
 

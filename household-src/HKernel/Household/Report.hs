@@ -14,7 +14,6 @@ module HKernel.Household.Report
   , ClassifiedPlannedTransaction(..)
   , classifyPlannedTransactions
   , EnvelopeBackingLine(..)
-  , envelopeLedgerRemaining
   , envelopePostPlanHeadroom
   , EnvelopeBacking(..)
   , envelopeFundingBalance
@@ -22,7 +21,6 @@ module HKernel.Household.Report
   , envelopeBackingRequired
   , envelopeBackingSurplus
   , envelopeAvailableBackingSurplus
-  , envelopeReconciliationDelta
   , DailyTarget(..)
   , dailyTargetCapacity
   , dailyTargetRate
@@ -49,6 +47,7 @@ import HKernel.Actual.Journal
   , actualJournalValue
   )
 import HKernel.Engine (LedgerEntry(..), journalEntries)
+import HKernel.Envelope.EntitlementHistory (EnvelopeEntitlementHistory)
 import HKernel.Envelope.ExpenseRouting (ExpenseRoutingHistory)
 import HKernel.Envelope.FulfillmentRouting (FulfillmentRoutingHistory)
 import HKernel.Household.Backing
@@ -62,10 +61,8 @@ import HKernel.Household.Backing
   , envelopeBackingRequired
   , envelopeBackingSurplus
   , envelopeAvailableBackingSurplus
-  , envelopeReconciliationDelta
   , deriveHouseholdBacking
   )
-import HKernel.Household.BudgetMovement (HouseholdBudgetMovement)
 import HKernel.Household.DailyTarget
 import HKernel.Household.EnvelopeObservation
   ( deriveHouseholdEnvelopeObservation
@@ -81,7 +78,6 @@ import HKernel.Household.Policy
   , householdCycleIncomeAccount
   , householdEnvelopeOrder
   , householdPolicyCycle
-  , householdUnassignedBudgetAccounts
   )
 import HKernel.HouseholdIssue
 import HKernel.Journal (Journal, journalAccountRegistry)
@@ -176,11 +172,11 @@ buildHouseholdReportSurfaceFromAdmitted
   -> ExpenseRoutingHistory
   -> FulfillmentRoutingHistory
   -> AdmittedPlans
-  -> [HouseholdBudgetMovement]
+  -> EnvelopeEntitlementHistory
   -> [HouseholdIssue]
   -> DailyTargetScope
   -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
-buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal policy expenseRouting fulfillmentRouting admittedPlans movements issues dailyScope = do
+buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal policy expenseRouting fulfillmentRouting admittedPlans entitlementHistory issues dailyScope = do
   let journal = actualJournalValue actualJournal
       cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
       retiredPlanIds = retiredPlanIdsAt observation
@@ -215,10 +211,9 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
       current
       actualJournal
       planJournal
-      policy
       expenseRouting
       fulfillmentRouting
-      movements)
+      entitlementHistory)
   let envelopeConsumption = householdEnvelopeConsumption envelopeObservation
       entitlement = householdEnvelopeEntitlement envelopeObservation
       remaining = householdEnvelopeRemaining envelopeObservation
@@ -237,8 +232,6 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
       journal
       (householdBackingPolicy policy)
       (householdEnvelopeOrder policy)
-      (householdUnassignedBudgetAccounts policy)
-      movements
       entitlement
       envelopeConsumption
       remaining

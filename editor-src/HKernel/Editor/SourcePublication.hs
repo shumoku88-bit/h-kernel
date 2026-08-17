@@ -23,9 +23,6 @@ module HKernel.Editor.SourcePublication
   , admitPlanJournalRootSource
   , admitPlanJournalPath
   , publishPlanJournalFromResolvedJournal
-  , BudgetJournalSourceAdmissionError(..)
-  , admitBudgetJournalPath
-  , publishBudgetJournalAppend
   ) where
 
 import Control.Exception (IOException, catch, onException, throwIO)
@@ -42,16 +39,10 @@ import HKernel.Actual.Journal
   , parseActualJournal
   )
 import HKernel.Editor.SourceAppend (SourceBlock(..), appendSourceBlock)
-import HKernel.Household.BudgetMovement
-  ( HouseholdBudgetMovement
-  , HouseholdBudgetMovementJournalError
-  , admitHouseholdBudgetMovementJournal
-  )
 import HKernel.Loader
   ( LoadError
   , journalRootObservationJournal
   , journalRootObservationTransactionSources
-  , loadJournal
   , loadJournalRootObservationFromSource
   )
 import HKernel.Plan.Journal
@@ -262,29 +253,6 @@ publishPlanJournalFromResolvedJournal
   -> IO (Either (WriteError PlanJournalSourceAdmissionError) ())
 publishPlanJournalFromResolvedJournal =
   publishWithPathAdmission admitPlanJournalPath
-
-data BudgetJournalSourceAdmissionError
-  = BudgetJournalSourceLoadError LoadError
-  | BudgetJournalSourceAdmitError (NonEmpty HouseholdBudgetMovementJournalError)
-  deriving (Show)
-
--- | Admit a Budget journal root through its filesystem-resolved Journal graph.
-admitBudgetJournalPath
-  :: FilePath
-  -> IO (Either (NonEmpty BudgetJournalSourceAdmissionError) [HouseholdBudgetMovement])
-admitBudgetJournalPath filePath = do
-  resolved <- loadJournal filePath
-  pure $ case resolved of
-    Left loadError -> Left (pure (BudgetJournalSourceLoadError loadError))
-    Right journal -> case admitHouseholdBudgetMovementJournal journal of
-      Left errors -> Left (pure (BudgetJournalSourceAdmitError errors))
-      Right movements -> Right movements
-
-publishBudgetJournalAppend
-  :: WriteIntent
-  -> IO (Either (WriteError BudgetJournalSourceAdmissionError) ())
-publishBudgetJournalAppend =
-  publishWithPathAdmission admitBudgetJournalPath
 
 -- | Place an already validated Actual transaction block and delegate all file
 -- safety behavior to the source publication owner.

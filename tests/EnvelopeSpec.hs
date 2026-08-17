@@ -4,6 +4,7 @@ import qualified EnvelopeCommitmentHeadroomSpec
 import qualified EnvelopeConfigSpec
 import qualified EnvelopeConsumptionSpec
 import qualified EnvelopeEntitlementHistorySpec
+import qualified EnvelopeEntitlementJournalSpec
 import qualified EnvelopeEntitlementSpec
 import qualified EnvelopeExpenseRoutingSpec
 import qualified EnvelopeFulfillmentRoutingTSVSpec
@@ -19,5 +20,6 @@ main = do
   EnvelopeFulfillmentRoutingTSVSpec.main
   EnvelopeEntitlementSpec.main
   EnvelopeEntitlementHistorySpec.main
+  EnvelopeEntitlementJournalSpec.main
   EnvelopeRemainingSpec.main
   EnvelopeConfigSpec.main

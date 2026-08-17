@@ -63,7 +63,6 @@ accountTypeLabel maybeType = case maybeType of
   Just HKernel.Account.Equity -> "Equity     "
   Just HKernel.Account.Income -> "Income     "
   Just HKernel.Account.Expense -> "Expenses   "
-  Just HKernel.Account.Budget -> "Budget     "
   Nothing -> "Unknown    "
 
 candidateWindow :: Int -> Maybe Int -> [a] -> [a]

@@ -165,8 +165,8 @@ readConciergeSnapshot directory = do
         [ householdAccountsJournalPath paths
         , householdActualJournalPath paths
         , householdPlanJournalPath paths
-        , householdBudgetJournalPath paths
-        , householdBudgetConfigPath paths
+        , householdEntitlementJournalPath paths
+        , householdEnvelopeConfigPath paths
         , householdPolicyConfigPath paths
         , householdReportConfigPath paths
         , householdIssuesPath paths

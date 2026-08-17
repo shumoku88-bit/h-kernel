@@ -4,9 +4,7 @@ module Main (main) where
 
 import Control.Monad.IO.Class (liftIO)
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
-import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day)
@@ -44,9 +42,9 @@ import HKernel.Editor.ActualAppend
   , ActualAddPreview(..)
   , prepareActualAddPreviewFromResolvedJournal
   )
-import HKernel.Editor.BudgetMovementAppend
-  ( BudgetJournalMovementAppendPreview(..)
-  , prepareCurrentBudgetJournalMovementAppend
+import HKernel.Editor.EntitlementTransferAppend
+  ( EntitlementTransferAppendPreview(..)
+  , prepareCurrentEntitlementTransferAppend
   )
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
@@ -60,6 +58,10 @@ import HKernel.Editor.SourcePublication
   , publishActualBlockWithPathAdmission
   , publishWithPathAdmission
   )
+import HKernel.Envelope.EntitlementTransfer
+  ( EnvelopeEndpoint(..)
+  , mkEnvelopeEntitlementTransfer
+  )
 import HKernel.Envelope.Identity
   ( EnvelopeId
   , envelopeIdText
@@ -70,12 +72,9 @@ import HKernel.Household.Application
   , loadCanonicalHousehold
   , loadCanonicalHouseholdWriteSnapshot
   )
-import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
+import HKernel.Household.EnvelopeHistory (householdEnvelopeRegistry)
 import HKernel.Household.Policy
-  ( HouseholdPolicy
-  , householdAllocationEnvelopes
-  , householdEnvelopeOrder
-  , householdUnassignedBudgetAccounts
+  ( householdEnvelopeOrder
   )
 import HKernel.Money
   ( Amount
@@ -97,9 +96,8 @@ data MainChoice
   | ManageEnvelopeMoney
   | QuitDialogue
 
-data EnvelopeChoice = EnvelopeChoice
+newtype EnvelopeChoice = EnvelopeChoice
   { choiceEnvelopeId :: EnvelopeId
-  , choiceAllocationAccount :: Account
   }
 
 data EnvelopeMovementChoice
@@ -261,91 +259,84 @@ envelopeDialogue
 envelopeDialogue today root snapshot = do
   let state = householdWriteSnapshotState snapshot
       policy = householdStatePolicy state
-  choices <- case currentEnvelopeChoices policy of
-    Left message -> outputStrLn (T.unpack message) >> pure Nothing
-    Right values -> pure (Just values)
-  case choices of
+      envelopeChoices = [EnvelopeChoice eid | eid <- householdEnvelopeOrder policy]
+  movementChoice <- chooseOne
+    "Envelope money:"
+    [ ("Allocate unassigned money to an Envelope", AllocateToEnvelope)
+    , ("Move money between Envelopes", MoveBetweenEnvelopes)
+    , ("Return money from an Envelope to unassigned", ReturnToUnassigned)
+    ]
+  case movementChoice of
     Nothing -> pure (Just snapshot)
-    Just envelopeChoices -> do
-      movementChoice <- chooseOne
-        "Envelope money:"
-        [ ("Allocate unassigned money to an Envelope", AllocateToEnvelope)
-        , ("Move money between Envelopes", MoveBetweenEnvelopes)
-        , ("Return money from an Envelope to unassigned", ReturnToUnassigned)
-        ]
-      case movementChoice of
+    Just AllocateToEnvelope -> do
+      destination <- chooseEnvelope "Envelope to fund" envelopeChoices
+      case destination of
         Nothing -> pure (Just snapshot)
-        Just AllocateToEnvelope -> do
-          fromAccount <- chooseUnassigned policy
-          destination <- chooseEnvelope "Envelope to fund" envelopeChoices
-          prepareEnvelopeMovement today root snapshot
-            "allocate" fromAccount (choiceAllocationAccount <$> destination)
-            (choiceEnvelopeId <$> destination)
-        Just ReturnToUnassigned -> do
-          source <- chooseEnvelope "Envelope to release" envelopeChoices
-          toAccount <- chooseUnassigned policy
-          prepareEnvelopeMovement today root snapshot
-            "release" (choiceAllocationAccount <$> source) toAccount
-            (choiceEnvelopeId <$> source)
-        Just MoveBetweenEnvelopes -> do
-          source <- chooseEnvelope "Move from Envelope" envelopeChoices
-          case source of
+        Just dest -> prepareEnvelopeMovement today root snapshot
+          "allocate" Unallocated (Spendable (choiceEnvelopeId dest))
+          (Just (choiceEnvelopeId dest))
+    Just ReturnToUnassigned -> do
+      source <- chooseEnvelope "Envelope to release" envelopeChoices
+      case source of
+        Nothing -> pure (Just snapshot)
+        Just src -> prepareEnvelopeMovement today root snapshot
+          "release" (Spendable (choiceEnvelopeId src)) Unallocated
+          (Just (choiceEnvelopeId src))
+    Just MoveBetweenEnvelopes -> do
+      source <- chooseEnvelope "Move from Envelope" envelopeChoices
+      case source of
+        Nothing -> pure (Just snapshot)
+        Just selectedSource -> do
+          let destinations = filter
+                ((/= choiceEnvelopeId selectedSource) . choiceEnvelopeId)
+                envelopeChoices
+          destination <- chooseEnvelope "Move to Envelope" destinations
+          case destination of
             Nothing -> pure (Just snapshot)
-            Just selectedSource -> do
-              let destinations = filter
-                    ((/= choiceEnvelopeId selectedSource) . choiceEnvelopeId)
-                    envelopeChoices
-              destination <- chooseEnvelope "Move to Envelope" destinations
-              case destination of
-                Nothing -> pure (Just snapshot)
-                Just selectedDestination ->
-                  prepareEnvelopeMovement today root snapshot
-                    "move"
-                    (Just (choiceAllocationAccount selectedSource))
-                    (Just (choiceAllocationAccount selectedDestination))
-                    (Just (choiceEnvelopeId selectedDestination))
+            Just selectedDestination ->
+              prepareEnvelopeMovement today root snapshot
+                "move"
+                (Spendable (choiceEnvelopeId selectedSource))
+                (Spendable (choiceEnvelopeId selectedDestination))
+                (Just (choiceEnvelopeId selectedDestination))
 
 prepareEnvelopeMovement
   :: Day
   -> HouseholdRoot
   -> HouseholdWriteSnapshot
   -> Text
-  -> Maybe Account
-  -> Maybe Account
+  -> EnvelopeEndpoint
+  -> EnvelopeEndpoint
   -> Maybe EnvelopeId
   -> InputT IO (Maybe HouseholdWriteSnapshot)
-prepareEnvelopeMovement today root snapshot memoVerb maybeFrom maybeTo maybeEnvelope =
-  case (maybeFrom, maybeTo) of
-    (Just fromAccount, Just toAccount) -> do
-      let state = householdWriteSnapshotState snapshot
-          registry = householdStateAccountsRegistry state
-          policy = householdStatePolicy state
-          defaultMemo = memoVerb <> maybe "" ((" " <>) . envelopeIdText) maybeEnvelope
-      amount <- promptPositiveAmount registry fromAccount toAccount
-      case amount of
+prepareEnvelopeMovement today root snapshot memoVerb fromEndpoint toEndpoint maybeEnvelope = do
+  let state = householdWriteSnapshotState snapshot
+      envelopePolicy = householdStateEnvelopePolicy state
+      registry = householdEnvelopeRegistry (householdStateEnvelopeHistory state)
+      defaultMemo = memoVerb <> maybe "" ((" " <>) . envelopeIdText) maybeEnvelope
+  amount <- promptPositiveAmount
+  case amount of
+    Nothing -> pure (Just snapshot)
+    Just movementAmount -> do
+      movementDay <- promptDay today
+      case movementDay of
         Nothing -> pure (Just snapshot)
-        Just movementAmount -> do
-          movementDay <- promptDay today
-          case movementDay of
+        Just day -> do
+          memo <- promptWithDefault
+            ("Memo [" <> T.unpack defaultMemo <> "]: ") defaultMemo
+          case memo of
             Nothing -> pure (Just snapshot)
-            Just day -> do
-              memo <- promptWithDefault
-                ("Memo [" <> T.unpack defaultMemo <> "]: ") defaultMemo
-              case memo of
-                Nothing -> pure (Just snapshot)
-                Just movementMemo -> do
-                  let movement = HouseholdBudgetMovement
-                        { householdBudgetMovementDate = day
-                        , householdBudgetMovementMemo = movementMemo
-                        , householdBudgetMovementFrom = fromAccount
-                        , householdBudgetMovementTo = toAccount
-                        , householdBudgetMovementAmount = movementAmount
-                        }
-                  case prepareCurrentBudgetJournalMovementAppend
+            Just movementMemo -> do
+              case mkEnvelopeEntitlementTransfer day fromEndpoint toEndpoint movementAmount movementMemo of
+                Left transferErr -> do
+                  outputStrLn ("Invalid transfer: " <> show transferErr)
+                  pure (Just snapshot)
+                Right transfer ->
+                  case prepareCurrentEntitlementTransferAppend
+                      envelopePolicy
                       registry
-                      policy
-                      (householdWriteSnapshotBudgetSource snapshot)
-                      movement of
+                      (householdWriteSnapshotEntitlementSource snapshot)
+                      transfer of
                     Left errors -> do
                       outputStrLn
                         ("Envelope movement rejected: "
@@ -354,27 +345,26 @@ prepareEnvelopeMovement today root snapshot memoVerb maybeFrom maybeTo maybeEnve
                     Right preview -> do
                       outputPreview
                         "Envelope movement preview"
-                        (budgetJournalCandidateBlock preview)
+                        (entitlementCandidateBlock preview)
                       confirmed <- confirmPublish
                       if not confirmed
                         then pure (Just snapshot)
-                        else publishBudget root snapshot preview
-    _ -> pure (Just snapshot)
+                        else publishEntitlement root snapshot preview
 
-publishBudget
+publishEntitlement
   :: HouseholdRoot
   -> HouseholdWriteSnapshot
-  -> BudgetJournalMovementAppendPreview
+  -> EntitlementTransferAppendPreview
   -> InputT IO (Maybe HouseholdWriteSnapshot)
-publishBudget root snapshot preview = do
+publishEntitlement root snapshot preview = do
   let state = householdWriteSnapshotState snapshot
-      path = householdBudgetJournalPath (householdStatePaths state)
-      expected = householdWriteSnapshotBudgetSource snapshot
+      path = householdEntitlementJournalPath (householdStatePaths state)
+      expected = householdWriteSnapshotEntitlementSource snapshot
       intent = WriteIntent
         { targetFilePath = path
         , expectedOldBytes = ExpectedSource expected
         , candidateNewBytes = CandidateSource
-            (budgetJournalCandidateCompleteSource preview)
+            (entitlementCandidateCompleteSource preview)
         }
   result <- liftIO
     (publishWithPathAdmission
@@ -388,26 +378,6 @@ publishBudget root snapshot preview = do
       outputStrLn "Published Envelope movement and re-admitted the Household."
       refreshSnapshot root
 
-currentEnvelopeChoices
-  :: HouseholdPolicy
-  -> Either Text [EnvelopeChoice]
-currentEnvelopeChoices policy =
-  traverse resolve (householdEnvelopeOrder policy)
-  where
-    coordinates = Map.toList (householdAllocationEnvelopes policy)
-    resolve envelope = case
-        [ account
-        | (account, mappedEnvelope) <- coordinates
-        , mappedEnvelope == envelope
-        ] of
-      [account] -> Right (EnvelopeChoice envelope account)
-      [] -> Left
-        ("Current Envelope has no allocation coordinate: "
-          <> envelopeIdText envelope)
-      _ -> Left
-        ("Current Envelope has duplicate allocation coordinates: "
-          <> envelopeIdText envelope)
-
 chooseEnvelope
   :: String
   -> [EnvelopeChoice]
@@ -417,13 +387,6 @@ chooseEnvelope title choices =
     [ (T.unpack (envelopeIdText (choiceEnvelopeId choice)), choice)
     | choice <- choices
     ]
-
-chooseUnassigned :: HouseholdPolicy -> InputT IO (Maybe Account)
-chooseUnassigned policy = case
-    Set.toAscList (householdUnassignedBudgetAccounts policy) of
-  [] -> outputStrLn "No current unassigned Budget Account is configured." >> pure Nothing
-  [account] -> pure (Just account)
-  accounts -> chooseAccount "Unassigned coordinate" accounts
 
 chooseAccount :: String -> [Account] -> InputT IO (Maybe Account)
 chooseAccount title accounts =
@@ -435,8 +398,8 @@ sharedDefaultCommodity
   -> Account
   -> Account
   -> Maybe Commodity
-sharedDefaultCommodity registry first second =
-  case catMaybes (map defaultFor [first, second]) of
+sharedDefaultCommodity registry firstAccount secondAccount =
+  case catMaybes (map defaultFor [firstAccount, secondAccount]) of
     [] -> Nothing
     commodity : rest
       | all (== commodity) rest -> Just commodity
@@ -446,36 +409,23 @@ sharedDefaultCommodity registry first second =
       declaredAccountDefaultCommodity =<<
         lookupAccountDeclaration account registry
 
-promptPositiveAmount
-  :: AccountRegistry
-  -> Account
-  -> Account
-  -> InputT IO (Maybe Amount)
-promptPositiveAmount registry fromAccount toAccount = do
-  let defaultCommodity = sharedDefaultCommodity registry fromAccount toAccount
-      prompt = case defaultCommodity of
-        Just commodity ->
-          "Amount [" <> T.unpack (commodityCode commodity) <> "]: "
-        Nothing -> "Amount (for example: 1200 JPY): "
-  raw <- promptRequired prompt
+promptPositiveAmount :: InputT IO (Maybe Amount)
+promptPositiveAmount = do
+  raw <- promptRequired "Amount (for example: 1200 JPY): "
   case raw of
     Nothing -> pure Nothing
-    Just value -> case parseAmountText defaultCommodity value of
-      Left message -> outputStrLn (T.unpack message)
-        >> promptPositiveAmount registry fromAccount toAccount
+    Just value -> case parseAmountText value of
+      Left message -> outputStrLn (T.unpack message) >> promptPositiveAmount
       Right amount -> pure (Just amount)
 
-parseAmountText :: Maybe Commodity -> Text -> Either Text Amount
-parseAmountText defaultCommodity input = do
+parseAmountText :: Text -> Either Text Amount
+parseAmountText input = do
   (quantityText, commodity) <- case T.words (T.strip input) of
-    [quantityValue] -> case defaultCommodity of
-      Just value -> Right (quantityValue, value)
-      Nothing -> Left "Commodity is required for these Accounts."
     [quantityValue, commodityValue] -> do
       value <- either (const (Left "Invalid Commodity.")) Right
         (mkCommodity commodityValue)
       Right (quantityValue, value)
-    _ -> Left "Amount must be a quantity, optionally followed by Commodity."
+    _ -> Left "Amount must be a quantity followed by Commodity (for example: 1200 JPY)."
   quantity <- either (const (Left "Invalid quantity.")) Right
     (parseQuantity quantityText)
   if quantityToRational quantity <= 0

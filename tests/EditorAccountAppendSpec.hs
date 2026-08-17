@@ -136,7 +136,6 @@ testAllAccountTypesRoundTrip =
     , Equity
     , Income
     , Expense
-    , Budget
     ]
   where
     declarationRoundTrips accountType =

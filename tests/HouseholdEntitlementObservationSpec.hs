@@ -25,6 +25,11 @@ import HKernel.Envelope.Consumption
   , envelopeConsumptionFor
   )
 import HKernel.Envelope.Entitlement (envelopeEntitlementBalance)
+import HKernel.Envelope.EntitlementHistory (mkEnvelopeEntitlementHistoryWithOrigins)
+import HKernel.Envelope.EntitlementTransfer
+  ( EnvelopeEndpoint(..)
+  , mkEnvelopeEntitlementTransfer
+  )
 import HKernel.Envelope.ExpenseRouting
   ( ExpenseRoute(..)
   , InitialExpenseRoutingDecision(..)
@@ -38,7 +43,6 @@ import HKernel.Envelope.FulfillmentRouting
 import HKernel.Envelope.Headroom (envelopeHeadroomFor)
 import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Envelope.Remaining (envelopeRemainingFor)
-import HKernel.Household.BudgetMovement (HouseholdBudgetMovement(..))
 import HKernel.Household.EnvelopeObservation
   ( deriveHouseholdEnvelopeObservation
   , householdEnvelopeConsumption
@@ -47,6 +51,10 @@ import HKernel.Household.EnvelopeObservation
   , householdEnvelopeRemaining
   )
 import HKernel.Household.Policy
+  ( householdEnvelopeOrder
+  , incomeAnchorCyclePolicy
+  , mkHouseholdPolicy
+  )
 import HKernel.Household.Report (admitPlanJournal, admittedOutgoingPlanValues)
 import HKernel.Money
 import HKernel.Period (mkPeriod)
@@ -66,10 +74,6 @@ main = do
       cash = mustRight (mkAccount "assets:cash")
       income = mustRight (mkAccount "income:pension")
       foodExpense = mustRight (mkAccount "expenses:food")
-      opening = mustRight (mkAccount "budget:opening")
-      unassigned = mustRight (mkAccount "budget:unassigned")
-      foodAllocation = mustRight (mkAccount "budget:food")
-      retiredAllocation = mustRight (mkAccount "budget:retired-savings")
       backingPolicy = mustRight (mkBackingPolicy
         [defineBackingPool poolId [cash]]
         [assignEnvelopeBackingPool foodId poolId])
@@ -78,21 +82,12 @@ main = do
       policy = mustRight (mkHouseholdPolicy
         (incomeAnchorCyclePolicy income)
         envelopePolicy
-        backingPolicy
-        [ defineHouseholdEnvelopeCoordinates foodId foodAllocation
-        , defineHouseholdEnvelopeCoordinates retiredId retiredAllocation
-        ]
-        [opening]
-        [unassigned])
+        backingPolicy)
       declarations = T.unlines
         [ "account assets:cash", "  type: Asset"
         , "account assets:savings", "  type: Asset"
         , "account income:pension", "  type: Income"
         , "account expenses:food", "  type: Expense"
-        , "account budget:opening", "  type: Budget"
-        , "account budget:unassigned", "  type: Budget"
-        , "account budget:food", "  type: Budget"
-        , "account budget:retired-savings", "  type: Budget"
         ]
       actual = mustRight (parseActualJournal
         (declarations <>
@@ -104,50 +99,41 @@ main = do
         (declarations <>
           "\n2026-08-09 save\n  ; plan-id: plan-save\n  assets:savings  20 JPY\n  assets:cash  -20 JPY\n"))
       narrowPlans = mustRight (admitPlanJournal plans)
-      movements =
-        [ HouseholdBudgetMovement
-            { householdBudgetMovementDate = fromGregorian 2026 6 15
-            , householdBudgetMovementMemo = "Envelope source opening"
-            , householdBudgetMovementFrom = opening
-            , householdBudgetMovementTo = unassigned
-            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 50)
-            }
-        , HouseholdBudgetMovement
-            { householdBudgetMovementDate = fromGregorian 2026 7 1
-            , householdBudgetMovementMemo = "First food grant"
-            , householdBudgetMovementFrom = unassigned
-            , householdBudgetMovementTo = foodAllocation
-            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 50)
-            }
-        , HouseholdBudgetMovement
-            { householdBudgetMovementDate = fromGregorian 2026 7 5
-            , householdBudgetMovementMemo = "Historical grant to retired savings Envelope"
-            , householdBudgetMovementFrom = unassigned
-            , householdBudgetMovementTo = retiredAllocation
-            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 30)
-            }
-        , HouseholdBudgetMovement
-            { householdBudgetMovementDate = fromGregorian 2026 7 20
-            , householdBudgetMovementMemo = "July release"
-            , householdBudgetMovementFrom = foodAllocation
-            , householdBudgetMovementTo = unassigned
-            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 10)
-            }
-        , HouseholdBudgetMovement
-            { householdBudgetMovementDate = fromGregorian 2026 8 1
-            , householdBudgetMovementMemo = "food entitlement"
-            , householdBudgetMovementFrom = unassigned
-            , householdBudgetMovementTo = foodAllocation
-            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 100)
-            }
-        , HouseholdBudgetMovement
-            { householdBudgetMovementDate = fromGregorian 2026 8 15
-            , householdBudgetMovementMemo = "future grant after observation"
-            , householdBudgetMovementFrom = unassigned
-            , householdBudgetMovementTo = foodAllocation
-            , householdBudgetMovementAmount = mkAmount jpy (quantityFromInteger 20)
-            }
+      origins = Map.singleton jpy (fromGregorian 2026 6 15)
+      transfers =
+        [ mustRight (mkEnvelopeEntitlementTransfer
+            (fromGregorian 2026 7 1)
+            Unallocated
+            (Spendable foodId)
+            (mkAmount jpy (quantityFromInteger 50))
+            "First food grant")
+        , mustRight (mkEnvelopeEntitlementTransfer
+            (fromGregorian 2026 7 5)
+            Unallocated
+            (Spendable retiredId)
+            (mkAmount jpy (quantityFromInteger 30))
+            "Historical grant to retired savings Envelope")
+        , mustRight (mkEnvelopeEntitlementTransfer
+            (fromGregorian 2026 7 20)
+            (Spendable foodId)
+            Unallocated
+            (mkAmount jpy (quantityFromInteger 10))
+            "July release")
+        , mustRight (mkEnvelopeEntitlementTransfer
+            (fromGregorian 2026 8 1)
+            Unallocated
+            (Spendable foodId)
+            (mkAmount jpy (quantityFromInteger 100))
+            "food entitlement")
+        , mustRight (mkEnvelopeEntitlementTransfer
+            (fromGregorian 2026 8 15)
+            Unallocated
+            (Spendable foodId)
+            (mkAmount jpy (quantityFromInteger 20))
+            "future grant after observation")
         ]
+      entitlementHistory = mustRight
+        (mkEnvelopeEntitlementHistoryWithOrigins origins transfers)
       expenseRouting = mustRight (mkExpenseRoutingHistoryWithInitial
         [ InitialExpenseRoutingDecision
             foodExpense (ManagedByEnvelope foodId) "food initial route"
@@ -161,7 +147,7 @@ main = do
             }
         ])
       observation = mustRight (deriveHouseholdEnvelopeObservation
-        observed period actual plans policy expenseRouting fulfillmentRouting movements)
+        observed period actual plans expenseRouting fulfillmentRouting entitlementHistory)
       consumption = householdEnvelopeConsumption observation
       entitlement = householdEnvelopeEntitlement observation
       remaining = householdEnvelopeRemaining observation
@@ -169,8 +155,6 @@ main = do
 
   assertEqual "current Envelope order excludes retired stable allocation identity"
     [foodId] (householdEnvelopeOrder policy)
-  assertEqual "stable allocation map retains retired identity for historical movements"
-    (Just retiredId) (Map.lookup retiredAllocation (householdAllocationEnvelopes policy))
   assertEqual "role-neutral Plan stays out of narrow outgoing report subset"
     [] (admittedOutgoingPlanValues narrowPlans)
   assertEqual "entitlement carries pre-period grant and release while cutting off future"

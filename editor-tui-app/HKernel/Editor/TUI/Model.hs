@@ -6,7 +6,7 @@ module HKernel.Editor.TUI.Model
   , ReportChoice(..)
   , WorkspaceFocus(..)
   , contextAccountsSource
-  , contextBudgetSource
+  , contextEntitlementSource
   , contextHouseholdState
   , contextIssueCounts
   , contextIssueListL
@@ -85,11 +85,11 @@ data Name
   | PlanAddCommodityField
   | PlanEditDateField
   | PlanEditAmountField
-  | BudgetMemoField
-  | BudgetFromField
-  | BudgetToField
-  | BudgetAmountField
-  | BudgetCommodityField
+  | EntitlementMemoField
+  | EntitlementFromField
+  | EntitlementToField
+  | EntitlementAmountField
+  | EntitlementCommodityField
   | AccountNameField
   | AccountTypeField
   | AccountCommodityField
@@ -107,7 +107,7 @@ data Name
   | HomeTab
   | CalendarDay Day
   | HomeDayViewport
-  | BudgetViewport
+  | EntitlementViewport
   | AccountsViewport
   | IssuesViewport
   | ReportsViewport
@@ -123,7 +123,7 @@ data WorkspaceFocus
 data HouseholdSection
   = ActualSection
   | PlansSection
-  | BudgetSection
+  | EntitlementSection
   | AccountsSection
   | IssuesSection
   | ReportsSection
@@ -171,8 +171,8 @@ contextSource = householdWriteSnapshotActualSource . contextHouseholdSnapshot
 contextPlanSource :: AppContext -> Text
 contextPlanSource = householdWriteSnapshotPlanSource . contextHouseholdSnapshot
 
-contextBudgetSource :: AppContext -> Text
-contextBudgetSource = householdWriteSnapshotBudgetSource . contextHouseholdSnapshot
+contextEntitlementSource :: AppContext -> Text
+contextEntitlementSource = householdWriteSnapshotEntitlementSource . contextHouseholdSnapshot
 
 contextIssuesSource :: AppContext -> Text
 contextIssuesSource = householdWriteSnapshotIssuesSource . contextHouseholdSnapshot

@@ -51,7 +51,7 @@ main = do
     observation
     (currentCycleAccountsObservation currentCycle)
   assertEqual "precise current-cycle report publishes the complete declared Account axis"
-    8
+    5
     (length (currentCycleAccountsRows currentCycle))
 
   case householdCycleComparison surface of
@@ -252,9 +252,6 @@ main = do
   assertLeftContaining "Household cycle Account must be declared Income"
     "HouseholdCycleIncomeAccountNotIncome"
     (buildSurfaceAt observation actualJournal planJournalText cycleRoleMismatchTOML issuesTSV)
-  assertLeftContaining "Household allocation Account must be declared Budget"
-    "HouseholdAllocationAccountNotBudget"
-    (buildSurfaceAt observation actualJournal planJournalText allocationRoleMismatchTOML issuesTSV)
   let roleNeutralSurface = mustRightText
         (buildSurfaceAt observation actualJournal roleNeutralPlanJournalText householdTOML issuesTSV)
       roleNeutralBacking = householdEnvelopeBacking roleNeutralSurface
@@ -297,8 +294,8 @@ buildSurfaceAt
   -> Either Text HouseholdReportSurface
 buildSurfaceAt observation actual plan household issues = do
   state <- leftShow
-    (admitCanonicalHousehold householdRoot accountsJournal actual plan budgetJournal
-      budgetPolicyTOML household reportTOML issues)
+    (admitCanonicalHousehold householdRoot accountsJournal actual plan entitlementJournalText
+      envelopePolicyTOML household reportTOML issues)
   leftShow (buildHouseholdReportSurfaceFromHousehold observation state)
 
 householdRoot = case mkHouseholdRoot "." of
@@ -365,33 +362,16 @@ declarations = T.unlines
   , "account expenses:food"
   , "    type: expense"
   , "    commodity: JPY"
-  , ""
-  , "account budget:opening"
-  , "    type: budget"
-  , "    commodity: JPY"
-  , ""
-  , "account budget:unassigned"
-  , "    type: budget"
-  , "    commodity: JPY"
-  , ""
-  , "account budget:food"
-  , "    type: budget"
-  , "    commodity: JPY"
   ]
 
-budgetJournal :: Text
-budgetJournal = "include accounts.journal\n\n" <> T.unlines
-  [ "2026-06-15 allocate"
-  , "    budget:opening  -1000 JPY"
-  , "    budget:food      1000 JPY"
-  , ""
-  , "2026-06-10 unassigned"
-  , "    budget:opening     -50 JPY"
-  , "    budget:unassigned   50 JPY"
+entitlementJournalText :: Text
+entitlementJournalText = T.unlines
+  [ "2026-06-10 origin JPY"
+  , "2026-06-15 alloc unallocated -> Food 1000 JPY"
   ]
 
-budgetPolicyTOML :: Text
-budgetPolicyTOML = T.unlines
+envelopePolicyTOML :: Text
+envelopePolicyTOML = T.unlines
   [ "[[backing-pools]]"
   , "id = \"operating\""
   , "asset-accounts = [\"assets:cash\"]"
@@ -408,14 +388,6 @@ householdTOML = T.unlines
   [ "[cycle]"
   , "mode = \"income-anchor\""
   , "income-account = \"income:pension\""
-  , ""
-  , "[budget]"
-  , "opening-accounts = [\"budget:opening\"]"
-  , "unassigned-accounts = [\"budget:unassigned\"]"
-  , ""
-  , "[[budget.envelopes]]"
-  , "id = \"Food\""
-  , "allocation-account = \"budget:food\""
   , ""
   , "[daily-target]"
   , ""
@@ -438,12 +410,6 @@ cycleRoleMismatchTOML :: Text
 cycleRoleMismatchTOML = T.replace
   "income-account = \"income:pension\""
   "income-account = \"assets:cash\""
-  householdTOML
-
-allocationRoleMismatchTOML :: Text
-allocationRoleMismatchTOML = T.replace
-  "allocation-account = \"budget:food\""
-  "allocation-account = \"expenses:food\""
   householdTOML
 
 planJournalText :: Text
