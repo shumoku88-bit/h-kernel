@@ -24,6 +24,11 @@ import HKernel.Editor.ActualAppend
   , classifyActualAddWriteResult
   , prepareActualMultiAddPreviewFromResolvedJournal
   )
+import HKernel.Editor.IssueRealize
+  ( IssueRealizeDisplayPreview(..)
+  , IssueRealizeIntent(..)
+  , prepareIssueRealizeDisplayPreview
+  )
 import HKernel.Editor.SourcePublication (WriteError(..))
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
@@ -37,6 +42,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , incomeAccountCandidates
   , initialActualAddInputForDay
   , initialActualMultiAddInputForDay
+  , initialActualMultiAddInputForDescription
   , multiAccountCandidates
   , resizeActualMultiPostings
   , resetMultiAccountCandidateCursor
@@ -48,11 +54,14 @@ import HKernel.Editor.Interaction.ActualAdd
   , moveMultiAccountCandidateCursor
   )
 import HKernel.Editor.TransactionBlock (IntentPosting(..))
+import HKernel.Actual.Journal (parseActualJournal)
+import HKernel.HouseholdIssue (mkIssueId)
 import HKernel.Journal
   ( journalAccountRegistry
   , journalTransactions
   , parseJournal
   )
+import HKernel.Plan.Journal (parsePlanJournal)
 import HKernel.Money (commodityCode, renderQuantity)
 
 main :: IO ()
@@ -79,6 +88,10 @@ main = do
         , ("from Account selection updates input", testFromSelection)
         , ("daily Account reselection preserves the rest of the draft", testDailyReselectionPreservesDraft)
         , ("general input builds balanced signed two-posting intent", testRecordTwoPostingBuild)
+        , ("Record and realization share the same posting draft", testRecordAndRealizeSharePostingDraft)
+        , ("Record and realization share posting editing semantics", testSharedPostingEditingSemantics)
+        , ("Issue amount is not copied into shared postings", testIssueAmountNotCopied)
+        , ("realization preview accepts the typed Actual intent", testRealizePreviewUsesTypedIntent)
         , ("existing three-posting input remains valid", testMultiBuild)
         , ("general input rejects one posting", testRecordRequiresTwo)
         , ("multi input rejects zero posting with row coordinate", testMultiRejectsZero)
@@ -455,6 +468,120 @@ testRecordTwoPostingBuild =
       , renderQuantity (intentQuantity posting)
       , maybe "" commodityCode (intentCommodity posting)
       )
+
+testRecordAndRealizeSharePostingDraft :: Bool
+testRecordAndRealizeSharePostingDraft =
+  let day = read "2026-08-08"
+      ordinary = initialActualMultiAddInputForDay day
+      realization = initialActualMultiAddInputForDescription day "Issue title"
+  in multiAddDateText ordinary == multiAddDateText realization
+      && multiAddPostings ordinary == multiAddPostings realization
+      && multiAddDescriptionText ordinary == ""
+      && multiAddDescriptionText realization == "Issue title"
+
+testSharedPostingEditingSemantics :: Bool
+testSharedPostingEditingSemantics =
+  case parseJournal candidateSource of
+    Left _ -> False
+    Right journal ->
+      let ordinary = editPosting (initialActualMultiAddInputForDay day)
+          realization = editPosting
+            (initialActualMultiAddInputForDescription day "Issue title")
+          candidates = multiAccountCandidates
+            (journalAccountRegistry journal)
+            (journalTransactions journal)
+          query = "assets:"
+          ordinaryCursor = moveMultiAccountCandidateCursor
+            1 query Nothing candidates
+          realizationCursor = moveMultiAccountCandidateCursor
+            1 query Nothing candidates
+          ordinaryCommitted = ordinaryCursor >>= \index ->
+            commitMultiAccountCandidate 1 query index candidates ordinary
+          realizationCommitted = realizationCursor >>= \index ->
+            commitMultiAccountCandidate 1 query index candidates realization
+      in multiAddPostings ordinary == multiAddPostings realization
+          && ordinaryCursor == realizationCursor
+          && fmap (actualMultiPostingAt 1) ordinaryCommitted
+            == fmap (actualMultiPostingAt 1) realizationCommitted
+  where
+    day = read "2026-08-08"
+    editPosting input =
+      setActualMultiPostingAmount 1 "600 JPY"
+        (setActualMultiPostingAccountText 1 "assets:cash"
+          (resizeActualMultiPostings 3 input))
+
+testIssueAmountNotCopied :: Bool
+testIssueAmountNotCopied =
+  case parseJournal multiSource of
+    Left _ -> False
+    Right journal ->
+      let issueAmount = ("1800 JPY" :: T.Text)
+          realizationInput =
+            (initialActualMultiAddInputForDescription
+              (read "2026-08-08") "Issue title")
+              { multiAddPostings =
+                  ActualPostingInput "expenses:food" "600 JPY"
+                    NonEmpty.:| [ActualPostingInput "assets:cash" "-600 JPY"]
+              }
+      in issueAmount == "1800 JPY"
+          && case buildActualMultiAddIntentWithRegistry
+              (journalAccountRegistry journal) realizationInput of
+            Right intent -> not (T.isInfixOf issueAmount (T.pack (show intent)))
+              && map renderPosting (NonEmpty.toList (intentPostings intent))
+              == [ ("expenses:food", "600", "JPY")
+                 , ("assets:cash", "-600", "JPY")
+                 ]
+            Left _ -> False
+  where
+    renderPosting posting =
+      ( accountName (intentAccount posting)
+      , renderQuantity (intentQuantity posting)
+      , maybe "" commodityCode (intentCommodity posting)
+      )
+
+testRealizePreviewUsesTypedIntent :: Bool
+testRealizePreviewUsesTypedIntent =
+  case ( parseActualJournal multiSource
+       , parsePlanJournal multiSource
+       , mkIssueId "ISSUE-TUI"
+       , parseJournal multiSource
+       ) of
+    (Right actualJournal, Right planJournal, Right issueId, Right journal) ->
+      case buildActualMultiAddIntentWithRegistry
+          (journalAccountRegistry journal)
+          (initialActualMultiAddInputForDescription
+            (read "2026-08-08") "Issue title")
+          { multiAddPostings =
+              ActualPostingInput "expenses:food" "600 JPY"
+                NonEmpty.:| [ActualPostingInput "assets:cash" "-600 JPY"]
+          } of
+        Left _ -> False
+        Right actualIntent ->
+          case prepareIssueRealizeDisplayPreview
+              actualJournal
+              planJournal
+              multiSource
+              ""
+              issueSource
+              IssueRealizeIntent
+                { realizeIssueId = issueId
+                , realizeRecordedOn = read "2026-08-08"
+                , realizeClosedOn = read "2026-08-08"
+                , realizeActualIntent = actualIntent
+                , realizeDecisionMemo = "decided"
+                } of
+            Left _ -> False
+            Right preview ->
+              T.isInfixOf "600 JPY" (displayActualBlock preview)
+                && not (T.isInfixOf "1800 JPY" (displayActualBlock preview))
+                && T.isInfixOf "Issue title" (displayActualBlock preview)
+                && T.isInfixOf "ISSUE-TUI" (displayRelationBlock preview)
+    _ -> False
+  where
+    issueSource = T.unlines
+      [ "issue_id\tstatus\tdate\tdue\tclosed\tcategory\ttitle\tamount\tcurrency\tdetails"
+      , "ISSUE-TUI\topen\t2026-08-01\tnone\tnone\tculture\tIssue title\t1800\tJPY\tconsidered"
+      ]
 
 testMultiBuild :: Bool
 testMultiBuild =

@@ -40,6 +40,9 @@ main = do
   assertEqual "Household notebook resolves from the canonical root"
     "private/household/issues.tsv"
     (householdIssuesPath sources)
+  assertEqual "Issue relation history resolves from the canonical root"
+    "private/household/issue-relations.tsv"
+    (householdIssueRelationsPath sources)
   assertEqual "an empty bootstrap path is not a Household root"
     (Left EmptyHouseholdRootPath)
     (mkHouseholdRoot "")

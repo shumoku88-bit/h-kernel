@@ -18,6 +18,7 @@ module HKernel.Editor.Interaction.ActualAdd
   , groupAccountCandidates
   , stepAccountCandidate
   , initialActualMultiAddInputForDay
+  , initialActualMultiAddInputForDescription
   , resizeActualMultiPostings
   , actualMultiPostingAt
   , setActualMultiPostingAccountText
@@ -187,6 +188,14 @@ initialActualMultiAddInputForDay day = ActualMultiAddInput
   , multiAddPostings =
       ActualPostingInput "" "" NonEmpty.:| [ActualPostingInput "" ""]
   }
+
+-- | Start the same general Record draft with an optional initial description.
+-- Issue realization uses this only to seed the shared description field; all
+-- posting rows and their editing semantics remain ordinary Record state.
+initialActualMultiAddInputForDescription :: Day -> Text -> ActualMultiAddInput
+initialActualMultiAddInputForDescription day description =
+  (initialActualMultiAddInputForDay day)
+    { multiAddDescriptionText = description }
 
 -- | Resize the editable posting table while preserving source order and the
 -- contents of retained rows. General Record entry always keeps the Transaction

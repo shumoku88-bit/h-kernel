@@ -18,7 +18,7 @@ TUIはcommand一覧の移植先ではない。現在見えているHousehold obj
 ```text
 Actual -> record / reverse
 Plan   -> complete / advance / edit
-Issue  -> maintain
+Issue  -> maintain / realize as explicit Actual evidence
 Budget -> movement
 Account -> add
 ```
@@ -63,23 +63,30 @@ UI stateへcomplete private source、backup、writer authorityを持ち込まず
 
 ## Issue relation current boundary
 
-Issue relationのtyped coreは既に存在する。
+Issue relationのtyped coreと最初の実用workflowが存在する。
 
 - `IssueRelationEvent`は独自のdurable event identityを持つ
 - Plan targetとdurable Actual targetをtyped constructorで区別する
 - `concerns-plan`、`planned-as`、`planning-withdrawn`、`realized-as`、`funded-by`の意味を区別する
 - cross-source target existenceは`admitIssueRelationReferences`がfail closedで検証する
 - `HKernel.Household.Issue.Relation.TSV`がsix-coordinate source-local syntaxを所有する
+- `HKernel.Editor.IssueRealize`が、open Issueを新しいsource-durable Actualへ明示的にrealizeするcandidateと三source publicationを所有する
+- 新Actualには最初からexplicit `event-id`を付け、relationはそのexact identityだけを`IssueRealizedAs` targetにする
+- relation recorded date、Actual date、Issue close dateは別座標であり、current configurationや互いの値から推論しない
+- Actual / relation / Issueのcomplete candidateをpublication前にadmitし、stale / post-admission failureではchecked recoveryを行う
+- relation sourceがまだ存在しない場合は、最初のsuccessful realizationだけがheader付きsourceを作る
 
-一方、このrelation sourceはまだcanonical Household path、`HouseholdWriteSnapshot`、writer authority、TUI publicationへ接続していない。この非接続はcurrent boundaryであり、欠陥を隠すfallbackではない。
+`issue-relations.tsv` は同じHousehold root配下のexplicit provenance sidecar coordinateとして解決するが、current eight-source `HouseholdState` / ordinary `HouseholdWriteSnapshot`へはまだ昇格していない。この境界は[`HOUSEHOLD_CANONICAL_SOURCE.md`](HOUSEHOLD_CANONICAL_SOURCE.md)が所有する。
 
-次に進めるのは、実際のHousehold workflowがrelation publicationを要求したときだけとする。その時点でcanonical source role、admission composition、writer authority、interactionを一緒に設計する。Budget movementは現在stable movement identityを持たないため、date / memo / amount / row positionの近似一致でrelation targetを捏造しない。
+最初のdeliveryはsource pathを人間へ分散させないHousehold-root based CLIからこのownerを呼ぶ。TUIへ接続するときは、existing Record flowが持つtyped `ActualEditIntent`を最後まで保持して同じownerへ渡す。rendered preview Text、amount、date、memo、Account resemblanceからActual intentやrelation targetを再構築してはならない。
 
-relation eventが存在することとIssue lifecycleは別である。universal relation graphやgeneral event frameworkへ拡張しない。
+Budget movementは現在stable movement identityを持たないため、date / memo / amount / row positionの近似一致でrelation targetを捏造しない。relation eventが存在することとIssue lifecycleは別であり、universal relation graphやgeneral event frameworkへ拡張しない。
 
 ## CLI boundary
 
 CLIにexplicit source pathやsource-shaped grammarが残ること自体を負債とみなさない。scripting、低水準operation、compatibility、writer authority上の役割があり得る。
+
+Householdを跨ぐoperationは、individual source pathsを利用者へ列挙させず一つの`HouseholdRoot`から必要coordinateを解決してよい。これはgeneric repository/session abstractionではなく、そのoperationが必要とする明示的なsource topologyである。
 
 CLIを整理する場合はcurrent usageの具体的摩擦から始め、見た目を揃えるためだけにsource ownership、source format、writer authorityを変更しない。`tools/hk`は既存ownerへのrouterであり、会計ruleを所有しない。
 
@@ -88,10 +95,11 @@ CLIを整理する場合はcurrent usageの具体的摩擦から始め、見た�
 優先順位は実際のHousehold利用で観察した頻度と摩擦から決める。
 
 1. Home / TUIを日常利用し、視認性、repeated typing、不要なmodal traversal、canonical-string recallを減らす
-2. Record、Plan completion / successor、Budget movement、Issue maintenanceをvisible objectから短く完了できる状態を保つ
-3. relation publicationが実際に必要になった場合だけ、既存typed relation coreをcanonical Household boundaryへ接続する
-4. Editor CLIは具体的なoperational frictionが確認された場合だけ整理する
-5. performanceは実測で問題になったruntime pathだけ改善する
+2. TUIのselected Issue -> Realize pathではexisting Recordのtyped intentを保持して`IssueRealize` ownerへ渡し、rendered Textから意味を再構築しない
+3. Record、Plan completion / successor、Budget movement、Issue maintenanceをvisible objectから短く完了できる状態を保つ
+4. Issue relationの次のmeaningは具体的なHousehold workflowとdurable target identityが揃った場合だけ追加する
+5. Editor CLIは具体的なoperational frictionが確認された場合だけ整理する
+6. performanceは実測で問題になったruntime pathだけ改善する
 
 このroadmapの列挙を実装済み状態のinventoryとして使わない。変更を始める前にcurrent main、owner module、testを確認する。
 

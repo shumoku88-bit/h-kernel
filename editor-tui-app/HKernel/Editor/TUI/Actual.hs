@@ -12,6 +12,7 @@ module HKernel.Editor.TUI.Actual
   , publishCandidate
   , startDaily
   , startIncome
+  , startIssueRealize
   , startRecord
   , startSelectedReverse
   , toggleWorkspaceFocus
@@ -23,6 +24,7 @@ import Brick.Forms
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import qualified Brick.Widgets.List as L
+import Control.Monad.IO.Class (liftIO)
 import qualified Graphics.Vty as V
 import Lens.Micro (Lens', Traversal')
 
@@ -31,8 +33,10 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (Day)
 import qualified Data.Vector as Vec
+import System.IO.Error (isDoesNotExistError, tryIOError)
 import Text.Read (readMaybe)
 
 import qualified HKernel.Account
@@ -43,14 +47,16 @@ import HKernel.Actual.Journal
   , actualTransactionEntryIdentity
   , actualTransactionEntryTransaction
   )
+import HKernel.Application.Config (HouseholdRoot, HouseholdSourcePaths(..))
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddPreview(..)
   , ActualAddWriteFailure(..)
   , ActualAddWriteOutcome(..)
-  , ActualPostingInput(..)
   , ActualMultiAddInput(..)
   , ActualMultiAddPreview(..)
+  , ActualPostingInput(..)
+  , buildActualMultiAddIntentWithRegistry
   , classifyActualAddWriteResult
   , prepareActualAddPreviewFromResolvedJournal
   , prepareActualMultiAddPreviewFromResolvedJournal
@@ -66,7 +72,6 @@ import HKernel.Editor.ActualWorkspace
   , actualReverseAvailability
   , newestTransactionEntriesForAccount
   )
-import HKernel.Editor.SourcePublication (publishActualBlockWithPathAdmission)
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
   , accountCandidateAt
@@ -78,21 +83,34 @@ import HKernel.Editor.Interaction.ActualAdd
   , incomeAccountCandidates
   , initialActualAddInputForDay
   , initialActualMultiAddInputForDay
+  , initialActualMultiAddInputForDescription
+  , moveMultiAccountCandidateCursor
   , multiAccountCandidates
-  , resizeActualMultiPostings
   , resetMultiAccountCandidateCursor
+  , resizeActualMultiPostings
   , selectActualAddAccount
   , setActualMultiPostingAccountText
   , setActualMultiPostingAmount
   , stepAccountCandidate
-  , moveMultiAccountCandidateCursor
   )
+import HKernel.Editor.IssueRealize
+  ( IssueRealizeDisplayPreview(..)
+  , IssueRealizeIntent(..)
+  , IssueRealizeObservedSources(..)
+  , IssueRealizeOperationError(..)
+  , IssueRealizeWriteError(..)
+  , admitIssueRelationSource
+  , prepareIssueRealizeDisplayPreview
+  , publishIssueRealizeFromObservedSources
+  )
+import HKernel.Editor.SourcePublication (publishActualBlockWithPathAdmission)
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
   , AppEvent
   , Name(..)
   , WorkspaceFocus(..)
   , contextHouseholdState
+  , contextIssuesSource
   , contextSource
   , contextSourcePath
   , contextWorkspaceAccountsL
@@ -102,6 +120,14 @@ import HKernel.Editor.TUI.Model
 import HKernel.Household.Application
   ( HouseholdState(..)
   , loadCanonicalHousehold
+  )
+import HKernel.HouseholdIssue
+  ( HouseholdIssue
+  , IssueStatus(..)
+  , householdIssueId
+  , householdIssueStatus
+  , householdIssueText
+  , issueIdText
   )
 import HKernel.Ledger
   ( Posting
@@ -123,14 +149,34 @@ import HKernel.Plan.Completion
   , actualTransactionIdText
   )
 
+data RecordPurpose
+  = OrdinaryRecord
+  | RealizeIssue HouseholdIssue
+  deriving (Eq, Show)
+
 -- | Brick-local interaction coordinates around the one authoritative Actual
 -- draft. Row selection and unfinished posting-count text are delivery state.
+-- RecordPurpose changes only the final household operation; the transaction
+-- draft and posting editor remain shared.
 data MultiFormState = MultiFormState
   { multiFormInput                  :: ActualMultiAddInput
   , multiFormSelectedPosting        :: Int
   , multiFormPostingCountText       :: Text
   , multiFormAccountCandidateCursor :: Maybe Int
+  , multiFormPurpose                :: RecordPurpose
+  , multiFormClosedDateText         :: Text
+  , multiFormDecisionMemoText       :: Text
   } deriving (Eq, Show)
+
+data RecordPreview
+  = RecordActualPreview ActualMultiAddPreview
+  | RecordIssueRealizeRejected Text
+  | RecordIssueRealizeReady IssueRealizeDisplayPreview IssueRealizeIntent
+  deriving (Eq, Show)
+
+data PublishRequest
+  = PublishActual Day Text
+  | PublishIssueRealize Day IssueRealizeIntent
 
 data DailyEntryKind
   = DailyExpense
@@ -141,18 +187,20 @@ data State event
   = DailyInput DailyEntryKind (Form ActualAddInput event Name)
   | DailyPreview DailyEntryKind ActualAddPreview (Form ActualAddInput event Name)
   | RecordInput (Form MultiFormState event Name)
-  | RecordPreview ActualMultiAddPreview (Form MultiFormState event Name)
+  | RecordPreview RecordPreview (Form MultiFormState event Name)
   | ReverseInput ActualTransactionId Transaction (Form ActualReverseInput event Name)
   | ReversePreview ActualTransactionId Transaction ActualReverseInputPreview (Form ActualReverseInput event Name)
   | ReverseUnavailable Text
   | WriteOutcome ActualAddWriteOutcome
+  | RealizeWriteOutcome Text
   | ReturnToWorkspace
-  | PublishRequested Day Text
+  | PublishRequested PublishRequest
   | QuitRequested
 
 data PublishResult
   = Published AppContext
   | PublicationFailed ActualAddWriteOutcome
+  | RealizationFailed AppContext Text
   | ReloadFailed
 
 startDaily :: Day -> State event
@@ -165,7 +213,14 @@ startDailyEntry :: DailyEntryKind -> Day -> State event
 startDailyEntry kind day = DailyInput kind (mkDailyForm kind day)
 
 startRecord :: Day -> State event
-startRecord day = RecordInput (mkMultiForm (initialMultiFormState day))
+startRecord day =
+  RecordInput (mkMultiForm (initialMultiFormState OrdinaryRecord day))
+
+startIssueRealize :: Day -> HouseholdIssue -> Maybe (State event)
+startIssueRealize day issue
+  | householdIssueStatus issue == Open =
+      Just (RecordInput (mkMultiForm (initialMultiFormState (RealizeIssue issue) day)))
+  | otherwise = Nothing
 
 startSelectedReverse :: AppContext -> State event
 startSelectedReverse context = case selectedWorkspaceReverseTarget context of
@@ -246,6 +301,16 @@ multiAmountTextL f state =
     selected = multiFormSelectedPosting state
     posting = actualMultiPostingAt selected input
 
+multiClosedDateTextL :: Lens' MultiFormState Text
+multiClosedDateTextL f state =
+  (\value -> state { multiFormClosedDateText = value })
+    <$> f (multiFormClosedDateText state)
+
+multiDecisionMemoTextL :: Lens' MultiFormState Text
+multiDecisionMemoTextL f state =
+  (\value -> state { multiFormDecisionMemoText = value })
+    <$> f (multiFormDecisionMemoText state)
+
 reverseInputDateTextL :: Lens' ActualReverseInput Text
 reverseInputDateTextL f input =
   (\value -> input { reverseInputDateText = value })
@@ -282,23 +347,29 @@ mkDailyForm kind day =
   setFormFocus AmountField
     (mkForm kind (initialActualAddInputForDay day))
 
-initialMultiFormState :: Day -> MultiFormState
-initialMultiFormState day = MultiFormState
+initialMultiFormState :: RecordPurpose -> Day -> MultiFormState
+initialMultiFormState purpose day = MultiFormState
   { multiFormInput = input
   , multiFormSelectedPosting = 0
   , multiFormPostingCountText =
       T.pack (show (NonEmpty.length (multiAddPostings input)))
   , multiFormAccountCandidateCursor = Nothing
+  , multiFormPurpose = purpose
+  , multiFormClosedDateText = T.pack (show day)
+  , multiFormDecisionMemoText = ""
   }
   where
-    input = initialActualMultiAddInputForDay day
+    input = case purpose of
+      OrdinaryRecord -> initialActualMultiAddInputForDay day
+      RealizeIssue issue -> initialActualMultiAddInputForDescription day
+        (householdIssueText issue)
 
 mkMultiForm :: MultiFormState -> Form MultiFormState event Name
 mkMultiForm state =
   let label labelText widget =
         padBottom (Pad 1)
           ((vLimit 1 (hLimit 20 (str labelText <+> fill ' '))) <+> widget)
-      form = newForm
+      baseFields =
         [ label "Date:"
             @@= editTextField multiDateTextL MultiDateField (Just 1)
         , label "Description:"
@@ -310,7 +381,16 @@ mkMultiForm state =
         , label "Selected amount:"
             @@= editTextField multiAmountTextL MultiAmountField (Just 1)
         ]
-  in setFormFocus MultiDescriptionField (form state)
+      realizationFields = case multiFormPurpose state of
+        OrdinaryRecord -> []
+        RealizeIssue _ ->
+          [ label "Closed:"
+              @@= editTextField multiClosedDateTextL IssueClosedDateField (Just 1)
+          , label "Decision memo:"
+              @@= editTextField multiDecisionMemoTextL IssueDecisionMemoField (Just 1)
+          ]
+      form = newForm (baseFields <> realizationFields) state
+  in setFormFocus MultiDescriptionField form
 
 applyMultiPostingCount :: MultiFormState -> MultiFormState
 applyMultiPostingCount state = state
@@ -398,37 +478,37 @@ drawFlow context state = case state of
       (borderWithLabel (str (dailyPreviewTitle kind))
         (padAll 1 (renderPreview preview <=> str " " <=> str (previewControls preview))))
   RecordInput form ->
-    center
-      (borderWithLabel (str "Record")
+    let multiState = formState form
+        input = multiFormInput multiState
+    in center
+      (borderWithLabel (str (recordInputTitle multiState))
         (hLimit 86
           (padAll 1
             (vBox
-              [ txt ("Date: " <> dateSummary context
-                  (multiAddDateText input))
-              , str "Use two postings for an ordinary transaction, or increase the posting count when needed."
-              , str "Each posting owns its sign. The complete transaction must balance to zero."
-              , str " "
-              , renderMultiPostingRows multiState
-              , str " "
-              , txt ("Editing posting "
-                  <> T.pack (show (multiFormSelectedPosting multiState + 1))
-                  <> " of "
-                  <> T.pack (show (NonEmpty.length (multiAddPostings input))))
-              , renderForm form
-              , renderMultiInlineAccountSelector context form
-              , str " "
-              , str "Validation: press Enter outside the Account field to check admission and balance."
-              , multiInputControls form
-              ]))))
-    where
-      multiState = formState form
-      input = multiFormInput multiState
-  RecordPreview preview _ ->
+              ( recordPurposeHeader context multiState
+                ++ [ txt ("Date: " <> dateSummary context
+                      (multiAddDateText input))
+                   , str "Use two postings for an ordinary transaction, or increase the posting count when needed."
+                   , str "Each posting owns its sign. The complete transaction must balance to zero."
+                   , str " "
+                   , renderMultiPostingRows multiState
+                   , str " "
+                   , txt ("Editing posting "
+                       <> T.pack (show (multiFormSelectedPosting multiState + 1))
+                       <> " of "
+                       <> T.pack (show (NonEmpty.length (multiAddPostings input))))
+                   , renderForm form
+                   , renderMultiInlineAccountSelector context form
+                   , str " "
+                   , str "Validation: press Enter outside the Account field to check admission and balance."
+                   , multiInputControls form
+                   ])))))
+  RecordPreview preview form ->
     center
-      (borderWithLabel (str "Record Preview")
+      (borderWithLabel (str (recordPreviewTitle (formState form)))
         (hLimit 86
           (padAll 1
-            (renderMultiPreview preview <=> str " " <=> str (multiPreviewControls preview)))))
+            (renderRecordPreview preview <=> str " " <=> str (recordPreviewControls preview)))))
   ReverseInput targetId transaction form ->
     center
       (borderWithLabel (str "Reverse Actual")
@@ -466,9 +546,37 @@ drawFlow context state = case state of
     center
       (borderWithLabel (str "Actual Write Result")
         (padAll 1 (renderWriteOutcome outcome <=> str " " <=> str "[Esc] Actual | [Q] Quit")))
+  RealizeWriteOutcome message ->
+    center
+      (borderWithLabel (str "Issue Realize Result")
+        (hLimit 86
+          (padAll 1
+            (withAttr (attrName "error") (txt message)
+              <=> str " " <=> str "[Esc] Issues | [Q] Quit"))))
   ReturnToWorkspace -> emptyWidget
-  PublishRequested _ _ -> emptyWidget
+  PublishRequested _ -> emptyWidget
   QuitRequested -> emptyWidget
+
+recordInputTitle :: MultiFormState -> String
+recordInputTitle state = case multiFormPurpose state of
+  OrdinaryRecord -> "Record"
+  RealizeIssue _ -> "Realize Issue as Actual"
+
+recordPreviewTitle :: MultiFormState -> String
+recordPreviewTitle state = case multiFormPurpose state of
+  OrdinaryRecord -> "Record Preview"
+  RealizeIssue _ -> "Issue Realize Preview"
+
+recordPurposeHeader :: AppContext -> MultiFormState -> [Widget Name]
+recordPurposeHeader context state = case multiFormPurpose state of
+  OrdinaryRecord -> []
+  RealizeIssue issue ->
+    [ txt ("Issue: " <> issueIdText (householdIssueId issue)
+        <> "  " <> householdIssueText issue)
+    , txt ("Relation recorded: " <> T.pack (show (contextEntryDay context)))
+    , str "Issue amount is not copied into the transaction; postings remain explicit."
+    , str " "
+    ]
 
 dailyEntryTitle :: DailyEntryKind -> String
 dailyEntryTitle kind = case kind of
@@ -488,9 +596,9 @@ dailyInputControls form = case dailySelectionTarget form of
 multiInputControls :: Form MultiFormState AppEvent Name -> Widget Name
 multiInputControls form
   | multiAccountFocused form =
-      str "[Up/Down] Choose Account | [click] Select | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
+      str "[Up/Down] Choose Account | [click] Select | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Back"
   | otherwise =
-      str "[Tab] Next field | [Up/Down] Previous/next posting row | [Enter] Preview | [Esc] Actual"
+      str "[Tab] Next field | [Up/Down] Previous/next posting row | [Enter] Preview | [Esc] Back"
 
 renderDailyInlineAccountSelector
   :: AppContext
@@ -684,8 +792,13 @@ handleFlowEvent context event = do
       VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
       VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
       _ -> pure ()
+    RealizeWriteOutcome _ -> case event of
+      VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
+      VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
+      VtyEvent (V.EvKey (V.KChar 'Q') []) -> put QuitRequested
+      _ -> pure ()
     ReturnToWorkspace -> pure ()
-    PublishRequested _ _ -> pure ()
+    PublishRequested _ -> pure ()
     QuitRequested -> pure ()
 
 handleDailyInput
@@ -797,7 +910,7 @@ handleDailyPreview context kind preview form event = case event of
       ActualAddCandidateReady block ->
         let stickyDay = fromMaybe (contextEntryDay context)
               (readMaybe (T.unpack (addDateText (formState form))))
-        in put (PublishRequested stickyDay block)
+        in put (PublishRequested (PublishActual stickyDay block))
       _ -> pure ()
 
 handleMultiInput
@@ -904,13 +1017,81 @@ prepareMultiPreview context form = do
       updatedForm = updateFormState applied form
       resolvedJournal = actualJournalValue
         (householdStateActualJournal (contextHouseholdState context))
-      preview = prepareActualMultiAddPreviewFromResolvedJournal
-        resolvedJournal (contextSource context) (multiFormInput applied)
+  preview <- case multiFormPurpose applied of
+    OrdinaryRecord -> pure
+      (RecordActualPreview
+        (prepareActualMultiAddPreviewFromResolvedJournal
+          resolvedJournal (contextSource context) (multiFormInput applied)))
+    RealizeIssue issue -> liftIO
+      (prepareIssueRealizeRecordPreview context issue applied)
   put (RecordPreview preview updatedForm)
+
+prepareIssueRealizeRecordPreview
+  :: AppContext
+  -> HouseholdIssue
+  -> MultiFormState
+  -> IO RecordPreview
+prepareIssueRealizeRecordPreview context issue formState = do
+  let state = contextHouseholdState context
+      paths = householdStatePaths state
+      registry = householdStateAccountsRegistry state
+      memo = T.strip (multiFormDecisionMemoText formState)
+  case buildActualMultiAddIntentWithRegistry registry (multiFormInput formState) of
+    Left inputError -> pure
+      (RecordIssueRealizeRejected
+        ("Actual input rejected: " <> T.pack (show inputError)))
+    Right actualIntent -> case parseRealizeClosedDay context formState of
+      Left message -> pure (RecordIssueRealizeRejected message)
+      Right closedOn
+        | T.null memo -> pure
+            (RecordIssueRealizeRejected "Decision memo is required for Issue realization.")
+        | otherwise -> do
+            relationResult <- readOptionalRelationSource
+              (householdIssueRelationsPath paths)
+            case relationResult of
+              Left message -> pure (RecordIssueRealizeRejected message)
+              Right (_, relationSource) -> do
+                let intent = IssueRealizeIntent
+                      { realizeIssueId = householdIssueId issue
+                      , realizeRecordedOn = contextEntryDay context
+                      , realizeClosedOn = closedOn
+                      , realizeActualIntent = actualIntent
+                      , realizeDecisionMemo = memo
+                      }
+                pure $ case prepareIssueRealizeDisplayPreview
+                    (householdStateActualJournal state)
+                    (householdStatePlanJournal state)
+                    (contextSource context)
+                    relationSource
+                    (contextIssuesSource context)
+                    intent of
+                  Left errors -> RecordIssueRealizeRejected
+                    ("Issue realization rejected: "
+                      <> T.pack (show (NonEmpty.toList errors)))
+                  Right preview -> RecordIssueRealizeReady preview intent
+
+parseRealizeClosedDay :: AppContext -> MultiFormState -> Either Text Day
+parseRealizeClosedDay context state
+  | T.null closedText = Right (contextEntryDay context)
+  | otherwise = maybe
+      (Left "Closed must be YYYY-MM-DD.")
+      Right
+      (readMaybe (T.unpack closedText))
+  where
+    closedText = T.strip (multiFormClosedDateText state)
+
+readOptionalRelationSource :: FilePath -> IO (Either Text (Bool, Text))
+readOptionalRelationSource path = do
+  result <- tryIOError (TIO.readFile path)
+  pure $ case result of
+    Right source -> Right (True, source)
+    Left errorValue
+      | isDoesNotExistError errorValue -> Right (False, "")
+      | otherwise -> Left ("Relation source read failed: " <> T.pack (show errorValue))
 
 handleMultiPreview
   :: AppContext
-  -> ActualMultiAddPreview
+  -> RecordPreview
   -> Form MultiFormState AppEvent Name
   -> BrickEvent Name AppEvent
   -> EventM Name (State AppEvent) ()
@@ -928,13 +1109,14 @@ handleMultiPreview context preview form event = case event of
   _ -> pure ()
   where
     state = formState form
+    stickyDay = fromMaybe (contextEntryDay context)
+      (readMaybe (T.unpack (multiAddDateText (multiFormInput state))))
     back = put (RecordInput form)
     publish = case preview of
-      ActualMultiAddCandidateReady block ->
-        let stickyDay = fromMaybe (contextEntryDay context)
-              (readMaybe (T.unpack
-                (multiAddDateText (multiFormInput state))))
-        in put (PublishRequested stickyDay block)
+      RecordActualPreview (ActualMultiAddCandidateReady block) ->
+        put (PublishRequested (PublishActual stickyDay block))
+      RecordIssueRealizeReady _ intent ->
+        put (PublishRequested (PublishIssueRealize stickyDay intent))
       _ -> pure ()
 
 handleReverseInput
@@ -976,26 +1158,150 @@ handleReversePreview context targetId transaction preview form event = case even
     back = put (ReverseInput targetId transaction form)
     publish = case preview of
       ActualReverseCandidateReady block ->
-        put (PublishRequested (contextEntryDay context) block)
+        put (PublishRequested (PublishActual (contextEntryDay context) block))
       _ -> pure ()
 
-publishCandidate :: AppContext -> Day -> Text -> IO PublishResult
-publishCandidate context stickyDay block = do
-  let state = contextHouseholdState context
-      root = householdStateRoot state
-      stickyContext = context { contextEntryDay = stickyDay }
-      postAdmission _ = loadCanonicalHousehold root
-  writeResult <- publishActualBlockWithPathAdmission
-    postAdmission
-    (contextSourcePath context)
-    (contextSource context)
-    block
-  let writeOutcome = classifyActualAddWriteResult writeResult
-  case writeOutcome of
-    ActualAddWriteSucceeded -> do
+publishCandidate :: AppContext -> PublishRequest -> IO PublishResult
+publishCandidate context request = case request of
+  PublishActual stickyDay block -> publishActualCandidate stickyDay block
+  PublishIssueRealize stickyDay intent ->
+    publishRealizeCandidate stickyDay intent
+  where
+    state = contextHouseholdState context
+    root = householdStateRoot state
+    publishActualCandidate stickyDay block = do
+      let stickyContext = context { contextEntryDay = stickyDay }
+          postAdmission _ = loadCanonicalHousehold root
+      writeResult <- publishActualBlockWithPathAdmission
+        postAdmission
+        (contextSourcePath context)
+        (contextSource context)
+        block
+      let writeOutcome = classifyActualAddWriteResult writeResult
+      case writeOutcome of
+        ActualAddWriteSucceeded -> reloadAfter stickyContext
+        _ -> pure (PublicationFailed writeOutcome)
+    publishRealizeCandidate stickyDay intent = do
+      let realizationState = contextHouseholdState context
+          paths = householdStatePaths realizationState
+          relationPath = householdIssueRelationsPath paths
+      relationResult <- readOptionalRelationSource relationPath
+      case relationResult of
+        Left message -> finishRealizationFailure True
+          ("Issue realization source read failed: " <> message)
+        Right (relationExists, relationSource) -> do
+          let observed = IssueRealizeObservedSources
+                { issueRealizeObservedActualPath = householdActualJournalPath paths
+                , issueRealizeObservedActualJournal =
+                    householdStateActualJournal realizationState
+                , issueRealizeObservedActualSource = contextSource context
+                , issueRealizeObservedPlanJournal =
+                    householdStatePlanJournal realizationState
+                , issueRealizeObservedRelationPath = relationPath
+                , issueRealizeObservedRelationExists = relationExists
+                , issueRealizeObservedRelationSource = relationSource
+                , issueRealizeObservedIssuesPath = householdIssuesPath paths
+                , issueRealizeObservedIssuesSource = contextIssuesSource context
+                }
+          writeResult <- publishIssueRealizeFromObservedSources
+            (admitIssueRealizeAfterWrite root relationPath)
+            observed
+            intent
+          case writeResult of
+            Right () -> reloadRealizationAfter
+              (context { contextEntryDay = stickyDay })
+            Left operationError -> finishRealizationFailure
+              (realizationFailureRecoverySafe operationError)
+              ("Issue realization write failed: "
+                <> T.pack (show operationError))
+    finishRealizationFailure recoverySafe message
+      | not recoverySafe = pure ReloadFailed
+      | otherwise = do
+          reloadedContext <- reloadAndAdmitRealization False context
+          pure $ case reloadedContext of
+            Nothing -> ReloadFailed
+            Just freshContext -> RealizationFailed freshContext message
+    reloadAfter stickyContext = do
       reloadedContext <- reloadWorkspaceContext stickyContext
       pure (maybe ReloadFailed Published reloadedContext)
-    _ -> pure (PublicationFailed writeOutcome)
+    reloadRealizationAfter stickyContext = do
+      reloadedContext <- reloadAndAdmitRealization True stickyContext
+      pure (maybe ReloadFailed Published reloadedContext)
+
+realizationFailureRecoverySafe
+  :: IssueRealizeOperationError admissionError
+  -> Bool
+realizationFailureRecoverySafe operationError = case operationError of
+  IssueRealizePreparationFailed _ -> True
+  IssueRealizePublicationFailed writeError -> writeFailureRecoverySafe writeError
+
+writeFailureRecoverySafe
+  :: IssueRealizeWriteError admissionError
+  -> Bool
+writeFailureRecoverySafe writeError = case writeError of
+  IssueRealizeActualStale -> True
+  IssueRealizeRelationStale -> True
+  IssueRealizeIssuesStale -> True
+  IssueRealizePostAdmissionFailed _ actualSafe relationSafe issuesSafe ->
+    actualSafe && relationSafe && issuesSafe
+  IssueRealizeFileIOError _ actualSafe relationSafe issuesSafe ->
+    actualSafe && relationSafe && issuesSafe
+
+-- A failed realization never returns the old workspace as authoritative. The
+-- only recoverable failure result carries a newly loaded Household whose
+-- explicit relation sidecar has also been admitted.
+reloadAndAdmitRealization
+  :: Bool
+  -> AppContext
+  -> IO (Maybe AppContext)
+reloadAndAdmitRealization requireRelationSource context = do
+  reloadedContext <- reloadWorkspaceContext context
+  case reloadedContext of
+    Nothing -> pure Nothing
+    Just freshContext -> do
+      let state = contextHouseholdState freshContext
+          relationPath = householdIssueRelationsPath (householdStatePaths state)
+      relationRead <- tryIOError (TIO.readFile relationPath)
+      let relationSource = case relationRead of
+            Right source -> Just (True, source)
+            Left errorValue
+              | isDoesNotExistError errorValue -> Just (False, "")
+              | otherwise -> Nothing
+      pure $ do
+        (relationExists, source) <- relationSource
+        if requireRelationSource && not relationExists
+          then Nothing
+          else pure ()
+        case admitIssueRelationSource
+            (householdStateActualJournal state)
+            (householdStatePlanJournal state)
+            (householdStateIssues state)
+            source of
+          Left _ -> Nothing
+          Right _ -> Just freshContext
+
+admitIssueRealizeAfterWrite
+  :: HouseholdRoot
+  -> FilePath
+  -> IO (Either String ())
+admitIssueRealizeAfterWrite root relationPath = do
+  householdResult <- loadCanonicalHousehold root
+  case householdResult of
+    Left errors -> pure
+      (Left ("Household post-admission failed: " <> show errors))
+    Right state -> do
+      relationRead <- tryIOError (TIO.readFile relationPath)
+      case relationRead of
+        Left errorValue -> pure
+          (Left ("Relation post-admission read failed: " <> show errorValue))
+        Right relationSource -> pure $ case admitIssueRelationSource
+            (householdStateActualJournal state)
+            (householdStatePlanJournal state)
+            (householdStateIssues state)
+            relationSource of
+          Left errors -> Left
+            ("Relation post-admission failed: " <> show (NonEmpty.toList errors))
+          Right _ -> Right ()
 
 toggleWorkspaceFocus :: AppContext -> AppContext
 toggleWorkspaceFocus context = context
@@ -1151,6 +1457,28 @@ previewControls :: ActualAddPreview -> String
 previewControls preview = case preview of
   ActualAddCandidateReady _ -> "[Esc/B] Back | [Enter/Y] Publish | [Q] Quit"
   _ -> "[Esc/B] Back | [Q] Quit"
+
+renderRecordPreview :: RecordPreview -> Widget Name
+renderRecordPreview preview = case preview of
+  RecordActualPreview actualPreview -> renderMultiPreview actualPreview
+  RecordIssueRealizeRejected message ->
+    withAttr (attrName "error") (txt message)
+  RecordIssueRealizeReady displayPreview _ ->
+    withAttr (attrName "success")
+      (str "All three candidates admitted. Sources unmodified.")
+      <=> str " "
+      <=> str "--- Actual ---"
+      <=> txt (displayActualBlock displayPreview)
+      <=> str "--- Relation ---"
+      <=> txt (displayRelationBlock displayPreview)
+      <=> str "--- Issue ---"
+      <=> txt (displayIssueBlock displayPreview)
+
+recordPreviewControls :: RecordPreview -> String
+recordPreviewControls preview = case preview of
+  RecordActualPreview actualPreview -> multiPreviewControls actualPreview
+  RecordIssueRealizeReady _ _ -> "[Esc/B] Back | [Enter/Y] Publish | [Q] Quit"
+  RecordIssueRealizeRejected _ -> "[Esc/B] Back | [Q] Quit"
 
 renderMultiPreview :: ActualMultiAddPreview -> Widget Name
 renderMultiPreview preview = case preview of

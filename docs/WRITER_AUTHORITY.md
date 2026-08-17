@@ -38,6 +38,8 @@ Actual reversalのdurable identity / provenanceと、そのmetadataをsilent ign
 - current operational writerを別implementationへ切り替える場合は、sourceごとのcutover evidenceと作者の明示承認を先に持つ。
 - capability追加、TUI/CLI追加、reader migration、source format migrationをwriter cutoverと同一視しない。
 
+`issue-relations.tsv` はcurrent eight-source `HouseholdState` inventoryへまだ昇格していないexplicit provenance sidecarであり、`IssueRealize` にwrite capabilityがあることからcanonical source inventoryやwriter authority変更を推測しない。Realizeがcanonical `actual.journal` / `issues.tsv` とこのsidecarを協調publicationしても、各sourceのoperational authority lawは別に評価する。
+
 この文書は、証拠のないsourceについて特定engineをcanonical writerだと新しく宣言しない。
 
 ## 3. Single-writer law

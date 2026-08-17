@@ -3,19 +3,42 @@
 module Main (main) where
 
 import Test.Support (mustRight, assertEqual)
+import Data.List.NonEmpty (NonEmpty((:|)))
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (fromGregorian)
-import HKernel.HouseholdIssue
+import HKernel.Account (Account, mkAccount)
+import HKernel.Actual.Journal (ActualJournal, parseActualJournal)
+import HKernel.Editor.ActualAppend (ActualEditIntent(..))
 import HKernel.Editor.HouseholdWorkspace
   ( IssueWorkspaceFilter(..)
+  , IssueRealizeError(..)
+  , IssueRealizeIntent(..)
+  , IssueRealizePreview(..)
+  , IssueRealizeObservedSources(..)
+  , IssueRealizeOperationError(..)
+  , IssueRealizeWriteError(..)
+  , admitIssueRelationSource
   , homeIssuesDueOn
   , issuesForWorkspace
+  , prepareIssueRealize
+  , publishIssueRealizeFromObservedSources
   , workspaceIssueCounts
   )
+import HKernel.Editor.SourcePublication
+  ( WriterFileSystem(..)
+  , defaultWriterFileSystem
+  )
+import HKernel.Editor.TransactionBlock (IntentPosting(..))
+import HKernel.HouseholdIssue
 import HKernel.Money
 import HKernel.Plan (mkPlanId)
-import HKernel.Plan.Completion (mkActualTransactionId)
+import HKernel.Plan.Completion (actualTransactionIdText, mkActualTransactionId)
+import HKernel.Plan.Journal (PlanJournal, parsePlanJournal)
 import System.Exit (exitFailure)
+import System.IO.Error (tryIOError)
 
 main :: IO ()
 main = do
@@ -23,6 +46,9 @@ main = do
   characterizeHouseholdIssue
   characterizeIssueRelations
   characterizeIssueRelationReferences
+  characterizeIssueRealization
+  characterizeIssueRealizationFailures
+  characterizeIssueRealizationPublication
   characterizeWorkspaceOrder
   characterizeHomeIssueProjection
 
@@ -258,6 +284,219 @@ characterizeIssueRelationReferences = do
       ]))
     (admitIssueRelationReferences
       knownIssues knownPlans durableActuals [doublyDangling])
+
+-- The first daily-use relation path: create one durable Actual, point exactly to
+-- that identity, and resolve the Issue as separate evidence.
+characterizeIssueRealization :: IO ()
+characterizeIssueRealization = case preparedRealization of
+  Left errors -> do
+    putStrLn "  [FAIL] Issue realization candidate is admitted"
+    print errors
+    exitFailure
+  Right preview -> do
+    let actualId = actualTransactionIdText (realizedActualId preview)
+        candidateActual = mustRight
+          (parseActualJournal (realizedActualCandidateSource preview))
+    assertEqual "realization derives one durable Actual identity from the Issue"
+      "ISSUE-ALG-actual"
+      actualId
+    assertEqual "the Actual candidate owns that durable event-id"
+      True
+      ("; event-id: ISSUE-ALG-actual" `T.isInfixOf` realizedActualBlock preview)
+    assertEqual "the relation targets exactly the newly created Actual"
+      True
+      ("\trealized-as\tISSUE-ALG-actual\t購入した" `T.isInfixOf`
+        realizedRelationBlock preview)
+    assertEqual "Issue closure remains a separate resolved lifecycle row"
+      True
+      ("ISSUE-ALG\tresolved\t2026-08-01\tnone\t2026-08-17\t" `T.isPrefixOf`
+        realizedIssueBlock preview)
+    case prepareIssueRealize
+        candidateActual
+        realizationPlanJournal
+        (realizedActualCandidateSource preview)
+        (realizedRelationCandidateSource preview)
+        (realizedIssuesCandidateSource preview)
+        realizationIntent of
+      Left errors -> assertEqual "a realized Issue cannot be realized twice"
+        True
+        (RealizeIssueNotOpen Resolved `elem` NonEmpty.toList errors)
+      Right _ -> do
+        putStrLn "  [FAIL] a realized Issue cannot be realized twice"
+        exitFailure
+
+characterizeIssueRealizationFailures :: IO ()
+characterizeIssueRealizationFailures = do
+  let suppliedEventIdIntent = realizationIntent
+        { realizeActualIntent = (realizeActualIntent realizationIntent)
+            { intentMetadata = [("event-id", "caller-owned")]
+            }
+        }
+  assertRealizeLeft "realization owns the new Actual event-id"
+    (== RealizeActualMetadataOwnsEventId)
+    (prepareIssueRealize realizationActualJournal realizationPlanJournal
+      realizationActualSource "" realizationIssuesSource suppliedEventIdIntent)
+  assertRealizeLeft "relation recording cannot predate the Issue"
+    isRelationBeforeIssue
+    (prepareIssueRealize realizationActualJournal realizationPlanJournal
+      realizationActualSource "" realizationIssuesSource
+      realizationIntent { realizeRecordedOn = fromGregorian 2026 7 31 })
+  assertEqual "Issue close remains independent from later relation recording"
+    True
+    (case prepareIssueRealize realizationActualJournal realizationPlanJournal
+      realizationActualSource "" realizationIssuesSource
+      realizationIntent { realizeClosedOn = fromGregorian 2026 8 16 } of
+        Right _ -> True
+        Left _ -> False)
+  where
+    isRelationBeforeIssue err = case err of
+      RealizeRelationBeforeIssueRecorded recorded relationDay ->
+        recorded == fromGregorian 2026 8 1
+          && relationDay == fromGregorian 2026 7 31
+      _ -> False
+
+characterizeIssueRealizationPublication :: IO ()
+characterizeIssueRealizationPublication = case preparedRealization of
+  Left errors -> do
+    putStrLn "  [FAIL] realization publication fixture is admitted"
+    print errors
+    exitFailure
+  Right preview -> do
+    cleanupRealizationFiles
+    TIO.writeFile realizationActualPath realizationActualSource
+    TIO.writeFile realizationIssuesPath realizationIssuesSource
+    success <- publishIssueRealizeFromObservedSources
+      (pure (Right ()) :: IO (Either String ()))
+      realizationObservedSources
+      realizationIntent
+    actualAfter <- TIO.readFile realizationActualPath
+    relationAfter <- TIO.readFile realizationRelationPath
+    issuesAfter <- TIO.readFile realizationIssuesPath
+    assertEqual "coordinated publication installs all three exact candidates"
+      True
+      ( success == Right ()
+          && actualAfter == realizedActualCandidateSource preview
+          && relationAfter == realizedRelationCandidateSource preview
+          && issuesAfter == realizedIssuesCandidateSource preview
+      )
+
+    cleanupRealizationFiles
+    TIO.writeFile realizationActualPath realizationActualSource
+    TIO.writeFile realizationIssuesPath realizationIssuesSource
+    failed <- publishIssueRealizeFromObservedSources
+      (pure (Left "synthetic post-admission failure"))
+      realizationObservedSources
+      realizationIntent
+    actualRestored <- TIO.readFile realizationActualPath
+    issuesRestored <- TIO.readFile realizationIssuesPath
+    relationRead <- tryIOError (TIO.readFile realizationRelationPath)
+    let safeFailure = case failed of
+          Left (IssueRealizePublicationFailed
+              (IssueRealizePostAdmissionFailed _ actualSafe relationSafe issuesSafe)) ->
+            actualSafe && relationSafe && issuesSafe
+          _ -> False
+    assertEqual "post-admission failure restores Actual and Issue and removes newly-created relation source"
+      True
+      ( safeFailure
+          && actualRestored == realizationActualSource
+          && issuesRestored == realizationIssuesSource
+          && either (const True) (const False) relationRead
+      )
+    cleanupRealizationFiles
+
+preparedRealization :: Either (NonEmpty IssueRealizeError) IssueRealizePreview
+preparedRealization = prepareIssueRealize
+  realizationActualJournal
+  realizationPlanJournal
+  realizationActualSource
+  ""
+  realizationIssuesSource
+  realizationIntent
+
+realizationActualSource :: Text
+realizationActualSource = T.unlines
+  [ "account assets:bank"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , "account expenses:books"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  ]
+
+realizationIssuesSource :: Text
+realizationIssuesSource = T.unlines
+  [ "issue_id\tstatus\tdate\tdue\tclosed\tcategory\ttitle\tamount\tcurrency\tdetails"
+  , "ISSUE-ALG\topen\t2026-08-01\tnone\tnone\tculture\t代数学の歴史を買う\t1800\tJPY\t購入を検討"
+  ]
+
+realizationActualJournal :: ActualJournal
+realizationActualJournal = mustRight (parseActualJournal realizationActualSource)
+
+realizationPlanJournal :: PlanJournal
+realizationPlanJournal = mustRight (parsePlanJournal realizationActualSource)
+
+realizationIntent :: IssueRealizeIntent
+realizationIntent = IssueRealizeIntent
+  { realizeIssueId = mustRight (mkIssueId "ISSUE-ALG")
+  , realizeRecordedOn = fromGregorian 2026 8 17
+  , realizeClosedOn = fromGregorian 2026 8 17
+  , realizeActualIntent = ActualEditIntent
+      { intentDate = fromGregorian 2026 8 16
+      , intentDescription = "代数学の歴史"
+      , intentPostings =
+          IntentPosting realizationBank (quantityFromInteger (-1800)) (Just realizationJpy)
+            :| [IntentPosting realizationBooks (quantityFromInteger 1800) (Just realizationJpy)]
+      , intentMetadata = []
+      }
+  , realizeDecisionMemo = "購入した"
+  }
+
+realizationBank, realizationBooks :: Account
+realizationBank = mustRight (mkAccount "assets:bank")
+realizationBooks = mustRight (mkAccount "expenses:books")
+
+realizationJpy :: Commodity
+realizationJpy = mustRight (mkCommodity "JPY")
+
+realizationActualPath, realizationRelationPath, realizationIssuesPath :: FilePath
+realizationActualPath = "tests/fixtures/editor/issue-realize-actual.journal"
+realizationRelationPath = "tests/fixtures/editor/issue-realize-relations.tsv"
+realizationIssuesPath = "tests/fixtures/editor/issue-realize-issues.tsv"
+
+realizationObservedSources :: IssueRealizeObservedSources
+realizationObservedSources = IssueRealizeObservedSources
+  { issueRealizeObservedActualPath = realizationActualPath
+  , issueRealizeObservedActualJournal = realizationActualJournal
+  , issueRealizeObservedActualSource = realizationActualSource
+  , issueRealizeObservedPlanJournal = realizationPlanJournal
+  , issueRealizeObservedRelationPath = realizationRelationPath
+  , issueRealizeObservedRelationExists = False
+  , issueRealizeObservedRelationSource = ""
+  , issueRealizeObservedIssuesPath = realizationIssuesPath
+  , issueRealizeObservedIssuesSource = realizationIssuesSource
+  }
+
+cleanupRealizationFiles :: IO ()
+cleanupRealizationFiles = mapM_ removeQuietly
+  [ realizationActualPath
+  , realizationRelationPath
+  , realizationIssuesPath
+  ]
+  where
+    removeQuietly path = do
+      result <- tryIOError (removeTextFile defaultWriterFileSystem path)
+      either (const (pure ())) (const (pure ())) result
+
+assertRealizeLeft
+  :: String
+  -> (IssueRealizeError -> Bool)
+  -> Either (NonEmpty IssueRealizeError) value
+  -> IO ()
+assertRealizeLeft label predicate result = case result of
+  Left errors -> assertEqual label True (any predicate (NonEmpty.toList errors))
+  Right _ -> do
+    putStrLn ("  [FAIL] " ++ label)
+    exitFailure
 
 characterizeWorkspaceOrder :: IO ()
 characterizeWorkspaceOrder = do

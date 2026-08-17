@@ -9,6 +9,7 @@ import qualified Data.Text.IO as TIO
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
+import System.IO.Error (isDoesNotExistError, tryIOError)
 
 import HKernel.Actual.Journal
   ( admitActualJournalFromResolvedJournal
@@ -26,6 +27,7 @@ import qualified HKernel.Editor.ActualReverse as ActualReverse
 import HKernel.Editor.SourcePublication
 import qualified HKernel.Editor.BudgetMovementAppend as BudgetMovementAppend
 import HKernel.Editor.CLI
+import qualified HKernel.Editor.HouseholdWorkspace as HouseholdWorkspace
 import qualified HKernel.Editor.IssueAppend as IssueAppend
 import qualified HKernel.Editor.PlanCompleteAdvance as PlanCompleteAdvance
 import qualified HKernel.Editor.PlanLifecycle as PlanLifecycle
@@ -188,6 +190,31 @@ executeCommand commitMode command = case command of
               (IssueAppend.candidateCompleteSource preview)
               commitMode
 
+  IssueRealizeCmd rootPath intent -> do
+    root <- case mkHouseholdRoot rootPath of
+      Left err -> die ("Invalid Household root: " <> show err)
+      Right value -> pure value
+    snapshotResult <- loadCanonicalHouseholdWriteSnapshot root
+    snapshot <- case snapshotResult of
+      Left errors -> validationFailed errors
+      Right value -> pure value
+    let state = householdWriteSnapshotState snapshot
+        paths = householdStatePaths state
+        actualSource = householdWriteSnapshotActualSource snapshot
+        issuesSource = householdWriteSnapshotIssuesSource snapshot
+        relationPath = householdIssueRelationsPath paths
+    (relationExists, relationSource) <- readOptionalTextSource relationPath
+    case HouseholdWorkspace.prepareIssueRealize
+        (householdStateActualJournal state)
+        (householdStatePlanJournal state)
+        actualSource
+        relationSource
+        issuesSource
+        intent of
+      Left errors -> validationFailed errors
+      Right preview -> executeIssueRealizePreview
+        root paths snapshot relationExists relationSource intent preview commitMode
+
   PlanAddCmd planFile actualFile intent -> do
     planSource <- TIO.readFile planFile
     actualSource <- TIO.readFile actualFile
@@ -254,6 +281,15 @@ executeCommand commitMode command = case command of
       Right preview -> executePlanFinishPreview
         planFile actualFile planSource actualSource preview commitMode
 
+readOptionalTextSource :: FilePath -> IO (Bool, Text)
+readOptionalTextSource path = do
+  result <- tryIOError (TIO.readFile path)
+  case result of
+    Right source -> pure (True, source)
+    Left errorValue
+      | isDoesNotExistError errorValue -> pure (False, "")
+      | otherwise -> die ("Source read failed: " <> show errorValue)
+
 loadResolvedActualJournal :: FilePath -> IO Journal
 loadResolvedActualJournal sourceFile = do
   result <- loadJournal sourceFile
@@ -280,6 +316,78 @@ validationFailed errors =
   die
     ("Validation errors:\n"
       <> unlines (map show (NonEmpty.toList errors)))
+
+executeIssueRealizePreview
+  :: HouseholdRoot
+  -> HouseholdSourcePaths
+  -> HouseholdWriteSnapshot
+  -> Bool
+  -> Text
+  -> HouseholdWorkspace.IssueRealizeIntent
+  -> HouseholdWorkspace.IssueRealizePreview
+  -> CommitMode
+  -> IO ()
+executeIssueRealizePreview root paths snapshot relationExists relationSource intent preview commitMode = do
+  TIO.putStrLn "--- Actual ---"
+  putPreviewBlock (HouseholdWorkspace.realizedActualBlock preview)
+  TIO.putStrLn "--- Relation --"
+  putPreviewBlock (HouseholdWorkspace.realizedRelationBlock preview)
+  TIO.putStrLn "--- Issue -----"
+  putPreviewBlock (HouseholdWorkspace.realizedIssueBlock preview)
+  TIO.putStrLn "---------------"
+  case commitMode of
+    PreviewOnly ->
+      TIO.putStrLn
+        "Run with --commit immediately after 'realize' to apply all three changes."
+    CommitRequested -> do
+      let state = householdWriteSnapshotState snapshot
+          observed = HouseholdWorkspace.IssueRealizeObservedSources
+            { HouseholdWorkspace.issueRealizeObservedActualPath =
+                householdActualJournalPath paths
+            , HouseholdWorkspace.issueRealizeObservedActualJournal =
+                householdStateActualJournal state
+            , HouseholdWorkspace.issueRealizeObservedActualSource =
+                householdWriteSnapshotActualSource snapshot
+            , HouseholdWorkspace.issueRealizeObservedPlanJournal =
+                householdStatePlanJournal state
+            , HouseholdWorkspace.issueRealizeObservedRelationPath =
+                householdIssueRelationsPath paths
+            , HouseholdWorkspace.issueRealizeObservedRelationExists = relationExists
+            , HouseholdWorkspace.issueRealizeObservedRelationSource = relationSource
+            , HouseholdWorkspace.issueRealizeObservedIssuesPath =
+                householdIssuesPath paths
+            , HouseholdWorkspace.issueRealizeObservedIssuesSource =
+                householdWriteSnapshotIssuesSource snapshot
+            }
+      writeResult <- HouseholdWorkspace.publishIssueRealizeFromObservedSources
+        (admitIssueRealizeAfterWrite root (householdIssueRelationsPath paths))
+        observed
+        intent
+      case writeResult of
+        Right () -> TIO.putStrLn "Successfully realized Issue as Actual."
+        Left writeError -> die ("Write failed: " <> show writeError)
+
+admitIssueRealizeAfterWrite
+  :: HouseholdRoot
+  -> FilePath
+  -> IO (Either String ())
+admitIssueRealizeAfterWrite root relationPath = do
+  householdResult <- loadCanonicalHousehold root
+  case householdResult of
+    Left errors -> pure
+      (Left ("Household post-admission failed: " <> show errors))
+    Right state -> do
+      relationRead <- tryIOError (TIO.readFile relationPath)
+      case relationRead of
+        Left errorValue -> pure
+          (Left ("Relation post-admission read failed: " <> show errorValue))
+        Right relationSource -> pure $ case HouseholdWorkspace.admitIssueRelationSource
+            (householdStateActualJournal state)
+            (householdStatePlanJournal state)
+            (householdStateIssues state)
+            relationSource of
+          Left errors -> Left ("Relation post-admission failed: " <> show errors)
+          Right _ -> Right ()
 
 executePlanFinishPreview
   :: FilePath

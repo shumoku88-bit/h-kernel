@@ -26,6 +26,10 @@ issues.tsv
 
 `HKernel.Application.Config.householdSourcePaths` が一つの `HouseholdRoot` からbasename解決を所有する。CLI、TUI、Report、editorは別のcanonical basenameやfallback sourceを定義しない。
 
+`issue-relations.tsv` は、この八つの `HouseholdState` admission sourceとは別に、同じroot配下でexplicit Issue provenanceを記録するroot-relative sidecar coordinateとして登録する。Issue relation workflowだけがこのpathを解決し、missing sourceは「relation historyがまだ存在しない」という明示的な初期状態として扱う。これはlegacy fallback、九番目の暗黙canonical source、または別Household rootではない。
+
+Issue relation sourceを `HouseholdState` / `HouseholdWriteSnapshot` の通常八source observationへ昇格するまでは、Reportや他domain readerがこのsidecarを暗黙に読むことはしない。Relation publicationは既存canonical Actual / Issue sourceとこの明示的provenance sourceを協調して扱い、cross-source reference admissionを別途通す。
+
 追加の `data/` / `config/` directoryやengine別canonical copyをroot内に作らない。欠落sourceをlegacy TSV、sample、current configurationから補わない。
 
 ## 3. Current admission inventory
@@ -44,6 +48,8 @@ issues.tsv
 `actual.journal`、`plan.journal`、`budget.journal`のroot textは`HKernel.Loader`で一度観察し、named domain admissionがその結果を使う。同じroot sourceをfeatureごとに再parseして別authorityを作らない。
 
 Included Account declarations may contribute to a resolved Journal. Included Transactions must not masquerade as root-local Actual、Plan、Budget evidence.
+
+`issue-relations.tsv` のsource-local syntaxは `HKernel.Household.Issue.Relation.TSV`、cross-source Issue / Plan / source-durable Actual reference admissionは `HKernel.HouseholdIssue` が所有する。Daily-use `IssueRealizedAs` candidate / publication orchestrationは `HKernel.Editor.IssueRealize` が所有する。
 
 ## 4. Source meaning
 
@@ -88,6 +94,8 @@ HouseholdRoot
 - `issues.tsv`
 
 This is one coordinated Household observation boundary, not a generic repository/session abstraction.
+
+`issue-relations.tsv` is not currently a `HouseholdState` field or ordinary `HouseholdWriteSnapshot` byte coordinate. `IssueRealize` reads its explicit root-relative coordinate together with the admitted Household observation, validates the complete relation candidate against admitted Issue / Plan / durable Actual identities, and gives its own three-source publication intent an exact existence+bytes fence. That bounded sidecar handling must not be generalized into hidden reader fallback.
 
 ## 6. Envelope lifetime law
 

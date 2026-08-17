@@ -116,6 +116,7 @@ library h-kernel-editor
                     , HKernel.Editor.Interaction.PlanCompleteAdvance
                     , HKernel.Editor.HouseholdWorkspace
                     , HKernel.Editor.IssueAppend
+                    , HKernel.Editor.IssueRealize
                     , HKernel.Editor.PlanLifecycle
                     , HKernel.Editor.PlanCompleteAdvance
                     , HKernel.Editor.TransactionBlock
@@ -620,6 +621,30 @@ test-suite h-kernel-editor-tui-actual-add-test
                     , h-kernel
                     , h-kernel-editor
                     , text
+
+test-suite h-kernel-editor-tui-issue-realize-test
+    import:           test-defaults
+    type:             exitcode-stdio-1.0
+    main-is:          EditorTUIIssueRealizeSpec.hs
+    other-modules:    HKernel.Editor.TUI.Actual
+                    , HKernel.Editor.TUI.Model
+    build-depends:    base >= 4.14 && < 5
+                    , containers >= 0.6 && < 0.8
+                    , directory >= 1.3 && < 1.4
+                    , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
+                    , filepath >= 1.4 && < 1.6
+                    , brick >= 1.0
+                    , vty >= 6.0
+                    , vty-crossplatform
+                    , microlens
+                    , microlens-mtl
+                    , vector
+                    , h-kernel
+                    , h-kernel-household
+                    , h-kernel-household-application
+                    , h-kernel-editor
+    hs-source-dirs:   tests editor-tui-app
 
 test-suite h-kernel-canonical-household-test
     import:           test-defaults
