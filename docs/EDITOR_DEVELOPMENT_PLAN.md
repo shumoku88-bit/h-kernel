@@ -67,7 +67,7 @@ Issue relationのtyped coreは既に存在する。
 
 - `IssueRelationEvent`は独自のdurable event identityを持つ
 - Plan targetとdurable Actual targetをtyped constructorで区別する
-- `planned-as`、`planning-withdrawn`、`realized-as`、`funded-by`等の意味を区別する
+- `concerns-plan`、`planned-as`、`planning-withdrawn`、`realized-as`、`funded-by`の意味を区別する
 - cross-source target existenceは`admitIssueRelationReferences`がfail closedで検証する
 - `HKernel.Household.Issue.Relation.TSV`がsix-coordinate source-local syntaxを所有する
 
