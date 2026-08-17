@@ -25,7 +25,7 @@ import Brick
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import qualified Graphics.Vty as V
-import Lens.Micro (Traversal')
+import Lens.Micro (Traversal', singular)
 
 import Data.Text (Text)
 
@@ -134,14 +134,14 @@ handleFlowEvent context event = do
   state <- get
   case state of
     BudgetFlow _ -> do
-      action <- zoom zoomBudgetFlow (Budget.handleFlowEvent context event)
+      action <- zoom (singular zoomBudgetFlow) (Budget.handleFlowEvent context event)
       case action of
         Budget.FlowMaintain -> pure ()
         Budget.FlowReturn -> put ReturnToWorkspace
         Budget.FlowQuit -> put QuitRequested
         Budget.FlowPublish preview -> put (PublishRequested (PublishBudget preview))
     AccountFlow _ -> do
-      action <- zoom zoomAccountFlow (Accounts.handleFlowEvent context event)
+      action <- zoom (singular zoomAccountFlow) (Accounts.handleFlowEvent context event)
       case action of
         Accounts.FlowMaintain -> pure ()
         Accounts.FlowReturn -> put ReturnToWorkspace
@@ -149,7 +149,7 @@ handleFlowEvent context event = do
         Accounts.FlowPublish source preview ->
           put (PublishRequested (PublishAccount source preview))
     IssueFlow _ -> do
-      action <- zoom zoomIssueFlow (Issues.handleFlowEvent context event)
+      action <- zoom (singular zoomIssueFlow) (Issues.handleFlowEvent context event)
       case action of
         Issues.FlowMaintain -> pure ()
         Issues.FlowReturn -> put ReturnToWorkspace
