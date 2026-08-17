@@ -24,14 +24,14 @@ main = do
 
 testSharedRecordFlow :: Bool
 testSharedRecordFlow =
-  isRecordInput (startRecord entryDay :: State ())
+  isRecordFlow (startRecord entryDay :: State ())
     && case openIssue of
       Nothing -> False
-      Just issue -> maybe False isRecordInput
+      Just issue -> maybe False isRecordFlow
         (startIssueRealize entryDay issue :: Maybe (State ()))
   where
-    isRecordInput state = case state of
-      RecordInput _ -> True
+    isRecordFlow state = case state of
+      RecordFlow _ -> True
       _ -> False
 
 testClosedIssueCannotStart :: Bool
