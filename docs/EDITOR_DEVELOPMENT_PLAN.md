@@ -78,7 +78,7 @@ Issue relationのtyped coreと最初の実用workflowが存在する。
 
 `issue-relations.tsv` は同じHousehold root配下のexplicit provenance sidecar coordinateとして解決するが、current eight-source `HouseholdState` / ordinary `HouseholdWriteSnapshot`へはまだ昇格していない。この境界は[`HOUSEHOLD_CANONICAL_SOURCE.md`](HOUSEHOLD_CANONICAL_SOURCE.md)が所有する。
 
-最初のdeliveryはsource pathを人間へ分散させないHousehold-root based CLIからこのownerを呼ぶ。TUIへ接続するときは、existing Record flowが持つtyped `ActualEditIntent`を最後まで保持して同じownerへ渡す。rendered preview Text、amount、date、memo、Account resemblanceからActual intentやrelation targetを再構築してはならない。
+最初のdeliveryはsource pathを人間へ分散させないHousehold-root based CLIからこのownerを呼ぶ。TUIのselected Issue -> Realize pathもexisting Record flowのtyped intentを保持したまま同じownerへ渡す。rendered preview Text、amount、date、memo、Account resemblanceからActual intentやrelation targetを再構築してはならない。
 
 Budget movementは現在stable movement identityを持たないため、date / memo / amount / row positionの近似一致でrelation targetを捏造しない。relation eventが存在することとIssue lifecycleは別であり、universal relation graphやgeneral event frameworkへ拡張しない。
 
@@ -95,11 +95,10 @@ CLIを整理する場合はcurrent usageの具体的摩擦から始め、見た�
 優先順位は実際のHousehold利用で観察した頻度と摩擦から決める。
 
 1. Home / TUIを日常利用し、視認性、repeated typing、不要なmodal traversal、canonical-string recallを減らす
-2. TUIのselected Issue -> Realize pathではexisting Recordのtyped intentを保持して`IssueRealize` ownerへ渡し、rendered Textから意味を再構築しない
-3. Record、Plan completion / successor、Budget movement、Issue maintenanceをvisible objectから短く完了できる状態を保つ
-4. Issue relationの次のmeaningは具体的なHousehold workflowとdurable target identityが揃った場合だけ追加する
-5. Editor CLIは具体的なoperational frictionが確認された場合だけ整理する
-6. performanceは実測で問題になったruntime pathだけ改善する
+2. Record、Plan completion / successor、Budget movement、Issue maintenanceをvisible objectから短く完了できる状態を保つ
+3. Issue relationの次のmeaningは具体的なHousehold workflowとdurable target identityが揃った場合だけ追加する
+4. Editor CLIは具体的なoperational frictionが確認された場合だけ整理する
+5. performanceは実測で問題になったruntime pathだけ改善する
 
 このroadmapの列挙を実装済み状態のinventoryとして使わない。変更を始める前にcurrent main、owner module、testを確認する。
 

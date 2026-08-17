@@ -5,7 +5,9 @@
 -- This module owns no Household facts. It renders pure projections from the
 -- shared editor workspace boundary onto a month matrix and selected-day pane.
 module HKernel.Editor.TUI.Home
-  ( draw
+  ( HomeAction(..)
+  , draw
+  , handleLocalEvent
   ) where
 
 import Brick
@@ -15,6 +17,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Time.Calendar
   ( Day
+  , addDays
   , fromGregorian
   , gregorianMonthLength
   , toGregorian
@@ -32,6 +35,7 @@ import HKernel.Editor.HouseholdWorkspace
   )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
+  , AppEvent
   , Name(..)
   , contextHouseholdState
   )
@@ -71,6 +75,43 @@ import HKernel.Report.Presentation
   , presentationCalendarMarkers
   , selectCalendarMarker
   )
+
+data HomeAction
+  = HomeMaintain
+  | HomeSelectDay Day
+  | HomeRecord Day
+  deriving (Eq, Show)
+
+-- | Handle only interaction local to the calendar surface. Application-shell
+-- navigation (Home/section tabs, quit, section-number keys) remains in Main.
+handleLocalEvent
+  :: Day
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppContext HomeAction
+handleLocalEvent selectedDay event = case event of
+  MouseDown (CalendarDay day) V.BLeft _ _ -> selectDay day
+  MouseDown HomeDayViewport V.BScrollUp _ _ -> do
+    vScrollBy (viewportScroll HomeDayViewport) (-3)
+    pure HomeMaintain
+  MouseDown HomeDayViewport V.BScrollDown _ _ -> do
+    vScrollBy (viewportScroll HomeDayViewport) 3
+    pure HomeMaintain
+  VtyEvent (V.EvKey V.KLeft []) -> selectDay (addDays (-1) selectedDay)
+  VtyEvent (V.EvKey V.KRight []) -> selectDay (addDays 1 selectedDay)
+  VtyEvent (V.EvKey V.KUp []) -> selectDay (addDays (-7) selectedDay)
+  VtyEvent (V.EvKey V.KDown []) -> selectDay (addDays 7 selectedDay)
+  VtyEvent (V.EvKey (V.KChar 't') []) -> today
+  VtyEvent (V.EvKey (V.KChar 'T') []) -> today
+  VtyEvent (V.EvKey (V.KChar 'r') []) -> pure (HomeRecord selectedDay)
+  VtyEvent (V.EvKey (V.KChar 'R') []) -> pure (HomeRecord selectedDay)
+  _ -> pure HomeMaintain
+  where
+    selectDay day = do
+      vScrollToBeginning (viewportScroll HomeDayViewport)
+      pure (HomeSelectDay day)
+    today = do
+      context <- get
+      selectDay (contextObservationDay context)
 
 -- | Draw a fixed-width month matrix beside the selected day's admitted facts.
 draw :: AppContext -> Day -> Widget Name

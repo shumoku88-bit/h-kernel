@@ -8,21 +8,17 @@ import Brick.Widgets.Center
 import qualified Brick.Widgets.List as L
 import qualified Graphics.Vty as V
 import Graphics.Vty.CrossPlatform (mkVty)
-import Lens.Micro (Lens', Traversal')
+import Lens.Micro (Lens', Traversal', singular)
 import Lens.Micro.Mtl ()
 
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Set as Set
-import qualified Data.Text as T
-import Data.Time.Calendar (Day, addDays)
+import Data.Time.Calendar (Day)
 import Data.Time.LocalTime (getZonedTime, localDay, zonedTimeToLocalTime)
-import qualified Data.Vector as Vec
 import System.Directory (doesDirectoryExist)
 import System.Environment (getArgs)
 import System.Exit (die)
 import System.FilePath (takeDirectory)
 
-import HKernel.Account (accountName)
 import HKernel.Application.Config (mkHouseholdRoot)
 import qualified HKernel.Editor.TUI.Actual as Actual
 import qualified HKernel.Editor.TUI.Home as Home
@@ -32,27 +28,12 @@ import HKernel.Editor.TUI.Model
   , AppEvent
   , HouseholdSection(..)
   , Name(..)
-  , ReportChoice
-  , contextHouseholdState
   , makeWorkspaceContext
   )
 import qualified HKernel.Editor.TUI.Plan as Plan
 import qualified HKernel.Editor.TUI.Report as Report
-import HKernel.Household.Application
-  ( HouseholdState(..)
-  , loadCanonicalHouseholdWriteSnapshot
-  )
-import HKernel.Household.Policy
-  ( householdAllocationEnvelopes
-  , householdCycleIncomeAccount
-  , householdEnvelopeOrder
-  , householdPolicyCycle
-  , householdUnassignedBudgetAccounts
-  )
-import HKernel.Report.Config
-  ( reportConfigurationPlan
-  , reportConfigurationPresentation
-  )
+import qualified HKernel.Editor.TUI.Settings as Settings
+import HKernel.Household.Application (loadCanonicalHouseholdWriteSnapshot)
 
 data ActualReturn
   = ActualReturnWorkspace
@@ -64,7 +45,7 @@ data UIState
   | ActualFlow ActualReturn (Actual.State AppEvent)
   | PlanFlow (Plan.State AppEvent)
   | MaintenanceFlow (Maintenance.State AppEvent)
-  | ReportPicker (L.List Name ReportChoice)
+  | ReportPicker Report.PickerState
   | ShowWorkspaceReloadFailure
 
 data AppWrapper = AppWrapper AppContext UIState
@@ -84,7 +65,7 @@ zoomMaintenanceFlow f (AppWrapper context (MaintenanceFlow state)) =
   (\updated -> AppWrapper context (MaintenanceFlow updated)) <$> f state
 zoomMaintenanceFlow _ wrapper = pure wrapper
 
-zoomReportPicker :: Traversal' AppWrapper (L.List Name ReportChoice)
+zoomReportPicker :: Traversal' AppWrapper Report.PickerState
 zoomReportPicker f (AppWrapper context (ReportPicker choices)) =
   (\updated -> AppWrapper context (ReportPicker updated)) <$> f choices
 zoomReportPicker _ wrapper = pure wrapper
@@ -163,45 +144,7 @@ drawSectionBody context = case contextCurrentSection context of
   AccountsSection -> Maintenance.drawAccountsWorkspace context
   IssuesSection -> Maintenance.drawIssuesWorkspace context
   ReportsSection -> Report.drawWorkspace context
-  SettingsSection -> drawSettingsView context
-
-drawSettingsView :: AppContext -> Widget Name
-drawSettingsView context =
-  vBox
-    [ borderWithLabel (str "Household Settings & Policy")
-        (vLimit 18
-          (viewport SettingsViewport Vertical
-            (vBox
-              [ str "=== [budget.toml] Envelope Policy ==="
-              , str ("Envelopes count: "
-                  <> show (length (householdEnvelopeOrder
-                    (householdStatePolicy state))))
-              , str " "
-              , str "=== [household.toml] Household Policy ==="
-              , txt ("Income Cycle Account: "
-                  <> accountName (householdCycleIncomeAccount
-                    (householdPolicyCycle (householdStatePolicy state))))
-              , txt ("Allocation Envelopes: "
-                  <> T.pack (show (householdAllocationEnvelopes
-                    (householdStatePolicy state))))
-              , txt ("Unassigned Accounts: "
-                  <> T.intercalate ", "
-                    (map accountName
-                      (Set.toAscList (householdUnassignedBudgetAccounts
-                        (householdStatePolicy state)))))
-              , str " "
-              , str "=== [report.toml] Report Configuration ==="
-              , txt ("Report Plan: "
-                  <> T.pack (show (reportConfigurationPlan
-                    (householdStateReportConfig state))))
-              , txt ("Presentation: "
-                  <> T.pack (show (reportConfigurationPresentation
-                    (householdStateReportConfig state))))
-              ])))
-    , str "[wheel] Scroll   [h] Home   [1-7] Switch section   [q] Quit"
-    ]
-  where
-    state = contextHouseholdState context
+  SettingsSection -> Settings.drawWorkspace context
 
 appEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 appEvent event = do
@@ -223,26 +166,9 @@ handleHomeEvent
 handleHomeEvent context selectedDay event = case event of
   MouseDown HomeTab V.BLeft _ _ -> pure ()
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
-  MouseDown (CalendarDay day) V.BLeft _ _ -> selectDay day
-  MouseDown HomeDayViewport V.BScrollUp _ _ ->
-    vScrollBy (viewportScroll HomeDayViewport) (-3)
-  MouseDown HomeDayViewport V.BScrollDown _ _ ->
-    vScrollBy (viewportScroll HomeDayViewport) 3
   VtyEvent (V.EvKey V.KEsc []) -> halt
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
-  VtyEvent (V.EvKey V.KLeft []) -> selectDay (addDays (-1) selectedDay)
-  VtyEvent (V.EvKey V.KRight []) -> selectDay (addDays 1 selectedDay)
-  VtyEvent (V.EvKey V.KUp []) -> selectDay (addDays (-7) selectedDay)
-  VtyEvent (V.EvKey V.KDown []) -> selectDay (addDays 7 selectedDay)
-  VtyEvent (V.EvKey (V.KChar 't') []) -> selectDay (contextObservationDay context)
-  VtyEvent (V.EvKey (V.KChar 'T') []) -> selectDay (contextObservationDay context)
-  VtyEvent (V.EvKey (V.KChar 'r') []) ->
-    put (AppWrapper context
-      (ActualFlow (ActualReturnHome selectedDay) (Actual.startRecord selectedDay)))
-  VtyEvent (V.EvKey (V.KChar 'R') []) ->
-    put (AppWrapper context
-      (ActualFlow (ActualReturnHome selectedDay) (Actual.startRecord selectedDay)))
   VtyEvent (V.EvKey (V.KChar '1') []) -> switchSection ActualSection
   VtyEvent (V.EvKey (V.KChar '2') []) -> switchSection PlansSection
   VtyEvent (V.EvKey (V.KChar '3') []) -> switchSection BudgetSection
@@ -250,11 +176,15 @@ handleHomeEvent context selectedDay event = case event of
   VtyEvent (V.EvKey (V.KChar '5') []) -> switchSection IssuesSection
   VtyEvent (V.EvKey (V.KChar '6') []) -> switchSection ReportsSection
   VtyEvent (V.EvKey (V.KChar '7') []) -> switchSection SettingsSection
-  _ -> pure ()
+  _ -> do
+    action <- zoom zoomContext (Home.handleLocalEvent selectedDay event)
+    AppWrapper currentContext _ <- get
+    case action of
+      Home.HomeMaintain -> pure ()
+      Home.HomeSelectDay day -> put (AppWrapper currentContext (Home day))
+      Home.HomeRecord day -> put (AppWrapper currentContext
+        (ActualFlow (ActualReturnHome day) (Actual.startRecord day)))
   where
-    selectDay day = do
-      put (AppWrapper context (Home day))
-      vScrollToBeginning (viewportScroll HomeDayViewport)
     switchSection section =
       put (AppWrapper (context { contextCurrentSection = section }) Workspace)
 
@@ -262,10 +192,6 @@ handleWorkspaceEvent :: AppContext -> BrickEvent Name AppEvent -> EventM Name Ap
 handleWorkspaceEvent context event = case event of
   MouseDown HomeTab V.BLeft _ _ -> openHome
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
-  MouseDown SettingsViewport V.BScrollUp _ _
-    | inSettings -> vScrollBy (viewportScroll SettingsViewport) (-3)
-  MouseDown SettingsViewport V.BScrollDown _ _
-    | inSettings -> vScrollBy (viewportScroll SettingsViewport) 3
   VtyEvent (V.EvKey V.KEsc []) -> halt
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
@@ -334,43 +260,24 @@ handleWorkspaceEvent context event = case event of
       action <- zoom zoomContext (Report.handleWorkspaceEvent event)
       case action of
         Report.MaintainContext -> pure ()
-        Report.OpenPicker -> openReportPicker
-    SettingsSection -> pure ()
+        Report.OpenPicker ->
+          put (AppWrapper context
+            (ReportPicker (Report.openPicker (contextSelectedReport context))))
+    SettingsSection -> Settings.handleWorkspaceEvent event
   where
-    inSettings = contextCurrentSection context == SettingsSection
     openHome = put (AppWrapper context (Home (contextObservationDay context)))
     switchSection :: HouseholdSection -> EventM Name AppWrapper ()
     switchSection section =
       put (AppWrapper (context { contextCurrentSection = section }) Workspace)
-    openReportPicker =
-      let picker = L.list ReportPickerList (Vec.fromList Report.reportChoices) 1
-          selectedIndex = Report.reportChoiceIndex (contextSelectedReport context)
-      in put (AppWrapper context (ReportPicker (L.listMoveTo selectedIndex picker)))
 
 handleReportPicker :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
-handleReportPicker context event = case event of
-  MouseDown ReportPickerList V.BScrollUp _ _ ->
-    zoom zoomReportPicker (L.handleListEvent (V.EvKey V.KUp []))
-  MouseDown ReportPickerList V.BScrollDown _ _ ->
-    zoom zoomReportPicker (L.handleListEvent (V.EvKey V.KDown []))
-  MouseDown ReportPickerList V.BLeft _ (Location (_, row)) ->
-    case Report.reportChoiceAt row of
-      Nothing -> pure ()
-      Just choice -> openChoice choice
-  VtyEvent (V.EvKey V.KEsc []) -> put (AppWrapper context Workspace)
-  VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
-  VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
-  VtyEvent (V.EvKey V.KEnter []) -> do
-    AppWrapper _ state <- get
-    case state of
-      ReportPicker choices -> case L.listSelectedElement choices of
-        Nothing -> put (AppWrapper context Workspace)
-        Just (_, choice) -> openChoice choice
-      _ -> pure ()
-  VtyEvent vtyEvent -> zoom zoomReportPicker (L.handleListEventVi L.handleListEvent vtyEvent)
-  _ -> pure ()
-  where
-    openChoice choice = do
+handleReportPicker context event = do
+  action <- zoom (singular zoomReportPicker) (Report.handlePickerEvent event)
+  case action of
+    Report.PickerMaintain -> pure ()
+    Report.PickerBack -> put (AppWrapper context Workspace)
+    Report.PickerQuit -> halt
+    Report.PickerOpen choice -> do
       put (AppWrapper (context { contextSelectedReport = choice }) Workspace)
       let reportsViewport = viewportScroll ReportsViewport
       vScrollToBeginning reportsViewport
@@ -486,7 +393,7 @@ main = do
           ("Failed to load canonical Household:\n"
             <> unlines (map show (NonEmpty.toList errs)))
         Right value -> pure value
-      let context = makeWorkspaceContext False today snapshot
+      let context = makeWorkspaceContext today snapshot
           initialState = AppWrapper context (Home today)
           buildVty = do
             vty <- mkVty V.defaultConfig
