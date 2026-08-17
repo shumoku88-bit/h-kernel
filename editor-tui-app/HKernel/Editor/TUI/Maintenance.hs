@@ -197,7 +197,11 @@ handleIssuesWorkspaceEvent event = do
     Issues.WorkspaceMaintain -> IssuesActionMaintain
     Issues.WorkspaceStartAdd -> IssuesActionStartAdd
     Issues.WorkspaceStartDueUpdate flow -> IssuesActionStartDueUpdate (IssueFlow flow)
+    Issues.WorkspaceDueUpdateUnavailable message ->
+      IssuesActionStartDueUpdate (WriteOutcome message)
     Issues.WorkspaceStartClose flow -> IssuesActionStartClose (IssueFlow flow)
+    Issues.WorkspaceCloseUnavailable message ->
+      IssuesActionStartClose (WriteOutcome message)
     Issues.WorkspaceStartRealize issue -> IssuesActionStartRealize issue
 
 publishCandidate :: AppContext -> PublishRequest -> IO PublishResult
