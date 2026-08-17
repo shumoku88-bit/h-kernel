@@ -1,7 +1,13 @@
--- | Pure presentation projections shared by Household workspace deliveries.
--- Canonical source order remains owned by the admitted source models.
+-- | Shared Household workspace projections and cross-domain operations.
+-- Canonical source order remains owned by the admitted source models. Operations
+-- exposed here retain their own domain owners and do not make presentation state
+-- semantic authority.
 module HKernel.Editor.HouseholdWorkspace
   ( IssueWorkspaceFilter(..)
+  , IssueRealizeIntent(..)
+  , IssueRealizeError(..)
+  , IssueRealizePreview(..)
+  , prepareIssueRealize
   , homeActualTransactionsOn
   , homeCycleEndDay
   , homeIssuesDueOn
@@ -29,6 +35,12 @@ import HKernel.Actual.Journal
   , actualJournalTransactionEntries
   , actualJournalValue
   , actualTransactionEntryTransaction
+  )
+import HKernel.Editor.IssueRealize
+  ( IssueRealizeError(..)
+  , IssueRealizeIntent(..)
+  , IssueRealizePreview(..)
+  , prepareIssueRealize
   )
 import HKernel.Editor.PlanLifecycle (planInactiveIdsAt)
 import HKernel.Household.Report (HouseholdReportSurface(..))
