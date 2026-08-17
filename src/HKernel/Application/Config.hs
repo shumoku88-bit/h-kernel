@@ -54,6 +54,7 @@ data HouseholdSourcePaths = HouseholdSourcePaths
   , householdPolicyConfigPath    :: FilePath
   , householdReportConfigPath    :: FilePath
   , householdIssuesPath          :: FilePath
+  , householdIssueRelationsPath  :: FilePath
   } deriving (Eq, Show)
 
 householdSourcePaths :: HouseholdRoot -> HouseholdSourcePaths
@@ -66,6 +67,7 @@ householdSourcePaths root = HouseholdSourcePaths
   , householdPolicyConfigPath = at "household.toml"
   , householdReportConfigPath = at "report.toml"
   , householdIssuesPath = at "issues.tsv"
+  , householdIssueRelationsPath = at "issue-relations.tsv"
   }
   where
     at basename = householdRootPath root </> basename
