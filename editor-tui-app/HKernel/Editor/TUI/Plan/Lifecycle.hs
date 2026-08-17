@@ -333,11 +333,11 @@ handleFlowEvent context event = do
   case state of
     AddInput form -> handleAddInput context form event
     AddPreview result form ->
-      handleSimplePreview (AddInput form) FlowPublishAdd result event
+      handleSimplePreview (Just (AddInput form)) FlowPublishAdd result event
     EditInput identified form -> handleEditInput context identified form event
     EditPreview identified result form ->
       handleSimplePreview
-        (EditInput identified form) FlowPublishEdit result event
+        (Just (EditInput identified form)) FlowPublishEdit result event
     CancelPreview _ _ result ->
       handleSimplePreview Nothing FlowPublishCancel result event
     ReplaceInput retiredOn identified form ->
