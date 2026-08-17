@@ -17,13 +17,14 @@ import HKernel.Editor.HouseholdWorkspace
   , IssueRealizeError(..)
   , IssueRealizeIntent(..)
   , IssueRealizePreview(..)
+  , IssueRealizeObservedSources(..)
+  , IssueRealizeOperationError(..)
   , IssueRealizeWriteError(..)
-  , IssueRealizeWriteIntent(..)
   , admitIssueRelationSource
   , homeIssuesDueOn
   , issuesForWorkspace
   , prepareIssueRealize
-  , publishIssueRealize
+  , publishIssueRealizeFromObservedSources
   , workspaceIssueCounts
   )
 import HKernel.Editor.SourcePublication
@@ -364,9 +365,10 @@ characterizeIssueRealizationPublication = case preparedRealization of
     cleanupRealizationFiles
     TIO.writeFile realizationActualPath realizationActualSource
     TIO.writeFile realizationIssuesPath realizationIssuesSource
-    success <- publishIssueRealize
+    success <- publishIssueRealizeFromObservedSources
       (pure (Right ()) :: IO (Either String ()))
-      (realizationWriteIntent preview)
+      realizationObservedSources
+      realizationIntent
     actualAfter <- TIO.readFile realizationActualPath
     relationAfter <- TIO.readFile realizationRelationPath
     issuesAfter <- TIO.readFile realizationIssuesPath
@@ -381,14 +383,16 @@ characterizeIssueRealizationPublication = case preparedRealization of
     cleanupRealizationFiles
     TIO.writeFile realizationActualPath realizationActualSource
     TIO.writeFile realizationIssuesPath realizationIssuesSource
-    failed <- publishIssueRealize
+    failed <- publishIssueRealizeFromObservedSources
       (pure (Left "synthetic post-admission failure"))
-      (realizationWriteIntent preview)
+      realizationObservedSources
+      realizationIntent
     actualRestored <- TIO.readFile realizationActualPath
     issuesRestored <- TIO.readFile realizationIssuesPath
     relationRead <- tryIOError (TIO.readFile realizationRelationPath)
     let safeFailure = case failed of
-          Left (IssueRealizePostAdmissionFailed _ actualSafe relationSafe issuesSafe) ->
+          Left (IssueRealizePublicationFailed
+              (IssueRealizePostAdmissionFailed _ actualSafe relationSafe issuesSafe)) ->
             actualSafe && relationSafe && issuesSafe
           _ -> False
     assertEqual "post-admission failure restores Actual and Issue and removes newly-created relation source"
@@ -459,18 +463,17 @@ realizationActualPath = "tests/fixtures/editor/issue-realize-actual.journal"
 realizationRelationPath = "tests/fixtures/editor/issue-realize-relations.tsv"
 realizationIssuesPath = "tests/fixtures/editor/issue-realize-issues.tsv"
 
-realizationWriteIntent :: IssueRealizePreview -> IssueRealizeWriteIntent
-realizationWriteIntent preview = IssueRealizeWriteIntent
-  { writeRealizeActualPath = realizationActualPath
-  , writeRealizeExpectedActual = realizationActualSource
-  , writeRealizeCandidateActual = realizedActualCandidateSource preview
-  , writeRealizeRelationPath = realizationRelationPath
-  , writeRealizeExpectedRelationExists = False
-  , writeRealizeExpectedRelation = ""
-  , writeRealizeCandidateRelation = realizedRelationCandidateSource preview
-  , writeRealizeIssuesPath = realizationIssuesPath
-  , writeRealizeExpectedIssues = realizationIssuesSource
-  , writeRealizeCandidateIssues = realizedIssuesCandidateSource preview
+realizationObservedSources :: IssueRealizeObservedSources
+realizationObservedSources = IssueRealizeObservedSources
+  { issueRealizeObservedActualPath = realizationActualPath
+  , issueRealizeObservedActualJournal = realizationActualJournal
+  , issueRealizeObservedActualSource = realizationActualSource
+  , issueRealizeObservedPlanJournal = realizationPlanJournal
+  , issueRealizeObservedRelationPath = realizationRelationPath
+  , issueRealizeObservedRelationExists = False
+  , issueRealizeObservedRelationSource = ""
+  , issueRealizeObservedIssuesPath = realizationIssuesPath
+  , issueRealizeObservedIssuesSource = realizationIssuesSource
   }
 
 cleanupRealizationFiles :: IO ()

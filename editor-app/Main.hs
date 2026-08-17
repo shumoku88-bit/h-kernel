@@ -213,7 +213,7 @@ executeCommand commitMode command = case command of
         intent of
       Left errors -> validationFailed errors
       Right preview -> executeIssueRealizePreview
-        root paths snapshot relationExists relationSource preview commitMode
+        root paths snapshot relationExists relationSource intent preview commitMode
 
   PlanAddCmd planFile actualFile intent -> do
     planSource <- TIO.readFile planFile
@@ -323,10 +323,11 @@ executeIssueRealizePreview
   -> HouseholdWriteSnapshot
   -> Bool
   -> Text
+  -> HouseholdWorkspace.IssueRealizeIntent
   -> HouseholdWorkspace.IssueRealizePreview
   -> CommitMode
   -> IO ()
-executeIssueRealizePreview root paths snapshot relationExists relationSource preview commitMode = do
+executeIssueRealizePreview root paths snapshot relationExists relationSource intent preview commitMode = do
   TIO.putStrLn "--- Actual ---"
   putPreviewBlock (HouseholdWorkspace.realizedActualBlock preview)
   TIO.putStrLn "--- Relation --"
@@ -339,26 +340,29 @@ executeIssueRealizePreview root paths snapshot relationExists relationSource pre
       TIO.putStrLn
         "Run with --commit immediately after 'realize' to apply all three changes."
     CommitRequested -> do
-      let writeIntent = HouseholdWorkspace.IssueRealizeWriteIntent
-            { HouseholdWorkspace.writeRealizeActualPath = householdActualJournalPath paths
-            , HouseholdWorkspace.writeRealizeExpectedActual =
+      let state = householdWriteSnapshotState snapshot
+          observed = HouseholdWorkspace.IssueRealizeObservedSources
+            { HouseholdWorkspace.issueRealizeObservedActualPath =
+                householdActualJournalPath paths
+            , HouseholdWorkspace.issueRealizeObservedActualJournal =
+                householdStateActualJournal state
+            , HouseholdWorkspace.issueRealizeObservedActualSource =
                 householdWriteSnapshotActualSource snapshot
-            , HouseholdWorkspace.writeRealizeCandidateActual =
-                HouseholdWorkspace.realizedActualCandidateSource preview
-            , HouseholdWorkspace.writeRealizeRelationPath = householdIssueRelationsPath paths
-            , HouseholdWorkspace.writeRealizeExpectedRelationExists = relationExists
-            , HouseholdWorkspace.writeRealizeExpectedRelation = relationSource
-            , HouseholdWorkspace.writeRealizeCandidateRelation =
-                HouseholdWorkspace.realizedRelationCandidateSource preview
-            , HouseholdWorkspace.writeRealizeIssuesPath = householdIssuesPath paths
-            , HouseholdWorkspace.writeRealizeExpectedIssues =
+            , HouseholdWorkspace.issueRealizeObservedPlanJournal =
+                householdStatePlanJournal state
+            , HouseholdWorkspace.issueRealizeObservedRelationPath =
+                householdIssueRelationsPath paths
+            , HouseholdWorkspace.issueRealizeObservedRelationExists = relationExists
+            , HouseholdWorkspace.issueRealizeObservedRelationSource = relationSource
+            , HouseholdWorkspace.issueRealizeObservedIssuesPath =
+                householdIssuesPath paths
+            , HouseholdWorkspace.issueRealizeObservedIssuesSource =
                 householdWriteSnapshotIssuesSource snapshot
-            , HouseholdWorkspace.writeRealizeCandidateIssues =
-                HouseholdWorkspace.realizedIssuesCandidateSource preview
             }
-      writeResult <- HouseholdWorkspace.publishIssueRealize
+      writeResult <- HouseholdWorkspace.publishIssueRealizeFromObservedSources
         (admitIssueRealizeAfterWrite root (householdIssueRelationsPath paths))
-        writeIntent
+        observed
+        intent
       case writeResult of
         Right () -> TIO.putStrLn "Successfully realized Issue as Actual."
         Left writeError -> die ("Write failed: " <> show writeError)

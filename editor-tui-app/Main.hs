@@ -326,9 +326,10 @@ handleWorkspaceEvent context event = case event of
         Maintenance.IssuesActionStartClose flow ->
           put (AppWrapper currentContext (MaintenanceFlow flow))
         Maintenance.IssuesActionStartRealize issue ->
-          put (AppWrapper currentContext
-            (ActualFlow ActualReturnWorkspace
-              (Actual.startIssueRealize (contextEntryDay currentContext) issue)))
+          case Actual.startIssueRealize (contextEntryDay currentContext) issue of
+            Nothing -> pure ()
+            Just flow -> put (AppWrapper currentContext
+              (ActualFlow ActualReturnWorkspace flow))
     ReportsSection -> do
       action <- zoom zoomContext (Report.handleWorkspaceEvent event)
       case action of
@@ -395,8 +396,8 @@ handleActualFlow context returnTarget event = do
         Actual.PublicationFailed outcome ->
           put (AppWrapper context
             (ActualFlow currentReturn (Actual.WriteOutcome outcome)))
-        Actual.RealizationFailed message ->
-          put (AppWrapper context
+        Actual.RealizationFailed freshContext message ->
+          put (AppWrapper freshContext
             (ActualFlow currentReturn (Actual.RealizeWriteOutcome message)))
         Actual.ReloadFailed -> put (AppWrapper context ShowWorkspaceReloadFailure)
     _ -> pure ()

@@ -83,6 +83,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , incomeAccountCandidates
   , initialActualAddInputForDay
   , initialActualMultiAddInputForDay
+  , initialActualMultiAddInputForDescription
   , moveMultiAccountCandidateCursor
   , multiAccountCandidates
   , resetMultiAccountCandidateCursor
@@ -93,12 +94,14 @@ import HKernel.Editor.Interaction.ActualAdd
   , stepAccountCandidate
   )
 import HKernel.Editor.IssueRealize
-  ( IssueRealizeIntent(..)
-  , IssueRealizePreview(..)
-  , IssueRealizeWriteIntent(..)
+  ( IssueRealizeDisplayPreview(..)
+  , IssueRealizeIntent(..)
+  , IssueRealizeObservedSources(..)
+  , IssueRealizeOperationError(..)
+  , IssueRealizeWriteError(..)
   , admitIssueRelationSource
-  , prepareIssueRealize
-  , publishIssueRealize
+  , prepareIssueRealizeDisplayPreview
+  , publishIssueRealizeFromObservedSources
   )
 import HKernel.Editor.SourcePublication (publishActualBlockWithPathAdmission)
 import HKernel.Editor.TUI.Model
@@ -120,7 +123,9 @@ import HKernel.Household.Application
   )
 import HKernel.HouseholdIssue
   ( HouseholdIssue
+  , IssueStatus(..)
   , householdIssueId
+  , householdIssueStatus
   , householdIssueText
   , issueIdText
   )
@@ -166,12 +171,12 @@ data MultiFormState = MultiFormState
 data RecordPreview
   = RecordActualPreview ActualMultiAddPreview
   | RecordIssueRealizeRejected Text
-  | RecordIssueRealizeReady IssueRealizePreview IssueRealizeWriteIntent
+  | RecordIssueRealizeReady IssueRealizeDisplayPreview IssueRealizeIntent
   deriving (Eq, Show)
 
 data PublishRequest
   = PublishActual Day Text
-  | PublishIssueRealize Day IssueRealizeWriteIntent
+  | PublishIssueRealize Day IssueRealizeIntent
 
 data DailyEntryKind
   = DailyExpense
@@ -195,7 +200,7 @@ data State event
 data PublishResult
   = Published AppContext
   | PublicationFailed ActualAddWriteOutcome
-  | RealizationFailed Text
+  | RealizationFailed AppContext Text
   | ReloadFailed
 
 startDaily :: Day -> State event
@@ -211,9 +216,11 @@ startRecord :: Day -> State event
 startRecord day =
   RecordInput (mkMultiForm (initialMultiFormState OrdinaryRecord day))
 
-startIssueRealize :: Day -> HouseholdIssue -> State event
-startIssueRealize day issue =
-  RecordInput (mkMultiForm (initialMultiFormState (RealizeIssue issue) day))
+startIssueRealize :: Day -> HouseholdIssue -> Maybe (State event)
+startIssueRealize day issue
+  | householdIssueStatus issue == Open =
+      Just (RecordInput (mkMultiForm (initialMultiFormState (RealizeIssue issue) day)))
+  | otherwise = Nothing
 
 startSelectedReverse :: AppContext -> State event
 startSelectedReverse context = case selectedWorkspaceReverseTarget context of
@@ -352,11 +359,10 @@ initialMultiFormState purpose day = MultiFormState
   , multiFormDecisionMemoText = ""
   }
   where
-    baseInput = initialActualMultiAddInputForDay day
     input = case purpose of
-      OrdinaryRecord -> baseInput
-      RealizeIssue issue ->
-        baseInput { multiAddDescriptionText = householdIssueText issue }
+      OrdinaryRecord -> initialActualMultiAddInputForDay day
+      RealizeIssue issue -> initialActualMultiAddInputForDescription day
+        (householdIssueText issue)
 
 mkMultiForm :: MultiFormState -> Form MultiFormState event Name
 mkMultiForm state =
@@ -1044,7 +1050,7 @@ prepareIssueRealizeRecordPreview context issue formState = do
               (householdIssueRelationsPath paths)
             case relationResult of
               Left message -> pure (RecordIssueRealizeRejected message)
-              Right (relationExists, relationSource) -> do
+              Right (_, relationSource) -> do
                 let intent = IssueRealizeIntent
                       { realizeIssueId = householdIssueId issue
                       , realizeRecordedOn = contextEntryDay context
@@ -1052,7 +1058,7 @@ prepareIssueRealizeRecordPreview context issue formState = do
                       , realizeActualIntent = actualIntent
                       , realizeDecisionMemo = memo
                       }
-                pure $ case prepareIssueRealize
+                pure $ case prepareIssueRealizeDisplayPreview
                     (householdStateActualJournal state)
                     (householdStatePlanJournal state)
                     (contextSource context)
@@ -1062,29 +1068,17 @@ prepareIssueRealizeRecordPreview context issue formState = do
                   Left errors -> RecordIssueRealizeRejected
                     ("Issue realization rejected: "
                       <> T.pack (show (NonEmpty.toList errors)))
-                  Right preview -> RecordIssueRealizeReady preview
-                    IssueRealizeWriteIntent
-                      { writeRealizeActualPath = householdActualJournalPath paths
-                      , writeRealizeExpectedActual = contextSource context
-                      , writeRealizeCandidateActual = realizedActualCandidateSource preview
-                      , writeRealizeRelationPath = householdIssueRelationsPath paths
-                      , writeRealizeExpectedRelationExists = relationExists
-                      , writeRealizeExpectedRelation = relationSource
-                      , writeRealizeCandidateRelation = realizedRelationCandidateSource preview
-                      , writeRealizeIssuesPath = householdIssuesPath paths
-                      , writeRealizeExpectedIssues = contextIssuesSource context
-                      , writeRealizeCandidateIssues = realizedIssuesCandidateSource preview
-                      }
+                  Right preview -> RecordIssueRealizeReady preview intent
 
 parseRealizeClosedDay :: AppContext -> MultiFormState -> Either Text Day
 parseRealizeClosedDay context state
-  | T.null raw = Right (contextEntryDay context)
+  | T.null closedText = Right (contextEntryDay context)
   | otherwise = maybe
       (Left "Closed must be YYYY-MM-DD.")
       Right
-      (readMaybe (T.unpack raw))
+      (readMaybe (T.unpack closedText))
   where
-    raw = T.strip (multiFormClosedDateText state)
+    closedText = T.strip (multiFormClosedDateText state)
 
 readOptionalRelationSource :: FilePath -> IO (Either Text (Bool, Text))
 readOptionalRelationSource path = do
@@ -1121,8 +1115,8 @@ handleMultiPreview context preview form event = case event of
     publish = case preview of
       RecordActualPreview (ActualMultiAddCandidateReady block) ->
         put (PublishRequested (PublishActual stickyDay block))
-      RecordIssueRealizeReady _ writeIntent ->
-        put (PublishRequested (PublishIssueRealize stickyDay writeIntent))
+      RecordIssueRealizeReady _ intent ->
+        put (PublishRequested (PublishIssueRealize stickyDay intent))
       _ -> pure ()
 
 handleReverseInput
@@ -1170,8 +1164,8 @@ handleReversePreview context targetId transaction preview form event = case even
 publishCandidate :: AppContext -> PublishRequest -> IO PublishResult
 publishCandidate context request = case request of
   PublishActual stickyDay block -> publishActualCandidate stickyDay block
-  PublishIssueRealize stickyDay writeIntent ->
-    publishRealizeCandidate stickyDay writeIntent
+  PublishIssueRealize stickyDay intent ->
+    publishRealizeCandidate stickyDay intent
   where
     state = contextHouseholdState context
     root = householdStateRoot state
@@ -1187,17 +1181,104 @@ publishCandidate context request = case request of
       case writeOutcome of
         ActualAddWriteSucceeded -> reloadAfter stickyContext
         _ -> pure (PublicationFailed writeOutcome)
-    publishRealizeCandidate stickyDay writeIntent = do
-      writeResult <- publishIssueRealize
-        (admitIssueRealizeAfterWrite root (writeRealizeRelationPath writeIntent))
-        writeIntent
-      case writeResult of
-        Right () -> reloadAfter (context { contextEntryDay = stickyDay })
-        Left writeError -> pure
-          (RealizationFailed ("Issue realization write failed: " <> T.pack (show writeError)))
+    publishRealizeCandidate stickyDay intent = do
+      let realizationState = contextHouseholdState context
+          paths = householdStatePaths realizationState
+          relationPath = householdIssueRelationsPath paths
+      relationResult <- readOptionalRelationSource relationPath
+      case relationResult of
+        Left message -> finishRealizationFailure True
+          ("Issue realization source read failed: " <> message)
+        Right (relationExists, relationSource) -> do
+          let observed = IssueRealizeObservedSources
+                { issueRealizeObservedActualPath = householdActualJournalPath paths
+                , issueRealizeObservedActualJournal =
+                    householdStateActualJournal realizationState
+                , issueRealizeObservedActualSource = contextSource context
+                , issueRealizeObservedPlanJournal =
+                    householdStatePlanJournal realizationState
+                , issueRealizeObservedRelationPath = relationPath
+                , issueRealizeObservedRelationExists = relationExists
+                , issueRealizeObservedRelationSource = relationSource
+                , issueRealizeObservedIssuesPath = householdIssuesPath paths
+                , issueRealizeObservedIssuesSource = contextIssuesSource context
+                }
+          writeResult <- publishIssueRealizeFromObservedSources
+            (admitIssueRealizeAfterWrite root relationPath)
+            observed
+            intent
+          case writeResult of
+            Right () -> reloadRealizationAfter
+              (context { contextEntryDay = stickyDay })
+            Left operationError -> finishRealizationFailure
+              (realizationFailureRecoverySafe operationError)
+              ("Issue realization write failed: "
+                <> T.pack (show operationError))
+    finishRealizationFailure recoverySafe message
+      | not recoverySafe = pure ReloadFailed
+      | otherwise = do
+          reloadedContext <- reloadAndAdmitRealization False context
+          pure $ case reloadedContext of
+            Nothing -> ReloadFailed
+            Just freshContext -> RealizationFailed freshContext message
     reloadAfter stickyContext = do
       reloadedContext <- reloadWorkspaceContext stickyContext
       pure (maybe ReloadFailed Published reloadedContext)
+    reloadRealizationAfter stickyContext = do
+      reloadedContext <- reloadAndAdmitRealization True stickyContext
+      pure (maybe ReloadFailed Published reloadedContext)
+
+realizationFailureRecoverySafe
+  :: IssueRealizeOperationError admissionError
+  -> Bool
+realizationFailureRecoverySafe operationError = case operationError of
+  IssueRealizePreparationFailed _ -> True
+  IssueRealizePublicationFailed writeError -> writeFailureRecoverySafe writeError
+
+writeFailureRecoverySafe
+  :: IssueRealizeWriteError admissionError
+  -> Bool
+writeFailureRecoverySafe writeError = case writeError of
+  IssueRealizeActualStale -> True
+  IssueRealizeRelationStale -> True
+  IssueRealizeIssuesStale -> True
+  IssueRealizePostAdmissionFailed _ actualSafe relationSafe issuesSafe ->
+    actualSafe && relationSafe && issuesSafe
+  IssueRealizeFileIOError _ actualSafe relationSafe issuesSafe ->
+    actualSafe && relationSafe && issuesSafe
+
+-- A failed realization never returns the old workspace as authoritative. The
+-- only recoverable failure result carries a newly loaded Household whose
+-- explicit relation sidecar has also been admitted.
+reloadAndAdmitRealization
+  :: Bool
+  -> AppContext
+  -> IO (Maybe AppContext)
+reloadAndAdmitRealization requireRelationSource context = do
+  reloadedContext <- reloadWorkspaceContext context
+  case reloadedContext of
+    Nothing -> pure Nothing
+    Just freshContext -> do
+      let state = contextHouseholdState freshContext
+          relationPath = householdIssueRelationsPath (householdStatePaths state)
+      relationRead <- tryIOError (TIO.readFile relationPath)
+      let relationSource = case relationRead of
+            Right source -> Just (True, source)
+            Left errorValue
+              | isDoesNotExistError errorValue -> Just (False, "")
+              | otherwise -> Nothing
+      pure $ do
+        (relationExists, source) <- relationSource
+        if requireRelationSource && not relationExists
+          then Nothing
+          else pure ()
+        case admitIssueRelationSource
+            (householdStateActualJournal state)
+            (householdStatePlanJournal state)
+            (householdStateIssues state)
+            source of
+          Left _ -> Nothing
+          Right _ -> Just freshContext
 
 admitIssueRealizeAfterWrite
   :: HouseholdRoot
@@ -1382,16 +1463,16 @@ renderRecordPreview preview = case preview of
   RecordActualPreview actualPreview -> renderMultiPreview actualPreview
   RecordIssueRealizeRejected message ->
     withAttr (attrName "error") (txt message)
-  RecordIssueRealizeReady realization _ ->
+  RecordIssueRealizeReady displayPreview _ ->
     withAttr (attrName "success")
       (str "All three candidates admitted. Sources unmodified.")
       <=> str " "
       <=> str "--- Actual ---"
-      <=> txt (realizedActualBlock realization)
+      <=> txt (displayActualBlock displayPreview)
       <=> str "--- Relation ---"
-      <=> txt (realizedRelationBlock realization)
+      <=> txt (displayRelationBlock displayPreview)
       <=> str "--- Issue ---"
-      <=> txt (realizedIssueBlock realization)
+      <=> txt (displayIssueBlock displayPreview)
 
 recordPreviewControls :: RecordPreview -> String
 recordPreviewControls preview = case preview of

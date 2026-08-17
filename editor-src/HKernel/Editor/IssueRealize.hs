@@ -11,13 +11,16 @@ module HKernel.Editor.IssueRealize
   ( IssueRealizeIntent(..)
   , IssueRealizeError(..)
   , IssueRealizePreview(..)
+  , IssueRealizeDisplayPreview(..)
+  , prepareIssueRealizeDisplayPreview
   , IssueRelationHouseholdAdmissionError(..)
   , admitIssueRelationSource
   , prepareIssueRealize
-  , IssueRealizeWriteIntent(..)
+  , IssueRealizeObservedSources(..)
+  , IssueRealizeOperationError(..)
+  , publishIssueRealizeFromObservedSources
+  , publishIssueRealizeFromObservedSourcesUsing
   , IssueRealizeWriteError(..)
-  , publishIssueRealize
-  , publishIssueRealizeUsing
   ) where
 
 import Control.Exception (IOException, catch, onException)
@@ -140,6 +143,15 @@ data IssueRealizePreview = IssueRealizePreview
   , realizedIssuesCandidateSource    :: Text
   } deriving (Eq, Show)
 
+-- | The preview surface a delivery adapter may retain. Complete source
+-- candidates stay inside the realization owner and are rebuilt for
+-- publication from the typed intent and an admitted observation.
+data IssueRealizeDisplayPreview = IssueRealizeDisplayPreview
+  { displayActualBlock   :: Text
+  , displayRelationBlock :: Text
+  , displayIssueBlock    :: Text
+  } deriving (Eq, Show)
+
 -- | Source-level relation admission against one already admitted Household.
 -- Only explicit source-durable Actual @event-id@ coordinates are relation
 -- targets. Plan-derived runtime identities remain intentionally excluded.
@@ -260,6 +272,28 @@ prepareIssueRealize actualJournal planJournal actualSource relationSource issues
     , realizedIssuesCandidateSource = closeCandidateCompleteSource closePreview
     }
 
+-- | Prepare only the displayable realization preview for a delivery adapter.
+-- The complete candidate sources produced during admission are deliberately
+-- projected away before the result crosses into UI state.
+prepareIssueRealizeDisplayPreview
+  :: ActualJournal
+  -> PlanJournal
+  -> Text
+  -> Text
+  -> Text
+  -> IssueRealizeIntent
+  -> Either (NonEmpty IssueRealizeError) IssueRealizeDisplayPreview
+prepareIssueRealizeDisplayPreview actualJournal planJournal actualSource relationSource issuesSource intent =
+  issueRealizeDisplayPreview <$> prepareIssueRealize
+    actualJournal planJournal actualSource relationSource issuesSource intent
+
+issueRealizeDisplayPreview :: IssueRealizePreview -> IssueRealizeDisplayPreview
+issueRealizeDisplayPreview preview = IssueRealizeDisplayPreview
+  { displayActualBlock = realizedActualBlock preview
+  , displayRelationBlock = realizedRelationBlock preview
+  , displayIssueBlock = realizedIssueBlock preview
+  }
+
 findIssue :: IssueId -> [HouseholdIssue] -> Maybe HouseholdIssue
 findIssue target = go
   where
@@ -343,6 +377,27 @@ meaningfulLines =
 
 -- Coordinated publication -----------------------------------------------------
 
+-- | The admitted Household observation needed to prepare one realization.
+-- This is an operation input, not UI state: the realization owner turns it
+-- into its private coordinated write intent immediately before publication.
+data IssueRealizeObservedSources = IssueRealizeObservedSources
+  { issueRealizeObservedActualPath       :: FilePath
+  , issueRealizeObservedActualJournal    :: ActualJournal
+  , issueRealizeObservedActualSource     :: Text
+  , issueRealizeObservedPlanJournal      :: PlanJournal
+  , issueRealizeObservedRelationPath     :: FilePath
+  , issueRealizeObservedRelationExists   :: Bool
+  , issueRealizeObservedRelationSource   :: Text
+  , issueRealizeObservedIssuesPath        :: FilePath
+  , issueRealizeObservedIssuesSource      :: Text
+  }
+  deriving (Eq, Show)
+
+data IssueRealizeOperationError admissionError
+  = IssueRealizePreparationFailed (NonEmpty IssueRealizeError)
+  | IssueRealizePublicationFailed (IssueRealizeWriteError admissionError)
+  deriving (Eq, Show)
+
 -- | Three physical sources whose exact observed bytes and exact candidates form
 -- one coordinated household mutation. The relation source may be absent before
 -- the first realization; absence is an explicit temporal coordinate.
@@ -367,11 +422,56 @@ data IssueRealizeWriteError admissionError
   | IssueRealizeFileIOError String Bool Bool Bool
   deriving (Eq, Show)
 
-publishIssueRealize
+-- | Rebuild and publish a realization from typed user intent and one admitted
+-- observation. Complete source candidates, expected-byte fencing, and the
+-- coordinated writer intent remain inside this owner.
+publishIssueRealizeFromObservedSources
   :: IO (Either admissionError admitted)
+  -> IssueRealizeObservedSources
+  -> IssueRealizeIntent
+  -> IO (Either (IssueRealizeOperationError admissionError) ())
+publishIssueRealizeFromObservedSources =
+  publishIssueRealizeFromObservedSourcesUsing defaultWriterFileSystem
+
+publishIssueRealizeFromObservedSourcesUsing
+  :: WriterFileSystem
+  -> IO (Either admissionError admitted)
+  -> IssueRealizeObservedSources
+  -> IssueRealizeIntent
+  -> IO (Either (IssueRealizeOperationError admissionError) ())
+publishIssueRealizeFromObservedSourcesUsing fileSystem postAdmission observed intent =
+  case prepareIssueRealize
+      (issueRealizeObservedActualJournal observed)
+      (issueRealizeObservedPlanJournal observed)
+      (issueRealizeObservedActualSource observed)
+      (issueRealizeObservedRelationSource observed)
+      (issueRealizeObservedIssuesSource observed)
+      intent of
+    Left errors -> pure (Left (IssueRealizePreparationFailed errors))
+    Right preview ->
+      fmap (either
+        (Left . IssueRealizePublicationFailed)
+        Right)
+        (publishIssueRealizeUsing fileSystem postAdmission
+          (issueRealizeWriteIntent observed preview))
+
+issueRealizeWriteIntent
+  :: IssueRealizeObservedSources
+  -> IssueRealizePreview
   -> IssueRealizeWriteIntent
-  -> IO (Either (IssueRealizeWriteError admissionError) ())
-publishIssueRealize = publishIssueRealizeUsing defaultWriterFileSystem
+issueRealizeWriteIntent observed preview = IssueRealizeWriteIntent
+  { writeRealizeActualPath = issueRealizeObservedActualPath observed
+  , writeRealizeExpectedActual = issueRealizeObservedActualSource observed
+  , writeRealizeCandidateActual = realizedActualCandidateSource preview
+  , writeRealizeRelationPath = issueRealizeObservedRelationPath observed
+  , writeRealizeExpectedRelationExists =
+      issueRealizeObservedRelationExists observed
+  , writeRealizeExpectedRelation = issueRealizeObservedRelationSource observed
+  , writeRealizeCandidateRelation = realizedRelationCandidateSource preview
+  , writeRealizeIssuesPath = issueRealizeObservedIssuesPath observed
+  , writeRealizeExpectedIssues = issueRealizeObservedIssuesSource observed
+  , writeRealizeCandidateIssues = realizedIssuesCandidateSource preview
+  }
 
 -- | Publish Actual, explicit relation history, and Issue closure as one guarded
 -- operation. All expected sources are fenced before staging and again before the

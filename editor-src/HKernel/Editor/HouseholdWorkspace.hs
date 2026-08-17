@@ -7,13 +7,16 @@ module HKernel.Editor.HouseholdWorkspace
   , IssueRealizeIntent(..)
   , IssueRealizeError(..)
   , IssueRealizePreview(..)
+  , IssueRealizeDisplayPreview(..)
+  , prepareIssueRealizeDisplayPreview
   , IssueRelationHouseholdAdmissionError(..)
   , admitIssueRelationSource
   , prepareIssueRealize
-  , IssueRealizeWriteIntent(..)
+  , IssueRealizeObservedSources(..)
+  , IssueRealizeOperationError(..)
+  , publishIssueRealizeFromObservedSources
+  , publishIssueRealizeFromObservedSourcesUsing
   , IssueRealizeWriteError(..)
-  , publishIssueRealize
-  , publishIssueRealizeUsing
   , homeActualTransactionsOn
   , homeCycleEndDay
   , homeIssuesDueOn
@@ -46,13 +49,16 @@ import HKernel.Editor.IssueRealize
   ( IssueRealizeIntent(..)
   , IssueRealizeError(..)
   , IssueRealizePreview(..)
+  , IssueRealizeDisplayPreview(..)
+  , prepareIssueRealizeDisplayPreview
   , IssueRelationHouseholdAdmissionError(..)
   , admitIssueRelationSource
   , prepareIssueRealize
-  , IssueRealizeWriteIntent(..)
+  , IssueRealizeObservedSources(..)
+  , IssueRealizeOperationError(..)
+  , publishIssueRealizeFromObservedSources
+  , publishIssueRealizeFromObservedSourcesUsing
   , IssueRealizeWriteError(..)
-  , publishIssueRealize
-  , publishIssueRealizeUsing
   )
 import HKernel.Editor.PlanLifecycle (planInactiveIdsAt)
 import HKernel.Household.Report (HouseholdReportSurface(..))
