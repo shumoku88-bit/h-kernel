@@ -155,18 +155,6 @@ executable h-kernel
                     , time >= 1.9 && < 1.15
     hs-source-dirs:   app
 
-executable repository-audit
-    import:           common-defaults
-    main-is:          Main.hs
-    other-modules:    RepositoryAudit
-    build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
-                    , filepath >= 1.4 && < 1.6
-                    , process
-                    , text >= 1.2 && < 2.2
-                    , toml-parser >= 2.0.2 && < 2.1
-    hs-source-dirs:   tools/repository-audit
-
 
 test-suite h-kernel-editor-actual-append-test
     import:           test-defaults
@@ -483,18 +471,6 @@ test-suite h-kernel-cli-test
                     , h-kernel
                     , text
                     , time
-
-test-suite repository-audit-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          RepositoryAuditSpec.hs
-    other-modules:    RepositoryAudit
-    build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
-                    , filepath >= 1.4 && < 1.6
-                    , text >= 1.2 && < 2.2
-                    , toml-parser >= 2.0.2 && < 2.1
-    hs-source-dirs:   tools/repository-audit
 
 test-suite h-kernel-editor-source-publication-test
     import:           test-defaults
