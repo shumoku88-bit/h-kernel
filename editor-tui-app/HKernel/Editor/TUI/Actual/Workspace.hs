@@ -10,9 +10,11 @@ module HKernel.Editor.TUI.Actual.Workspace
   ) where
 
 import Brick
+import Brick.Widgets.Border
 import qualified Brick.Widgets.List as L
 import qualified Graphics.Vty as V
 
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
