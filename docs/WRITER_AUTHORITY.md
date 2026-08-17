@@ -1,7 +1,7 @@
 # Canonical source writer authority
 
 ステータス: 承認済みcurrent contract  
-Owner: source別writer authority、single-writer law、writer cutover gate  
+Owner: source別writer authority、single-writer law、writer cutover / rollback gate  
 更新日: 2026-08-17
 
 ## 1. この文書の役割
@@ -25,7 +25,7 @@ actual.journal
 
 別implementationをreaderとして使うことと、canonical writerを切り替えることは別である。reader compatibilityからwriter authorityを推測しない。
 
-`actual.journal`固有のrollback / reader boundaryは[`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md)、reversal identity / provenanceは[`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)が所有する。
+Actual reversalのdurable identity / provenanceと、そのmetadataをsilent ignoreしないreader compatibilityは[`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md)が所有する。
 
 ### Other canonical sources
 
@@ -56,9 +56,9 @@ one canonical source
 - source format migrationとwriter cutoverは別chapterとして扱う。
 - writer authority rollbackをsource rollbackやreader fallbackと暗黙に同時実行しない。
 
-## 4. Writer cutover gate
+## 4. Writer cutover / rollback gate
 
-source別writer authorityは、少なくとも次を満たす明示changeでのみ移す。
+source別writer authorityは、少なくとも次を満たす明示changeでのみ移す。以前のwriterへ戻す場合も「fallback」ではなく、新しいauthority cutoverとして同じgateを通す。
 
 1. 対象sourceに必要なoperation parity
 2. mutation前previewとstrict complete-source admission
@@ -72,6 +72,8 @@ source別writer authorityは、少なくとも次を満たす明示changeでの�
 10. 作者によるwriter authority移動の明示承認
 
 write pathがこのgateを技術的に満たしていても、10の承認なしにauthorityは移らない。
+
+rollback /再移動では、両writer operationを止め、canonical sourceのcurrent bytesを保全し、strict admissionを確認し、未完了publication / restoreがないことを確認してから移動先writerを評価する。source bytesを過去状態へ戻すこととwriter authorityを戻すことは別changeであり、自動fallbackやalternating writeにしない。
 
 ## 5. Stop and recovery
 
@@ -89,15 +91,14 @@ safe writerの具体的なpublication lawは[`EDITOR_DEVELOPMENT_PLAN.md`](EDITO
 
 ## 6. Authority変更時の文書更新
 
-writer cutoverを行うchangeでは、この文書のcurrent authorityを同じchangeで更新する。source固有のrollback、reader compatibility、recoveryに追加の意味がある場合だけ、source-specific contractを置く。
+writer cutover / rollbackを行うchangeでは、この文書のcurrent authorityを同じchangeで更新する。source固有のreader compatibilityやdomain provenanceに追加の意味がある場合だけ、そのdomain contractへ置く。
 
 完了済みmigrationの作業ログ、旧source一覧、activation checklist、当時のcommand一覧をcurrent contractへ保存しない。過去の状態はGit履歴とmerged PRから確認する。
 
 ## 7. Related owners
 
 - [`HOUSEHOLD_CANONICAL_SOURCE.md`](HOUSEHOLD_CANONICAL_SOURCE.md): canonical source shape、source role、reader admission / topology
-- [`ACTUAL_WRITER_CUTOVER_001.md`](ACTUAL_WRITER_CUTOVER_001.md): `actual.journal`固有のrollback / reader boundary
-- [`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md): Actual reversal identity / provenance
+- [`ACTUAL_REVERSE_PROVENANCE_DECISION_001.md`](ACTUAL_REVERSE_PROVENANCE_DECISION_001.md): Actual reversal identity / provenance / reader compatibility
 - [`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md): Editor interaction、safe publication、current priorities
 - [`REPOSITORY_POLICY.md`](REPOSITORY_POLICY.md): document lifecycleとauthority changeの作業単位
 - [`../SECURITY.md`](../SECURITY.md): private/public boundary
