@@ -116,6 +116,7 @@ library h-kernel-editor
                     , HKernel.Editor.Interaction.PlanCompleteAdvance
                     , HKernel.Editor.HouseholdWorkspace
                     , HKernel.Editor.IssueAppend
+                    , HKernel.Editor.IssueRealize
                     , HKernel.Editor.PlanLifecycle
                     , HKernel.Editor.PlanCompleteAdvance
                     , HKernel.Editor.TransactionBlock
