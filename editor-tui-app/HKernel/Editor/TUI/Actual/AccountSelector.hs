@@ -7,6 +7,7 @@ module HKernel.Editor.TUI.Actual.AccountSelector
   ) where
 
 import Brick
+import Brick.Widgets.Border
 import qualified Brick.Widgets.List as L
 
 import Data.Maybe (fromMaybe)
