@@ -1,245 +1,108 @@
-# h-kernel Editor 開発方針
+# h-kernel Editor current policy and roadmap
 
 ステータス: active  
-Owner: h-kernel editor / Household application  
-更新日: 2026-08-13
+Owner: Editor interaction、safe publication、current practical priorities
 
 ## 目的
 
-Editorの目的は、canonical Household sourceを壊さず、日常の家計操作を少ない迷いと少ない手順で完了できるようにすることにある。
+Editorは、admitted Household stateで見えているobjectから自然な操作へ進み、canonical sourceを壊さず日常の家計操作を完了させる。
 
-設計判断は次で評価する。
+この文書はEditor固有のinteraction law、safe-publication law、まだ残っている実用上のpriorityだけを所有する。Canonical source shape / reader topologyは[`HOUSEHOLD_CANONICAL_SOURCE.md`](HOUSEHOLD_CANONICAL_SOURCE.md)、writer authorityは[`WRITER_AUTHORITY.md`](WRITER_AUTHORITY.md)、component boundaryは[`ARCHITECTURE.md`](ARCHITECTURE.md)、delivery portabilityは[`PLATFORM_NEUTRAL_APPLICATION_POLICY.md`](PLATFORM_NEUTRAL_APPLICATION_POLICY.md)が所有する。
 
-- 実際の家計操作が完了できるか
-- 入力、選択、確認の負担が妥当か
-- exact arithmetic、identity、provenanceを失わないか
-- canonical sourceとwriter authorityを守るか
-- invalid/stale candidateをfail closedできるか
-- operation後にfresh Household stateへ戻れるか
-- domain ruleをCLI/TUIへ重複実装していないか
-- 新しい抽象やstateが、実在する問題より大きくなっていないか
+実装済みcommand、workspace field、key binding、module inventoryをこの文書へ転記しない。current implementationとtestを正本にする。
 
-特定の言語機能、architecture pattern、LOC、抽象度を達成目標にしない。
+## Interaction law
 
-## Canonical Household boundary
-
-shared canonical Household rootは次の8 sourceである。
+TUIはcommand一覧の移植先ではない。現在見えているHousehold objectとtyped identityを保持し、そのobjectへ自然なoperationへ進む。
 
 ```text
-accounts.journal
-actual.journal
-plan.journal
-budget.journal
-budget.toml
-household.toml
-report.toml
-issues.tsv
+Actual -> record / reverse
+Plan   -> complete / advance / edit
+Issue  -> maintain
+Budget -> movement
+Account -> add
 ```
 
-sourceへUI stateやdelivery-specific representationを持ち込まない。source semanticsへ未対応のreader/writerはsilent ignoreせずfail closedする。
+- canonical Account名、PlanId、Actual identity、IssueIdを人間へ暗記させることを日常pathの前提にしない
+- 表示Text、list index、source lineからdurable identityを再構築しない
+- ordinary transactionとmulti-posting transactionを別のaccounting modelに分けない
+- confirmationはconsequenceを理解する必要があるoperationに使い、同じcandidateを儀式的に何度も確認しない
+- operation成功後はfresh Household observationへ戻り、古いworkspace stateをauthorityにしない
+- keyboard pathを保ち、mouseやpickerは同じvisible objectへの補助入口にする
 
-write capabilityとcanonical writer authorityは別である。authority変更はsource migration/cutover contractで明示する。
+具体的なportable key contractは`PLATFORM_NEUTRAL_APPLICATION_POLICY.md`、画面遷移とfield shapeはTUI implementation / testが所有する。
 
-## Daily interaction target
+## Home boundary
 
-TUIはcommand一覧を移植する場所ではない。現在見えているHousehold objectから、そのobjectへ自然なoperationへ進める。
+Homeはadmitted Household stateから作るcalendar-first projectionであり、feature menuや新しいcanonical ownerではない。
 
-```text
-Actual selected -> Reverse
-Plan selected   -> Complete / Advance / Edit
-Issue selected  -> Resolve / Drop
-Budget          -> Movement
-Accounts        -> Add Account
-```
+Home専用source reload、cycle計算、canonical model、未計測cacheを作らない。選択日へ対応するadmitted Actual / Plan / Issue / cycle evidenceを表示してよいが、`Actual none recorded`から「記帳漏れ」など生活上の意味を推測しない。
 
-Recordはordinary transactionとmulti-posting transactionを別世界にしない。必要なposting数へ自然に拡張できる一つの記帳体験を目指す。
+marker、glyph、focus、selected-day paneなどcurrent presentation shapeはTUI implementationとtestが所有する。見た目やnavigationは実運用で繰り返し現れる摩擦から改善し、dashboardを埋めるために新しいdomain meaningを作らない。
 
-Issues workspaceはattention surfaceとしてOpenだけを既定表示する。ResolvedとDroppedはcanonical sourceから削除せず、TUIの明示的なOpen / Closed / All表示で履歴を確認できるようにする。表示選択はTUI stateであり、Issue lifecycleや`issues.tsv`を変更しない。
+## Candidate and publication law
 
-日常操作では、canonical Account名、PlanId、event-idなどを人間へ暗記させない。workspaceがtyped identityを保持し、表示Textからidentityを再構築しない。
-
-keyboard operationは完全に保ち、mouseは同じvisible objectへの短い入口として使える。click-only mutationは作らない。
-
-## Household Home
-
-Homeはcalendar-firstのHousehold-state projectionであり、feature menu、dashboard、新しいcanonical ownerではない。
-
-現在の基本動作は次である。
-
-```text
-起動
-  -> 今日を含む月間Calendarを見る
-  -> 日を選ぶ
-  -> その日のadmitted factsを見る
-  -> 必要なら選択日からRecordする
-```
-
-Calendarの一文字markerは、同じHousehold observationから得た次の3つのattention factだけを表す。
-
-- open outgoing payment Planのdue date
-- open Issueのdue date
-- current cycleのend day (`end-exclusive - 1 day`)
-
-これらは独立した事実であり、優先順位で一つを勝たせない。1つだけ成立する日はその意味のmarkerを表示し、2つ以上が同日に成立する場合は`multiple-marker`を表示する。
-
-Actualの存在はmarker帯域を消費しない。selected-day paneで、その日付に対応するActual transaction/postings、payment Plan、Issue due、cycle end dayの根拠を表示する。過去日は記録確認、未来日は予定や注意点の確認に使う。
-
-`Actual none recorded`は観察された事実であり、記帳漏れという判断ではない。UIは記録がないことから生活上の事実を推測しない。
-
-Calendarのmarkerはpresentationであり、glyphだけを設定できる。markerを生じさせるHousehold factや、複数factが重なったという意味を設定へ移さない。cell幅はterminal matrixを崩さない固定幅とする。
-
-今日の表示、選択状態、markerは別の意味を持つ。現在地のcueをaccounting semanticsやattention severityと混同しない。
-
-Homeは既にadmitされた`HouseholdState`とHousehold report surfaceを使う。Home専用canonical model、source reload、重複cycle計算、未計測のcacheを追加しない。
-
-HomeとTUI全体の見た目・操作は、しばらく実際に使いながら少しずつ修正する。先に機能一覧やdashboard layoutを固定せず、繰り返し現れる摩擦と見えにくさから変更する。
-
-## Issue relation
-
-`HouseholdIssue`は家計上の検討・問題・判断対象であり、それ自体はActual fact、Plan commitment、Budget movementではない。Issueが後に別のobjectへつながった場合だけ、具体的なprovenance relationを表す。
-
-現在のidentity上の前提:
-
-- Issueはstable `IssueId`を持つ
-- Planはdurable `PlanId`を持つ
-- Actualは`ActualTransactionId`を持てるが、ordinary Actual transactionはidentity-freeでもよい
-- `HouseholdBudgetMovement`には現在stable movement IDがない
-
-最初に観察するrelationは`Issue -> Plan`とする。date、memo、amountの類似からrelationを推測しない。
-
-将来の意味としては、例えば次を区別できるようにしたい。
-
-```text
-Issue -> Plan             予定化した
-Issue -> Actual           実際の支払い・取引で対処した
-Issue -> Budget movement  資金移動で対処した
-```
-
-ただし`Issue -> Actual`と`Issue -> Budget movement`は、対象を長期に一意に指せるidentity lawが成立してから設計する。source line番号やlist indexをdurable identityとして使わない。
-
-relationが追加されたこととIssueが`Resolved` / `Dropped`になることは別である。relationは処理・判断の履歴を示し、lifecycle statusを自動決定しない。
-
-universal relation graphやgeneral event frameworkを先に作らない。最初の実際のworkflowから必要なrelationだけを追加する。
-
-## Candidate and publication boundary
-
-基本形:
+基本形は次である。
 
 ```text
 user intent
-  -> typed selected identity / input
+  -> typed identity / input
   -> pure candidate preparation
   -> complete-source admission
   -> preview when consequence warrants it
-  -> publication through the named writer owner
+  -> named writer publication
   -> complete Household post-admission
   -> fresh workspace
 ```
 
-confirmationは危険なoperationを理解するために使う。同じcandidateを意味なく何度も確認させない。
+single-source publicationは、expected bytesに対するstale rejection、complete candidate admission、backup、sibling staged candidate、immediate pre-publication stale recheck、atomic publication、post-admissionを順に守る。失敗時のrestoreはtargetがjust-published candidateから変化していない場合だけ行い、後から入った別writerの変更を上書きしない。
 
-## Writer law
+cross-file operationではfilesystem全体のatomicityを装わない。publication前に必要sourceのexpected stateとcandidateを揃え、whole-Household post-admissionを通し、失敗時は対象sourceごとのchecked restoreを行う。
 
-single-source publicationは最低でも次を守る。
+UI stateへcomplete private source、backup、writer authorityを持ち込まず、CLI/TUIがpublication lawを複製しない。write capabilityとcanonical writer authorityは別であり、authority変更は`WRITER_AUTHORITY.md`のcutover gateに従う。
 
-```text
-expected bytes
-  -> complete candidate admitted
-  -> stale rejection
-  -> backup
-  -> sibling staged candidate
-  -> immediate pre-publication stale recheck
-  -> atomic publication
-  -> post-admission
-  -> success
-     or checked restore-capable failure
-```
+## Issue relation current boundary
 
-rollbackはtargetが自分のjust-published candidateから変化していない場合だけ行う。後から入った別writerの変更を上書きしない。
+Issue relationのtyped coreは既に存在する。
 
-cross-file operationではfilesystem全体のatomicityを装わない。publication前に必要sourceのexpected stateとcandidateを揃え、whole-Household post-admissionを通し、失敗時は各sourceをchecked restoreする。
+- `IssueRelationEvent`は独自のdurable event identityを持つ
+- Plan targetとdurable Actual targetをtyped constructorで区別する
+- `concerns-plan`、`planned-as`、`planning-withdrawn`、`realized-as`、`funded-by`の意味を区別する
+- cross-source target existenceは`admitIssueRelationReferences`がfail closedで検証する
+- `HKernel.Household.Issue.Relation.TSV`がsix-coordinate source-local syntaxを所有する
 
-## Delivery ownership
+一方、このrelation sourceはまだcanonical Household path、`HouseholdWriteSnapshot`、writer authority、TUI publicationへ接続していない。この非接続はcurrent boundaryであり、欠陥を隠すfallbackではない。
 
-Domain/editor owner:
+次に進めるのは、実際のHousehold workflowがrelation publicationを要求したときだけとする。その時点でcanonical source role、admission composition、writer authority、interactionを一緒に設計する。Budget movementは現在stable movement identityを持たないため、date / memo / amount / row positionの近似一致でrelation targetを捏造しない。
 
-- accounting semantics
-- identity / provenance
-- candidate preparation
-- admission
-- publication law
+relation eventが存在することとIssue lifecycleは別である。universal relation graphやgeneral event frameworkへ拡張しない。
 
-CLI/TUI owner:
+## CLI boundary
 
-- argv / terminal event
-- focus / cursor / widget
-- free-form input
-- visible selection
-- preview / confirmation presentation
-- named operationのeffect invocation
-- user-facing outcome
+CLIにexplicit source pathやsource-shaped grammarが残ること自体を負債とみなさない。scripting、低水準operation、compatibility、writer authority上の役割があり得る。
 
-UI都合でbalance law、Account classification、Plan recurrence、identity relation、source admissionを再実装しない。
-
-## CLI application model
-
-TUIはHousehold rootから一つのHousehold observationを扱う一方、CLIにはexplicit source pathやsource-shaped command grammarが残っている。
-
-これは自動的に負債とはみなさない。compatibility、scripting、低水準operation、writer authority上の理由があり得る。
-
-CLIを整理するときは、まずcurrent mainで次を観察する。
-
-- canonical Household operationとして実際に使うcommand
-- compatibility / low-level toolとして残すcommand
-- `tools/hk`がroutingだけを担当しているか
-- Household-root-oriented CLIが実際の操作や保守を簡単にするか
-- source format retirementやwriter authority changeを混ぜていないか
-
-CLIの見た目を揃えるためだけにsource ownershipを変更しない。
+CLIを整理する場合はcurrent usageの具体的摩擦から始め、見た目を揃えるためだけにsource ownership、source format、writer authorityを変更しない。`tools/hk`は既存ownerへのrouterであり、会計ruleを所有しない。
 
 ## Current practical priorities
 
-優先順位はHouseholdを実際に使う頻度と不便さで決める。
+優先順位は実際のHousehold利用で観察した頻度と摩擦から決める。
 
-1. Calendar-first HomeとTUI全体を実際に使い、繰り返し現れる視認性・操作摩擦を小さく直す
-2. Record / Plan completion / successor replenishment / Budget / Issue maintenanceをvisible objectから短く完了できるようにする
-3. repeated typing、canonical-string recall、不要なmodal traversalを減らす
-4. 最初の具体的な`Issue -> Plan` workflowを観察し、必要なrelation meaningだけを設計する
-5. `Issue -> Actual` / `Issue -> Budget movement`に必要なdurable identityを、実際のworkflowが要求した時点で検討する
-6. Editor CLIのsource-oriented grammarは、current useを再観察して具体的な摩擦がある場合だけ整理する
-7. 実測で問題があるruntime pathだけを性能改善する
+1. Home / TUIを日常利用し、視認性、repeated typing、不要なmodal traversal、canonical-string recallを減らす
+2. Record、Plan completion / successor、Budget movement、Issue maintenanceをvisible objectから短く完了できる状態を保つ
+3. relation publicationが実際に必要になった場合だけ、既存typed relation coreをcanonical Household boundaryへ接続する
+4. Editor CLIは具体的なoperational frictionが確認された場合だけ整理する
+5. performanceは実測で問題になったruntime pathだけ改善する
 
-新しい機能へ進む前に、current codeとremoteを確認する。この文書の列挙を実装済み状態の代わりに使わない。
+このroadmapの列挙を実装済み状態のinventoryとして使わない。変更を始める前にcurrent main、owner module、testを確認する。
 
 ## Non-goals
 
-- generic command framework
-- generic form DSL
-- generic repository/session abstraction
-- generic relation graph / universal event store
-- Home専用canonical modelや先回りcache
-- dashboardを埋めるための情報追加
-- architecture diagramを満たすためのlayer追加
-- future GUI/HTTP/mobileを想像した先回り抽象
-- LOC削減だけを目的にしたrefactor
-- Haskell機能を導入すること自体を目的にしたrefactor
+- generic command / form framework
+- generic repository / session abstraction
+- universal relation graph / event store
+- Home専用canonical model
+- dashboardを埋めるためのdomain追加
+- future GUI / HTTP / mobileを想像した先回り抽象
+- LOC削減やHaskell機能導入そのものを目的にしたrefactor
 
-## Completion evidence
-
-変更ごとに必要な範囲で次を確認する。
-
-```sh
-cabal build all
-cabal test all
-cabal run repository-audit
-```
-
-Reportへ影響する場合:
-
-```sh
-./report-build
-./report-verify --fixture
-./report-verify --corpus
-```
-
-canonical sourceへ影響する場合はprivate dataを出力せず、current canonical Householdでadmission/publication contractを追加確認する。
+検証手順は[`REPOSITORY_POLICY.md`](REPOSITORY_POLICY.md)とCIを正本とし、この文書へcommand snapshotを複製しない。
