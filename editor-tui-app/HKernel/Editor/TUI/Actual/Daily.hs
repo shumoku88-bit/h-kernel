@@ -18,6 +18,7 @@ import qualified Graphics.Vty as V
 import Lens.Micro (Lens', Traversal')
 
 import Data.List (findIndex)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
