@@ -396,7 +396,7 @@ drawIssuesWorkspace context =
     , borderWithLabel (str "Selected Issue")
         (padAll 1 (renderSelectedIssue context))
     , str "[O] Open   [C] Closed   [L] All   [j/k/Arrows] Move"
-    , str "[Enter] Resolve/Drop (Open)   [U] Due (Open)   [A] Add Issue   [1-7] Sections   [q] Quit"
+    , str "[R] Realize as Actual (Open)   [Enter] Resolve/Drop   [U] Due   [A] Add Issue   [1-7] Sections   [q] Quit"
     ]
   where
     (openCount, closedCount) = contextIssueCounts context
@@ -924,6 +924,7 @@ data IssuesWorkspaceAction
   | IssuesActionStartAdd
   | IssuesActionStartDueUpdate (State AppEvent)
   | IssuesActionStartClose (State AppEvent)
+  | IssuesActionStartRealize HouseholdIssue
 
 handleIssuesWorkspaceEvent
   :: BrickEvent Name AppEvent
@@ -948,6 +949,8 @@ handleIssuesWorkspaceEvent event = case event of
   VtyEvent (V.EvKey (V.KChar 'A') []) -> pure IssuesActionStartAdd
   VtyEvent (V.EvKey (V.KChar 'u') []) -> openSelectedIssueDueUpdate
   VtyEvent (V.EvKey (V.KChar 'U') []) -> openSelectedIssueDueUpdate
+  VtyEvent (V.EvKey (V.KChar 'r') []) -> openSelectedIssueRealize
+  VtyEvent (V.EvKey (V.KChar 'R') []) -> openSelectedIssueRealize
   VtyEvent (V.EvKey V.KEnter []) -> openSelectedIssueClose
   VtyEvent (V.EvKey vtyKey vtyMods) -> do
     zoom contextIssueListL (L.handleListEventVi L.handleListEvent (V.EvKey vtyKey vtyMods))
@@ -967,3 +970,9 @@ handleIssuesWorkspaceEvent event = case event of
       case startSelectedIssueDueUpdate context of
         Nothing -> pure IssuesActionMaintain
         Just flow -> pure (IssuesActionStartDueUpdate flow)
+    openSelectedIssueRealize = do
+      context <- get
+      case L.listSelectedElement (contextIssueList context) of
+        Just (_, issue) | householdIssueStatus issue == Open ->
+          pure (IssuesActionStartRealize issue)
+        _ -> pure IssuesActionMaintain
