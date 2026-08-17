@@ -75,27 +75,17 @@ data FlowAction
   | FlowQuit
   | FlowPublish PlanId PlanCompleteAdvancePreview
 
-startSelectedCompletion :: AppContext -> Maybe (State event)
+startSelectedCompletion :: AppContext -> Maybe (Either Text (State event))
 startSelectedCompletion context = do
   (_, identified) <- L.listSelectedElement (contextPlanList context)
   pure $ case proposePlanAdvance
       (householdStatePlanJournal (contextHouseholdState context))
       (identifiedPlanId identified) of
-    Left errors ->
-      -- Keep proposal rejection in the parent result surface rather than
-      -- manufacturing a partial completion state.
-      InputRejected
-        ("Cannot prepare selected Plan: "
-          <> T.pack (show (NonEmpty.toList errors)))
-    Right proposal -> Input proposal
-      (mkPlanCompleteForm (contextObservationDay context) proposal)
-
--- Proposal construction can fail before a form exists. Keep that failure in
--- this concrete flow owner so the parent does not need PlanCompleteAdvance
--- internals merely to render it.
-data InitialState event
-  = InputRejected Text
-  | InputReady (State event)
+    Left errors -> Left
+      ("Cannot prepare selected Plan: "
+        <> T.pack (show (NonEmpty.toList errors)))
+    Right proposal -> Right
+      (Input proposal (mkPlanCompleteForm (contextObservationDay context) proposal))
 
 planActualDateTextL :: Lens' PlanCompleteAdvanceInput Text
 planActualDateTextL f input =
