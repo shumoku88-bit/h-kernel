@@ -47,14 +47,13 @@ import HKernel.Actual.Journal
   , actualTransactionEntryIdentity
   , actualTransactionEntryTransaction
   )
-import HKernel.Application.Config (HouseholdSourcePaths(..))
+import HKernel.Application.Config (HouseholdRoot, HouseholdSourcePaths(..))
 import HKernel.Editor.ActualAppend
   ( ActualAddInput(..)
   , ActualAddPreview(..)
   , ActualAddWriteFailure(..)
   , ActualAddWriteOutcome(..)
   , ActualMultiAddInput(..)
-  , ActualMultiAddInputError
   , ActualMultiAddPreview(..)
   , ActualPostingInput(..)
   , buildActualMultiAddIntentWithRegistry
@@ -473,7 +472,9 @@ drawFlow context state = case state of
       (borderWithLabel (str (dailyPreviewTitle kind))
         (padAll 1 (renderPreview preview <=> str " " <=> str (previewControls preview))))
   RecordInput form ->
-    center
+    let multiState = formState form
+        input = multiFormInput multiState
+    in center
       (borderWithLabel (str (recordInputTitle multiState))
         (hLimit 86
           (padAll 1
@@ -496,9 +497,6 @@ drawFlow context state = case state of
                    , str "Validation: press Enter outside the Account field to check admission and balance."
                    , multiInputControls form
                    ]))))
-    where
-      multiState = formState form
-      input = multiFormInput multiState
   RecordPreview preview form ->
     center
       (borderWithLabel (str (recordPreviewTitle (formState form)))
@@ -1202,7 +1200,7 @@ publishCandidate context request = case request of
       pure (maybe ReloadFailed Published reloadedContext)
 
 admitIssueRealizeAfterWrite
-  :: HKernel.Application.Config.HouseholdRoot
+  :: HouseholdRoot
   -> FilePath
   -> IO (Either String ())
 admitIssueRealizeAfterWrite root relationPath = do
