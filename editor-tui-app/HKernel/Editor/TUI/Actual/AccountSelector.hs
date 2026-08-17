@@ -17,6 +17,7 @@ import HKernel.Actual.Journal
   ( actualJournalTransactionEntries
   , actualTransactionEntryTransaction
   )
+import HKernel.Editor.Interaction.ActualAdd (groupAccountCandidates)
 import HKernel.Editor.TUI.Model
   ( AppContext
   , Name(..)
@@ -78,7 +79,7 @@ flattenCandidateGroups
   -> [HKernel.Account.Account]
   -> [HKernel.Account.Account]
 flattenCandidateGroups context candidates =
-  concatMap snd (HKernel.Account.groupAccountsByType registry candidates)
+  concatMap snd (groupAccountCandidates registry candidates)
   where
     registry = householdStateAccountsRegistry (contextHouseholdState context)
 
