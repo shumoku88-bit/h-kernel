@@ -34,10 +34,6 @@ path = "docs/ACTUAL_REVERSE_PROVENANCE_DECISION_001.md"
 role = "contract"
 
 [[documents]]
-path = "docs/ACTUAL_WRITER_CUTOVER_001.md"
-role = "contract"
-
-[[documents]]
 path = "docs/WRITER_AUTHORITY.md"
 role = "contract"
 
