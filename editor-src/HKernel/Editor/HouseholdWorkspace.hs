@@ -1,7 +1,19 @@
--- | Pure presentation projections shared by Household workspace deliveries.
--- Canonical source order remains owned by the admitted source models.
+-- | Household workspace projections plus the explicit cross-domain Issue
+-- realization entrypoint. Projection logic remains pure; realization semantics
+-- live in their dedicated owner and are only re-exported here for delivery
+-- compatibility.
 module HKernel.Editor.HouseholdWorkspace
   ( IssueWorkspaceFilter(..)
+  , IssueRealizeIntent(..)
+  , IssueRealizeError(..)
+  , IssueRealizePreview(..)
+  , IssueRelationHouseholdAdmissionError(..)
+  , admitIssueRelationSource
+  , prepareIssueRealize
+  , IssueRealizeWriteIntent(..)
+  , IssueRealizeWriteError(..)
+  , publishIssueRealize
+  , publishIssueRealizeUsing
   , homeActualTransactionsOn
   , homeCycleEndDay
   , homeIssuesDueOn
@@ -29,6 +41,18 @@ import HKernel.Actual.Journal
   , actualJournalTransactionEntries
   , actualJournalValue
   , actualTransactionEntryTransaction
+  )
+import HKernel.Editor.IssueRealize
+  ( IssueRealizeIntent(..)
+  , IssueRealizeError(..)
+  , IssueRealizePreview(..)
+  , IssueRelationHouseholdAdmissionError(..)
+  , admitIssueRelationSource
+  , prepareIssueRealize
+  , IssueRealizeWriteIntent(..)
+  , IssueRealizeWriteError(..)
+  , publishIssueRealize
+  , publishIssueRealizeUsing
   )
 import HKernel.Editor.PlanLifecycle (planInactiveIdsAt)
 import HKernel.Household.Report (HouseholdReportSurface(..))
