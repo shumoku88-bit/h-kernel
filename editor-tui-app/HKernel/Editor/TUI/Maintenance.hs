@@ -10,13 +10,11 @@ module HKernel.Editor.TUI.Maintenance
   , drawAccountsWorkspace
   , drawBudgetWorkspace
   , drawIssuesWorkspace
-  , drawSettingsWorkspace
   , drawFlow
   , handleAccountsWorkspaceEvent
   , handleBudgetWorkspaceEvent
   , handleFlowEvent
   , handleIssuesWorkspaceEvent
-  , handleSettingsWorkspaceEvent
   , publishCandidate
   , startAccountAdd
   , startBudgetMovement
@@ -29,11 +27,8 @@ import Brick.Widgets.Center
 import qualified Graphics.Vty as V
 import Lens.Micro (Traversal', singular)
 
-import qualified Data.Set as Set
 import Data.Text (Text)
-import qualified Data.Text as T
 
-import HKernel.Account (accountName)
 import HKernel.Editor.AccountAppend (AccountJournalAppendPreview)
 import HKernel.Editor.BudgetMovementAppend (BudgetJournalMovementAppendPreview)
 import HKernel.Editor.IssueAppend
@@ -47,22 +42,9 @@ import qualified HKernel.Editor.TUI.Maintenance.Issues as Issues
 import HKernel.Editor.TUI.Model
   ( AppContext
   , AppEvent
-  , Name(..)
-  , contextHouseholdState
-  )
-import HKernel.Household.Application (HouseholdState(..))
-import HKernel.Household.Policy
-  ( householdAllocationEnvelopes
-  , householdCycleIncomeAccount
-  , householdEnvelopeOrder
-  , householdPolicyCycle
-  , householdUnassignedBudgetAccounts
+  , Name
   )
 import HKernel.HouseholdIssue (HouseholdIssue)
-import HKernel.Report.Config
-  ( reportConfigurationPlan
-  , reportConfigurationPresentation
-  )
 
 data State event
   = BudgetFlow (Budget.State event)
@@ -119,46 +101,6 @@ drawAccountsWorkspace = Accounts.drawWorkspace
 
 drawIssuesWorkspace :: AppContext -> Widget Name
 drawIssuesWorkspace = Issues.drawWorkspace
-
--- | Read-only presentation of the admitted policy/configuration coordinates.
--- Main owns section navigation; this owner owns the Settings section body.
-drawSettingsWorkspace :: AppContext -> Widget Name
-drawSettingsWorkspace context =
-  vBox
-    [ borderWithLabel (str "Household Settings & Policy")
-        (vLimit 18
-          (viewport SettingsViewport Vertical
-            (vBox
-              [ str "=== [budget.toml] Envelope Policy ==="
-              , str ("Envelopes count: "
-                  <> show (length (householdEnvelopeOrder
-                    (householdStatePolicy state))))
-              , str " "
-              , str "=== [household.toml] Household Policy ==="
-              , txt ("Income Cycle Account: "
-                  <> accountName (householdCycleIncomeAccount
-                    (householdPolicyCycle (householdStatePolicy state))))
-              , txt ("Allocation Envelopes: "
-                  <> T.pack (show (householdAllocationEnvelopes
-                    (householdStatePolicy state))))
-              , txt ("Unassigned Accounts: "
-                  <> T.intercalate ", "
-                    (map accountName
-                      (Set.toAscList (householdUnassignedBudgetAccounts
-                        (householdStatePolicy state)))))
-              , str " "
-              , str "=== [report.toml] Report Configuration ==="
-              , txt ("Report Plan: "
-                  <> T.pack (show (reportConfigurationPlan
-                    (householdStateReportConfig state))))
-              , txt ("Presentation: "
-                  <> T.pack (show (reportConfigurationPresentation
-                    (householdStateReportConfig state))))
-              ])))
-    , str "[wheel] Scroll   [h] Home   [1-7] Switch section   [q] Quit"
-    ]
-  where
-    state = contextHouseholdState context
 
 drawFlow :: State AppEvent -> Widget Name
 drawFlow state = case state of
@@ -261,16 +203,6 @@ handleIssuesWorkspaceEvent event = do
     Issues.WorkspaceCloseUnavailable message ->
       IssuesActionStartClose (WriteOutcome message)
     Issues.WorkspaceStartRealize issue -> IssuesActionStartRealize issue
-
-handleSettingsWorkspaceEvent
-  :: BrickEvent Name AppEvent
-  -> EventM Name s ()
-handleSettingsWorkspaceEvent event = case event of
-  MouseDown SettingsViewport V.BScrollUp _ _ ->
-    vScrollBy (viewportScroll SettingsViewport) (-3)
-  MouseDown SettingsViewport V.BScrollDown _ _ ->
-    vScrollBy (viewportScroll SettingsViewport) 3
-  _ -> pure ()
 
 publishCandidate :: AppContext -> PublishRequest -> IO PublishResult
 publishCandidate context request = case request of
