@@ -68,7 +68,15 @@ def main() -> None:
         )
         write_executable(
             cabal_stub,
-            "#!/bin/sh\nset -- cabal \"$@\"\n" + logger,
+            "#!/bin/sh\n"
+            "if [ \"${1:-}\" = sdist ]; then\n"
+            "  set -- cabal \"$@\"\n"
+            + logger
+            + "  git ls-files -z\n"
+            "  exit 0\n"
+            "fi\n"
+            "set -- cabal \"$@\"\n"
+            + logger,
         )
 
         base_env = os.environ.copy()
@@ -168,7 +176,11 @@ def main() -> None:
         log.write_text("", encoding="utf-8")
         result = invoke(["check"], base_env)
         assert_success(result, "repository check")
-        if read_log(log) != ["cabal <build> <all>", "cabal <test> <all>", "cabal <run> <exe:repository-audit>"]:
+        if read_log(log) != [
+            "cabal <build> <all>",
+            "cabal <test> <all>",
+            "cabal <sdist> <-v0> <--list-only> <--null-sep>",
+        ]:
             raise AssertionError(f"check delegation differed: {read_log(log)!r}")
 
         log.write_text("", encoding="utf-8")
