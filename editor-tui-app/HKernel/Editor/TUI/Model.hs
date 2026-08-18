@@ -52,6 +52,7 @@ import HKernel.Household.Cycle
   , householdCycleCurrentPeriod
   , observeHouseholdCycle
   )
+import HKernel.Household.EnvelopeObservation (EnvelopeChangeBaseline)
 import HKernel.Household.Policy (householdPolicyCycle)
 import HKernel.Household.Report (HouseholdReportSurface)
 import HKernel.Household.Report.Render (HouseholdReportSection)
@@ -146,6 +147,8 @@ data ReportChoice
   | ReportDailyFlow
   | ReportMonthlyAccounts
   | ReportHousehold HouseholdReportSection
+  | ReportEnvelopeChange EnvelopeChangeBaseline
+  | ReportEnvelopeAlignedPreviousCycle
   | ReportRecentTransactions
   | ReportCombinedBook
   deriving (Eq, Show)
