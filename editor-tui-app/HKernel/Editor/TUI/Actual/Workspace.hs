@@ -91,10 +91,10 @@ drawWorkspace context =
         (padAll 1 (renderWorkspaceSelection context))
     , txtWrap ("Filter: " <> workspaceFilterText context)
     , vBox
-        [ txtWrap "Navigate: [1-7] Sections  [Tab/Left/Right] Focus  [j/k/Arrows] Move"
+        [ txtWrap "Navigate: [Left/Right] Pane  [j/k/Arrows] Move"
         , txtWrap "Record:   [a] Expense  [i] Income  [r] General transaction"
         , txtWrap ("Observe:  " <> workspaceReconcileHint context)
-        , txtWrap "Action:   [Enter] Reverse selected  [q] Quit"
+        , txtWrap "Action:   [Enter] Reverse selected"
         ]
     ]
 
@@ -134,9 +134,6 @@ handleWorkspaceEvent event = case event of
         modify (\ctx -> ctx { contextWorkspaceFocus = TransactionsFocus })
         pure MaintainContext
       else pure OpenReverse
-  VtyEvent (V.EvKey (V.KChar '\t') []) -> do
-    modify toggleWorkspaceFocus
-    pure MaintainContext
   VtyEvent (V.EvKey V.KLeft []) -> do
     modify (\ctx -> ctx { contextWorkspaceFocus = AccountsFocus })
     pure MaintainContext
@@ -248,6 +245,7 @@ renderWorkspaceTransaction selected transaction
       <> transactionDescription transaction)
 
 renderWorkspaceSelection :: AppContext -> Widget Name
+drawWorkspaceSelection_PLACEHOLDER = undefined
 renderWorkspaceSelection context = case selectedWorkspaceEntry context of
   Nothing -> str "No Actual transactions for this account."
   Just entry ->
