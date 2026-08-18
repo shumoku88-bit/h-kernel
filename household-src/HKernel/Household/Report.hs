@@ -9,6 +9,7 @@ module HKernel.Household.Report
   ( HouseholdSourceError(..)
   , HouseholdCycleComparison(..)
   , HouseholdCycleComparisonUnavailable(..)
+  , HouseholdPlannedTransactions(..)
   , HouseholdReportSurface(..)
   , PlannedTransactionHorizon(..)
   , ClassifiedPlannedTransaction(..)
@@ -105,6 +106,7 @@ import HKernel.Plan.Journal
   , IdentifiedPlanTransaction
   , PlanClassificationError(..)
   , PlanJournal
+  , PlanReportProjectionError
   , admitPlanRetirements
   , identifiedPlanId
   , identifiedPlanTransaction
@@ -145,10 +147,21 @@ data HouseholdCycleComparisonUnavailable
   | HouseholdCycleComparisonRejected CycleComparisonError
   deriving (Eq, Show)
 
+-- | Availability of the narrow payment-facing Planned Transactions section.
+--
+-- A PlanJournal may be broadly valid while containing a Plan shape that this
+-- presentation cannot flatten into one current 'CommittedOutgoingPlan'. Such a
+-- failure belongs to this section and must not hide Cycle, Daily Target, or
+-- Envelope observations that do not require that narrow interpretation.
+data HouseholdPlannedTransactions
+  = HouseholdPlannedTransactionsAvailable [CommittedOutgoingPlan]
+  | HouseholdPlannedTransactionsUnavailable (NonEmpty HouseholdSourceError)
+  deriving (Eq, Show)
+
 data HouseholdReportSurface = HouseholdReportSurface
   { householdCurrentCycleAccounts  :: CurrentCycleAccounts
   , householdCycleComparison       :: HouseholdCycleComparison
-  , householdPlannedTransactions   :: [CommittedOutgoingPlan]
+  , householdPlannedTransactions   :: HouseholdPlannedTransactions
   , householdIssues                :: [HouseholdIssue]
   , householdEnvelopeStockOrigins  :: Map Commodity StockOrigin
   , householdEnvelopeBacking       :: EnvelopeBacking
@@ -177,19 +190,12 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
   currentCycle <- mapLeft
     (NonEmpty.singleton . sourceError "cycle" 0 . tshow)
     (currentCycleAccounts observation current journal)
-  outgoingPlans <- projectReportOutgoingPlans planJournal
   retirements <- mapLeft
     (fmap (\err -> sourceError "plan.journal" (planLifecycleErrorLine err) (tshow err)))
     (admitPlanRetirements planJournal)
   let retiredPlanIds = retiredPlanIdsAt observation retirements
-  outgoingDeclarations <- completionDeclarationsForOutgoingPlans
-    planJournal outgoingPlans (actualJournalCompletionDeclarations actualJournal)
-  completionOpenPlanValues <- mapLeft
-    (fmap (sourceError "actual.journal" 0 . tshow))
-    (resolveOpenCommittedOutgoingPlans
-      outgoingPlans
-      (actualJournalIdentifiedTransactions actualJournal)
-      outgoingDeclarations)
+      completionDeclarations = actualJournalCompletionDeclarations actualJournal
+      identifiedActuals = actualJournalIdentifiedTransactions actualJournal
   openFundingTransactions <- mapLeft
     (fmap (sourceError "plan.journal" 0 . tshow))
     (resolveOpenPlanTransactionsAt observation planJournal actualJournal)
@@ -213,12 +219,6 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
       entitlement = householdEnvelopeEntitlement envelopeObservation
       remaining = householdEnvelopeRemaining envelopeObservation
       headroom = householdEnvelopeHeadroom envelopeObservation
-      openPlanValues = filter
-        (\plan -> committedPlanId plan `Set.notMember` retiredPlanIds)
-        completionOpenPlanValues
-      openPlanIds = Set.fromList (map committedPlanId openPlanValues)
-      openPlans = openOutgoingPlans openPlanIds outgoingPlans
-      currentOpenPlans = filter (periodContains current . committedPlanDate) openPlans
   backing <- mapLeft
     (fmap (sourceError "backing" 0 . tshow))
     (deriveHouseholdBacking
@@ -232,13 +232,33 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
       remaining
       headroom
       backingPlans)
-  let target = deriveDailyTarget observation current journal dailyScope currentOpenPlans
+  dailyTargetPlans <- mapLeft
+    (fmap (sourceError "daily-target" 0 . tshow))
+    (projectDailyTargetScopePlans planJournal dailyScope)
+  dailyTargetDeclarations <- completionDeclarationsForOutgoingPlans
+    planJournal dailyTargetPlans completionDeclarations
+  dailyTargetCompletionOpen <- mapLeft
+    (fmap (sourceError "actual.journal" 0 . tshow))
+    (resolveOpenCommittedOutgoingPlans
+      dailyTargetPlans identifiedActuals dailyTargetDeclarations)
+  let currentDailyTargetPlans =
+        [ plan
+        | plan <- dailyTargetCompletionOpen
+        , committedPlanId plan `Set.notMember` retiredPlanIds
+        , periodContains current (committedPlanDate plan)
+        ]
+      target = deriveDailyTarget
+        observation current journal dailyScope currentDailyTargetPlans
       comparison = alignedHouseholdCycleComparison
         observation current previous journal currentCycle
+      plannedTransactions = case observeReportPlannedTransactions
+          planJournal identifiedActuals completionDeclarations retiredPlanIds of
+        Left errors -> HouseholdPlannedTransactionsUnavailable errors
+        Right plans -> HouseholdPlannedTransactionsAvailable plans
   pure HouseholdReportSurface
     { householdCurrentCycleAccounts = currentCycle
     , householdCycleComparison = comparison
-    , householdPlannedTransactions = openPlans
+    , householdPlannedTransactions = plannedTransactions
     , householdIssues = issues
     , householdEnvelopeStockOrigins =
         householdEnvelopeObservationStockOrigins envelopeObservation
@@ -292,6 +312,46 @@ projectReportOutgoingPlans planJournal = do
   pure (map projectedCommittedOutgoingPlan projected)
   where
     registry = journalAccountRegistry (planJournalValue planJournal)
+
+-- | Re-project only the Plan identities already selected by the admitted Daily
+-- Target scope. Relevance is owned by Daily Target; this composition step merely
+-- asks the existing Plan.Journal binary projection for those relevant values.
+-- An unrelated Plan shape can therefore never make Daily Target unavailable.
+projectDailyTargetScopePlans
+  :: PlanJournal
+  -> DailyTargetScope
+  -> Either (NonEmpty PlanReportProjectionError) [CommittedOutgoingPlan]
+projectDailyTargetScopePlans planJournal scope =
+  fmap (map projectedCommittedOutgoingPlan)
+    (projectCommittedOutgoingPlans planJournal selectedTransactions)
+  where
+    selectedIds = dailyTargetObligationPlanIds
+      (dailyTargetScopeObligations scope)
+    selectedTransactions =
+      [ OutgoingPlanTransaction identified
+      | identified <- planJournalTransactions planJournal
+      , identifiedPlanId identified `Set.member` selectedIds
+      ]
+
+observeReportPlannedTransactions
+  :: PlanJournal
+  -> [IdentifiedActualTransaction]
+  -> [PlanCompletionDeclaration]
+  -> Set.Set PlanId
+  -> Either (NonEmpty HouseholdSourceError) [CommittedOutgoingPlan]
+observeReportPlannedTransactions planJournal actuals declarations retiredPlanIds = do
+  outgoingPlans <- projectReportOutgoingPlans planJournal
+  outgoingDeclarations <- completionDeclarationsForOutgoingPlans
+    planJournal outgoingPlans declarations
+  completionOpenPlanValues <- mapLeft
+    (fmap (sourceError "actual.journal" 0 . tshow))
+    (resolveOpenCommittedOutgoingPlans
+      outgoingPlans actuals outgoingDeclarations)
+  let openPlanValues = filter
+        (\plan -> committedPlanId plan `Set.notMember` retiredPlanIds)
+        completionOpenPlanValues
+      openPlanIds = Set.fromList (map committedPlanId openPlanValues)
+  pure (openOutgoingPlans openPlanIds outgoingPlans)
 
 classifyForNarrowReport
   :: AccountRegistry
