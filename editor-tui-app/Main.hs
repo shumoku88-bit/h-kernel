@@ -176,8 +176,13 @@ handleWorkspaceEvent context selectedDay focus event = case event of
     vScrollToBeginning (viewportScroll HomeDayViewport)
     put (AppWrapper context (Home day))
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
-  VtyEvent (V.EvKey (V.KChar '\t') []) -> switchFocus (Shell.nextFocus focus)
-  VtyEvent (V.EvKey V.KEsc []) -> halt
+  VtyEvent (V.EvKey (V.KChar '\t') []) -> case focus of
+    Shell.SurfaceFocus -> handleSectionSurfaceEvent context selectedDay event
+    _ -> switchFocus (Shell.nextFocus focus)
+  VtyEvent (V.EvKey V.KEsc []) -> case focus of
+    Shell.SurfaceFocus ->
+      put (AppWrapper context (Workspace selectedDay Shell.SectionFocus))
+    _ -> halt
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
   VtyEvent (V.EvKey (V.KChar '1') []) -> switchSection ActualSection
@@ -233,10 +238,8 @@ handleSectionSurfaceEvent
   -> Day
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleSectionSurfaceEvent context selectedDay event = case event of
-  VtyEvent (V.EvKey V.KLeft []) ->
-    put (AppWrapper context (Workspace selectedDay Shell.SectionFocus))
-  _ -> case contextCurrentSection context of
+handleSectionSurfaceEvent context selectedDay event =
+  case contextCurrentSection context of
     ActualSection -> do
       action <- zoom zoomContext (Actual.handleWorkspaceEvent event)
       AppWrapper currentContext _ <- get
@@ -426,8 +429,8 @@ app = App
   , appAttrMap = const
       (attrMap V.defAttr
         [ (L.listSelectedAttr, V.black `on` V.white)
-        , (attrName "activeTab", V.black `on` V.cyan)
-        , (attrName "homeSelectedDay", V.withStyle V.defAttr V.reverseVideo)
+        , (attrName "activeTab", V.black `on` V.white)
+        , (attrName "homeSelectedDay", V.black `on` V.cyan)
         , (attrName "shellFocus", V.withStyle V.defAttr V.bold)
         , (attrName "shellMuted", V.withStyle V.defAttr V.dim)
         , (attrName "error", fg V.red)
