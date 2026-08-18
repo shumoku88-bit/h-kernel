@@ -88,7 +88,7 @@ drawWorkspace context =
         ]
     , borderWithLabel (str "Selected transaction")
         (padAll 1 (renderWorkspaceSelection context))
-    , txt ("Filter: " <> workspaceFilterText context)
+    , txtWrap ("Filter: " <> workspaceFilterText context)
     , vBox
         [ txtWrap "Navigate: [1-7] Sections  [Tab/Left/Right] Focus  [j/k/Arrows] Move"
         , txtWrap "Record:   [r] Record (2+ postings)  [a] Expense  [i] Income"
@@ -230,6 +230,8 @@ renderWorkspaceTransaction selected transaction
   | selected = withAttr L.listSelectedAttr row
   | otherwise = row
   where
+    -- List rows intentionally remain one line because the list has item height 1.
+    -- The complete transaction is preserved in the selected-detail pane below.
     row = txt (T.pack (show (transactionDate transaction)) <> "  "
       <> transactionDescription transaction)
 
@@ -239,7 +241,7 @@ renderWorkspaceSelection context = case selectedWorkspaceEntry context of
   Just entry ->
     let transaction = actualTransactionEntryTransaction entry
     in vBox
-      ( [ txt (T.pack (show (transactionDate transaction)) <> "  "
+      ( [ txtWrap (T.pack (show (transactionDate transaction)) <> "  "
             <> transactionDescription transaction)
         ]
         ++ map renderPosting (NonEmpty.toList (transactionPostings transaction))
@@ -250,19 +252,19 @@ renderReverseAvailability :: AppContext -> ActualTransactionEntry -> Widget Name
 renderReverseAvailability context entry =
   case actualReverseAvailability actualJournal entry of
     ActualReverseIdentityMissing -> withAttr (attrName "warning")
-      (str "Reverse unavailable: no durable Actual identity.")
+      (strWrap "Reverse unavailable: no durable Actual identity.")
     ActualReverseAlreadyReversed _ reversalId -> withAttr (attrName "warning")
-      (txt ("Already reversed by " <> actualTransactionIdText reversalId
+      (txtWrap ("Already reversed by " <> actualTransactionIdText reversalId
         <> ". Select that reversal to reverse it."))
     ActualReverseAvailable targetId -> withAttr (attrName "success")
-      (txt ("[Enter] Reverse  event-id: " <> actualTransactionIdText targetId))
+      (txtWrap ("[Enter] Reverse  event-id: " <> actualTransactionIdText targetId))
   where
     actualJournal =
       householdStateActualJournal (contextHouseholdState context)
 
 renderPosting :: Posting -> Widget Name
 renderPosting posting =
-  txt ("  " <> HKernel.Account.accountName (postingAccount posting) <> "  "
+  txtWrap ("  " <> HKernel.Account.accountName (postingAccount posting) <> "  "
     <> renderQuantity (amountQuantity amount) <> " "
     <> commodityCode (amountCommodity amount))
   where
