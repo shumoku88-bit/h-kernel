@@ -116,6 +116,7 @@ data Name
   | ReportPickerList
   | HomeTab
   | CalendarDay Day
+  | HomeChangeFrom Day
   | HomeDayViewport
   | EntitlementViewport
   | AccountsViewport
