@@ -16,6 +16,12 @@ module HKernel.Editor.ActualAppend
   , buildActualAddIntentWithRegistry
   , prepareActualAddPreview
   , prepareActualAddPreviewFromResolvedJournal
+  , ActualExpenseItemInput(..)
+  , ActualExpenseInput(..)
+  , ActualExpenseInputError(..)
+  , ActualExpensePreview(..)
+  , buildActualExpenseIntentWithRegistry
+  , prepareActualExpensePreviewFromResolvedJournal
   , ActualPostingInput(..)
   , ActualMultiAddInput(..)
   , ActualMultiAddInputError(..)
@@ -26,6 +32,7 @@ module HKernel.Editor.ActualAppend
   ) where
 
 import Data.Bifunctor (first)
+import qualified Data.Map.Strict as Map
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes)
@@ -37,6 +44,8 @@ import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import HKernel.Account
   ( Account
   , AccountRegistry
+  , AccountType(..)
+  , accountTypeFor
   , declaredAccountDefaultCommodity
   , lookupAccountDeclaration
   , mkAccount
@@ -66,6 +75,7 @@ import HKernel.Ledger (TransactionError)
 import HKernel.Money
   ( Commodity
   , Quantity
+  , addQuantity
   , mkCommodity
   , negateQuantity
   , parseQuantity
@@ -327,6 +337,145 @@ prepareActualAddPreviewWith build prepare input =
     Right intent -> case prepare intent of
       Left sourceErrors -> ActualAddCandidateRejected sourceErrors
       Right preview -> ActualAddCandidateReady (candidateBlock preview)
+
+-- | One positive Expense breakdown line. The payment side is intentionally not
+-- editable here: it is derived exactly from all item quantities so a split
+-- purchase remains one balanced Actual transaction.
+data ActualExpenseItemInput = ActualExpenseItemInput
+  { expenseItemAccountText :: Text
+  , expenseItemAmountText  :: Text
+  } deriving (Eq, Show)
+
+-- | Delivery-neutral role-aware Expense draft. This is an interaction intent,
+-- not persisted transaction classification. Canonical Actual remains ordinary
+-- postings after the draft is lowered to 'ActualEditIntent'.
+data ActualExpenseInput = ActualExpenseInput
+  { expenseDateText           :: Text
+  , expenseDescriptionText    :: Text
+  , expensePaymentAccountText :: Text
+  , expenseItems              :: NonEmpty ActualExpenseItemInput
+  } deriving (Eq, Show)
+
+data ActualExpenseInputError
+  = ActualExpenseInvalidDate
+  | ActualExpenseInvalidPaymentAccount
+  | ActualExpensePaymentAccountMustBeAssetOrLiability
+  | ActualExpenseInvalidItemAccount Int
+  | ActualExpenseItemAccountMustBeExpense Int
+  | ActualExpenseInvalidAmountShape Int
+  | ActualExpenseInvalidQuantity Int
+  | ActualExpenseAmountMustBePositive Int
+  | ActualExpenseInvalidCommodity Int
+  | ActualExpenseMissingDefaultCommodity Int
+  | ActualExpenseConflictingDefaultCommodity Int
+  deriving (Eq, Show)
+
+data ActualExpensePreview
+  = ActualExpenseInputRejected ActualExpenseInputError
+  | ActualExpenseCandidateRejected (NonEmpty ActualEditError)
+  | ActualExpenseCandidateReady Text
+  deriving (Eq, Show)
+
+-- | Lower one semantic Expense interaction into the same authoritative Actual
+-- append intent used by every other writer. Each breakdown line must address an
+-- Expense Account and carry a positive quantity. The payment Account must be an
+-- Asset or Liability. One balancing payment posting is derived per Commodity,
+-- preserving exact multi-commodity arithmetic without asking the delivery to
+-- calculate totals or signs.
+buildActualExpenseIntentWithRegistry
+  :: AccountRegistry
+  -> ActualExpenseInput
+  -> Either ActualExpenseInputError ActualEditIntent
+buildActualExpenseIntentWithRegistry registry input = do
+  date <- maybe (Left ActualExpenseInvalidDate) Right
+    (parseDayText (expenseDateText input))
+  paymentAccount <- first (const ActualExpenseInvalidPaymentAccount)
+    (mkAccount (expensePaymentAccountText input))
+  case accountTypeFor paymentAccount registry of
+    Just Asset -> pure ()
+    Just Liability -> pure ()
+    _ -> Left ActualExpensePaymentAccountMustBeAssetOrLiability
+  parsedItems <- traverse
+    (parseExpenseItem registry paymentAccount)
+    (zip [1 ..] (NonEmpty.toList (expenseItems input)))
+  itemPostings <- maybe
+    (Left (ActualExpenseInvalidItemAccount 1))
+    Right
+    (NonEmpty.nonEmpty
+      [ IntentPosting account quantity (Just commodity)
+      | (account, quantity, commodity) <- parsedItems
+      ])
+  let totals = Map.fromListWith addQuantity
+        [ (commodity, quantity)
+        | (_, quantity, commodity) <- parsedItems
+        ]
+      paymentPostings =
+        [ IntentPosting paymentAccount (negateQuantity quantity) (Just commodity)
+        | (commodity, quantity) <- Map.toAscList totals
+        ]
+  pure ActualEditIntent
+    { intentDate = date
+    , intentDescription = expenseDescriptionText input
+    , intentPostings = itemPostings <> NonEmpty.fromList paymentPostings
+    , intentMetadata = []
+    }
+
+parseExpenseItem
+  :: AccountRegistry
+  -> Account
+  -> (Int, ActualExpenseItemInput)
+  -> Either ActualExpenseInputError (Account, Quantity, Commodity)
+parseExpenseItem registry paymentAccount (index, item) = do
+  account <- first (const (ActualExpenseInvalidItemAccount index))
+    (mkAccount (expenseItemAccountText item))
+  case accountTypeFor account registry of
+    Just Expense -> pure ()
+    _ -> Left (ActualExpenseItemAccountMustBeExpense index)
+  (quantityText, commodity) <- case T.words (expenseItemAmountText item) of
+    [quantityValue, commodityValue] -> do
+      parsedCommodity <- first (const (ActualExpenseInvalidCommodity index))
+        (mkCommodity commodityValue)
+      Right (quantityValue, parsedCommodity)
+    [quantityValue] -> do
+      inferred <- inferExpenseCommodity registry paymentAccount account index
+      Right (quantityValue, inferred)
+    _ -> Left (ActualExpenseInvalidAmountShape index)
+  quantity <- first (const (ActualExpenseInvalidQuantity index))
+    (parseQuantity quantityText)
+  if quantityToRational quantity <= 0
+    then Left (ActualExpenseAmountMustBePositive index)
+    else Right (account, quantity, commodity)
+
+inferExpenseCommodity
+  :: AccountRegistry
+  -> Account
+  -> Account
+  -> Int
+  -> Either ActualExpenseInputError Commodity
+inferExpenseCommodity registry paymentAccount expenseAccount index =
+  case catMaybes (map defaultFor [paymentAccount, expenseAccount]) of
+    [] -> Left (ActualExpenseMissingDefaultCommodity index)
+    commodity : rest
+      | all (== commodity) rest -> Right commodity
+      | otherwise -> Left (ActualExpenseConflictingDefaultCommodity index)
+  where
+    defaultFor account =
+      declaredAccountDefaultCommodity =<<
+        lookupAccountDeclaration account registry
+
+prepareActualExpensePreviewFromResolvedJournal
+  :: Journal
+  -> Text
+  -> ActualExpenseInput
+  -> ActualExpensePreview
+prepareActualExpensePreviewFromResolvedJournal resolvedJournal source input =
+  case buildActualExpenseIntentWithRegistry
+      (journalAccountRegistry resolvedJournal) input of
+    Left inputError -> ActualExpenseInputRejected inputError
+    Right intent -> case prepareActualAppendFromResolvedJournal
+        resolvedJournal source intent of
+      Left sourceErrors -> ActualExpenseCandidateRejected sourceErrors
+      Right preview -> ActualExpenseCandidateReady (candidateBlock preview)
 
 -- | One signed posting row in the general multi-posting Actual input. A
 -- quantity may include an explicit Commodity ("600 JPY") or rely on the
