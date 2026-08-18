@@ -49,7 +49,6 @@ import HKernel.Editor.ActualAppend
   )
 import HKernel.Editor.ActualWorkspace
   ( AccountReconciliation
-  , externalBalanceAccount
   , externalBalanceObservedOn
   , externalBalanceValue
   , observeExternalBalance
@@ -232,7 +231,7 @@ drawReconcileFlow reconcileState = case reconcileState of
               , str " "
               , strWrap "[Tab] Next field | [Enter] Compare | [Esc] Actual"
               ]))))
-  ReconcileResultState account result form ->
+  ReconcileResultState account result _ ->
     center
       (borderWithLabel (str "Account Reconciliation")
         (hLimit 76
@@ -247,8 +246,6 @@ drawReconcileFlow reconcileState = case reconcileState of
                 renderReconciliation account reconciliation
                   <=> str " "
                   <=> strWrap "[Esc/B] Edit | [Enter] Actual | [Q] Quit"))))
-    where
-      _keepForm = form
 
 renderReconciliation :: Account -> AccountReconciliation -> Widget Name
 renderReconciliation account reconciliation =
@@ -275,7 +272,7 @@ renderReconciliation account reconciliation =
           withAttr (attrName "success") (str "Status: MATCHED")
       | otherwise =
           withAttr (attrName "warning")
-            (str "Status: DIFFERENCE — inspect this Account's Actual history")
+            (str "Status: DIFFERENCE | inspect this Account's Actual history")
 
 renderBalance :: Balance -> Text
 renderBalance balance = case balanceEntries balance of
@@ -399,7 +396,8 @@ prepareReconciliation
   -> ReconcileInput
   -> Either Text AccountReconciliation
 prepareReconciliation context account input = do
-  observedOn <- case readMaybe (T.unpack (T.strip (reconcileDateText input))) of
+  observedOn <- case
+      (readMaybe (T.unpack (T.strip (reconcileDateText input))) :: Maybe Day) of
     Nothing -> Left ("Invalid observation date: " <> reconcileDateText input)
     Just day -> Right day
   quantity <- case parseQuantity (T.strip (reconcileBalanceText input)) of
