@@ -113,7 +113,7 @@ drawHelp focus = withAttr (attrName "shellMuted") (strWrap message)
       SectionFocus ->
         "Sections: Up/Down or j/k select · Right/Enter surface · Left calendar · Tab surface"
       SurfaceFocus ->
-        "Surface: section owns its keys · Left sections · Tab calendar · q quit"
+        "Surface: section owns arrows/Tab and its own keys · Esc sections · q quit"
 
 focusLabel :: Bool -> Text -> Widget Name
 focusLabel focused label
@@ -132,7 +132,7 @@ sectionStatus context section = case section of
   ReportsSection -> ordinary "ready"
   SettingsSection -> ordinary "ready"
   where
-    ordinary summary = ("•", attrName "success", summary)
+    ordinary summary = ("✓", attrName "success", summary)
     countOf = T.pack . show . Vec.length . L.listElements
     accountCount = Vec.length
       (Vec.filter isJust (L.listElements (contextWorkspaceAccounts context)))
