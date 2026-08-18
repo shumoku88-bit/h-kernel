@@ -92,7 +92,7 @@ drawWorkspace context =
     , txtWrap ("Filter: " <> workspaceFilterText context)
     , vBox
         [ txtWrap "Navigate: [1-7] Sections  [Tab/Left/Right] Focus  [j/k/Arrows] Move"
-        , txtWrap "Record:   [a] Expense (split)  [i] Income  [r] General transaction"
+        , txtWrap "Record:   [a] Expense  [i] Income  [r] General transaction"
         , txtWrap ("Observe:  " <> workspaceReconcileHint context)
         , txtWrap "Action:   [Enter] Reverse selected  [q] Quit"
         ]
