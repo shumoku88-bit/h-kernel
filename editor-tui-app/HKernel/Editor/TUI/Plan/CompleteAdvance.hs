@@ -142,10 +142,10 @@ drawFlow state = case state of
               <=> str " "
               <=> renderForm form
               <=> str " "
-              <=> str "Blank Actual amount uses the planned amount."
-              <=> str "Blank Next amount keeps the original planned amount."
-              <=> str "Clear Next nominal date to complete without a successor."
-              <=> str "[Tab] Next field | [Esc] Plans | [Enter] Preview"))))
+              <=> strWrap "Blank Actual amount uses the planned amount."
+              <=> strWrap "Blank Next amount keeps the original planned amount."
+              <=> strWrap "Clear Next nominal date to complete without a successor."
+              <=> strWrap "[Tab] Next field | [Esc] Plans | [Enter] Preview"))))
   Preview _ result _ ->
     center
       (borderWithLabel (str "Complete & Advance Preview")
@@ -154,18 +154,18 @@ drawFlow state = case state of
             (padAll 1
               (renderPreviewResult renderCompletePreview result
                 <=> str " "
-                <=> str (completionPreviewControls result))))))
+                <=> strWrap (completionPreviewControls result))))))
   Confirmation _ preview _ ->
     center
       (borderWithLabel (str "Confirm Complete & Advance")
         (hLimit 86
           (vLimit 30
             (padAll 1
-              ( str "This will update Actual and, when present, append the successor Plan as one operation."
+              ( strWrap "This will update Actual and, when present, append the successor Plan as one operation."
                 <=> str " "
                 <=> renderCompletePreview preview
                 <=> str " "
-                <=> str "[Y] Publish | [N/Esc] Back | [Q] Quit")))))
+                <=> strWrap "[Y] Publish | [N/Esc] Back | [Q] Quit")))))
 
 handleFlowEvent
   :: AppContext
@@ -260,10 +260,10 @@ handleConfirmation proposal preview form event = case event of
 renderPlanProposal :: PlanAdvanceProposal -> Widget Name
 renderPlanProposal proposal =
   vBox
-    [ txt ("Plan: " <> T.pack (show (proposalNominalDate proposal))
+    [ txtWrap ("Plan: " <> T.pack (show (proposalNominalDate proposal))
         <> "  [" <> planIdText (proposalPlanId proposal) <> "]  "
         <> proposalDescription proposal)
-    , txt ("Recurrence: " <> recurrenceLabel (proposalRecurrence proposal))
+    , txtWrap ("Recurrence: " <> recurrenceLabel (proposalRecurrence proposal))
     , str "Planned postings:"
     , vBox (map renderPosting
         (NonEmpty.toList
@@ -282,19 +282,19 @@ renderPreviewResult
   -> PreviewResult preview
   -> Widget Name
 renderPreviewResult renderPreview result = case result of
-  PreviewRejected message -> withAttr (attrName "error") (txt message)
+  PreviewRejected message -> withAttr (attrName "error") (txtWrap message)
   PreviewReady preview -> renderPreview preview
 
 renderCompletePreview :: PlanCompleteAdvancePreview -> Widget Name
 renderCompletePreview preview =
   vBox
     [ withAttr (attrName "success") (str "Actual completion")
-    , txt (completeAdvanceActualBlock preview)
+    , txtWrap (completeAdvanceActualBlock preview)
     , str " "
     , withAttr (attrName "success") (str "Next Plan")
     , case completeAdvanceSuccessorBlock preview of
-        Nothing -> str "No successor will be added."
-        Just block -> txt block
+        Nothing -> strWrap "No successor will be added."
+        Just block -> txtWrap block
     ]
 
 completionPreviewControls :: PreviewResult PlanCompleteAdvancePreview -> String
@@ -304,7 +304,7 @@ completionPreviewControls result = case result of
 
 renderPosting :: Posting -> Widget Name
 renderPosting posting =
-  txt ("  " <> accountName (postingAccount posting) <> "  "
+  txtWrap ("  " <> accountName (postingAccount posting) <> "  "
     <> renderQuantity (amountQuantity amount) <> " "
     <> commodityCode (amountCommodity amount))
   where
