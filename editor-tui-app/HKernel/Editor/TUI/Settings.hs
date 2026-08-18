@@ -57,7 +57,7 @@ drawWorkspace context =
                   <> T.pack (show (reportConfigurationPresentation
                     (householdStateReportConfig state))))
               ])))
-    , strWrap "[wheel] Scroll   [h] Home   [1-7] Switch section   [q] Quit"
+    , strWrap "[wheel] Scroll"
     ]
   where
     state = contextHouseholdState context
