@@ -46,8 +46,20 @@ import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Envelope.Remaining (envelopeRemainingFor)
 import HKernel.Household.EnvelopeObservation
   ( deriveHouseholdEnvelopeObservation
+  , envelopeExplanationCommitment
+  , envelopeExplanationConsumptionCharges
+  , envelopeExplanationConsumptionNet
+  , envelopeExplanationConsumptionRefunds
+  , envelopeExplanationEntitlement
+  , envelopeExplanationFulfillmentApplied
+  , envelopeExplanationFulfillmentNet
+  , envelopeExplanationFulfillmentReversed
+  , envelopeExplanationHeadroom
+  , envelopeExplanationRemaining
+  , explainHouseholdEnvelope
   , householdEnvelopeConsumption
   , householdEnvelopeEntitlement
+  , householdEnvelopeExplanationLines
   , householdEnvelopeHeadroom
   , householdEnvelopeRemaining
   )
@@ -93,10 +105,13 @@ main = do
         (declarations <>
           "\n2026-06-20 pre-grant food\n  expenses:food  5 JPY\n  assets:cash  -5 JPY\n" <>
           "\n2026-08-03 food\n  expenses:food  40 JPY\n  assets:cash  -40 JPY\n" <>
-          "\n2026-08-04 refund\n  expenses:food  -10 JPY\n  assets:cash  10 JPY\n"))
+          "\n2026-08-04 refund\n  expenses:food  -10 JPY\n  assets:cash  10 JPY\n" <>
+          "\n2026-08-08 completed saving\n  ; event-id: save-done\n  ; plan-id: plan-done\n  assets:savings  15 JPY\n  assets:cash  -15 JPY\n"))
       savingsPlanId = mustRight (mkPlanId "plan-save")
+      donePlanId = mustRight (mkPlanId "plan-done")
       plans = mustRight (parsePlanJournal
         (declarations <>
+          "\n2026-08-08 completed saving\n  ; plan-id: plan-done\n  assets:savings  15 JPY\n  assets:cash  -15 JPY\n" <>
           "\n2026-08-09 save\n  ; plan-id: plan-save\n  assets:savings  20 JPY\n  assets:cash  -20 JPY\n"))
       origins = Map.singleton jpy
         (StockOrigin (fromGregorian 2026 6 15) jpy "June stock origin")
@@ -143,7 +158,13 @@ main = do
             { fulfillmentRoutingEffectiveFrom = fromGregorian 2026 8 1
             , fulfillmentRoutingPlanId = savingsPlanId
             , fulfillmentRoutingRoute = FulfillsEnvelope foodId
-            , fulfillmentRoutingNote = "explicit savings intent"
+            , fulfillmentRoutingNote = "explicit open savings intent"
+            }
+        , FulfillmentRoutingDecision
+            { fulfillmentRoutingEffectiveFrom = fromGregorian 2026 8 1
+            , fulfillmentRoutingPlanId = donePlanId
+            , fulfillmentRoutingRoute = FulfillsEnvelope foodId
+            , fulfillmentRoutingNote = "explicit completed savings intent"
             }
         ])
       observation = mustRight (deriveHouseholdEnvelopeObservation
@@ -152,6 +173,17 @@ main = do
       entitlement = householdEnvelopeEntitlement observation
       remaining = householdEnvelopeRemaining observation
       headroom = householdEnvelopeHeadroom observation
+      explanation = explainHouseholdEnvelope (householdEnvelopeOrder policy) observation
+      explanationLine = case householdEnvelopeExplanationLines explanation of
+        [line] -> line
+        _ -> error "expected one current Envelope explanation line"
+      reconstructedRemaining =
+        envelopeExplanationEntitlement explanationLine
+          `subtractBalance` envelopeExplanationConsumptionNet explanationLine
+          `subtractBalance` envelopeExplanationFulfillmentNet explanationLine
+      reconstructedHeadroom =
+        envelopeExplanationRemaining explanationLine
+          `subtractBalance` envelopeExplanationCommitment explanationLine
 
   assertEqual "current Envelope order excludes retired stable allocation identity"
     [foodId] (householdEnvelopeOrder policy)
@@ -161,10 +193,22 @@ main = do
     (one jpy 45) (consumptionCharges (envelopeConsumptionFor foodId consumption))
   assertEqual "refunds remain gross native evidence"
     (one jpy 10) (consumptionRefunds (envelopeConsumptionFor foodId consumption))
-  assertEqual "Remaining preserves pre-grant use after later Period rollover"
-    (one jpy 105) (envelopeRemainingFor foodId remaining)
-  assertEqual "PlanId-routed Asset transfer reserves native Headroom"
-    (one jpy 85) (envelopeHeadroomFor foodId headroom)
+  assertEqual "completed Plan fulfillment consumes native Remaining"
+    (one jpy 90) (envelopeRemainingFor foodId remaining)
+  assertEqual "still-open PlanId-routed Asset transfer reserves native Headroom"
+    (one jpy 70) (envelopeHeadroomFor foodId headroom)
+  assertEqual "Explain retains gross consumption charges"
+    (one jpy 45) (envelopeExplanationConsumptionCharges explanationLine)
+  assertEqual "Explain retains gross consumption refunds"
+    (one jpy 10) (envelopeExplanationConsumptionRefunds explanationLine)
+  assertEqual "Explain retains completed fulfillment application"
+    (one jpy 15) (envelopeExplanationFulfillmentApplied explanationLine)
+  assertEqual "Explain retains fulfillment reversal coordinate at zero"
+    mempty (envelopeExplanationFulfillmentReversed explanationLine)
+  assertEqual "Explain Remaining closes exactly from typed evidence"
+    (envelopeExplanationRemaining explanationLine) reconstructedRemaining
+  assertEqual "Explain Headroom closes exactly from typed evidence"
+    (envelopeExplanationHeadroom explanationLine) reconstructedHeadroom
 
 one :: Commodity -> Integer -> Balance
 one commodity value = singletonBalance (mkAmount commodity (quantityFromInteger value))
