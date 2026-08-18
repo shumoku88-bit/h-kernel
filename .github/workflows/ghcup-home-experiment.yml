@@ -39,3 +39,10 @@ jobs:
             --project-file=experiments/ghcup-home/cabal.project \
             h-kernel-ghcup-home \
             --disable-optimization
+
+      - name: Smoke runtime
+        run: |
+          cabal run \
+            --project-file=experiments/ghcup-home/cabal.project \
+            h-kernel-ghcup-home \
+            -- --smoke
