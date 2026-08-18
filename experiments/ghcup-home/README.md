@@ -3,25 +3,21 @@
 This is an isolated Brick interaction experiment for a status-first h-kernel shell.
 It does not replace the production calendar-first Home and it owns no Household facts.
 
-The current experiment separates three things that looked dangerously similar in the earlier prototype:
+The current experiment separates three things:
 
-- the current Household observation day
-- the calendar temporal cursor
+- the current Household observation used by the status rail
+- the calendar temporal cursor used by calendar day detail
 - the UI focus owner
 
-The status rail always describes the current observation. Moving the calendar into the past or future does not silently reinterpret every status row at that date.
+The left side contains a compact calendar above a GHCup-like section rail. The right side deliberately changes role with focus instead of pretending that the calendar is a global date filter.
 
-The calendar is instead a temporal cursor. Surfaces that have a meaningful temporal coordinate may consume it. Actual, Plans, Envelopes, Issues, and Reports demonstrate that relationship. Accounts and Settings deliberately remain unbound from the cursor.
+When Calendar owns focus, the right pane is the selected-day detail. It represents the existing Home intuition: choose a date and see that day's Actual, Plans, Issues due, and Cycle context.
 
-The shell also has explicit focus ownership:
+When Sections owns focus, the right pane becomes the selected major Household surface. The section rail continues to describe the current observation. In this prototype no section consumes the calendar cursor at all. Their future relationship can therefore be designed later, per section, without changing the shell grammar.
 
-- Calendar focus: arrows move naturally in the month matrix, with Left/Right = one day and Up/Down = one week
-- Section focus: Up/Down selects a section
-- Surface focus: the right pane owns its interaction space; Left returns to the section rail in this prototype
-- Tab explicitly moves between Calendar, Sections, and Surface
-- Mouse clicks both select and focus the clicked area
+Surface focus is entered explicitly from Sections with Right or Enter. Left returns to Sections. Tab moves Calendar -> Sections -> Surface -> Calendar. Mouse clicks focus/select the clicked area.
 
-Selection survives focus movement. Changing focus does not erase the temporal cursor or selected section.
+The right pane is greedy and takes the terminal space left by the compact 30-column rail. Sparse representative data can therefore remain visually quiet without shrinking the application into a small content-sized box.
 
 Run from the repository root:
 
@@ -31,11 +27,11 @@ cabal run --project-file=experiments/ghcup-home/cabal.project h-kernel-ghcup-hom
 
 Controls depend on the focused area:
 
-- Calendar: arrows or h/j/k/l move the temporal cursor, t returns the cursor to today
+- Calendar: arrows or h/j/k/l move the day cursor, t returns to today
 - Sections: Up/Down or j/k select, Right or Enter moves into the selected surface
 - Surface: Left returns to Sections
 - Tab: move explicitly to the next focus area
-- Mouse: focus/select calendar day, section, or surface
+- Mouse: focus/select calendar day, section, or section surface
 - q or Esc: quit
 
 A non-interactive runtime smoke path is also available:
@@ -56,9 +52,14 @@ Deliberate limits:
 - no public exposure of private h-kernel sublibraries
 - no replacement of the production Home
 - no attempt to reproduce GHCup's colors or exact layout
+- no calendar-to-section semantics yet
 
-The thing under observation is now:
+The shell hypothesis is now:
 
-`current status rail` + `temporal cursor` + `focus-local interaction` -> `selected observation surface`
+`Calendar -> Day Detail`
 
-If this grammar feels right in daily use, the next step is not to grow this demo into a second application. The presentation should move inside the existing editor TUI and consume the already-admitted `AppContext`. The production section surfaces can remain specialized while sharing one stable shell.
+or, after explicit focus movement:
+
+`Section Rail -> Major Household Surface`
+
+If this grammar feels right in daily use, the next step is not to grow this demo into a second application. The presentation should move inside the existing editor TUI and consume the already-admitted `AppContext`. Production section surfaces can remain specialized while sharing one stable shell.
