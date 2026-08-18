@@ -13,8 +13,8 @@ executable h-kernel-ghcup-home
                     , directory
                     , filepath
                     , h-kernel
-                    , h-kernel-editor
-                    , h-kernel-household-application
+                    , h-kernel:h-kernel-editor
+                    , h-kernel:h-kernel-household-application
                     , text
                     , time
                     , vty
