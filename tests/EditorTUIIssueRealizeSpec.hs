@@ -15,6 +15,13 @@ import HKernel.Household.Application
   ( HouseholdWriteSnapshot(..)
   , admitCanonicalHousehold
   )
+import HKernel.Household.Report
+  ( HouseholdPlannedTransactions(..)
+  , householdPlannedTransactionsAvailability
+  )
+import HKernel.Household.Report.Render
+  ( renderHouseholdReportSections
+  )
 import HKernel.HouseholdIssue
   ( HouseholdIssue
   , IssueDue(..)
@@ -24,6 +31,7 @@ import HKernel.HouseholdIssue
   )
 import HKernel.Plan (planIdText)
 import HKernel.Plan.Journal (identifiedPlanId)
+import HKernel.Report.Presentation (defaultPresentationConfig)
 import System.Exit (exitFailure, exitSuccess)
 
 main :: IO ()
@@ -34,7 +42,7 @@ main = do
         , ("Home stacks observations at 60 columns", homeUsesStackedLayout 60)
         , ("Home remains side-by-side at 80 columns", not (homeUsesStackedLayout 80))
         , ("Home remains side-by-side at 120 columns", not (homeUsesStackedLayout 120))
-        , ("Home observers survive an unavailable narrow Household Report surface", testIndependentHomeObservations)
+        , ("narrow Planned Transactions failure stays local to that report section", testIndependentHomeObservations)
         ]
   mapM_ print results
   if all snd results then exitSuccess else exitFailure
@@ -84,9 +92,20 @@ testIndependentHomeObservations =
               , householdWriteSnapshotIssuesSource = availabilityIssues
               }
             context = makeWorkspaceContext availabilityObservation snapshot
-            reportUnavailable = case contextHouseholdReportSurface context of
-              Left _ -> True
-              Right _ -> False
+            surfaceLocalUnavailable = case contextHouseholdReportSurface context of
+              Left _ -> False
+              Right surface ->
+                let plannedUnavailable = case
+                      householdPlannedTransactionsAvailability surface of
+                      HouseholdPlannedTransactionsUnavailable _ -> True
+                      HouseholdPlannedTransactionsAvailable _ -> False
+                    rendered = renderHouseholdReportSections
+                      defaultPresentationConfig surface
+                in plannedUnavailable
+                    && "Planned Transactions" `T.isInfixOf` rendered
+                    && "Status: NOT AVAILABLE" `T.isInfixOf` rendered
+                    && "Daily Target" `T.isInfixOf` rendered
+                    && "Envelope & Backing" `T.isInfixOf` rendered
             cycleAvailable = case contextHouseholdCycleObservation context of
               Left _ -> False
               Right _ -> True
@@ -97,7 +116,7 @@ testIndependentHomeObservations =
               Left _ -> False
               Right plans ->
                 "P200" `elem` map (planIdText . identifiedPlanId) plans
-        in reportUnavailable
+        in surfaceLocalUnavailable
             && cycleAvailable
             && reportBookAvailable
             && planAvailable
