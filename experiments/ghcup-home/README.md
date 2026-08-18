@@ -3,15 +3,25 @@
 This is an isolated Brick interaction experiment for a status-first h-kernel shell.
 It does not replace the production calendar-first Home and it owns no Household facts.
 
-The experiment now tests a stronger hypothesis than the first status list: a persistent left rail can carry both temporal navigation and section navigation while the right pane becomes the selected Household surface.
+The current experiment separates three things that looked dangerously similar in the earlier prototype:
 
-The left rail contains:
+- the current Household observation day
+- the calendar temporal cursor
+- the UI focus owner
 
-- a compact month calendar, where the selected day is the temporal coordinate
-- GHCup-like section rows for Actual, Plans, Envelopes, Accounts, Issues, Reports, and Settings
-- a small status glyph and compact summary on each section row
+The status rail always describes the current observation. Moving the calendar into the past or future does not silently reinterpret every status row at that date.
 
-The right pane represents the selected section at the selected day. Values remain representative only, so the experiment can judge layout, density, navigation, and the relationship between `when` and `what` without widening h-kernel's private package boundaries or inventing UI-owned semantics.
+The calendar is instead a temporal cursor. Surfaces that have a meaningful temporal coordinate may consume it. Actual, Plans, Envelopes, Issues, and Reports demonstrate that relationship. Accounts and Settings deliberately remain unbound from the cursor.
+
+The shell also has explicit focus ownership:
+
+- Calendar focus: arrows move naturally in the month matrix, with Left/Right = one day and Up/Down = one week
+- Section focus: Up/Down selects a section
+- Surface focus: the right pane owns its interaction space; Left returns to the section rail in this prototype
+- Tab explicitly moves between Calendar, Sections, and Surface
+- Mouse clicks both select and focus the clicked area
+
+Selection survives focus movement. Changing focus does not erase the temporal cursor or selected section.
 
 Run from the repository root:
 
@@ -19,12 +29,13 @@ Run from the repository root:
 cabal run --project-file=experiments/ghcup-home/cabal.project h-kernel-ghcup-home
 ```
 
-Controls:
+Controls depend on the focused area:
 
-- Up/Down or j/k: select a section
-- Left/Right or h/l: move the selected day
-- t: return the calendar to today
-- Mouse click: select a calendar day or section
+- Calendar: arrows or h/j/k/l move the temporal cursor, t returns the cursor to today
+- Sections: Up/Down or j/k select, Right or Enter moves into the selected surface
+- Surface: Left returns to Sections
+- Tab: move explicitly to the next focus area
+- Mouse: focus/select calendar day, section, or surface
 - q or Esc: quit
 
 A non-interactive runtime smoke path is also available:
@@ -46,8 +57,8 @@ Deliberate limits:
 - no replacement of the production Home
 - no attempt to reproduce GHCup's colors or exact layout
 
-The thing under observation is now a shell grammar:
+The thing under observation is now:
 
-`calendar = when` + `section rail = what` -> `right pane = observation surface`
+`current status rail` + `temporal cursor` + `focus-local interaction` -> `selected observation surface`
 
-If this grammar feels right in daily use, the next step is not to grow this demo into a second application. The presentation should move inside the existing editor TUI and consume the already-admitted `AppContext`. The production section surfaces can then remain specialized while sharing one stable temporal/navigation shell.
+If this grammar feels right in daily use, the next step is not to grow this demo into a second application. The presentation should move inside the existing editor TUI and consume the already-admitted `AppContext`. The production section surfaces can remain specialized while sharing one stable shell.
