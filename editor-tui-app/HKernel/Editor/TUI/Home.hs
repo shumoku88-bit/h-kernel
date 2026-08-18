@@ -11,6 +11,7 @@ module HKernel.Editor.TUI.Home
   ) where
 
 import Brick
+import Brick.Types (availWidthL, getContext)
 import Brick.Widgets.Border (borderWithLabel)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Text (Text)
@@ -25,6 +26,7 @@ import Data.Time.Calendar
 import Data.Time.Calendar.WeekDate (toWeekDate)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Graphics.Vty qualified as V
+import Lens.Micro ((^.))
 
 import HKernel.Account (accountName)
 import HKernel.Editor.HouseholdWorkspace
@@ -113,17 +115,35 @@ handleLocalEvent selectedDay event = case event of
       context <- get
       selectDay (contextObservationDay context)
 
--- | Draw a fixed-width month matrix beside the selected day's admitted facts.
+-- | Keep the calendar and selected-day observation side by side when there is
+-- room. Below 80 columns the same two observations stack instead of allowing
+-- the right-hand pane to be cropped away.
 draw :: AppContext -> Day -> Widget Name
 draw context selectedDay =
   vBox
-    [ hBox
-        [ hLimit 32 (drawCalendar context selectedDay)
-        , padLeft (Pad 1) (hLimit 46 (drawDayPane context selectedDay))
-        ]
+    [ responsiveAt 80 compactLayout wideLayout
     , padTop (Pad 1) (drawLegend context)
-    , str "[Arrows] Day   [t] Today   [r] Record   [1-7] Sections   [q] Quit"
+    , strWrap "[Arrows] Day   [t] Today   [r] Record   [1-7] Sections   [q] Quit"
     ]
+  where
+    calendar = hLimit 32 (drawCalendar context selectedDay)
+    dayPane = drawDayPane context selectedDay
+    wideLayout = hBox
+      [ calendar
+      , padLeft (Pad 1) (hLimit 46 dayPane)
+      ]
+    compactLayout = vBox
+      [ calendar
+      , padTop (Pad 1) dayPane
+      ]
+
+-- | Select a presentation using only Brick's rendering context. Terminal
+-- dimensions remain presentation evidence and never enter Household state.
+responsiveAt :: Int -> Widget name -> Widget name -> Widget name
+responsiveAt breakpoint compact wide =
+  Widget Greedy Fixed $ do
+    context <- getContext
+    render $ if context ^. availWidthL < breakpoint then compact else wide
 
 drawCalendar :: AppContext -> Day -> Widget Name
 drawCalendar context selectedDay =
@@ -251,28 +271,28 @@ drawDayPane context selectedDay =
       Left _ ->
         [ str " "
         , withAttr (attrName "warning")
-            (str "Plan/cycle projection unavailable for this observation.")
+            (strWrap "Plan/cycle projection unavailable for this observation.")
         ]
       Right _ -> []
 
 renderActual :: Transaction -> [Widget Name]
 renderActual transaction =
-  txt ("  " <> transactionDescription transaction)
+  txtWrap ("  " <> transactionDescription transaction)
     : map renderPosting (NonEmpty.toList (transactionPostings transaction))
 
 renderPosting :: Posting -> Widget Name
 renderPosting posting =
-  txt ("    " <> accountName (postingAccount posting) <> "  "
+  txtWrap ("    " <> accountName (postingAccount posting) <> "  "
     <> renderAmount (postingAmount posting))
 
 renderPlan :: CommittedOutgoingPlan -> Widget Name
 renderPlan plan =
-  txt ("  " <> committedPlanMemo plan <> "  "
+  txtWrap ("  " <> committedPlanMemo plan <> "  "
     <> renderAmount (positiveAmountValue (committedPlanAmount plan)))
 
 renderIssue :: HouseholdIssue -> Widget Name
 renderIssue issue =
-  txt ("  " <> householdIssueText issue <> maybe "" (("  " <>) . renderAmount)
+  txtWrap ("  " <> householdIssueText issue <> maybe "" (("  " <>) . renderAmount)
     (householdIssueAmount issue))
 
 renderAmount :: Amount -> Text
@@ -282,7 +302,7 @@ renderAmount amount =
 
 drawLegend :: AppContext -> Widget Name
 drawLegend context =
-  txt
+  txtWrap
     ( markerText (calendarPlanDueMarker markers) <> " Plan due   "
       <> markerText (calendarIssueDueMarker markers) <> " Issue due   "
       <> markerText (calendarCycleEndMarker markers) <> " Cycle end   "
