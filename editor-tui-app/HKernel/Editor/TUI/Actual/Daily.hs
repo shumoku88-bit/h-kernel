@@ -137,8 +137,8 @@ drawFlow context state = case state of
         (padAll 1
           (vBox
             [ txt ("Date: " <> dateSummary context (addDateText (formState form)))
-            , str "Amount accepts a quantity only when Account defaults determine the commodity."
-            , str "Account fields expose existing typed Accounts inline; exact text remains available."
+            , strWrap "Amount accepts a quantity only when Account defaults determine the commodity."
+            , strWrap "Account fields expose existing typed Accounts inline; exact text remains available."
             , str " "
             , renderForm form
             , renderDailyInlineAccountSelector context kind form
@@ -149,7 +149,7 @@ drawFlow context state = case state of
     center
       (borderWithLabel (str (previewTitle kind))
         (padAll 1
-          (renderPreview preview <=> str " " <=> str (previewControls preview))))
+          (renderPreview preview <=> str " " <=> strWrap (previewControls preview))))
 
 entryTitle :: EntryKind -> String
 entryTitle kind = case kind of
@@ -163,8 +163,8 @@ previewTitle kind = case kind of
 
 inputControls :: Form ActualAddInput AppEvent Name -> Widget Name
 inputControls form = case selectionTarget form of
-  Just _ -> str "[Up/Down] Choose Account | [click] Select | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
-  Nothing -> str "[Tab] Next field | [Enter] Preview | [Esc] Actual"
+  Just _ -> strWrap "[Up/Down] Choose Account | [click] Select | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Actual"
+  Nothing -> strWrap "[Tab] Next field | [Enter] Preview | [Esc] Actual"
 
 renderDailyInlineAccountSelector
   :: AppContext
@@ -341,14 +341,14 @@ renderPreview :: ActualAddPreview -> Widget Name
 renderPreview preview = case preview of
   ActualAddInputRejected inputError ->
     withAttr (attrName "error")
-      (txt ("Input rejected: " <> T.pack (show inputError)))
+      (txtWrap ("Input rejected: " <> T.pack (show inputError)))
   ActualAddCandidateRejected sourceErrors ->
     withAttr (attrName "error")
-      (txt (T.intercalate "\n" (map (T.pack . show) (NonEmpty.toList sourceErrors))))
+      (txtWrap (T.intercalate "\n" (map (T.pack . show) (NonEmpty.toList sourceErrors))))
   ActualAddCandidateReady block ->
     withAttr (attrName "success")
-      (str "Validation successful. Source unmodified.")
-      <=> str " " <=> txt block
+      (strWrap "Validation successful. Source unmodified.")
+      <=> str " " <=> txtWrap block
 
 previewControls :: ActualAddPreview -> String
 previewControls preview = case preview of
