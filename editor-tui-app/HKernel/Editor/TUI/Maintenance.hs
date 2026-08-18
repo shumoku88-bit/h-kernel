@@ -109,7 +109,9 @@ drawFlow state = case state of
   IssueFlow issueState -> Issues.drawFlow issueState
   WriteOutcome message ->
     center (borderWithLabel (str "Maintenance Result")
-      (hLimit 84 (padAll 1 (txt message <=> str " " <=> str "[Esc] Workspace   [Q] Quit"))))
+      (hLimit 84
+        (padAll 1
+          (txtWrap message <=> str " " <=> strWrap "[Esc] Workspace   [Q] Quit"))))
   ReturnToWorkspace -> emptyWidget
   PublishRequested _ -> emptyWidget
   QuitRequested -> emptyWidget
