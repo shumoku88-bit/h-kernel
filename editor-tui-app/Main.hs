@@ -3,13 +3,12 @@
 module Main (main) where
 
 import Brick
-import Brick.Types (availWidthL, getContext)
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import qualified Brick.Widgets.List as L
 import qualified Graphics.Vty as V
 import Graphics.Vty.CrossPlatform (mkVty)
-import Lens.Micro (Lens', Traversal', singular, (^.))
+import Lens.Micro (Lens', Traversal', singular)
 import Lens.Micro.Mtl ()
 
 import qualified Data.List.NonEmpty as NonEmpty
@@ -35,20 +34,21 @@ import HKernel.Editor.TUI.Model
 import qualified HKernel.Editor.TUI.Plan as Plan
 import qualified HKernel.Editor.TUI.Report as Report
 import qualified HKernel.Editor.TUI.Settings as Settings
+import qualified HKernel.Editor.TUI.Shell as Shell
 import HKernel.Household.Application (loadCanonicalHouseholdWriteSnapshot)
 import HKernel.Household.EnvelopeObservation (EnvelopeChangeBaseline(..))
 
 data ActualReturn
-  = ActualReturnWorkspace
+  = ActualReturnWorkspace Day
   | ActualReturnHome Day
 
 data UIState
   = Home Day
-  | Workspace
+  | Workspace Day Shell.ShellFocus
   | ActualFlow ActualReturn (Actual.State AppEvent)
-  | PlanFlow (Plan.State AppEvent)
-  | MaintenanceFlow (Maintenance.State AppEvent)
-  | ReportPicker Report.PickerState
+  | PlanFlow Day (Plan.State AppEvent)
+  | MaintenanceFlow Day (Maintenance.State AppEvent)
+  | ReportPicker Day Report.PickerState
   | ShowWorkspaceReloadFailure
 
 data AppWrapper = AppWrapper AppContext UIState
@@ -59,18 +59,18 @@ zoomActualFlow f (AppWrapper context (ActualFlow returnTarget state)) =
 zoomActualFlow _ wrapper = pure wrapper
 
 zoomPlanFlow :: Traversal' AppWrapper (Plan.State AppEvent)
-zoomPlanFlow f (AppWrapper context (PlanFlow state)) =
-  (\updated -> AppWrapper context (PlanFlow updated)) <$> f state
+zoomPlanFlow f (AppWrapper context (PlanFlow selectedDay state)) =
+  (\updated -> AppWrapper context (PlanFlow selectedDay updated)) <$> f state
 zoomPlanFlow _ wrapper = pure wrapper
 
 zoomMaintenanceFlow :: Traversal' AppWrapper (Maintenance.State AppEvent)
-zoomMaintenanceFlow f (AppWrapper context (MaintenanceFlow state)) =
-  (\updated -> AppWrapper context (MaintenanceFlow updated)) <$> f state
+zoomMaintenanceFlow f (AppWrapper context (MaintenanceFlow selectedDay state)) =
+  (\updated -> AppWrapper context (MaintenanceFlow selectedDay updated)) <$> f state
 zoomMaintenanceFlow _ wrapper = pure wrapper
 
 zoomReportPicker :: Traversal' AppWrapper Report.PickerState
-zoomReportPicker f (AppWrapper context (ReportPicker choices)) =
-  (\updated -> AppWrapper context (ReportPicker updated)) <$> f choices
+zoomReportPicker f (AppWrapper context (ReportPicker selectedDay choices)) =
+  (\updated -> AppWrapper context (ReportPicker selectedDay updated)) <$> f choices
 zoomReportPicker _ wrapper = pure wrapper
 
 zoomContext :: Lens' AppWrapper AppContext
@@ -79,12 +79,13 @@ zoomContext f (AppWrapper context state) =
 
 drawUI :: AppWrapper -> [Widget Name]
 drawUI (AppWrapper context (Home selectedDay)) =
-  [drawHomeShell context selectedDay]
-drawUI (AppWrapper context Workspace) = [drawHouseholdShell context]
+  [ Shell.draw context selectedDay Shell.CalendarFocus (drawSectionBody context) ]
+drawUI (AppWrapper context (Workspace selectedDay focus)) =
+  [ Shell.draw context selectedDay focus (drawSectionBody context) ]
 drawUI (AppWrapper context (ActualFlow _ state)) = [Actual.drawFlow context state]
-drawUI (AppWrapper _ (PlanFlow state)) = [Plan.drawFlow state]
-drawUI (AppWrapper _ (MaintenanceFlow state)) = [Maintenance.drawFlow state]
-drawUI (AppWrapper _ (ReportPicker choices)) = [Report.drawPicker choices]
+drawUI (AppWrapper _ (PlanFlow _ state)) = [Plan.drawFlow state]
+drawUI (AppWrapper _ (MaintenanceFlow _ state)) = [Maintenance.drawFlow state]
+drawUI (AppWrapper _ (ReportPicker _ choices)) = [Report.drawPicker choices]
 drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
   [ center
       (borderWithLabel (str "Household reload")
@@ -97,61 +98,6 @@ drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
               , strWrap "[Esc/Q] Quit"
               ]))))
   ]
-
-drawHomeShell :: AppContext -> Day -> Widget Name
-drawHomeShell context selectedDay =
-  vBox [drawNavigationBar Nothing, Home.draw context selectedDay]
-
-drawHouseholdShell :: AppContext -> Widget Name
-drawHouseholdShell context =
-  vBox
-    [ drawNavigationBar (Just (contextCurrentSection context))
-    , drawSectionBody context
-    ]
-
-drawNavigationBar :: Maybe HouseholdSection -> Widget Name
-drawNavigationBar currentSection =
-  borderWithLabel (str "h-kernel Household")
-    (responsiveAt 96 compactTabs wideTabs)
-  where
-    renderedTabs = map renderTab [minBound .. maxBound]
-    wideTabs = hBox (homeTab : renderedTabs)
-    compactTabs = vBox
-      [ hBox (homeTab : take 3 renderedTabs)
-      , hBox (drop 3 renderedTabs)
-      ]
-    homeTab = clickable HomeTab renderedHome
-    renderedHome = case currentSection of
-      Nothing -> withAttr (attrName "activeTab") (str " [Home] ")
-      Just _ -> str "  Home  "
-    renderTab section = clickable (SectionTab section) rendered
-      where
-        rendered
-          | Just section == currentSection = withAttr (attrName "activeTab")
-              (str (" [" <> sectionNum section <> ": " <> sectionName section <> "] "))
-          | otherwise = str ("  " <> sectionNum section <> ": " <> sectionName section <> "  ")
-    sectionNum ActualSection = "1"
-    sectionNum PlansSection = "2"
-    sectionNum EntitlementSection = "3"
-    sectionNum AccountsSection = "4"
-    sectionNum IssuesSection = "5"
-    sectionNum ReportsSection = "6"
-    sectionNum SettingsSection = "7"
-    sectionName ActualSection = "Actual"
-    sectionName PlansSection = "Plans"
-    sectionName EntitlementSection = "Envelopes"
-    sectionName AccountsSection = "Accounts"
-    sectionName IssuesSection = "Issues"
-    sectionName ReportsSection = "Reports"
-    sectionName SettingsSection = "Settings"
-
--- | Select layout from Brick's current render context. Terminal dimensions are
--- presentation evidence only and do not enter application or Household state.
-responsiveAt :: Int -> Widget name -> Widget name -> Widget name
-responsiveAt breakpoint compact wide =
-  Widget Greedy Fixed $ do
-    context <- getContext
-    render $ if context ^. availWidthL < breakpoint then compact else wide
 
 drawSectionBody :: AppContext -> Widget Name
 drawSectionBody context = case contextCurrentSection context of
@@ -168,11 +114,11 @@ appEvent event = do
   AppWrapper context state <- get
   case state of
     Home selectedDay -> handleHomeEvent context selectedDay event
-    Workspace -> handleWorkspaceEvent context event
+    Workspace selectedDay focus -> handleWorkspaceEvent context selectedDay focus event
     ActualFlow returnTarget _ -> handleActualFlow context returnTarget event
-    PlanFlow _ -> handlePlanFlow context event
-    MaintenanceFlow _ -> handleMaintenanceFlow context event
-    ReportPicker _ -> handleReportPicker context event
+    PlanFlow selectedDay _ -> handlePlanFlow context selectedDay event
+    MaintenanceFlow selectedDay _ -> handleMaintenanceFlow context selectedDay event
+    ReportPicker selectedDay _ -> handleReportPicker context selectedDay event
     ShowWorkspaceReloadFailure -> handleExitOnlyEvent event
 
 handleHomeEvent
@@ -181,8 +127,9 @@ handleHomeEvent
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
 handleHomeEvent context selectedDay event = case event of
-  MouseDown HomeTab V.BLeft _ _ -> pure ()
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
+  VtyEvent (V.EvKey (V.KChar '\t') []) ->
+    put (AppWrapper context (Workspace selectedDay Shell.SectionFocus))
   VtyEvent (V.EvKey V.KEsc []) -> halt
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
@@ -204,27 +151,35 @@ handleHomeEvent context selectedDay event = case event of
       Home.HomeObserveChange day -> openChange currentContext day
   where
     switchSection section =
-      put (AppWrapper (context { contextCurrentSection = section }) Workspace)
+      put (AppWrapper
+        (context { contextCurrentSection = section })
+        (Workspace selectedDay Shell.SectionFocus))
     openChange currentContext day = do
       put (AppWrapper
         (currentContext
           { contextCurrentSection = ReportsSection
           , contextSelectedReport = ReportEnvelopeChange (ExplicitDay day)
           })
-        Workspace)
+        (Workspace day Shell.SurfaceFocus))
       let reportsViewport = viewportScroll ReportsViewport
       vScrollToBeginning reportsViewport
       hScrollToBeginning reportsViewport
 
-handleWorkspaceEvent :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
-handleWorkspaceEvent context event = case event of
-  MouseDown HomeTab V.BLeft _ _ -> openHome
+handleWorkspaceEvent
+  :: AppContext
+  -> Day
+  -> Shell.ShellFocus
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleWorkspaceEvent context selectedDay focus event = case event of
+  MouseDown (CalendarDay day) V.BLeft _ _ -> do
+    vScrollToBeginning (viewportScroll HomeDayViewport)
+    put (AppWrapper context (Home day))
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
+  VtyEvent (V.EvKey (V.KChar '\t') []) -> switchFocus (Shell.nextFocus focus)
   VtyEvent (V.EvKey V.KEsc []) -> halt
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
-  VtyEvent (V.EvKey (V.KChar 'h') []) -> openHome
-  VtyEvent (V.EvKey (V.KChar 'H') []) -> openHome
   VtyEvent (V.EvKey (V.KChar '1') []) -> switchSection ActualSection
   VtyEvent (V.EvKey (V.KChar '2') []) -> switchSection PlansSection
   VtyEvent (V.EvKey (V.KChar '3') []) -> switchSection EntitlementSection
@@ -232,6 +187,55 @@ handleWorkspaceEvent context event = case event of
   VtyEvent (V.EvKey (V.KChar '5') []) -> switchSection IssuesSection
   VtyEvent (V.EvKey (V.KChar '6') []) -> switchSection ReportsSection
   VtyEvent (V.EvKey (V.KChar '7') []) -> switchSection SettingsSection
+  _ -> case focus of
+    Shell.CalendarFocus -> put (AppWrapper context (Home selectedDay))
+    Shell.SectionFocus -> handleSectionNavigation context selectedDay event
+    Shell.SurfaceFocus -> handleSectionSurfaceEvent context selectedDay event
+  where
+    switchFocus next = case next of
+      Shell.CalendarFocus -> put (AppWrapper context (Home selectedDay))
+      nextFocus -> put (AppWrapper context (Workspace selectedDay nextFocus))
+    switchSection section =
+      put (AppWrapper
+        (context { contextCurrentSection = section })
+        (Workspace selectedDay Shell.SectionFocus))
+
+handleSectionNavigation
+  :: AppContext
+  -> Day
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleSectionNavigation context selectedDay event = case event of
+  VtyEvent (V.EvKey V.KUp []) -> move (-1)
+  VtyEvent (V.EvKey V.KDown []) -> move 1
+  VtyEvent (V.EvKey (V.KChar 'k') []) -> move (-1)
+  VtyEvent (V.EvKey (V.KChar 'K') []) -> move (-1)
+  VtyEvent (V.EvKey (V.KChar 'j') []) -> move 1
+  VtyEvent (V.EvKey (V.KChar 'J') []) -> move 1
+  VtyEvent (V.EvKey V.KRight []) -> enterSurface
+  VtyEvent (V.EvKey V.KEnter []) -> enterSurface
+  VtyEvent (V.EvKey V.KLeft []) ->
+    put (AppWrapper context (Home selectedDay))
+  _ -> pure ()
+  where
+    move delta =
+      put (AppWrapper
+        (context
+          { contextCurrentSection =
+              Shell.moveSection delta (contextCurrentSection context)
+          })
+        (Workspace selectedDay Shell.SectionFocus))
+    enterSurface =
+      put (AppWrapper context (Workspace selectedDay Shell.SurfaceFocus))
+
+handleSectionSurfaceEvent
+  :: AppContext
+  -> Day
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleSectionSurfaceEvent context selectedDay event = case event of
+  VtyEvent (V.EvKey V.KLeft []) ->
+    put (AppWrapper context (Workspace selectedDay Shell.SectionFocus))
   _ -> case contextCurrentSection context of
     ActualSection -> do
       action <- zoom zoomContext (Actual.handleWorkspaceEvent event)
@@ -239,77 +243,84 @@ handleWorkspaceEvent context event = case event of
       case action of
         Actual.MaintainContext -> pure ()
         Actual.OpenDaily -> put (AppWrapper currentContext
-          (ActualFlow ActualReturnWorkspace
+          (ActualFlow (ActualReturnWorkspace selectedDay)
             (Actual.startDaily (contextEntryDay currentContext))))
         Actual.OpenIncome -> put (AppWrapper currentContext
-          (ActualFlow ActualReturnWorkspace
+          (ActualFlow (ActualReturnWorkspace selectedDay)
             (Actual.startIncome (contextEntryDay currentContext))))
         Actual.OpenRecord -> put (AppWrapper currentContext
-          (ActualFlow ActualReturnWorkspace
+          (ActualFlow (ActualReturnWorkspace selectedDay)
             (Actual.startRecord (contextEntryDay currentContext))))
         Actual.OpenReconcile account -> put (AppWrapper currentContext
-          (ActualFlow ActualReturnWorkspace
+          (ActualFlow (ActualReturnWorkspace selectedDay)
             (Actual.startReconcile currentContext account)))
         Actual.OpenReverse -> put (AppWrapper currentContext
-          (ActualFlow ActualReturnWorkspace
+          (ActualFlow (ActualReturnWorkspace selectedDay)
             (Actual.startSelectedReverse currentContext)))
     PlansSection -> do
       action <- zoom zoomContext (Plan.handleWorkspaceEvent event)
       AppWrapper currentContext _ <- get
       case action of
         Plan.MaintainContext -> pure ()
-        Plan.StartFlow flow -> put (AppWrapper currentContext (PlanFlow flow))
+        Plan.StartFlow flow ->
+          put (AppWrapper currentContext (PlanFlow selectedDay flow))
     EntitlementSection -> do
       action <- Maintenance.handleEntitlementWorkspaceEvent event
       case action of
         Maintenance.EntitlementActionMaintain -> pure ()
         Maintenance.EntitlementActionStartTransfer ->
-          put (AppWrapper context (MaintenanceFlow Maintenance.startEntitlementTransfer))
+          put (AppWrapper context
+            (MaintenanceFlow selectedDay Maintenance.startEntitlementTransfer))
     AccountsSection -> do
       action <- Maintenance.handleAccountsWorkspaceEvent event
       case action of
         Maintenance.AccountsActionMaintain -> pure ()
         Maintenance.AccountsActionStartAdd ->
-          put (AppWrapper context (MaintenanceFlow Maintenance.startAccountAdd))
+          put (AppWrapper context
+            (MaintenanceFlow selectedDay Maintenance.startAccountAdd))
     IssuesSection -> do
       action <- zoom zoomContext (Maintenance.handleIssuesWorkspaceEvent event)
       AppWrapper currentContext _ <- get
       case action of
         Maintenance.IssuesActionMaintain -> pure ()
         Maintenance.IssuesActionStartAdd ->
-          put (AppWrapper currentContext (MaintenanceFlow Maintenance.startIssueAdd))
+          put (AppWrapper currentContext
+            (MaintenanceFlow selectedDay Maintenance.startIssueAdd))
         Maintenance.IssuesActionStartDueUpdate flow ->
-          put (AppWrapper currentContext (MaintenanceFlow flow))
+          put (AppWrapper currentContext (MaintenanceFlow selectedDay flow))
         Maintenance.IssuesActionStartClose flow ->
-          put (AppWrapper currentContext (MaintenanceFlow flow))
+          put (AppWrapper currentContext (MaintenanceFlow selectedDay flow))
         Maintenance.IssuesActionStartRealize issue ->
           case Actual.startIssueRealize (contextEntryDay currentContext) issue of
             Nothing -> pure ()
             Just flow -> put (AppWrapper currentContext
-              (ActualFlow ActualReturnWorkspace flow))
+              (ActualFlow (ActualReturnWorkspace selectedDay) flow))
     ReportsSection -> do
       action <- zoom zoomContext (Report.handleWorkspaceEvent event)
       case action of
         Report.MaintainContext -> pure ()
         Report.OpenPicker ->
           put (AppWrapper context
-            (ReportPicker (Report.openPicker (contextSelectedReport context))))
+            (ReportPicker selectedDay
+              (Report.openPicker (contextSelectedReport context))))
     SettingsSection -> Settings.handleWorkspaceEvent event
-  where
-    openHome = put (AppWrapper context (Home (contextObservationDay context)))
-    switchSection :: HouseholdSection -> EventM Name AppWrapper ()
-    switchSection section =
-      put (AppWrapper (context { contextCurrentSection = section }) Workspace)
 
-handleReportPicker :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
-handleReportPicker context event = do
+handleReportPicker
+  :: AppContext
+  -> Day
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleReportPicker context selectedDay event = do
   action <- zoom (singular zoomReportPicker) (Report.handlePickerEvent event)
   case action of
     Report.PickerMaintain -> pure ()
-    Report.PickerBack -> put (AppWrapper context Workspace)
+    Report.PickerBack ->
+      put (AppWrapper context (Workspace selectedDay Shell.SurfaceFocus))
     Report.PickerQuit -> halt
     Report.PickerOpen choice -> do
-      put (AppWrapper (context { contextSelectedReport = choice }) Workspace)
+      put (AppWrapper
+        (context { contextSelectedReport = choice })
+        (Workspace selectedDay Shell.SurfaceFocus))
       let reportsViewport = viewportScroll ReportsViewport
       vScrollToBeginning reportsViewport
       hScrollToBeginning reportsViewport
@@ -341,42 +352,61 @@ handleActualFlow context returnTarget event = do
     _ -> pure ()
 
 returnFromActual :: AppContext -> ActualReturn -> AppWrapper
-returnFromActual context ActualReturnWorkspace = AppWrapper context Workspace
+returnFromActual context (ActualReturnWorkspace selectedDay) =
+  AppWrapper context (Workspace selectedDay Shell.SurfaceFocus)
 returnFromActual context (ActualReturnHome selectedDay) =
   AppWrapper context (Home selectedDay)
 
-handlePlanFlow :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
-handlePlanFlow context event = do
+handlePlanFlow
+  :: AppContext
+  -> Day
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handlePlanFlow context selectedDay event = do
   zoom zoomPlanFlow (Plan.handleFlowEvent context event)
   AppWrapper currentContext state <- get
   case state of
-    PlanFlow Plan.ReturnToWorkspace -> put (AppWrapper currentContext Workspace)
-    PlanFlow Plan.QuitRequested -> halt
-    PlanFlow (Plan.PublishRequested request) -> publishPlanRequest context request
+    PlanFlow _ Plan.ReturnToWorkspace ->
+      put (AppWrapper currentContext (Workspace selectedDay Shell.SurfaceFocus))
+    PlanFlow _ Plan.QuitRequested -> halt
+    PlanFlow _ (Plan.PublishRequested request) ->
+      publishPlanRequest context selectedDay request
     _ -> pure ()
 
-publishPlanRequest :: AppContext -> Plan.PublishRequest -> EventM Name AppWrapper ()
-publishPlanRequest context request = do
+publishPlanRequest
+  :: AppContext
+  -> Day
+  -> Plan.PublishRequest
+  -> EventM Name AppWrapper ()
+publishPlanRequest context selectedDay request = do
   result <- suspendAndResume' (Plan.publishCandidate context request)
   case result of
-    Plan.Published freshContext -> put (AppWrapper freshContext Workspace)
+    Plan.Published freshContext ->
+      put (AppWrapper freshContext (Workspace selectedDay Shell.SurfaceFocus))
     Plan.PublicationFailed message ->
-      put (AppWrapper context (PlanFlow (Plan.WriteOutcome message)))
+      put (AppWrapper context (PlanFlow selectedDay (Plan.WriteOutcome message)))
     Plan.ReloadFailed -> put (AppWrapper context ShowWorkspaceReloadFailure)
 
-handleMaintenanceFlow :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
-handleMaintenanceFlow context event = do
+handleMaintenanceFlow
+  :: AppContext
+  -> Day
+  -> BrickEvent Name AppEvent
+  -> EventM Name AppWrapper ()
+handleMaintenanceFlow context selectedDay event = do
   zoom zoomMaintenanceFlow (Maintenance.handleFlowEvent context event)
   AppWrapper currentContext state <- get
   case state of
-    MaintenanceFlow Maintenance.ReturnToWorkspace -> put (AppWrapper currentContext Workspace)
-    MaintenanceFlow Maintenance.QuitRequested -> halt
-    MaintenanceFlow (Maintenance.PublishRequested request) -> do
+    MaintenanceFlow _ Maintenance.ReturnToWorkspace ->
+      put (AppWrapper currentContext (Workspace selectedDay Shell.SurfaceFocus))
+    MaintenanceFlow _ Maintenance.QuitRequested -> halt
+    MaintenanceFlow _ (Maintenance.PublishRequested request) -> do
       result <- suspendAndResume' (Maintenance.publishCandidate context request)
       case result of
-        Maintenance.Published freshContext -> put (AppWrapper freshContext Workspace)
+        Maintenance.Published freshContext ->
+          put (AppWrapper freshContext (Workspace selectedDay Shell.SurfaceFocus))
         Maintenance.PublicationFailed message ->
-          put (AppWrapper context (MaintenanceFlow (Maintenance.WriteOutcome message)))
+          put (AppWrapper context
+            (MaintenanceFlow selectedDay (Maintenance.WriteOutcome message)))
         Maintenance.ReloadFailed -> put (AppWrapper context ShowWorkspaceReloadFailure)
     _ -> pure ()
 
@@ -398,6 +428,8 @@ app = App
         [ (L.listSelectedAttr, V.black `on` V.white)
         , (attrName "activeTab", V.black `on` V.cyan)
         , (attrName "homeSelectedDay", V.withStyle V.defAttr V.reverseVideo)
+        , (attrName "shellFocus", V.withStyle V.defAttr V.bold)
+        , (attrName "shellMuted", V.withStyle V.defAttr V.dim)
         , (attrName "error", fg V.red)
         , (attrName "success", fg V.green)
         , (attrName "warning", fg V.yellow)
