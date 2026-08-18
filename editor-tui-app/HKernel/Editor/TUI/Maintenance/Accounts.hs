@@ -131,7 +131,7 @@ drawFlow state = case state of
       ]
   Preview result _ ->
     previewBox "Account Preview"
-      (renderPreviewResult (txt . accountCandidateBlock . snd) result)
+      (renderPreviewResult (txtWrap . accountCandidateBlock . snd) result)
       (previewControls result)
 
 inputBox :: String -> Form input AppEvent Name -> [String] -> Widget Name
@@ -140,7 +140,7 @@ inputBox title form helpLines =
     (borderWithLabel (str title)
       (hLimit 82
         (padAll 1
-          (renderForm form <=> str " " <=> vBox (map str helpLines)))))
+          (renderForm form <=> str " " <=> vBox (map strWrap helpLines)))))
 
 previewBox :: String -> Widget Name -> String -> Widget Name
 previewBox title body controls =
@@ -149,14 +149,14 @@ previewBox title body controls =
       (hLimit 88
         (vLimit 32
           (padAll 1
-            (body <=> str " " <=> str controls)))))
+            (body <=> str " " <=> strWrap controls)))))
 
 renderPreviewResult
   :: (preview -> Widget Name)
   -> PreviewResult preview
   -> Widget Name
 renderPreviewResult renderPreview result = case result of
-  PreviewRejected message -> withAttr (attrName "error") (txt message)
+  PreviewRejected message -> withAttr (attrName "error") (txtWrap message)
   PreviewReady preview -> renderPreview preview
 
 previewControls :: PreviewResult preview -> String
@@ -244,12 +244,12 @@ drawWorkspace context =
             (vBox (map renderAccountDecl
               (accountDeclarations
                 (householdStateAccountsRegistry (contextHouseholdState context)))))))
-    , str "[Enter/A] Add Account   [1-7] Sections   [q] Quit"
+    , strWrap "[Enter/A] Add Account   [1-7] Sections   [q] Quit"
     ]
 
 renderAccountDecl :: AccountDeclaration -> Widget Name
 renderAccountDecl declaration =
-  txt (accountName (declaredAccount declaration) <> "  type: "
+  txtWrap (accountName (declaredAccount declaration) <> "  type: "
     <> T.pack (show (declaredAccountType declaration))
     <> maybe "" (\commodity -> "  default commodity: " <> commodityCode commodity)
       (declaredAccountDefaultCommodity declaration))
