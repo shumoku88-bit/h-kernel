@@ -13,6 +13,23 @@ module HKernel.Household.EnvelopeObservation
   , householdEnvelopeHeadroom
   , HouseholdEnvelopeError(..)
   , deriveHouseholdEnvelopeObservation
+  , HouseholdEnvelopeExplanation
+  , EnvelopeExplanationLine
+  , explainHouseholdEnvelope
+  , householdEnvelopeExplanationPeriod
+  , householdEnvelopeExplanationObservedThrough
+  , householdEnvelopeExplanationLines
+  , envelopeExplanationId
+  , envelopeExplanationEntitlement
+  , envelopeExplanationConsumptionCharges
+  , envelopeExplanationConsumptionRefunds
+  , envelopeExplanationConsumptionNet
+  , envelopeExplanationFulfillmentApplied
+  , envelopeExplanationFulfillmentReversed
+  , envelopeExplanationFulfillmentNet
+  , envelopeExplanationRemaining
+  , envelopeExplanationCommitment
+  , envelopeExplanationHeadroom
   ) where
 
 import Data.List.NonEmpty (NonEmpty)
@@ -23,16 +40,22 @@ import HKernel.Actual.Journal (ActualJournal)
 import HKernel.Envelope.Commitment
   ( EnvelopeCommitment
   , EnvelopeCommitmentError
+  , envelopeCommitmentFor
   , observeEnvelopeCommitment
   )
 import HKernel.Envelope.Consumption
   ( EnvelopeConsumption
   , EnvelopeConsumptionError
+  , consumptionCharges
+  , consumptionNet
+  , consumptionRefunds
+  , envelopeConsumptionFor
   , observeEnvelopeStockConsumption
   )
 import HKernel.Envelope.Entitlement
   ( EnvelopeEntitlement
   , EnvelopeEntitlementError
+  , envelopeEntitlementBalance
   , observeEnvelopeEntitlement
   )
 import HKernel.Envelope.EntitlementHistory
@@ -46,6 +69,10 @@ import HKernel.Envelope.ExpenseRouting
 import HKernel.Envelope.Fulfillment
   ( EnvelopeFulfillment
   , EnvelopeFulfillmentError
+  , envelopeFulfillmentFor
+  , fulfillmentApplied
+  , fulfillmentNet
+  , fulfillmentReversed
   , observeEnvelopeStockFulfillment
   )
 import HKernel.Envelope.FulfillmentRouting (FulfillmentRoutingHistory)
@@ -53,14 +80,17 @@ import HKernel.Envelope.Headroom
   ( EnvelopeHeadroom
   , EnvelopeHeadroomError
   , calculateEnvelopeHeadroom
+  , envelopeHeadroomFor
   )
+import HKernel.Envelope.Identity (EnvelopeId)
 import HKernel.Envelope.Remaining
   ( EnvelopeRemaining
   , EnvelopeRemainingError
   , calculateEnvelopeRemaining
+  , envelopeRemainingFor
   )
 import HKernel.Envelope.StockOrigin (StockOrigin)
-import HKernel.Money (Commodity)
+import HKernel.Money (Balance, Commodity)
 import HKernel.Period (Period)
 import HKernel.Plan.Journal (PlanJournal)
 
@@ -121,6 +151,81 @@ deriveHouseholdEnvelopeObservation observedThrough period actual plans expenseRo
     , householdEnvelopeCommitment = commitment
     , householdEnvelopeHeadroom = headroom
     }
+
+-- | Complete arithmetic witness for one Envelope in one admitted Household
+-- observation. Gross evidence remains beside its net projection so activity does
+-- not disappear merely because opposite movements cancel.
+data EnvelopeExplanationLine = EnvelopeExplanationLine
+  { envelopeExplanationId                  :: EnvelopeId
+  , envelopeExplanationEntitlement         :: Balance
+  , envelopeExplanationConsumptionCharges  :: Balance
+  , envelopeExplanationConsumptionRefunds  :: Balance
+  , envelopeExplanationConsumptionNet      :: Balance
+  , envelopeExplanationFulfillmentApplied  :: Balance
+  , envelopeExplanationFulfillmentReversed :: Balance
+  , envelopeExplanationFulfillmentNet      :: Balance
+  , envelopeExplanationRemaining           :: Balance
+  , envelopeExplanationCommitment          :: Balance
+  , envelopeExplanationHeadroom            :: Balance
+  } deriving (Eq, Show)
+
+-- | Question-specific explanation of why current Envelope Remaining and
+-- Headroom have their observed values. The caller supplies current presentation
+-- membership and order; historical evidence does not decide current membership.
+data HouseholdEnvelopeExplanation = HouseholdEnvelopeExplanation
+  { householdEnvelopeExplanationPeriod          :: Period
+  , householdEnvelopeExplanationObservedThrough :: Day
+  , householdEnvelopeExplanationLines           :: [EnvelopeExplanationLine]
+  } deriving (Eq, Show)
+
+-- | Preserve the typed arithmetic evidence already present in one observation.
+-- This projection performs no source reads and creates no new authority.
+explainHouseholdEnvelope
+  :: [EnvelopeId]
+  -> HouseholdEnvelopeObservation
+  -> HouseholdEnvelopeExplanation
+explainHouseholdEnvelope envelopes observation =
+  HouseholdEnvelopeExplanation
+    { householdEnvelopeExplanationPeriod =
+        householdEnvelopeObservationPeriod observation
+    , householdEnvelopeExplanationObservedThrough =
+        householdEnvelopeObservationObservedThrough observation
+    , householdEnvelopeExplanationLines = map explain envelopes
+    }
+  where
+    entitlement = householdEnvelopeEntitlement observation
+    consumption = householdEnvelopeConsumption observation
+    fulfillment = householdEnvelopeFulfillment observation
+    remaining = householdEnvelopeRemaining observation
+    commitment = householdEnvelopeCommitment observation
+    headroom = householdEnvelopeHeadroom observation
+
+    explain envelope =
+      let consumptionAmounts = envelopeConsumptionFor envelope consumption
+          fulfillmentAmounts = envelopeFulfillmentFor envelope fulfillment
+      in EnvelopeExplanationLine
+        { envelopeExplanationId = envelope
+        , envelopeExplanationEntitlement =
+            envelopeEntitlementBalance envelope entitlement
+        , envelopeExplanationConsumptionCharges =
+            consumptionCharges consumptionAmounts
+        , envelopeExplanationConsumptionRefunds =
+            consumptionRefunds consumptionAmounts
+        , envelopeExplanationConsumptionNet =
+            consumptionNet consumptionAmounts
+        , envelopeExplanationFulfillmentApplied =
+            fulfillmentApplied fulfillmentAmounts
+        , envelopeExplanationFulfillmentReversed =
+            fulfillmentReversed fulfillmentAmounts
+        , envelopeExplanationFulfillmentNet =
+            fulfillmentNet fulfillmentAmounts
+        , envelopeExplanationRemaining =
+            envelopeRemainingFor envelope remaining
+        , envelopeExplanationCommitment =
+            envelopeCommitmentFor envelope commitment
+        , envelopeExplanationHeadroom =
+            envelopeHeadroomFor envelope headroom
+        }
 
 singleLeft
   :: (error -> HouseholdEnvelopeError)

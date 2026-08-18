@@ -24,11 +24,30 @@ import qualified Data.Text as T
 import Data.Time.Calendar (Day, diffDays)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import HKernel.Account (Account, accountName, declaredAccount)
+import HKernel.Envelope.Identity (envelopeIdText)
 import HKernel.Envelope.StockOrigin (StockOrigin(..))
 import HKernel.Household.Backing
   ( envelopeAvailableBackingRequired
   , envelopeAvailableFunding
   , envelopeFundingCommitment
+  )
+import HKernel.Household.EnvelopeObservation
+  ( HouseholdEnvelopeExplanation
+  , EnvelopeExplanationLine
+  , envelopeExplanationCommitment
+  , envelopeExplanationConsumptionCharges
+  , envelopeExplanationConsumptionNet
+  , envelopeExplanationConsumptionRefunds
+  , envelopeExplanationEntitlement
+  , envelopeExplanationFulfillmentApplied
+  , envelopeExplanationFulfillmentNet
+  , envelopeExplanationFulfillmentReversed
+  , envelopeExplanationHeadroom
+  , envelopeExplanationId
+  , envelopeExplanationRemaining
+  , householdEnvelopeExplanationLines
+  , householdEnvelopeExplanationObservedThrough
+  , householdEnvelopeExplanationPeriod
   )
 import HKernel.HouseholdIssue
 import HKernel.Money
@@ -98,6 +117,7 @@ renderHouseholdReportSection presentation section surface =
         presentation
         (householdEnvelopeStockOrigins surface)
         (householdEnvelopeBacking surface)
+        (householdEnvelopeExplanation surface)
 
 renderHouseholdReportSections
   :: PresentationConfig
@@ -478,8 +498,9 @@ renderEnvelope
   :: PresentationConfig
   -> Map.Map Commodity StockOrigin
   -> EnvelopeBacking
+  -> HouseholdEnvelopeExplanation
   -> Text
-renderEnvelope presentation origins report = T.intercalate "\n"
+renderEnvelope presentation origins report explanation = T.intercalate "\n"
   [ terminalHeaderWith presentation "Envelope & Backing"
   , terminalMeta ("Cycle: [" <> renderDay (periodStart period)
       <> ", " <> renderDay (periodEndExclusive period) <> ")"
@@ -495,6 +516,7 @@ renderEnvelope presentation origins report = T.intercalate "\n"
   , "Gross status: " <> renderBackingStatus (envelopeBackingSurplus report)
   , "Available status: " <> renderBackingStatus (envelopeAvailableBackingSurplus report)
   , ""
+  , renderEnvelopeExplanation presentation explanation
   ]
   where
     period = envelopeBackingPeriod report
@@ -536,6 +558,61 @@ renderEnvelope presentation origins report = T.intercalate "\n"
           (envelopeBackingSurplus report)]
       , [plainCell "Available backing surplus", signedBalanceCellWith presentation
           (envelopeAvailableBackingSurplus report)]
+      ]
+
+renderEnvelopeExplanation
+  :: PresentationConfig
+  -> HouseholdEnvelopeExplanation
+  -> Text
+renderEnvelopeExplanation presentation explanation = T.intercalate "\n"
+  ( [ terminalSectionWith presentation "Envelope explanation"
+    , terminalMeta
+        ("Observation: "
+          <> renderDay (householdEnvelopeExplanationObservedThrough explanation)
+          <> " | Period: "
+          <> renderPeriod (householdEnvelopeExplanationPeriod explanation))
+    , terminalMeta
+        "Remaining = Entitlement - Consumption net - Fulfillment net | Headroom = Remaining - Commitment"
+    ]
+    ++ if null linesToRender
+        then [terminalDim "(no current Envelopes)", ""]
+        else concatMap renderExplanationLine linesToRender
+  )
+  where
+    linesToRender = householdEnvelopeExplanationLines explanation
+
+    renderExplanationLine line =
+      [ ""
+      , terminalSectionWith presentation
+          ("Envelope: " <> envelopeIdText (envelopeExplanationId line))
+      , renderTerminalTable
+          [("Evidence", AlignLeft), ("Exact value", AlignRight)]
+          (explanationRows line)
+          Nothing
+      ]
+
+    explanationRows :: EnvelopeExplanationLine -> [[Cell]]
+    explanationRows line =
+      [ [plainCell "Entitlement", signedBalanceCellWith presentation
+          (envelopeExplanationEntitlement line)]
+      , [plainCell "Consumption charges", plainBalanceCellWith presentation
+          (envelopeExplanationConsumptionCharges line)]
+      , [plainCell "Consumption refunds", plainBalanceCellWith presentation
+          (envelopeExplanationConsumptionRefunds line)]
+      , [plainCell "Consumption net", signedBalanceCellWith presentation
+          (envelopeExplanationConsumptionNet line)]
+      , [plainCell "Fulfillment applied", plainBalanceCellWith presentation
+          (envelopeExplanationFulfillmentApplied line)]
+      , [plainCell "Fulfillment reversed", plainBalanceCellWith presentation
+          (envelopeExplanationFulfillmentReversed line)]
+      , [plainCell "Fulfillment net", signedBalanceCellWith presentation
+          (envelopeExplanationFulfillmentNet line)]
+      , [styledCell terminalBold "= Remaining", signedBalanceCellWith presentation
+          (envelopeExplanationRemaining line)]
+      , [plainCell "Commitment", plainBalanceCellWith presentation
+          (envelopeExplanationCommitment line)]
+      , [styledCell terminalBold "= Headroom", signedBalanceCellWith presentation
+          (envelopeExplanationHeadroom line)]
       ]
 
 renderStockOrigins :: Map.Map Commodity StockOrigin -> Text
