@@ -66,6 +66,7 @@ data WorkspaceAction
   | OpenDaily
   | OpenIncome
   | OpenRecord
+  | OpenReconcile HKernel.Account.Account
   | OpenReverse
 
 drawWorkspace :: AppContext -> Widget Name
@@ -92,6 +93,7 @@ drawWorkspace context =
     , vBox
         [ txtWrap "Navigate: [1-7] Sections  [Tab/Left/Right] Focus  [j/k/Arrows] Move"
         , txtWrap "Record:   [r] Record (2+ postings)  [a] Expense  [i] Income"
+        , txtWrap ("Observe:  " <> workspaceReconcileHint context)
         , txtWrap "Action:   [Enter] Reverse selected  [q] Quit"
         ]
     ]
@@ -123,6 +125,8 @@ handleWorkspaceEvent event = case event of
   VtyEvent (V.EvKey (V.KChar 'I') []) -> pure OpenIncome
   VtyEvent (V.EvKey (V.KChar 'r') []) -> pure OpenRecord
   VtyEvent (V.EvKey (V.KChar 'R') []) -> pure OpenRecord
+  VtyEvent (V.EvKey (V.KChar 'c') []) -> selectedReconcileAction
+  VtyEvent (V.EvKey (V.KChar 'C') []) -> selectedReconcileAction
   VtyEvent (V.EvKey V.KEnter []) -> do
     context <- get
     if contextWorkspaceFocus context == AccountsFocus
@@ -146,6 +150,9 @@ handleWorkspaceEvent event = case event of
       TransactionsFocus -> selectTransactionEvent (V.EvKey vtyKey vtyMods)
   _ -> pure MaintainContext
   where
+    selectedReconcileAction = do
+      context <- get
+      pure (maybe MaintainContext OpenReconcile (selectedWorkspaceAccount context))
     selectAccountEvent ev = do
       zoom contextWorkspaceAccountsL (L.handleListEventVi L.handleListEvent ev)
       modify (\ctx -> applyWorkspaceAccountFilter
@@ -190,6 +197,11 @@ workspaceFilterText :: AppContext -> Text
 workspaceFilterText context = case selectedWorkspaceAccount context of
   Nothing -> "All accounts"
   Just account -> HKernel.Account.accountName account
+
+workspaceReconcileHint :: AppContext -> Text
+workspaceReconcileHint context = case selectedWorkspaceAccount context of
+  Nothing -> "[c] Compare balance (select one Account first)"
+  Just _ -> "[c] Compare external balance"
 
 selectedWorkspaceAccount :: AppContext -> Maybe HKernel.Account.Account
 selectedWorkspaceAccount context = case L.listSelectedElement (contextWorkspaceAccounts context) of
