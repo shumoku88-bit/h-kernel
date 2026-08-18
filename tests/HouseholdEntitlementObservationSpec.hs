@@ -45,7 +45,9 @@ import HKernel.Envelope.Headroom (envelopeHeadroomFor)
 import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Envelope.Remaining (envelopeRemainingFor)
 import HKernel.Household.EnvelopeObservation
-  ( HouseholdEnvelopeChangeError(..)
+  ( EnvelopeChangeBaseline(..)
+  , EnvelopeChangeBaselineError(..)
+  , HouseholdEnvelopeChangeError(..)
   , deriveHouseholdEnvelopeObservation
   , envelopeChangeCommitment
   , envelopeChangeConsumptionCharges
@@ -75,6 +77,8 @@ import HKernel.Household.EnvelopeObservation
   , householdEnvelopeHeadroom
   , householdEnvelopeRemaining
   , observeHouseholdEnvelopeChange
+  , resolveEnvelopeChangeBaseline
+  , resolvedEnvelopeChangeBaselineDay
   )
 import HKernel.Household.Policy
   ( householdEnvelopeOrder
@@ -92,8 +96,21 @@ main = do
   let jpy = mustRight (mkCommodity "JPY")
       period = mustRight
         (mkPeriod (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
-      earlierObserved = fromGregorian 2026 8 7
       observed = fromGregorian 2026 8 10
+      previousObservationDay = fromGregorian 2026 8 7
+      previousObservationBaseline = mustRight
+        (resolveEnvelopeChangeBaseline
+          period observed (Just previousObservationDay) PreviousObservation)
+      previousDayBaseline = mustRight
+        (resolveEnvelopeChangeBaseline period observed Nothing PreviousDay)
+      cycleStartBaseline = mustRight
+        (resolveEnvelopeChangeBaseline period observed Nothing CycleStart)
+      explicitBaselineDay = fromGregorian 2026 8 5
+      explicitBaseline = mustRight
+        (resolveEnvelopeChangeBaseline
+          period observed Nothing (ExplicitDay explicitBaselineDay))
+      earlierObserved =
+        resolvedEnvelopeChangeBaselineDay previousObservationBaseline
       foodId = mustRight (mkEnvelopeId "food")
       retiredId = mustRight (mkEnvelopeId "retired-savings")
       poolId = mustRight (mkBackingPoolId "cash")
@@ -212,6 +229,39 @@ main = do
       incompatibleExplanation = explainHouseholdEnvelope
         [foodId, retiredId] observation
 
+  assertEqual "PreviousObservation baseline uses caller-supplied observation context"
+    previousObservationDay earlierObserved
+  assertEqual "PreviousDay resolves inside the current Period"
+    (fromGregorian 2026 8 9)
+    (resolvedEnvelopeChangeBaselineDay previousDayBaseline)
+  assertEqual "CycleStart resolves to the current Period start"
+    (fromGregorian 2026 8 1)
+    (resolvedEnvelopeChangeBaselineDay cycleStartBaseline)
+  assertEqual "ExplicitDay preserves its requested coordinate"
+    explicitBaselineDay
+    (resolvedEnvelopeChangeBaselineDay explicitBaseline)
+  assertEqual "PreviousObservation is never inferred from accounting evidence"
+    (Left EnvelopeChangePreviousObservationUnavailable)
+    (resolveEnvelopeChangeBaseline period observed Nothing PreviousObservation)
+  assertBool "PreviousObservation must denote a strictly earlier observation"
+    (case resolveEnvelopeChangeBaseline period observed (Just observed) PreviousObservation of
+      Left (EnvelopeChangePreviousObservationNotBefore previous through) ->
+        previous == observed && through == observed
+      _ -> False)
+  assertBool "PreviousDay fails closed at the Period boundary"
+    (case resolveEnvelopeChangeBaseline
+        period (fromGregorian 2026 8 1) Nothing PreviousDay of
+      Left (EnvelopeChangeBaselineDayOutsidePeriod PreviousDay day rejectedPeriod) ->
+        day == fromGregorian 2026 7 31 && rejectedPeriod == period
+      _ -> False)
+  assertBool "ExplicitDay cannot point after the later observation"
+    (case resolveEnvelopeChangeBaseline
+        period observed Nothing (ExplicitDay (fromGregorian 2026 8 11)) of
+      Left (EnvelopeChangeBaselineDayAfterObservation (ExplicitDay requested) day through) ->
+        requested == day
+          && day == fromGregorian 2026 8 11
+          && through == observed
+      _ -> False)
   assertEqual "current Envelope order excludes retired stable allocation identity"
     [foodId] envelopeOrder
   assertEqual "entitlement carries pre-period grant and release while cutting off future"
