@@ -88,6 +88,7 @@ library h-kernel-household
     exposed-modules:  HKernel.Household.AccountProfile
                     , HKernel.Household.Backing
                     , HKernel.Household.Config
+                    , HKernel.Household.Cycle
                     , HKernel.Household.DailyTarget
                     , HKernel.Household.EnvelopeHistory
                     , HKernel.Household.EnvelopeObservation
@@ -250,6 +251,16 @@ test-suite h-kernel-household-backing-test
     main-is:          HouseholdBackingSpec.hs
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
+                    , h-kernel
+                    , h-kernel-household
+                    , text
+                    , time
+
+test-suite h-kernel-household-cycle-test
+    import:           test-defaults
+    type:             exitcode-stdio-1.0
+    main-is:          HouseholdCycleSpec.hs
+    build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-household
                     , text
