@@ -73,7 +73,9 @@ import HKernel.Household.Cycle
   )
 import HKernel.Household.DailyTarget
 import HKernel.Household.EnvelopeObservation
-  ( deriveHouseholdEnvelopeObservation
+  ( HouseholdEnvelopeExplanation
+  , deriveHouseholdEnvelopeObservation
+  , explainHouseholdEnvelope
   , householdEnvelopeObservationStockOrigins
   , householdEnvelopeConsumption
   , householdEnvelopeEntitlement
@@ -167,6 +169,7 @@ data HouseholdReportSurface = HouseholdReportSurface
   , householdIssues                             :: [HouseholdIssue]
   , householdEnvelopeStockOrigins               :: Map Commodity StockOrigin
   , householdEnvelopeBacking                    :: EnvelopeBacking
+  , householdEnvelopeExplanation                :: HouseholdEnvelopeExplanation
   , householdDailyTarget                        :: DailyTarget
   } deriving (Eq, Show)
 
@@ -233,6 +236,8 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
       entitlement = householdEnvelopeEntitlement envelopeObservation
       remaining = householdEnvelopeRemaining envelopeObservation
       headroom = householdEnvelopeHeadroom envelopeObservation
+      explanation = explainHouseholdEnvelope
+        (householdEnvelopeOrder policy) envelopeObservation
   backing <- mapLeft
     (fmap (sourceError "backing" 0 . tshow))
     (deriveHouseholdBacking
@@ -277,6 +282,7 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
     , householdEnvelopeStockOrigins =
         householdEnvelopeObservationStockOrigins envelopeObservation
     , householdEnvelopeBacking = backing
+    , householdEnvelopeExplanation = explanation
     , householdDailyTarget = target
     }
 
