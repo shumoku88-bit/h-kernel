@@ -87,11 +87,11 @@ drawUI :: HomeState -> Widget Name
 drawUI state =
   vBox
     [ withAttr mutedAttr
-        (strWrap "Shell experiment · current observation stays current · calendar is a temporal cursor")
+        (strWrap "Shell experiment · calendar observes a day · section rail opens current Household surfaces")
     , padTop (Pad 1)
         (hBox
           [ hLimit 30 (drawRail state)
-          , padLeft (Pad 1) (drawSurface state)
+          , padLeft (Pad 1) (drawRightPane state)
           ])
     , padTop (Pad 1) (drawKeyHelp state)
     ]
@@ -102,17 +102,18 @@ drawKeyHelp state =
   where
     help = case homeFocus state of
       CalendarFocus ->
-        "Calendar focus: [arrows / h j k l] Move cursor   [t] Today   [Tab] Next area   [mouse] Focus/select   [q/Esc] Quit"
+        "Calendar: [arrows / h j k l] Move day   [t] Today   [Tab] Sections   [mouse] Focus/select   [q/Esc] Quit"
       SectionFocus ->
-        "Section focus: [Up/Down or j/k] Select   [Right/Enter] Open surface   [Tab] Next area   [mouse] Focus/select   [q/Esc] Quit"
+        "Sections: [Up/Down or j/k] Select   [Right/Enter] Enter surface   [Tab] Surface   [mouse] Focus/select   [q/Esc] Quit"
       SurfaceFocus ->
-        "Surface focus: [Left] Back to sections   [Tab] Next area   [mouse] Focus   [q/Esc] Quit"
+        "Surface: [Left] Back to sections   [Tab] Calendar   [mouse] Focus   [q/Esc] Quit"
 
 drawRail :: HomeState -> Widget Name
 drawRail state =
   vBox
     [ drawCalendar state
     , padTop (Pad 1) (drawSectionRail state)
+    , fill ' '
     ]
 
 drawCalendar :: HomeState -> Widget Name
@@ -169,8 +170,8 @@ drawSectionRow state section =
       | homeSelectedSection state == section = withAttr sectionSelectedAttr row
       | otherwise = row
 
--- | Rail status belongs to the current admitted observation. Moving the
--- calendar cursor must not quietly turn every status into a historical one.
+-- | Rail status belongs to the current admitted observation. Calendar motion
+-- changes only the day detail pane, not these current-status summaries.
 sectionStatus :: Overview -> Section -> (Text, AttrName, Text)
 sectionStatus overview section = case section of
   Actual -> available (T.pack (show (overviewActualCount overview)) <> " rec")
@@ -191,95 +192,118 @@ sectionStatus overview section = case section of
     available summary = ("✓", availableAttr, summary)
     attention summary = ("!", attentionAttr, summary)
 
-drawSurface :: HomeState -> Widget Name
-drawSurface state =
+drawRightPane :: HomeState -> Widget Name
+drawRightPane state = case homeFocus state of
+  CalendarFocus -> drawDayDetail state
+  SectionFocus -> drawSectionSurface state
+  SurfaceFocus -> drawSectionSurface state
+
+drawDayDetail :: HomeState -> Widget Name
+drawDayDetail state =
+  borderWithLabel (txt ("Day · " <> dayText cursorDay))
+    (padAll 1
+      (vBox
+        ( dayDetail cursorDay
+          ++ [ str " "
+             , withAttr mutedAttr
+                 (strWrap
+                   "Calendar owns this pane directly. Moving to Sections changes the pane to the selected major Household surface; no calendar-to-section semantics are assumed yet.")
+             , fill ' '
+             ]
+        )))
+  where
+    cursorDay = homeTemporalCursorDay state
+
+dayDetail :: Day -> [Widget Name]
+dayDetail cursorDay =
+  [ heading "Actual"
+  , str "  12:10  Grocery                         -1,250 JPY"
+  , str "  09:20  Mobile plan                       -440 JPY"
+  , str " "
+  , heading "Plans"
+  , str "  Internet payment"
+  , str "  Investment contribution"
+  , str " "
+  , heading "Issues due"
+  , withAttr attentionAttr (str "  Review subscription")
+  , str " "
+  , heading "Cycle"
+  , txtWrap ("  Observation day " <> dayText cursorDay <> " · representative cycle context")
+  , str " "
+  , withAttr mutedAttr
+      (strWrap "Representative day detail only. Production would reuse the existing admitted Home day observations rather than inventing Calendar-owned facts.")
+  ]
+  where
+    heading label = withAttr availableAttr (txt label)
+
+drawSectionSurface :: HomeState -> Widget Name
+drawSectionSurface state =
   clickable SurfacePane $
     borderWithLabel
-      (focusLabel state SurfaceFocus (surfaceTitle selected cursorDay))
+      (focusLabel state SurfaceFocus
+        (sectionLabel selected <> " · current"))
       (padAll 1
         (vBox
           ( [ withAttr mutedAttr
-                (txtWrap coordinates)
+                (txtWrap
+                  ("Current Household observation: " <> dayText observedOn
+                    <> ". Calendar cursor is retained independently."))
             , str " "
             ]
-            ++ sectionSurface overview cursorDay selected
+            ++ sectionSurface overview selected
             ++ [ str " "
                , withAttr mutedAttr
-                   (txtWrap temporalNote)
+                   (strWrap
+                     "No section consumes the calendar cursor in this prototype. Their relationship can be designed later, per section, without changing the shell focus model.")
                , withAttr mutedAttr
                    (strWrap
                      "Representative values only. Production would project already-admitted AppContext data here.")
+               , fill ' '
                ]
           )))
   where
     overview = homeOverview state
     observedOn = overviewObservedOn overview
     selected = homeSelectedSection state
-    cursorDay = homeTemporalCursorDay state
-    coordinates =
-      "Current observation: " <> dayText observedOn
-        <> "   Calendar cursor: " <> dayText cursorDay
-    temporalNote
-      | sectionUsesTemporalCursor selected =
-          "This surface may use the calendar cursor. The status rail still describes the current observation."
-      | otherwise =
-          "This surface is not bound to the calendar cursor. Moving through time does not rewrite this section."
 
 focusLabel :: HomeState -> ShellFocus -> Text -> Widget Name
 focusLabel state target label
   | homeFocus state == target = withAttr focusAttr (txt ("[" <> label <> "]"))
   | otherwise = txt label
 
-surfaceTitle :: Section -> Day -> Text
-surfaceTitle section cursorDay
-  | sectionUsesTemporalCursor section =
-      sectionLabel section <> " · cursor " <> dayText cursorDay
-  | otherwise = sectionLabel section <> " · current"
-
-sectionUsesTemporalCursor :: Section -> Bool
-sectionUsesTemporalCursor section = case section of
-  Actual -> True
-  Plans -> True
-  Envelopes -> True
-  Accounts -> False
-  Issues -> True
-  Reports -> True
-  Settings -> False
-
-sectionSurface :: Overview -> Day -> Section -> [Widget Name]
-sectionSurface overview cursorDay section = case section of
+sectionSurface :: Overview -> Section -> [Widget Name]
+sectionSurface overview section = case section of
   Actual ->
-    [ heading "Actual at temporal cursor"
-    , txtWrap ("Cursor date: " <> dayText cursorDay)
+    [ heading "Actual · current workspace"
+    , txtWrap
+        (T.pack (show (overviewActualCount overview))
+          <> " representative transactions in the current observation")
     , str " "
-    , heading "Representative entries"
-    , str "  12:10  Grocery       -1,250 JPY"
-    , str "  09:20  Mobile plan     -440 JPY"
+    , str "  12:10  Grocery                         -1,250 JPY"
+    , str "  09:20  Mobile plan                       -440 JPY"
     ]
   Plans ->
-    [ heading "Plans around temporal cursor"
-    , txtWrap ("Cursor date: " <> dayText cursorDay)
+    [ heading "Plans · current workspace"
     , txtWrap
-        ("Current rail observation still has "
-          <> T.pack (show (overviewPlanCount overview)) <> " open plans")
+        (T.pack (show (overviewPlanCount overview))
+          <> " plans remain open")
     , str " "
     , str "  2026-08-20  Internet"
     , str "  2026-08-25  Investment"
     , str "  2026-09-01  Rent"
     ]
   Envelopes ->
-    [ heading "Envelope observation at temporal cursor"
-    , txtWrap ("Cursor date: " <> dayText cursorDay)
+    [ heading "Envelope observation · current"
     , txtWrap
-        ("Current rail attention: "
-          <> T.pack (show (overviewEnvelopeAttention overview)))
+        (T.pack (show (overviewEnvelopeAttention overview))
+          <> " attention items")
     , str " "
     , str "  Food          remaining 31,240 JPY"
     , str "  Daily         remaining  8,400 JPY"
     , withAttr attentionAttr (str "  Utilities     attention")
     , str " "
     , withAttr mutedAttr
-        (strWrap "A real projection could expose remaining, change and provenance at this cursor without making Brick own those semantics.")
+        (strWrap "A real surface can expose remaining, change and provenance without making the shell own those semantics.")
     ]
   Accounts ->
     [ heading "Accounts · current registry"
@@ -294,10 +318,9 @@ sectionSurface overview cursorDay section = case section of
     ]
   Issues ->
     let (openCount, closedCount) = overviewIssueCounts overview
-    in [ heading "Issues with temporal context"
-       , txtWrap ("Cursor date: " <> dayText cursorDay)
+    in [ heading "Issues · current workspace"
        , txtWrap
-           ("Current rail status · Open: " <> T.pack (show openCount)
+           ("Open: " <> T.pack (show openCount)
              <> "   Closed: " <> T.pack (show closedCount))
        , str " "
        , withAttr attentionAttr (str "  due soon   Review subscription")
@@ -305,8 +328,6 @@ sectionSurface overview cursorDay section = case section of
        ]
   Reports ->
     [ heading "Reports"
-    , txtWrap ("Temporal cursor candidate: " <> dayText cursorDay)
-    , str " "
     , str "  Trial balance"
     , str "  Balance sheet"
     , str "  Profit and loss"
@@ -376,8 +397,12 @@ handleEvent event = case event of
       { homeTemporalCursorDay = day
       , homeFocus = CalendarFocus
       })
-  MouseDown SurfacePane V.BLeft _ _ ->
-    modify (\state -> state { homeFocus = SurfaceFocus })
+  MouseDown SurfacePane V.BLeft _ _ -> do
+    focus <- homeFocus <$> get
+    case focus of
+      CalendarFocus -> pure ()
+      SectionFocus -> modify (\state -> state { homeFocus = SurfaceFocus })
+      SurfaceFocus -> pure ()
   VtyEvent (V.EvKey (V.KChar '\t') []) ->
     modify (\state -> state { homeFocus = nextFocus (homeFocus state) })
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
