@@ -61,7 +61,10 @@ import HKernel.Editor.IssueRealize
   , IssueRealizeWriteError(..)
   )
 import HKernel.Editor.PlanLifecycle (planInactiveIdsAt)
-import HKernel.Household.Report (HouseholdReportSurface(..))
+import HKernel.Household.Cycle
+  ( HouseholdCycleObservation
+  , householdCycleCurrentPeriod
+  )
 import HKernel.HouseholdIssue
   ( HouseholdIssue
   , IssueDue(..)
@@ -72,11 +75,11 @@ import HKernel.HouseholdIssue
   )
 import HKernel.Ledger (Transaction, transactionDate)
 import HKernel.Period (Period, periodEndExclusive)
-import HKernel.Plan (CommittedOutgoingPlan, committedPlanDate)
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , PlanJournal
   , identifiedPlanId
+  , identifiedPlanTransaction
   , planJournalTransactions
   )
 import HKernel.Report (ReportBook, reportBookWithPlan)
@@ -84,7 +87,6 @@ import HKernel.Report.Config
   ( ReportConfiguration
   , reportConfigurationPlan
   )
-import HKernel.Report.CycleAccounts (currentCycleAccountsPeriod)
 import HKernel.Report.Plan
   ( ReportPlanError
   , resolveReportPlanWithCurrentCycle
@@ -184,16 +186,17 @@ homeActualTransactionsOn selectedDay actualJournal =
   , transactionDate transaction == selectedDay
   ]
 
--- | Day-local outgoing Plan projection from the already admitted Household
--- report surface.
+-- | Day-local Plan facts from one already role-neutral open-Plan observation.
+-- Home is a calendar of household intent, not the narrow payment Report, so it
+-- keeps whole Plan transactions and does not require a report-facing shape.
 homePlannedTransactionsOn
   :: Day
-  -> HouseholdReportSurface
-  -> [CommittedOutgoingPlan]
-homePlannedTransactionsOn selectedDay surface =
+  -> [IdentifiedPlanTransaction]
+  -> [IdentifiedPlanTransaction]
+homePlannedTransactionsOn selectedDay plans =
   [ plan
-  | plan <- householdPlannedTransactions surface
-  , committedPlanDate plan == selectedDay
+  | plan <- plans
+  , transactionDate (identifiedPlanTransaction plan) == selectedDay
   ]
 
 -- | Open Issues due on one day. Closed history remains available through the
@@ -206,9 +209,8 @@ homeIssuesDueOn selectedDay issues =
   , householdIssueDue issue == DueOn selectedDay
   ]
 
--- | Human-facing cycle end day for a half-open current cycle.
-homeCycleEndDay :: HouseholdReportSurface -> Day
-homeCycleEndDay surface =
+-- | Human-facing cycle end day for one independently observed half-open cycle.
+homeCycleEndDay :: HouseholdCycleObservation -> Day
+homeCycleEndDay observation =
   addDays (-1)
-    (periodEndExclusive
-      (currentCycleAccountsPeriod (householdCurrentCycleAccounts surface)))
+    (periodEndExclusive (householdCycleCurrentPeriod observation))
