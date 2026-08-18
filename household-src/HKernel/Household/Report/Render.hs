@@ -298,14 +298,28 @@ renderRates rates = T.intercalate ", " (map renderRate rates)
           fraction = abs (scaled `mod` 100)
       in tshow whole <> "." <> T.justifyRight 2 '0' (tshow fraction)
 
-renderPlans :: PresentationConfig -> Period -> [CommittedOutgoingPlan] -> Text
-renderPlans presentation period plans = T.intercalate "\n"
-  [ terminalHeaderWith presentation "Planned Transactions"
-  , terminalMeta "Source: plan.journal | All open outgoing commitments; current-cycle calculations remain cycle-bounded"
-  , ""
-  , renderPlanHorizon presentation period plans
-  , ""
-  ]
+renderPlans
+  :: PresentationConfig
+  -> Period
+  -> HouseholdPlannedTransactions
+  -> Text
+renderPlans presentation period availability = case availability of
+  HouseholdPlannedTransactionsAvailable plans -> T.intercalate "\n"
+    [ terminalHeaderWith presentation "Planned Transactions"
+    , terminalMeta "Source: plan.journal | All open outgoing commitments; current-cycle calculations remain cycle-bounded"
+    , ""
+    , renderPlanHorizon presentation period plans
+    , ""
+    ]
+  HouseholdPlannedTransactionsUnavailable errors -> T.intercalate "\n"
+    [ terminalHeaderWith presentation "Planned Transactions"
+    , terminalMeta "Source: plan.journal | Narrow payment-facing projection"
+    , terminalMeta "Status: NOT AVAILABLE"
+    , terminalDim
+        ("This report view cannot interpret part of the admitted Plan world:\n"
+          <> T.stripEnd (renderHouseholdSourceErrors errors))
+    , ""
+    ]
 
 renderPlanHorizon
   :: PresentationConfig
