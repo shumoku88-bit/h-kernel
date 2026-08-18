@@ -1,0 +1,21 @@
+cabal-version:      3.0
+name:               h-kernel-ghcup-home-experiment
+version:            0.1.0.0
+build-type:          Simple
+
+executable h-kernel-ghcup-home
+    main-is:          Main.hs
+    hs-source-dirs:   .
+    default-language: GHC2024
+    ghc-options:      -Wall -Werror=incomplete-patterns
+    build-depends:    base >= 4.14 && < 5
+                    , brick
+                    , directory
+                    , filepath
+                    , h-kernel
+                    , h-kernel-editor
+                    , h-kernel-household-application
+                    , text
+                    , time
+                    , vty
+                    , vty-crossplatform
