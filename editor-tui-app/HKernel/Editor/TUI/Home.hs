@@ -119,8 +119,8 @@ handleLocalEvent selectedDay event = case event of
       selectDay (contextObservationDay context)
 
 -- | Keep the calendar and selected-day observation side by side when there is
--- room. Below 80 columns the same two observations stack instead of allowing
--- the right-hand pane to be cropped away.
+-- room. The roomier five-column day cells make the combined surface 86 columns
+-- wide, so widths below 87 stack instead of cropping the right-hand pane.
 draw :: AppContext -> Day -> Widget Name
 draw context selectedDay =
   vBox
@@ -132,7 +132,7 @@ draw context selectedDay =
     , strWrap "[Arrows] Day   [t] Today   [r] Record   [1-7] Sections   [q] Quit"
     ]
   where
-    calendar = hLimit 32 (drawCalendar context selectedDay)
+    calendar = hLimit 39 (drawCalendar context selectedDay)
     dayPane = drawDayPane context selectedDay
     wideLayout = hBox
       [ calendar
@@ -146,7 +146,7 @@ draw context selectedDay =
 -- | Pure width policy for the Home observation. Kept separate from Brick's
 -- render context so representative terminal widths can be regression-tested.
 homeUsesStackedLayout :: Int -> Bool
-homeUsesStackedLayout width = width < 80
+homeUsesStackedLayout width = width < 87
 
 -- | Select a presentation using only Brick's rendering context. Terminal
 -- dimensions remain presentation evidence and never enter Household state.
@@ -173,14 +173,14 @@ drawCalendar context selectedDay =
     cells = leading ++ map Just days
     trailing = replicate ((7 - length cells `mod` 7) `mod` 7) Nothing
     weeks = chunksOf 7 (cells ++ trailing)
-    weekdayHeader = hBox (map str [" Mo ", " Tu ", " We ", " Th ", " Fr ", " Sa ", " Su "])
+    weekdayHeader = hBox (map str [" Mo  ", " Tu  ", " We  ", " Th  ", " Fr  ", " Sa  ", " Su  "])
     drawWeek = hBox . map drawCell
-    drawCell Nothing = str "    "
+    drawCell Nothing = str "     "
     drawCell (Just day) =
       let (_, _, dayOfMonth) = toGregorian day
           marker = maybe ' ' calendarMarkerValue (markerForDay context day)
           dayLabel = T.justifyRight 2 ' ' (T.pack (show dayOfMonth))
-          markerLabel = T.singleton marker <> " "
+          markerLabel = " " <> T.singleton marker <> " "
           dayNumber =
             if day == contextObservationDay context && day /= selectedDay
               then modifyDefAttr (`V.withStyle` V.dim) (txt dayLabel)
