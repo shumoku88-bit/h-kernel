@@ -148,7 +148,7 @@ drawFlow state = case state of
       ]
   Preview result _ ->
     previewBox "Entitlement Transfer Preview"
-      (renderPreviewResult (txt . entitlementCandidateBlock) result)
+      (renderPreviewResult (txtWrap . entitlementCandidateBlock) result)
       (previewControls result)
 
 inputBox :: String -> Form input AppEvent Name -> [String] -> Widget Name
@@ -157,7 +157,7 @@ inputBox title form helpLines =
     (borderWithLabel (str title)
       (hLimit 82
         (padAll 1
-          (renderForm form <=> str " " <=> vBox (map str helpLines)))))
+          (renderForm form <=> str " " <=> vBox (map strWrap helpLines)))))
 
 previewBox :: String -> Widget Name -> String -> Widget Name
 previewBox title body controls =
@@ -166,14 +166,14 @@ previewBox title body controls =
       (hLimit 88
         (vLimit 32
           (padAll 1
-            (body <=> str " " <=> str controls)))))
+            (body <=> str " " <=> strWrap controls)))))
 
 renderPreviewResult
   :: (preview -> Widget Name)
   -> PreviewResult preview
   -> Widget Name
 renderPreviewResult renderPreview result = case result of
-  PreviewRejected message -> withAttr (attrName "error") (txt message)
+  PreviewRejected message -> withAttr (attrName "error") (txtWrap message)
   PreviewReady preview -> renderPreview preview
 
 previewControls :: PreviewResult preview -> String
@@ -269,30 +269,30 @@ drawWorkspace context =
         (vLimit 18
           (viewport EntitlementViewport Vertical
             (vBox
-              [ str "--- Stock Origins ---"
+              [ strWrap "--- Stock Origins ---"
               , vBox (map renderStockOriginItem (Map.elems (envelopeEntitlementHistoryOrigins (householdStateEntitlementHistory state))))
               , str " "
-              , str "--- Entitlement Transfers ---"
+              , strWrap "--- Entitlement Transfers ---"
               , vBox (map renderTransfer (envelopeEntitlementHistoryTransfers (householdStateEntitlementHistory state)))
               , str " "
-              , str "--- Spendable Envelopes ---"
+              , strWrap "--- Spendable Envelopes ---"
               , vBox (map renderEnvelopeDef
                   (currentEnvelopePolicyDefinitions (householdStateEnvelopePolicy state)))
               ])))
-    , str "[Enter/M] New transfer   [1-7] Sections   [q] Quit"
+    , strWrap "[Enter/M] New transfer   [1-7] Sections   [q] Quit"
     ]
   where
     state = contextHouseholdState context
 
 renderStockOriginItem :: StockOrigin -> Widget Name
-renderStockOriginItem = txt . renderStockOrigin
+renderStockOriginItem = txtWrap . renderStockOrigin
 
 renderTransfer :: EnvelopeEntitlementTransfer -> Widget Name
-renderTransfer = txt . renderEntitlementTransfer
+renderTransfer = txtWrap . renderEntitlementTransfer
 
 renderEnvelopeDef :: EnvelopeDefinition -> Widget Name
 renderEnvelopeDef definition =
-  txt ("Envelope: " <> envelopeIdText (envelopeDefinitionId definition))
+  txtWrap ("Envelope: " <> envelopeIdText (envelopeDefinitionId definition))
 
 handleWorkspaceEvent
   :: BrickEvent Name AppEvent
