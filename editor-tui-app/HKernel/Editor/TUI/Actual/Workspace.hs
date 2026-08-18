@@ -245,7 +245,6 @@ renderWorkspaceTransaction selected transaction
       <> transactionDescription transaction)
 
 renderWorkspaceSelection :: AppContext -> Widget Name
-drawWorkspaceSelection_PLACEHOLDER = undefined
 renderWorkspaceSelection context = case selectedWorkspaceEntry context of
   Nothing -> str "No Actual transactions for this account."
   Just entry ->
