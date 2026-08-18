@@ -11,6 +11,7 @@ module HKernel.Household.Report
   , HouseholdCycleComparisonUnavailable(..)
   , HouseholdPlannedTransactions(..)
   , HouseholdReportSurface(..)
+  , householdPlannedTransactions
   , PlannedTransactionHorizon(..)
   , ClassifiedPlannedTransaction(..)
   , classifyPlannedTransactions
@@ -97,7 +98,8 @@ import HKernel.Money
 import HKernel.Period
 import HKernel.Plan
 import HKernel.Plan.Completion
-  ( PlanCompletionDeclaration
+  ( IdentifiedActualTransaction
+  , PlanCompletionDeclaration
   , declaredCompletionPlanId
   , resolveOpenCommittedOutgoingPlans
   )
@@ -159,14 +161,25 @@ data HouseholdPlannedTransactions
   deriving (Eq, Show)
 
 data HouseholdReportSurface = HouseholdReportSurface
-  { householdCurrentCycleAccounts  :: CurrentCycleAccounts
-  , householdCycleComparison       :: HouseholdCycleComparison
-  , householdPlannedTransactions   :: HouseholdPlannedTransactions
-  , householdIssues                :: [HouseholdIssue]
-  , householdEnvelopeStockOrigins  :: Map Commodity StockOrigin
-  , householdEnvelopeBacking       :: EnvelopeBacking
-  , householdDailyTarget           :: DailyTarget
+  { householdCurrentCycleAccounts               :: CurrentCycleAccounts
+  , householdCycleComparison                    :: HouseholdCycleComparison
+  , householdPlannedTransactionsAvailability    :: HouseholdPlannedTransactions
+  , householdIssues                             :: [HouseholdIssue]
+  , householdEnvelopeStockOrigins               :: Map Commodity StockOrigin
+  , householdEnvelopeBacking                    :: EnvelopeBacking
+  , householdDailyTarget                        :: DailyTarget
   } deriving (Eq, Show)
+
+-- | Compatibility read of only successfully projected payment-facing Plans.
+-- New delivery code that must distinguish empty from unavailable should inspect
+-- 'householdPlannedTransactionsAvailability' instead.
+householdPlannedTransactions
+  :: HouseholdReportSurface
+  -> [CommittedOutgoingPlan]
+householdPlannedTransactions surface =
+  case householdPlannedTransactionsAvailability surface of
+    HouseholdPlannedTransactionsAvailable plans -> plans
+    HouseholdPlannedTransactionsUnavailable _ -> []
 
 buildHouseholdReportSurfaceFromAdmitted
   :: Day
@@ -258,7 +271,7 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
   pure HouseholdReportSurface
     { householdCurrentCycleAccounts = currentCycle
     , householdCycleComparison = comparison
-    , householdPlannedTransactions = plannedTransactions
+    , householdPlannedTransactionsAvailability = plannedTransactions
     , householdIssues = issues
     , householdEnvelopeStockOrigins =
         householdEnvelopeObservationStockOrigins envelopeObservation
