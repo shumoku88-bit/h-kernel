@@ -45,7 +45,16 @@ import HKernel.Envelope.Headroom (envelopeHeadroomFor)
 import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Envelope.Remaining (envelopeRemainingFor)
 import HKernel.Household.EnvelopeObservation
-  ( deriveHouseholdEnvelopeObservation
+  ( HouseholdEnvelopeChangeError(..)
+  , deriveHouseholdEnvelopeObservation
+  , envelopeChangeCommitment
+  , envelopeChangeConsumptionCharges
+  , envelopeChangeConsumptionNet
+  , envelopeChangeEntitlement
+  , envelopeChangeFulfillmentApplied
+  , envelopeChangeFulfillmentNet
+  , envelopeChangeHeadroom
+  , envelopeChangeRemaining
   , envelopeExplanationCommitment
   , envelopeExplanationConsumptionCharges
   , envelopeExplanationConsumptionNet
@@ -57,11 +66,15 @@ import HKernel.Household.EnvelopeObservation
   , envelopeExplanationHeadroom
   , envelopeExplanationRemaining
   , explainHouseholdEnvelope
+  , householdEnvelopeChangeFrom
+  , householdEnvelopeChangeLines
+  , householdEnvelopeChangeThrough
   , householdEnvelopeConsumption
   , householdEnvelopeEntitlement
   , householdEnvelopeExplanationLines
   , householdEnvelopeHeadroom
   , householdEnvelopeRemaining
+  , observeHouseholdEnvelopeChange
   )
 import HKernel.Household.Policy
   ( householdEnvelopeOrder
@@ -79,6 +92,7 @@ main = do
   let jpy = mustRight (mkCommodity "JPY")
       period = mustRight
         (mkPeriod (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
+      earlierObserved = fromGregorian 2026 8 7
       observed = fromGregorian 2026 8 10
       foodId = mustRight (mkEnvelopeId "food")
       retiredId = mustRight (mkEnvelopeId "retired-savings")
@@ -167,16 +181,23 @@ main = do
             , fulfillmentRoutingNote = "explicit completed savings intent"
             }
         ])
+      earlierObservation = mustRight (deriveHouseholdEnvelopeObservation
+        earlierObserved period actual plans expenseRouting fulfillmentRouting entitlementHistory)
       observation = mustRight (deriveHouseholdEnvelopeObservation
         observed period actual plans expenseRouting fulfillmentRouting entitlementHistory)
       consumption = householdEnvelopeConsumption observation
       entitlement = householdEnvelopeEntitlement observation
       remaining = householdEnvelopeRemaining observation
       headroom = householdEnvelopeHeadroom observation
-      explanation = explainHouseholdEnvelope (householdEnvelopeOrder policy) observation
+      envelopeOrder = householdEnvelopeOrder policy
+      earlierExplanation = explainHouseholdEnvelope envelopeOrder earlierObservation
+      explanation = explainHouseholdEnvelope envelopeOrder observation
       explanationLine = case householdEnvelopeExplanationLines explanation of
         [line] -> line
         _ -> error "expected one current Envelope explanation line"
+      earlierExplanationLine = case householdEnvelopeExplanationLines earlierExplanation of
+        [line] -> line
+        _ -> error "expected one earlier Envelope explanation line"
       reconstructedRemaining =
         envelopeExplanationEntitlement explanationLine
           `subtractBalance` envelopeExplanationConsumptionNet explanationLine
@@ -184,9 +205,15 @@ main = do
       reconstructedHeadroom =
         envelopeExplanationRemaining explanationLine
           `subtractBalance` envelopeExplanationCommitment explanationLine
+      change = mustRight (observeHouseholdEnvelopeChange earlierExplanation explanation)
+      changeLine = case householdEnvelopeChangeLines change of
+        [line] -> line
+        _ -> error "expected one Envelope change line"
+      incompatibleExplanation = explainHouseholdEnvelope
+        [foodId, retiredId] observation
 
   assertEqual "current Envelope order excludes retired stable allocation identity"
-    [foodId] (householdEnvelopeOrder policy)
+    [foodId] envelopeOrder
   assertEqual "entitlement carries pre-period grant and release while cutting off future"
     (one jpy 140) (envelopeEntitlementBalance foodId entitlement)
   assertEqual "source opening makes routed pre-grant Actual part of live stock"
@@ -209,6 +236,37 @@ main = do
     (envelopeExplanationRemaining explanationLine) reconstructedRemaining
   assertEqual "Explain Headroom closes exactly from typed evidence"
     (envelopeExplanationHeadroom explanationLine) reconstructedHeadroom
+  assertEqual "earlier observation sees both unresolved routed Plans as commitment"
+    (one jpy 35) (envelopeExplanationCommitment earlierExplanationLine)
+  assertEqual "Change retains explicit observation interval"
+    (earlierObserved, observed)
+    (householdEnvelopeChangeFrom change, householdEnvelopeChangeThrough change)
+  assertEqual "Change sees no Entitlement movement across the interval"
+    mempty (envelopeChangeEntitlement changeLine)
+  assertEqual "Change sees no additional consumption across the interval"
+    mempty (envelopeChangeConsumptionCharges changeLine)
+  assertEqual "Change keeps consumption net unchanged"
+    mempty (envelopeChangeConsumptionNet changeLine)
+  assertEqual "Change sees completed Fulfillment become realized evidence"
+    (one jpy 15) (envelopeChangeFulfillmentApplied changeLine)
+  assertEqual "Change sees Fulfillment net increase"
+    (one jpy 15) (envelopeChangeFulfillmentNet changeLine)
+  assertEqual "Change sees Remaining fall by realized Fulfillment"
+    (one jpy (-15)) (envelopeChangeRemaining changeLine)
+  assertEqual "Change sees resolved commitment leave active intent"
+    (one jpy (-15)) (envelopeChangeCommitment changeLine)
+  assertEqual "Change preserves unchanged Headroom despite internal transition"
+    mempty (envelopeChangeHeadroom changeLine)
+  assertBool "Change rejects reversed observation time"
+    (case observeHouseholdEnvelopeChange explanation earlierExplanation of
+      Left (HouseholdEnvelopeChangeObservationOrderInvalid fromDay throughDay) ->
+        fromDay == observed && throughDay == earlierObserved
+      _ -> False)
+  assertBool "Change rejects different current Envelope coordinates"
+    (case observeHouseholdEnvelopeChange earlierExplanation incompatibleExplanation of
+      Left (HouseholdEnvelopeChangeEnvelopeOrderMismatch beforeIds afterIds) ->
+        beforeIds == [foodId] && afterIds == [foodId, retiredId]
+      _ -> False)
 
 one :: Commodity -> Integer -> Balance
 one commodity value = singletonBalance (mkAmount commodity (quantityFromInteger value))
@@ -226,3 +284,6 @@ assertEqual label expected actual
       putStrLn ("    expected: " ++ show expected)
       putStrLn ("    actual:   " ++ show actual)
       exitFailure
+
+assertBool :: String -> Bool -> IO ()
+assertBool label actual = assertEqual label True actual
