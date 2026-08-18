@@ -85,7 +85,6 @@ import HKernel.Household.Policy
 import HKernel.Household.Report
   ( HouseholdReportSurface
   , HouseholdSourceError
-  , admitPlanJournal
   , buildHouseholdReportSurfaceFromAdmitted
   )
 import HKernel.HouseholdIssue (HouseholdIssue)
@@ -176,7 +175,6 @@ data HouseholdLoadError
   | HouseholdDailyTargetPlanMetadataFailed (NonEmpty DailyTargetPlanJournalError)
   | HouseholdDailyTargetPlanProjectionFailed (NonEmpty PlanReportProjectionError)
   | HouseholdDailyTargetScopeFailed (NonEmpty DailyTargetSelectionError)
-  | HouseholdPlanProjectionFailed (NonEmpty HouseholdSourceError)
   | HouseholdReportCalculationFailed (NonEmpty HouseholdSourceError)
   deriving (Show)
 
@@ -471,8 +469,6 @@ buildHouseholdReportSurfaceFromHousehold
   -> HouseholdState
   -> Either (NonEmpty HouseholdLoadError) HouseholdReportSurface
 buildHouseholdReportSurfaceFromHousehold observation state = do
-  admittedPlans <- first (pure . HouseholdPlanProjectionFailed)
-    (admitPlanJournal (householdStatePlanJournal state))
   let history = householdStateEnvelopeHistory state
   first (pure . HouseholdReportCalculationFailed)
     (buildHouseholdReportSurfaceFromAdmitted
@@ -482,7 +478,6 @@ buildHouseholdReportSurfaceFromHousehold observation state = do
       (householdStatePolicy state)
       (householdExpenseRoutingHistory history)
       (householdFulfillmentRoutingHistory history)
-      admittedPlans
       (householdStateEntitlementHistory state)
       (householdStateIssues state)
       (householdStateDailyScope state))

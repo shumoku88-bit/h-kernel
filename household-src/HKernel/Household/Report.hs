@@ -3,8 +3,8 @@
 -- | Pure Household report composition from already admitted typed values.
 --
 -- Source admission, writer authority, and delivery effects remain outside this
--- module. Native Envelope owners meet here without an intermediate Budget
--- calculation model.
+-- module. Native Household observers meet here without an intermediate Budget
+-- calculation model or one shared Plan projection bundle.
 module HKernel.Household.Report
   ( HouseholdSourceError(..)
   , HouseholdCycleComparison(..)
@@ -24,9 +24,6 @@ module HKernel.Household.Report
   , DailyTarget(..)
   , dailyTargetCapacity
   , dailyTargetRate
-  , AdmittedPlans
-  , admitPlanJournal
-  , admittedOutgoingPlanValues
   , buildHouseholdReportSurfaceFromAdmitted
   ) where
 
@@ -40,20 +37,22 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, addDays, diffDays)
 import HKernel.Account
+  ( AccountRegistry
+  , AccountType(..)
+  , accountTypeFor
+  )
 import HKernel.Actual.Journal
   ( ActualJournal
   , actualJournalCompletionDeclarations
   , actualJournalIdentifiedTransactions
   , actualJournalValue
   )
-import HKernel.Engine (LedgerEntry(..), journalEntries)
 import HKernel.Envelope.EntitlementHistory (EnvelopeEntitlementHistory)
 import HKernel.Envelope.ExpenseRouting (ExpenseRoutingHistory)
 import HKernel.Envelope.FulfillmentRouting (FulfillmentRoutingHistory)
 import HKernel.Envelope.StockOrigin (StockOrigin)
 import HKernel.Household.Backing
-  ( HouseholdBackingPlan(..)
-  , EnvelopeBackingLine(..)
+  ( EnvelopeBackingLine(..)
   , envelopeLedgerRemaining
   , envelopePostPlanHeadroom
   , EnvelopeBacking(..)
@@ -63,6 +62,12 @@ import HKernel.Household.Backing
   , envelopeBackingSurplus
   , envelopeAvailableBackingSurplus
   , deriveHouseholdBacking
+  , projectHouseholdBackingPlans
+  )
+import HKernel.Household.Cycle
+  ( householdCycleCurrentPeriod
+  , householdCyclePreviousPeriod
+  , observeHouseholdCycle
   )
 import HKernel.Household.DailyTarget
 import HKernel.Household.EnvelopeObservation
@@ -76,7 +81,6 @@ import HKernel.Household.EnvelopeObservation
 import HKernel.Household.Policy
   ( HouseholdPolicy
   , householdBackingPolicy
-  , householdCycleIncomeAccount
   , householdEnvelopeOrder
   , householdPolicyCycle
   )
@@ -86,7 +90,6 @@ import HKernel.Ledger
   ( Posting
   , postingAccount
   , postingAmount
-  , transactionDate
   , transactionPostings
   )
 import HKernel.Money
@@ -103,7 +106,6 @@ import HKernel.Plan.Journal
   , PlanClassificationError(..)
   , PlanJournal
   , admitPlanRetirements
-  , classifiedIncomingPlanTransactions
   , identifiedPlanId
   , identifiedPlanTransaction
   , planJournalTransactions
@@ -120,18 +122,6 @@ data HouseholdSourceError = HouseholdSourceError
   { householdSourceName    :: Text
   , householdSourceLine    :: Int
   , householdSourceMessage :: Text
-  } deriving (Eq, Show)
-
-data IncomingCycleAnchor = IncomingCycleAnchor
-  { incomingAnchorId     :: PlanId
-  , incomingAnchorDate   :: Day
-  , incomingAnchorSource :: Account
-  } deriving (Eq, Show)
-
-data AdmittedPlans = AdmittedPlans
-  { admittedIncomingAnchors :: [IncomingCycleAnchor]
-  , admittedOutgoingPlans   :: [CommittedOutgoingPlan]
-  , admittedPlanRetirements :: [PlanRetirement]
   } deriving (Eq, Show)
 
 data PlannedTransactionHorizon
@@ -172,26 +162,28 @@ buildHouseholdReportSurfaceFromAdmitted
   -> HouseholdPolicy
   -> ExpenseRoutingHistory
   -> FulfillmentRoutingHistory
-  -> AdmittedPlans
   -> EnvelopeEntitlementHistory
   -> [HouseholdIssue]
   -> DailyTargetScope
   -> Either (NonEmpty HouseholdSourceError) HouseholdReportSurface
-buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal policy expenseRouting fulfillmentRouting admittedPlans entitlementHistory issues dailyScope = do
+buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal policy expenseRouting fulfillmentRouting entitlementHistory issues dailyScope = do
   let journal = actualJournalValue actualJournal
-      cycleAccount = householdCycleIncomeAccount (householdPolicyCycle policy)
-      retiredPlanIds = retiredPlanIdsAt observation
-        (admittedPlanRetirements admittedPlans)
-      activeIncomingAnchors = filter
-        (\anchor -> incomingAnchorId anchor `Set.notMember` retiredPlanIds)
-        (admittedIncomingAnchors admittedPlans)
-  (current, previous) <- resolveCycles observation journal cycleAccount activeIncomingAnchors
+  cycleObservation <- mapLeft
+    (fmap (sourceError "cycle" 0 . tshow))
+    (observeHouseholdCycle
+      observation actualJournal planJournal (householdPolicyCycle policy))
+  let current = householdCycleCurrentPeriod cycleObservation
+      previous = householdCyclePreviousPeriod cycleObservation
   currentCycle <- mapLeft
     (NonEmpty.singleton . sourceError "cycle" 0 . tshow)
     (currentCycleAccounts observation current journal)
-  let outgoingPlans = admittedOutgoingPlans admittedPlans
+  outgoingPlans <- projectReportOutgoingPlans planJournal
+  retirements <- mapLeft
+    (fmap (\err -> sourceError "plan.journal" (planLifecycleErrorLine err) (tshow err)))
+    (admitPlanRetirements planJournal)
+  let retiredPlanIds = retiredPlanIdsAt observation retirements
   outgoingDeclarations <- completionDeclarationsForOutgoingPlans
-    planJournal admittedPlans (actualJournalCompletionDeclarations actualJournal)
+    planJournal outgoingPlans (actualJournalCompletionDeclarations actualJournal)
   completionOpenPlanValues <- mapLeft
     (fmap (sourceError "actual.journal" 0 . tshow))
     (resolveOpenCommittedOutgoingPlans
@@ -201,10 +193,12 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
   openFundingTransactions <- mapLeft
     (fmap (sourceError "plan.journal" 0 . tshow))
     (resolveOpenPlanTransactionsAt observation planJournal actualJournal)
-  backingPlans <- projectBackingFundingPlans
-    current
-    (journalAccountRegistry (planJournalValue planJournal))
-    openFundingTransactions
+  backingPlans <- mapLeft
+    (fmap (sourceError "plan.journal" 0 . tshow))
+    (projectHouseholdBackingPlans
+      current
+      (journalAccountRegistry (planJournalValue planJournal))
+      openFundingTransactions)
   envelopeObservation <- mapLeft
     (fmap (sourceError "envelope" 0 . tshow))
     (deriveHouseholdEnvelopeObservation
@@ -252,39 +246,6 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
     , householdDailyTarget = target
     }
 
--- | Project every negative Asset posting of every role-neutral open Plan into
--- the independent Backing funding horizon. Plan destination semantics never
--- enter this projection; Envelope claims are owned by Commitment routing.
-projectBackingFundingPlans
-  :: Period
-  -> AccountRegistry
-  -> [IdentifiedPlanTransaction]
-  -> Either (NonEmpty HouseholdSourceError) [HouseholdBackingPlan]
-projectBackingFundingPlans period registry = fmap concat . traverse projectPlan
-  where
-    projectPlan identified
-      | transactionDate transaction >= periodEndExclusive period = Right []
-      | otherwise = traverse projectPosting fundingPostings
-      where
-        transaction = identifiedPlanTransaction identified
-        fundingPostings =
-          [ posting
-          | posting <- NonEmpty.toList (transactionPostings transaction)
-          , accountTypeFor (postingAccount posting) registry == Just Asset
-          , amountQuantity (postingAmount posting) < zeroQuantity
-          ]
-
-    projectPosting posting =
-      case mkPositiveAmount (negateAmount (postingAmount posting)) of
-        Right amount -> Right HouseholdBackingPlan
-          { householdBackingPlanSource = postingAccount posting
-          , householdBackingPlanAmount = amount
-          }
-        Left err -> Left
-          (sourceError "plan.journal" 0
-            ("open funding Asset posting failed sign normalization: " <> tshow err)
-            NonEmpty.:| [])
-
 alignedHouseholdCycleComparison
   :: Day -> Period -> Period -> Journal -> CurrentCycleAccounts -> HouseholdCycleComparison
 alignedHouseholdCycleComparison observation current previous journal currentCycle =
@@ -312,31 +273,23 @@ classifyPlannedTransactions current = map classifyOne
       | periodContains current day = InCurrentCycle
       | otherwise = AfterCurrentCycle
 
--- | Admit only the legacy incoming/outgoing subset needed by the narrow report
--- surface. Role-neutral Asset-to-Asset Plans remain in the full PlanJournal for
--- native Envelope Commitment/Fulfillment observers and are deliberately absent
--- from this compatibility projection.
-admitPlanJournal :: PlanJournal -> Either (NonEmpty HouseholdSourceError) AdmittedPlans
-admitPlanJournal planJournal = do
-  retirements <- mapLeft
-    (fmap (\err -> sourceError "plan.journal" (planLifecycleErrorLine err) (tshow err)))
-    (admitPlanRetirements planJournal)
+-- | Project only the narrow payment-facing subset used by Planned Transactions.
+-- Role-neutral Asset transfers remain valid Plan evidence but stay outside this
+-- presentation view. Other unsupported accounting role flows fail at this
+-- report boundary rather than constraining canonical Plan admission.
+projectReportOutgoingPlans
+  :: PlanJournal
+  -> Either (NonEmpty HouseholdSourceError) [CommittedOutgoingPlan]
+projectReportOutgoingPlans planJournal = do
   classified <- case partitionEithers
       (map (classifyForNarrowReport registry) (planJournalTransactions planJournal)) of
     ([], values) -> Right [value | Just value <- values]
     (errors, _) -> Left
       (fmap (sourceError "plan.journal" 0 . tshow) (NonEmpty.fromList errors))
-  incoming <- mapLeft NonEmpty.singleton
-    (traverse (projectIncomingCycleAnchor registry)
-      (classifiedIncomingPlanTransactions classified))
   projected <- mapLeft
     (fmap (sourceError "plan.journal" 0 . tshow))
     (projectCommittedOutgoingPlans planJournal classified)
-  pure AdmittedPlans
-    { admittedIncomingAnchors = incoming
-    , admittedOutgoingPlans = map projectedCommittedOutgoingPlan projected
-    , admittedPlanRetirements = retirements
-    }
+  pure (map projectedCommittedOutgoingPlan projected)
   where
     registry = journalAccountRegistry (planJournalValue planJournal)
 
@@ -388,35 +341,12 @@ assetTransferShape coordinates =
 hasCoordinate :: PostingCoordinate -> [PostingCoordinate] -> Bool
 hasCoordinate = elem
 
-admittedOutgoingPlanValues :: AdmittedPlans -> [CommittedOutgoingPlan]
-admittedOutgoingPlanValues = admittedOutgoingPlans
-
-projectIncomingCycleAnchor
-  :: AccountRegistry -> IdentifiedPlanTransaction -> Either HouseholdSourceError IncomingCycleAnchor
-projectIncomingCycleAnchor registry identified =
-  case Set.toAscList incomeSources of
-    [source] -> Right IncomingCycleAnchor
-      { incomingAnchorId = identifiedPlanId identified
-      , incomingAnchorDate = transactionDate transaction
-      , incomingAnchorSource = source
-      }
-    _ -> Left (sourceError "plan.journal" 0
-      "incoming cycle anchor requires exactly one Income source Account")
-  where
-    transaction = identifiedPlanTransaction identified
-    incomeSources = Set.fromList
-      [ postingAccount posting
-      | posting <- NonEmpty.toList (transactionPostings transaction)
-      , accountTypeFor (postingAccount posting) registry == Just Income
-      , amountQuantity (postingAmount posting) < zeroQuantity
-      ]
-
 completionDeclarationsForOutgoingPlans
   :: PlanJournal
-  -> AdmittedPlans
+  -> [CommittedOutgoingPlan]
   -> [PlanCompletionDeclaration]
   -> Either (NonEmpty HouseholdSourceError) [PlanCompletionDeclaration]
-completionDeclarationsForOutgoingPlans planJournal plans declarations =
+completionDeclarationsForOutgoingPlans planJournal outgoingPlans declarations =
   case NonEmpty.nonEmpty unknownErrors of
     Just errors -> Left errors
     Nothing -> Right
@@ -427,7 +357,7 @@ completionDeclarationsForOutgoingPlans planJournal plans declarations =
   where
     knownPlanIds = Set.fromList
       (map identifiedPlanId (planJournalTransactions planJournal))
-    outgoingPlanIds = Set.fromList (map committedPlanId (admittedOutgoingPlans plans))
+    outgoingPlanIds = Set.fromList (map committedPlanId outgoingPlans)
     unknownErrors =
       [ sourceError "actual.journal" 0
           ("completion relation refers to unknown PlanId " <> planIdText planId)
@@ -438,39 +368,6 @@ completionDeclarationsForOutgoingPlans planJournal plans declarations =
 
 sourceError :: Text -> Int -> Text -> HouseholdSourceError
 sourceError = HouseholdSourceError
-
-resolveCycles
-  :: Day
-  -> Journal
-  -> Account
-  -> [IncomingCycleAnchor]
-  -> Either (NonEmpty HouseholdSourceError) (Period, Period)
-resolveCycles observation journal incomeAccount anchors =
-  case (reverse actualAnchors, plannedAnchors) of
-    (currentStart : previousStart : _, currentEnd : _) -> do
-      current <- period currentStart currentEnd
-      previous <- period previousStart currentStart
-      Right (current, previous)
-    _ -> Left (sourceError "household.toml" 0
-      "income-anchor cycle requires two observed Actual anchors and one future Plan anchor"
-      NonEmpty.:| [])
-  where
-    actualAnchors = Set.toAscList (Set.fromList
-      [ entryDate entry
-      | entry <- journalEntries journal
-      , entryDate entry <= observation
-      , entryAccount entry == incomeAccount
-      , amountQuantity (entryAmount entry) < zeroQuantity
-      ])
-    plannedAnchors = Set.toAscList (Set.fromList
-      [ incomingAnchorDate anchor
-      | anchor <- anchors
-      , incomingAnchorSource anchor == incomeAccount
-      , incomingAnchorDate anchor > observation
-      ])
-    period start end = mapLeft
-      (NonEmpty.singleton . sourceError "household.toml" 0 . tshow)
-      (mkPeriod start end)
 
 openOutgoingPlans
   :: Set.Set PlanId -> [CommittedOutgoingPlan] -> [CommittedOutgoingPlan]

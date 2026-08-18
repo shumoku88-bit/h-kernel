@@ -4,6 +4,8 @@
 -- Envelope claims, ledger facts, and open funding Plans.
 module HKernel.Household.Backing
   ( HouseholdBackingPlan(..)
+  , HouseholdBackingPlanProjectionError(..)
+  , projectHouseholdBackingPlans
   , EnvelopeBackingLine(..)
   , envelopePostPlanHeadroom
   , EnvelopeBacking(..)
@@ -16,10 +18,16 @@ module HKernel.Household.Backing
   ) where
 
 import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.Time.Calendar (Day)
-import HKernel.Account (Account)
+import HKernel.Account
+  ( Account
+  , AccountRegistry
+  , AccountType(..)
+  , accountTypeFor
+  )
 import HKernel.Backing
   ( BackedEnvelopeClaim(..)
   , BackingPoolError
@@ -63,14 +71,75 @@ import HKernel.Envelope.Remaining
   )
 import HKernel.Engine (accountBalance, accountBalancesThrough)
 import HKernel.Journal (Journal)
+import HKernel.Ledger
+  ( postingAccount
+  , postingAmount
+  , transactionDate
+  , transactionPostings
+  )
 import HKernel.Money
-import HKernel.Period (Period)
-import HKernel.Plan (PositiveAmount, positiveAmountValue)
+import HKernel.Period (Period, periodEndExclusive)
+import HKernel.Plan
+  ( PlanId
+  , PositiveAmount
+  , mkPositiveAmount
+  , positiveAmountValue
+  )
+import HKernel.Plan.Journal
+  ( IdentifiedPlanTransaction
+  , identifiedPlanId
+  , identifiedPlanTransaction
+  )
 
 data HouseholdBackingPlan = HouseholdBackingPlan
   { householdBackingPlanSource :: Account
   , householdBackingPlanAmount :: PositiveAmount
   } deriving (Eq, Show)
+
+-- | Failure while projecting role-neutral open Plan funding into Backing.
+-- The source Plan identity and funding Account are retained without exposing a
+-- private amount value in the diagnostic.
+data HouseholdBackingPlanProjectionError
+  = HouseholdBackingPlanSignNormalizationFailed PlanId Account
+  deriving (Eq, Show)
+
+-- | Project every negative Asset posting of every supplied role-neutral open
+-- Plan into the independent Backing funding horizon.
+--
+-- Plan destination semantics never enter this projection. Callers own open Plan
+-- lifecycle observation; this owner only interprets source-Asset funding before
+-- the current Period boundary.
+projectHouseholdBackingPlans
+  :: Period
+  -> AccountRegistry
+  -> [IdentifiedPlanTransaction]
+  -> Either (NonEmpty HouseholdBackingPlanProjectionError) [HouseholdBackingPlan]
+projectHouseholdBackingPlans period registry = fmap concat . traverse projectPlan
+  where
+    projectPlan identified
+      | transactionDate transaction >= periodEndExclusive period = Right []
+      | otherwise = traverse (projectPosting identified) fundingPostings
+      where
+        transaction = identifiedPlanTransaction identified
+        fundingPostings =
+          [ posting
+          | posting <- NonEmpty.toList (transactionPostings transaction)
+          , accountTypeFor (postingAccount posting) registry == Just Asset
+          , amountQuantity (postingAmount posting) < zeroQuantity
+          ]
+
+    projectPosting identified posting =
+      case mkPositiveAmount (negateAmount (postingAmount posting)) of
+        Right amount -> Right HouseholdBackingPlan
+          { householdBackingPlanSource = postingAccount posting
+          , householdBackingPlanAmount = amount
+          }
+        Left _ -> Left
+          ( HouseholdBackingPlanSignNormalizationFailed
+              (identifiedPlanId identified)
+              (postingAccount posting)
+            NonEmpty.:| []
+          )
 
 -- | Envelope detail for the current observation.
 --

@@ -56,7 +56,6 @@ import HKernel.Household.Policy
   , incomeAnchorCyclePolicy
   , mkHouseholdPolicy
   )
-import HKernel.Household.Report (admitPlanJournal, admittedOutgoingPlanValues)
 import HKernel.Money
 import HKernel.Period (mkPeriod)
 import HKernel.Plan (mkPlanId)
@@ -99,7 +98,6 @@ main = do
       plans = mustRight (parsePlanJournal
         (declarations <>
           "\n2026-08-09 save\n  ; plan-id: plan-save\n  assets:savings  20 JPY\n  assets:cash  -20 JPY\n"))
-      narrowPlans = mustRight (admitPlanJournal plans)
       origins = Map.singleton jpy
         (StockOrigin (fromGregorian 2026 6 15) jpy "June stock origin")
       transfers =
@@ -157,8 +155,6 @@ main = do
 
   assertEqual "current Envelope order excludes retired stable allocation identity"
     [foodId] (householdEnvelopeOrder policy)
-  assertEqual "role-neutral Plan stays out of narrow outgoing report subset"
-    [] (admittedOutgoingPlanValues narrowPlans)
   assertEqual "entitlement carries pre-period grant and release while cutting off future"
     (one jpy 140) (envelopeEntitlementBalance foodId entitlement)
   assertEqual "source opening makes routed pre-grant Actual part of live stock"
