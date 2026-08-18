@@ -40,7 +40,7 @@ renderInlineAccountSelector context label cursor candidates =
         (vBox
           ( map renderCandidate visibleCandidates
             ++ [ str " "
-               , str "Existing Accounts are grouped by typed meaning; recent use ranks within each group."
+               , strWrap "Existing Accounts are grouped by typed meaning; recent use ranks within each group."
                ]
           ))))
   where
@@ -52,7 +52,7 @@ renderInlineAccountSelector context label cursor candidates =
       where
         selected = cursor == Just index
         accountType = HKernel.Account.accountTypeFor account registry
-        row = txt
+        row = txtWrap
           (accountTypeLabel accountType <> "  " <> HKernel.Account.accountName account)
         highlighted = if selected then withAttr L.listSelectedAttr row else row
 

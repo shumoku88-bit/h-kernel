@@ -39,25 +39,25 @@ drawWorkspace context =
         (vLimit 18
           (viewport SettingsViewport Vertical
             (vBox
-              [ str "=== [envelope.toml] Envelope Policy ==="
-              , str ("Envelopes count: "
+              [ strWrap "=== [envelope.toml] Envelope Policy ==="
+              , strWrap ("Envelopes count: "
                   <> show (length (householdEnvelopeOrder
                     (householdStatePolicy state))))
               , str " "
-              , str "=== [household.toml] Household Policy ==="
-              , txt ("Income Cycle Account: "
+              , strWrap "=== [household.toml] Household Policy ==="
+              , txtWrap ("Income Cycle Account: "
                   <> accountName (householdCycleIncomeAccount
                     (householdPolicyCycle (householdStatePolicy state))))
               , str " "
-              , str "=== [report.toml] Report Configuration ==="
-              , txt ("Report Plan: "
+              , strWrap "=== [report.toml] Report Configuration ==="
+              , txtWrap ("Report Plan: "
                   <> T.pack (show (reportConfigurationPlan
                     (householdStateReportConfig state))))
-              , txt ("Presentation: "
+              , txtWrap ("Presentation: "
                   <> T.pack (show (reportConfigurationPresentation
                     (householdStateReportConfig state))))
               ])))
-    , str "[wheel] Scroll   [h] Home   [1-7] Switch section   [q] Quit"
+    , strWrap "[wheel] Scroll   [h] Home   [1-7] Switch section   [q] Quit"
     ]
   where
     state = contextHouseholdState context

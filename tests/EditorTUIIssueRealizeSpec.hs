@@ -4,6 +4,7 @@ module Main (main) where
 
 import Data.Time.Calendar (Day)
 import HKernel.Editor.TUI.Actual (State(..), startIssueRealize, startRecord)
+import HKernel.Editor.TUI.Home (homeUsesStackedLayout)
 import HKernel.HouseholdIssue
   ( HouseholdIssue
   , IssueDue(..)
@@ -18,6 +19,9 @@ main = do
   let results =
         [ ("ordinary Record and Issue realization enter the shared Record flow", testSharedRecordFlow)
         , ("closed Issue cannot start realization", testClosedIssueCannotStart)
+        , ("Home stacks observations at 60 columns", homeUsesStackedLayout 60)
+        , ("Home remains side-by-side at 80 columns", not (homeUsesStackedLayout 80))
+        , ("Home remains side-by-side at 120 columns", not (homeUsesStackedLayout 120))
         ]
   mapM_ print results
   if all snd results then exitSuccess else exitFailure

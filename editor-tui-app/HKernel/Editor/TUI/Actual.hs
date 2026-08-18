@@ -112,14 +112,14 @@ drawFlow context state = case state of
       (borderWithLabel (str "Actual Write Result")
         (padAll 1
           (renderWriteOutcome outcome
-            <=> str " " <=> str "[Esc] Actual | [Q] Quit")))
+            <=> str " " <=> strWrap "[Esc] Actual | [Q] Quit")))
   RealizeWriteOutcome message ->
     center
       (borderWithLabel (str "Issue Realize Result")
         (hLimit 86
           (padAll 1
-            (withAttr (attrName "error") (txt message)
-              <=> str " " <=> str "[Esc] Issues | [Q] Quit"))))
+            (withAttr (attrName "error") (txtWrap message)
+              <=> str " " <=> strWrap "[Esc] Issues | [Q] Quit"))))
   ReturnToWorkspace -> emptyWidget
   PublishRequested _ -> emptyWidget
   QuitRequested -> emptyWidget
@@ -347,26 +347,26 @@ admitIssueRealizeAfterWrite root relationPath = do
 renderWriteOutcome :: ActualAddWriteOutcome -> Widget Name
 renderWriteOutcome outcome = case outcome of
   ActualAddWriteSucceeded -> withAttr (attrName "success")
-    (str "Published and post-admitted successfully.")
+    (strWrap "Published and post-admitted successfully.")
   ActualAddWriteStale -> withAttr (attrName "error")
     (vBox
-      [ str "Source changed after preview. Nothing was written."
-      , str "Return to Actual and preview the current source before retrying."
+      [ strWrap "Source changed after preview. Nothing was written."
+      , strWrap "Return to Actual and preview the current source before retrying."
       ])
   ActualAddWriteRecovered failure -> withAttr (attrName "warning")
     (vBox
-      [ str "Publication failed, and the backup was restored."
-      , txt (writeFailureText failure)
+      [ strWrap "Publication failed, and the backup was restored."
+      , txtWrap (writeFailureText failure)
       ])
   ActualAddWriteFileIOFailed -> withAttr (attrName "error")
     (vBox
-      [ str "The writer could not complete because of a filesystem error."
-      , str "No source-local error detail is retained in the TUI state."
+      [ strWrap "The writer could not complete because of a filesystem error."
+      , strWrap "No source-local error detail is retained in the TUI state."
       ])
   ActualAddWriteFailed failure -> withAttr (attrName "error")
     (vBox
-      [ str "Publication failed and automatic recovery did not complete."
-      , txt (writeFailureText failure)
+      [ strWrap "Publication failed and automatic recovery did not complete."
+      , txtWrap (writeFailureText failure)
       ])
 
 writeFailureText :: ActualAddWriteFailure -> Text

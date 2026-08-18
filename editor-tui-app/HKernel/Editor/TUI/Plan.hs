@@ -127,7 +127,7 @@ drawFlow state = case state of
     center
       (borderWithLabel (str "Plan Result")
         (padAll 1
-          (txt message <=> str " " <=> str "[Esc] Plans | [Q] Quit")))
+          (txtWrap message <=> str " " <=> strWrap "[Esc] Plans | [Q] Quit")))
   ReturnToWorkspace -> emptyWidget
   PublishRequested _ -> emptyWidget
   QuitRequested -> emptyWidget
