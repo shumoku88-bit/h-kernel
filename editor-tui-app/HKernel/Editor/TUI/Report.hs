@@ -96,6 +96,7 @@ import HKernel.Render
   )
 import HKernel.Render.TerminalStyle
   ( Alignment(..)
+  , Cell
   , plainCell
   , renderTerminalTable
   , signedBalanceCellWith
