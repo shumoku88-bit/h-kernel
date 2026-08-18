@@ -96,7 +96,10 @@ main = do
   let jpy = mustRight (mkCommodity "JPY")
       period = mustRight
         (mkPeriod (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
+      previousPeriod = mustRight
+        (mkPeriod (fromGregorian 2026 7 1) (fromGregorian 2026 8 1))
       observed = fromGregorian 2026 8 10
+      previousPeriodObserved = fromGregorian 2026 7 10
       previousObservationDay = fromGregorian 2026 8 7
       previousObservationBaseline = mustRight
         (resolveEnvelopeChangeBaseline
@@ -198,6 +201,8 @@ main = do
             , fulfillmentRoutingNote = "explicit completed savings intent"
             }
         ])
+      previousPeriodObservation = mustRight (deriveHouseholdEnvelopeObservation
+        previousPeriodObserved previousPeriod actual plans expenseRouting fulfillmentRouting entitlementHistory)
       earlierObservation = mustRight (deriveHouseholdEnvelopeObservation
         earlierObserved period actual plans expenseRouting fulfillmentRouting entitlementHistory)
       observation = mustRight (deriveHouseholdEnvelopeObservation
@@ -207,6 +212,8 @@ main = do
       remaining = householdEnvelopeRemaining observation
       headroom = householdEnvelopeHeadroom observation
       envelopeOrder = householdEnvelopeOrder policy
+      previousPeriodExplanation = explainHouseholdEnvelope
+        envelopeOrder previousPeriodObservation
       earlierExplanation = explainHouseholdEnvelope envelopeOrder earlierObservation
       explanation = explainHouseholdEnvelope envelopeOrder observation
       explanationLine = case householdEnvelopeExplanationLines explanation of
@@ -316,6 +323,11 @@ main = do
     (case observeHouseholdEnvelopeChange earlierExplanation incompatibleExplanation of
       Left (HouseholdEnvelopeChangeEnvelopeOrderMismatch beforeIds afterIds) ->
         beforeIds == [foodId] && afterIds == [foodId, retiredId]
+      _ -> False)
+  assertBool "Change rejects cross-Period comparison"
+    (case observeHouseholdEnvelopeChange previousPeriodExplanation explanation of
+      Left (HouseholdEnvelopeChangePeriodMismatch beforePeriod afterPeriod) ->
+        beforePeriod == previousPeriod && afterPeriod == period
       _ -> False)
 
 one :: Commodity -> Integer -> Balance
