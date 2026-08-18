@@ -72,6 +72,12 @@ data Name
   | FromAccountField
   | ToAccountField
   | AmountField
+  | ExpenseDateField
+  | ExpenseDescriptionField
+  | ExpensePaymentField
+  | ExpenseItemCountField
+  | ExpenseItemAccountField
+  | ExpenseItemAmountField
   | MultiDateField
   | MultiDescriptionField
   | MultiPostingCountField
