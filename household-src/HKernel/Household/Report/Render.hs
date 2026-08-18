@@ -25,6 +25,11 @@ import Data.Time.Calendar (Day, diffDays)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import HKernel.Account (Account, accountName, declaredAccount)
 import HKernel.Envelope.StockOrigin (StockOrigin(..))
+import HKernel.Household.Backing
+  ( envelopeAvailableBackingRequired
+  , envelopeAvailableFunding
+  , envelopeFundingCommitment
+  )
 import HKernel.HouseholdIssue
 import HKernel.Money
 import HKernel.Period
@@ -433,7 +438,7 @@ renderIssueCard issue = T.intercalate "\n"
     fields =
       [ ("ID", issueIdText (householdIssueId issue))
       , ("Recorded", renderDay (householdIssueRecordedOn issue))
-      , ("Amount", maybe "—" renderAmount (householdIssueAmount issue))
+      , ("Amount", maybe "\x2014" renderAmount (householdIssueAmount issue))
       , ("Title", householdIssueText issue)
       , ("Details", householdIssueDetails issue)
       ]
@@ -487,7 +492,8 @@ renderEnvelope presentation origins report = T.intercalate "\n"
       (envelopeUnassignedExpenses report)
   , terminalSectionWith presentation "Backing evidence"
   , renderTerminalTable backingColumns backingRows Nothing
-  , "Status: " <> renderBackingStatus (envelopeBackingSurplus report)
+  , "Gross status: " <> renderBackingStatus (envelopeBackingSurplus report)
+  , "Available status: " <> renderBackingStatus (envelopeAvailableBackingSurplus report)
   , ""
   ]
   where
@@ -516,12 +522,20 @@ renderEnvelope presentation origins report = T.intercalate "\n"
     backingRows =
       [ [plainCell "Funding balance", plainBalanceCellWith presentation
           (envelopeFundingBalance report)]
+      , [plainCell "Funding commitment", plainBalanceCellWith presentation
+          (envelopeFundingCommitment report)]
+      , [plainCell "Available funding", signedBalanceCellWith presentation
+          (envelopeAvailableFunding report)]
       , [plainCell "Signed envelope total", signedBalanceCellWith presentation
           (envelopeSignedTotal report)]
-      , [plainCell "Positive backing required", plainBalanceCellWith presentation
+      , [plainCell "Gross backing required", plainBalanceCellWith presentation
           (envelopeBackingRequired report)]
-      , [plainCell "Backing surplus", signedBalanceCellWith presentation
+      , [plainCell "Available backing required", plainBalanceCellWith presentation
+          (envelopeAvailableBackingRequired report)]
+      , [plainCell "Gross backing surplus", signedBalanceCellWith presentation
           (envelopeBackingSurplus report)]
+      , [plainCell "Available backing surplus", signedBalanceCellWith presentation
+          (envelopeAvailableBackingSurplus report)]
       ]
 
 renderStockOrigins :: Map.Map Commodity StockOrigin -> Text

@@ -10,8 +10,11 @@ module HKernel.Household.Backing
   , envelopePostPlanHeadroom
   , EnvelopeBacking(..)
   , envelopeFundingBalance
+  , envelopeFundingCommitment
+  , envelopeAvailableFunding
   , envelopeSignedTotal
   , envelopeBackingRequired
+  , envelopeAvailableBackingRequired
   , envelopeBackingSurplus
   , envelopeAvailableBackingSurplus
   , deriveHouseholdBacking
@@ -32,8 +35,11 @@ import HKernel.Backing
   ( BackedEnvelopeClaim(..)
   , BackingPoolError
   , BackingPoolPosition
+  , backingPoolAvailableEnvelopeRequired
+  , backingPoolAvailableFunding
   , backingPoolAvailableSurplus
   , backingPoolFundingBalance
+  , backingPoolFundingCommitment
   , backingPoolGrossEnvelopeRequired
   , backingPoolGrossSurplus
   , deriveBackingPoolPosition
@@ -170,11 +176,23 @@ data EnvelopeBacking = EnvelopeBacking
 envelopeFundingBalance :: EnvelopeBacking -> Balance
 envelopeFundingBalance = foldMap backingPoolFundingBalance . envelopeBackingPools
 
+envelopeFundingCommitment :: EnvelopeBacking -> Balance
+envelopeFundingCommitment =
+  foldMap backingPoolFundingCommitment . envelopeBackingPools
+
+envelopeAvailableFunding :: EnvelopeBacking -> Balance
+envelopeAvailableFunding =
+  foldMap backingPoolAvailableFunding . envelopeBackingPools
+
 envelopeSignedTotal :: EnvelopeBacking -> Balance
 envelopeSignedTotal = foldMap envelopeLedgerRemaining . envelopeBackingLines
 
 envelopeBackingRequired :: EnvelopeBacking -> Balance
 envelopeBackingRequired = foldMap backingPoolGrossEnvelopeRequired . envelopeBackingPools
+
+envelopeAvailableBackingRequired :: EnvelopeBacking -> Balance
+envelopeAvailableBackingRequired =
+  foldMap backingPoolAvailableEnvelopeRequired . envelopeBackingPools
 
 envelopeBackingSurplus :: EnvelopeBacking -> Balance
 envelopeBackingSurplus = foldMap backingPoolGrossSurplus . envelopeBackingPools
