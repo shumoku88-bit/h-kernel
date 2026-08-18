@@ -52,14 +52,16 @@ import HKernel.Report (ReportBook(..))
 import HKernel.Report.Config (reportConfigurationPresentation)
 import HKernel.Report.Plan (ReportPlanError(..))
 
--- | Render the Reports section of the Household workspace.
+-- | Render the Reports section of the Household workspace. Report bodies stay
+-- intentionally two-dimensional and retain horizontal scrolling; only the TUI
+-- chrome wraps to the available terminal width.
 drawWorkspace :: AppContext -> Widget Name
 drawWorkspace context =
   vBox
     [ borderWithLabel (txt ("Household Report: " <> reportChoiceLabel selected))
         (viewport ReportsViewport Both (renderSelectedReport context))
-    , str "[Enter] Choose report   [wheel/↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page"
-    , str "[Home/End] Top/Bottom   [r/R] Next/Previous report   [1-7] Switch section   [q] Quit"
+    , strWrap "[Enter] Choose report   [wheel/↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page"
+    , strWrap "[Home/End] Top/Bottom   [r/R] Next/Previous report   [1-7] Switch section   [q] Quit"
     ]
   where
     selected = contextSelectedReport context
@@ -90,7 +92,7 @@ drawPicker choices =
           (padAll 1
             (L.renderList renderReportChoice True choices
               <=> str " "
-              <=> str "[wheel/↑/↓ or j/k] Move   [click/Enter] Open   [Esc] Back   [Q] Quit")))))
+              <=> strWrap "[wheel/↑/↓ or j/k] Move   [click/Enter] Open   [Esc] Back   [Q] Quit")))))
 
 -- | Keep picker-local list movement and selection inside the Report owner.
 -- Main only interprets the resulting application transition.
