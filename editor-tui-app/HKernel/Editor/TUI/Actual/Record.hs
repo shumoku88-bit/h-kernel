@@ -267,8 +267,8 @@ drawFlow context state = case state of
               ( recordPurposeHeader context multiState
                 ++ [ txt ("Date: " <> dateSummary context
                       (multiAddDateText input))
-                   , str "Use two postings for an ordinary transaction, or increase the posting count when needed."
-                   , str "Each posting owns its sign. The complete transaction must balance to zero."
+                   , strWrap "Use two postings for an ordinary transaction, or increase the posting count when needed."
+                   , strWrap "Each posting owns its sign. The complete transaction must balance to zero."
                    , str " "
                    , renderMultiPostingRows multiState
                    , str " "
@@ -279,7 +279,7 @@ drawFlow context state = case state of
                    , renderForm form
                    , renderMultiInlineAccountSelector context form
                    , str " "
-                   , str "Validation: press Enter outside the Account field to check admission and balance."
+                   , strWrap "Validation: press Enter outside the Account field to check admission and balance."
                    , multiInputControls form
                    ])))))
   Preview preview form ->
@@ -288,7 +288,7 @@ drawFlow context state = case state of
         (hLimit 86
           (padAll 1
             (renderRecordPreview preview <=> str " "
-              <=> str (recordPreviewControls preview)))))
+              <=> strWrap (recordPreviewControls preview)))))
 
 recordInputTitle :: MultiFormState -> String
 recordInputTitle state = case multiFormPurpose state of
@@ -304,19 +304,19 @@ recordPurposeHeader :: AppContext -> MultiFormState -> [Widget Name]
 recordPurposeHeader context state = case multiFormPurpose state of
   OrdinaryRecord -> []
   RealizeIssue issue ->
-    [ txt ("Issue: " <> issueIdText (householdIssueId issue)
+    [ txtWrap ("Issue: " <> issueIdText (householdIssueId issue)
         <> "  " <> householdIssueText issue)
     , txt ("Relation recorded: " <> T.pack (show (contextEntryDay context)))
-    , str "Issue amount is not copied into the transaction; postings remain explicit."
+    , strWrap "Issue amount is not copied into the transaction; postings remain explicit."
     , str " "
     ]
 
 multiInputControls :: Form MultiFormState AppEvent Name -> Widget Name
 multiInputControls form
   | multiAccountFocused form =
-      str "[Up/Down] Choose Account | [click] Select | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Back"
+      strWrap "[Up/Down] Choose Account | [click] Select | [Enter] Accept | [Tab] Next field | text edits exact Account | [Esc] Back"
   | otherwise =
-      str "[Tab] Next field | [Up/Down] Previous/next posting row | [Enter] Preview | [Esc] Back"
+      strWrap "[Tab] Next field | [Up/Down] Previous/next posting row | [Enter] Preview | [Esc] Back"
 
 renderMultiInlineAccountSelector
   :: AppContext
@@ -581,7 +581,7 @@ renderMultiPostingRows state =
           amountText
             | T.null (multiPostingAmountText posting) = "(amount)"
             | otherwise = multiPostingAmountText posting
-          row = txt
+          row = txtWrap
             (T.pack (show (index + 1)) <> ".  " <> accountText <> "  " <> amountText)
       in if index == selected then withAttr L.listSelectedAttr row else row
 
@@ -589,17 +589,17 @@ renderRecordPreview :: RecordPreview -> Widget Name
 renderRecordPreview preview = case preview of
   RecordActualPreview actualPreview -> renderMultiPreview actualPreview
   RecordIssueRealizeRejected message ->
-    withAttr (attrName "error") (txt message)
+    withAttr (attrName "error") (txtWrap message)
   RecordIssueRealizeReady displayPreview _ ->
     withAttr (attrName "success")
-      (str "All three candidates admitted. Sources unmodified.")
+      (strWrap "All three candidates admitted. Sources unmodified.")
       <=> str " "
       <=> str "--- Actual ---"
-      <=> txt (displayActualBlock displayPreview)
+      <=> txtWrap (displayActualBlock displayPreview)
       <=> str "--- Relation ---"
-      <=> txt (displayRelationBlock displayPreview)
+      <=> txtWrap (displayRelationBlock displayPreview)
       <=> str "--- Issue ---"
-      <=> txt (displayIssueBlock displayPreview)
+      <=> txtWrap (displayIssueBlock displayPreview)
 
 recordPreviewControls :: RecordPreview -> String
 recordPreviewControls preview = case preview of
@@ -611,14 +611,14 @@ renderMultiPreview :: ActualMultiAddPreview -> Widget Name
 renderMultiPreview preview = case preview of
   ActualMultiAddInputRejected inputError ->
     withAttr (attrName "error")
-      (txt ("Input rejected: " <> T.pack (show inputError)))
+      (txtWrap ("Input rejected: " <> T.pack (show inputError)))
   ActualMultiAddCandidateRejected sourceErrors ->
     withAttr (attrName "error")
-      (txt (T.intercalate "\n" (map (T.pack . show) (NonEmpty.toList sourceErrors))))
+      (txtWrap (T.intercalate "\n" (map (T.pack . show) (NonEmpty.toList sourceErrors))))
   ActualMultiAddCandidateReady block ->
     withAttr (attrName "success")
-      (str "Validation successful. Source unmodified.")
-      <=> str " " <=> txt block
+      (strWrap "Validation successful. Source unmodified.")
+      <=> str " " <=> txtWrap block
 
 multiPreviewControls :: ActualMultiAddPreview -> String
 multiPreviewControls preview = case preview of
