@@ -3,12 +3,13 @@
 module Main (main) where
 
 import Brick
+import Brick.Types (availWidthL, getContext)
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import qualified Brick.Widgets.List as L
 import qualified Graphics.Vty as V
 import Graphics.Vty.CrossPlatform (mkVty)
-import Lens.Micro (Lens', Traversal', singular)
+import Lens.Micro (Lens', Traversal', singular, (^.))
 import Lens.Micro.Mtl ()
 
 import qualified Data.List.NonEmpty as NonEmpty
@@ -88,10 +89,10 @@ drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
         (padAll 1
           (withAttr (attrName "error")
             (vBox
-              [ str "The source write succeeded, but the Household could not reload."
-              , str "Restart the TUI before continuing."
+              [ strWrap "The source write succeeded, but the Household could not reload."
+              , strWrap "Restart the TUI before continuing."
               , str " "
-              , str "[Esc/Q] Quit"
+              , strWrap "[Esc/Q] Quit"
               ]))))
   ]
 
@@ -109,8 +110,14 @@ drawHouseholdShell context =
 drawNavigationBar :: Maybe HouseholdSection -> Widget Name
 drawNavigationBar currentSection =
   borderWithLabel (str "h-kernel Household")
-    (hBox (homeTab : map renderTab [minBound .. maxBound]))
+    (responsiveAt 96 compactTabs wideTabs)
   where
+    renderedTabs = map renderTab [minBound .. maxBound]
+    wideTabs = hBox (homeTab : renderedTabs)
+    compactTabs = vBox
+      [ hBox (homeTab : take 3 renderedTabs)
+      , hBox (drop 3 renderedTabs)
+      ]
     homeTab = clickable HomeTab renderedHome
     renderedHome = case currentSection of
       Nothing -> withAttr (attrName "activeTab") (str " [Home] ")
@@ -135,6 +142,14 @@ drawNavigationBar currentSection =
     sectionName IssuesSection = "Issues"
     sectionName ReportsSection = "Reports"
     sectionName SettingsSection = "Settings"
+
+-- | Select layout from Brick's current render context. Terminal dimensions are
+-- presentation evidence only and do not enter application or Household state.
+responsiveAt :: Int -> Widget name -> Widget name -> Widget name
+responsiveAt breakpoint compact wide =
+  Widget Greedy Fixed $ do
+    context <- getContext
+    render $ if context ^. availWidthL < breakpoint then compact else wide
 
 drawSectionBody :: AppContext -> Widget Name
 drawSectionBody context = case contextCurrentSection context of
