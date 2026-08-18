@@ -8,6 +8,7 @@ module HKernel.Editor.TUI.Home
   ( HomeAction(..)
   , draw
   , handleLocalEvent
+  , homeUsesStackedLayout
   ) where
 
 import Brick
@@ -121,7 +122,7 @@ handleLocalEvent selectedDay event = case event of
 draw :: AppContext -> Day -> Widget Name
 draw context selectedDay =
   vBox
-    [ responsiveAt 80 compactLayout wideLayout
+    [ responsiveWhen homeUsesStackedLayout compactLayout wideLayout
     , padTop (Pad 1) (drawLegend context)
     , strWrap "[Arrows] Day   [t] Today   [r] Record   [1-7] Sections   [q] Quit"
     ]
@@ -137,13 +138,21 @@ draw context selectedDay =
       , padTop (Pad 1) dayPane
       ]
 
+-- | Pure width policy for the Home observation. Kept separate from Brick's
+-- render context so representative terminal widths can be regression-tested.
+homeUsesStackedLayout :: Int -> Bool
+homeUsesStackedLayout width = width < 80
+
 -- | Select a presentation using only Brick's rendering context. Terminal
 -- dimensions remain presentation evidence and never enter Household state.
-responsiveAt :: Int -> Widget name -> Widget name -> Widget name
-responsiveAt breakpoint compact wide =
+responsiveWhen :: (Int -> Bool) -> Widget name -> Widget name -> Widget name
+responsiveWhen useCompact compact wide =
   Widget Greedy Fixed $ do
     context <- getContext
-    render $ if context ^. availWidthL < breakpoint then compact else wide
+    render $
+      if useCompact (context ^. availWidthL)
+        then compact
+        else wide
 
 drawCalendar :: AppContext -> Day -> Widget Name
 drawCalendar context selectedDay =
