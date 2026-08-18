@@ -7,7 +7,6 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Time.Calendar (fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account
@@ -22,6 +21,7 @@ import HKernel.Actual.Journal
   , actualJournalValue
   , actualTransactionEntryIdentity
   , actualTransactionEntrySource
+  , actualTransactionEntryTransaction
   , parseActualJournal
   )
 import HKernel.Editor.ActualWorkspace
@@ -44,6 +44,7 @@ import HKernel.Journal
   ( journalAccountRegistry
   , journalTransactionSourceHeaderLine
   )
+import HKernel.Ledger (transactionDate)
 import HKernel.Money
   ( balanceEntries
   , mkAmount
@@ -186,6 +187,12 @@ main = do
             == ActualReverseAvailable reversalId
         )
       reconciliationJournal = mustRight (parseActualJournal reconciliationSource)
+      reconciliationEntries = actualJournalTransactionEntries reconciliationJournal
+      (rewardDay, purchaseDay) = case map
+          (transactionDate . actualTransactionEntryTransaction)
+          reconciliationEntries of
+        [firstDay, secondDay] -> (firstDay, secondDay)
+        _ -> error "invalid reconciliation fixture: expected two transactions"
       reconciliationLedger = actualJournalValue reconciliationJournal
       reconciliationRegistry = journalAccountRegistry reconciliationLedger
       paypay = mustJust
@@ -197,13 +204,13 @@ main = do
       external700 = singletonBalance (mkAmount jpy (quantity "700"))
       external1000 = singletonBalance (mkAmount jpy (quantity "1000"))
       differenceObservation = observeExternalBalance
-        paypay (fromGregorian 2026 8 18) external710
+        paypay purchaseDay external710
       differenceReconciliation = reconcileAccountBalance
         reconciliationLedger differenceObservation
       matchedReconciliation = reconcileAccountBalance reconciliationLedger
-        (observeExternalBalance paypay (fromGregorian 2026 8 18) external700)
+        (observeExternalBalance paypay purchaseDay external700)
       historicalReconciliation = reconcileAccountBalance reconciliationLedger
-        (observeExternalBalance paypay (fromGregorian 2026 8 10) external1000)
+        (observeExternalBalance paypay rewardDay external1000)
       differenceLawResult =
         ( "reconciliation difference is exact external minus ledger"
         , balanceEntries (reconciliationLedgerBalance differenceReconciliation)
