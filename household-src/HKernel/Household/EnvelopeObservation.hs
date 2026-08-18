@@ -30,6 +30,25 @@ module HKernel.Household.EnvelopeObservation
   , envelopeExplanationRemaining
   , envelopeExplanationCommitment
   , envelopeExplanationHeadroom
+  , HouseholdEnvelopeChangeError(..)
+  , HouseholdEnvelopeChange
+  , EnvelopeChangeLine
+  , observeHouseholdEnvelopeChange
+  , householdEnvelopeChangePeriod
+  , householdEnvelopeChangeFrom
+  , householdEnvelopeChangeThrough
+  , householdEnvelopeChangeLines
+  , envelopeChangeId
+  , envelopeChangeEntitlement
+  , envelopeChangeConsumptionCharges
+  , envelopeChangeConsumptionRefunds
+  , envelopeChangeConsumptionNet
+  , envelopeChangeFulfillmentApplied
+  , envelopeChangeFulfillmentReversed
+  , envelopeChangeFulfillmentNet
+  , envelopeChangeRemaining
+  , envelopeChangeCommitment
+  , envelopeChangeHeadroom
   ) where
 
 import Data.List.NonEmpty (NonEmpty)
@@ -90,7 +109,7 @@ import HKernel.Envelope.Remaining
   , envelopeRemainingFor
   )
 import HKernel.Envelope.StockOrigin (StockOrigin)
-import HKernel.Money (Balance, Commodity)
+import HKernel.Money (Balance, Commodity, subtractBalance)
 import HKernel.Period (Period)
 import HKernel.Plan.Journal (PlanJournal)
 
@@ -226,6 +245,99 @@ explainHouseholdEnvelope envelopes observation =
         , envelopeExplanationHeadroom =
             envelopeHeadroomFor envelope headroom
         }
+
+-- | Reasons two typed Envelope explanations do not denote one comparable
+-- change coordinate. Change never silently crosses a period boundary, reverses
+-- time, or treats a different current Envelope set as zero-valued evidence.
+data HouseholdEnvelopeChangeError
+  = HouseholdEnvelopeChangePeriodMismatch Period Period
+  | HouseholdEnvelopeChangeObservationOrderInvalid Day Day
+  | HouseholdEnvelopeChangeEnvelopeOrderMismatch [EnvelopeId] [EnvelopeId]
+  deriving (Eq, Show)
+
+-- | Fieldwise change for one Envelope. Every coordinate is @later - earlier@.
+-- Gross evidence changes remain first-class beside net and final-value changes.
+data EnvelopeChangeLine = EnvelopeChangeLine
+  { envelopeChangeId                  :: EnvelopeId
+  , envelopeChangeEntitlement         :: Balance
+  , envelopeChangeConsumptionCharges  :: Balance
+  , envelopeChangeConsumptionRefunds  :: Balance
+  , envelopeChangeConsumptionNet      :: Balance
+  , envelopeChangeFulfillmentApplied  :: Balance
+  , envelopeChangeFulfillmentReversed :: Balance
+  , envelopeChangeFulfillmentNet      :: Balance
+  , envelopeChangeRemaining           :: Balance
+  , envelopeChangeCommitment          :: Balance
+  , envelopeChangeHeadroom            :: Balance
+  } deriving (Eq, Show)
+
+-- | First-class change between two comparable typed observations.
+data HouseholdEnvelopeChange = HouseholdEnvelopeChange
+  { householdEnvelopeChangePeriod  :: Period
+  , householdEnvelopeChangeFrom    :: Day
+  , householdEnvelopeChangeThrough :: Day
+  , householdEnvelopeChangeLines   :: [EnvelopeChangeLine]
+  } deriving (Eq, Show)
+
+-- | Compare two explanations without rereading source evidence.
+--
+-- This deliberately requires the same period and current Envelope order. A
+-- policy or period change is itself a different question and must not be hidden
+-- by treating a missing coordinate as zero.
+observeHouseholdEnvelopeChange
+  :: HouseholdEnvelopeExplanation
+  -> HouseholdEnvelopeExplanation
+  -> Either HouseholdEnvelopeChangeError HouseholdEnvelopeChange
+observeHouseholdEnvelopeChange earlier later
+  | earlierPeriod /= laterPeriod =
+      Left (HouseholdEnvelopeChangePeriodMismatch earlierPeriod laterPeriod)
+  | earlierDay > laterDay =
+      Left (HouseholdEnvelopeChangeObservationOrderInvalid earlierDay laterDay)
+  | earlierIds /= laterIds =
+      Left (HouseholdEnvelopeChangeEnvelopeOrderMismatch earlierIds laterIds)
+  | otherwise = Right HouseholdEnvelopeChange
+      { householdEnvelopeChangePeriod = earlierPeriod
+      , householdEnvelopeChangeFrom = earlierDay
+      , householdEnvelopeChangeThrough = laterDay
+      , householdEnvelopeChangeLines =
+          zipWith changeLine earlierLines laterLines
+      }
+  where
+    earlierPeriod = householdEnvelopeExplanationPeriod earlier
+    laterPeriod = householdEnvelopeExplanationPeriod later
+    earlierDay = householdEnvelopeExplanationObservedThrough earlier
+    laterDay = householdEnvelopeExplanationObservedThrough later
+    earlierLines = householdEnvelopeExplanationLines earlier
+    laterLines = householdEnvelopeExplanationLines later
+    earlierIds = map envelopeExplanationId earlierLines
+    laterIds = map envelopeExplanationId laterLines
+
+    changeLine before after = EnvelopeChangeLine
+      { envelopeChangeId = envelopeExplanationId after
+      , envelopeChangeEntitlement = delta
+          envelopeExplanationEntitlement before after
+      , envelopeChangeConsumptionCharges = delta
+          envelopeExplanationConsumptionCharges before after
+      , envelopeChangeConsumptionRefunds = delta
+          envelopeExplanationConsumptionRefunds before after
+      , envelopeChangeConsumptionNet = delta
+          envelopeExplanationConsumptionNet before after
+      , envelopeChangeFulfillmentApplied = delta
+          envelopeExplanationFulfillmentApplied before after
+      , envelopeChangeFulfillmentReversed = delta
+          envelopeExplanationFulfillmentReversed before after
+      , envelopeChangeFulfillmentNet = delta
+          envelopeExplanationFulfillmentNet before after
+      , envelopeChangeRemaining = delta
+          envelopeExplanationRemaining before after
+      , envelopeChangeCommitment = delta
+          envelopeExplanationCommitment before after
+      , envelopeChangeHeadroom = delta
+          envelopeExplanationHeadroom before after
+      }
+
+    delta accessor before after =
+      accessor after `subtractBalance` accessor before
 
 singleLeft
   :: (error -> HouseholdEnvelopeError)
