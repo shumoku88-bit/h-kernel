@@ -55,12 +55,41 @@ module HKernel.Household.EnvelopeObservation
   , envelopeChangeRemaining
   , envelopeChangeCommitment
   , envelopeChangeHeadroom
+  , EnvelopeCycleComparisonSide(..)
+  , HouseholdEnvelopeCycleComparisonError(..)
+  , HouseholdEnvelopeCycleComparison
+  , EnvelopeCycleComparisonLine
+  , observeAlignedHouseholdEnvelopeCycleComparison
+  , householdEnvelopeCycleComparisonCurrentPeriod
+  , householdEnvelopeCycleComparisonBaselinePeriod
+  , householdEnvelopeCycleComparisonCurrentThrough
+  , householdEnvelopeCycleComparisonBaselineThrough
+  , householdEnvelopeCycleComparisonLines
+  , envelopeCycleComparisonId
+  , envelopeCycleCurrentConsumption
+  , envelopeCycleBaselineConsumption
+  , envelopeCycleCurrentFulfillment
+  , envelopeCycleBaselineFulfillment
+  , envelopeCycleCurrentEntitlement
+  , envelopeCycleBaselineEntitlement
+  , envelopeCycleCurrentRemaining
+  , envelopeCycleBaselineRemaining
+  , envelopeCycleCurrentCommitment
+  , envelopeCycleBaselineCommitment
+  , envelopeCycleCurrentHeadroom
+  , envelopeCycleBaselineHeadroom
+  , envelopeCycleConsumptionNetDifference
+  , envelopeCycleFulfillmentNetDifference
+  , envelopeCycleEntitlementDifference
+  , envelopeCycleRemainingDifference
+  , envelopeCycleCommitmentDifference
+  , envelopeCycleHeadroomDifference
   ) where
 
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
-import Data.Time.Calendar (Day, addDays)
+import Data.Time.Calendar (Day, addDays, diffDays)
 import HKernel.Actual.Journal (ActualJournal)
 import HKernel.Envelope.Commitment
   ( EnvelopeCommitment
@@ -69,12 +98,14 @@ import HKernel.Envelope.Commitment
   , observeEnvelopeCommitment
   )
 import HKernel.Envelope.Consumption
-  ( EnvelopeConsumption
+  ( ConsumptionAmounts
+  , EnvelopeConsumption
   , EnvelopeConsumptionError
   , consumptionCharges
   , consumptionNet
   , consumptionRefunds
   , envelopeConsumptionFor
+  , observeEnvelopeConsumption
   , observeEnvelopeStockConsumption
   )
 import HKernel.Envelope.Entitlement
@@ -94,10 +125,12 @@ import HKernel.Envelope.ExpenseRouting
 import HKernel.Envelope.Fulfillment
   ( EnvelopeFulfillment
   , EnvelopeFulfillmentError
+  , FulfillmentAmounts
   , envelopeFulfillmentFor
   , fulfillmentApplied
   , fulfillmentNet
   , fulfillmentReversed
+  , observeEnvelopeFulfillment
   , observeEnvelopeStockFulfillment
   )
 import HKernel.Envelope.FulfillmentRouting (FulfillmentRoutingHistory)
@@ -419,6 +452,191 @@ observeHouseholdEnvelopeChange earlier later
 
     delta accessor before after =
       accessor after `subtractBalance` accessor before
+
+-- | Which side of an aligned cycle comparison failed to produce typed evidence.
+data EnvelopeCycleComparisonSide
+  = CurrentEnvelopeCycle
+  | BaselineEnvelopeCycle
+  deriving (Eq, Show)
+
+-- | Aligned cycle comparison errors remain separate from same-Period Change.
+-- Crossing a Period boundary changes the question rather than weakening Change.
+data HouseholdEnvelopeCycleComparisonError
+  = EnvelopeCycleComparisonPeriodOrderInvalid Period Period
+  | EnvelopeCycleComparisonCurrentObservationOutsidePeriod Day Period
+  | EnvelopeCycleComparisonAlignedBaselineOutsidePeriod Day Period
+  | EnvelopeCycleComparisonStockObservationError
+      EnvelopeCycleComparisonSide
+      HouseholdEnvelopeError
+  | EnvelopeCycleComparisonConsumptionError
+      EnvelopeCycleComparisonSide
+      EnvelopeConsumptionError
+  | EnvelopeCycleComparisonFulfillmentError
+      EnvelopeCycleComparisonSide
+      EnvelopeFulfillmentError
+  deriving (Eq, Show)
+
+-- | One Envelope axis under aligned previous-cycle comparison.
+--
+-- Consumption and Fulfillment are bounded activity inside each Period. The
+-- remaining coordinates are point-in-time positions at aligned observation days.
+-- Current/baseline values are stored; differences are always derived.
+data EnvelopeCycleComparisonLine = EnvelopeCycleComparisonLine
+  { envelopeCycleComparisonId          :: EnvelopeId
+  , envelopeCycleCurrentConsumption    :: ConsumptionAmounts
+  , envelopeCycleBaselineConsumption   :: ConsumptionAmounts
+  , envelopeCycleCurrentFulfillment    :: FulfillmentAmounts
+  , envelopeCycleBaselineFulfillment   :: FulfillmentAmounts
+  , envelopeCycleCurrentEntitlement    :: Balance
+  , envelopeCycleBaselineEntitlement   :: Balance
+  , envelopeCycleCurrentRemaining      :: Balance
+  , envelopeCycleBaselineRemaining     :: Balance
+  , envelopeCycleCurrentCommitment     :: Balance
+  , envelopeCycleBaselineCommitment    :: Balance
+  , envelopeCycleCurrentHeadroom       :: Balance
+  , envelopeCycleBaselineHeadroom      :: Balance
+  } deriving (Eq, Show)
+
+-- | Two explicit Period observations aligned by elapsed day count.
+data HouseholdEnvelopeCycleComparison = HouseholdEnvelopeCycleComparison
+  { householdEnvelopeCycleComparisonCurrentPeriod   :: Period
+  , householdEnvelopeCycleComparisonBaselinePeriod  :: Period
+  , householdEnvelopeCycleComparisonCurrentThrough  :: Day
+  , householdEnvelopeCycleComparisonBaselineThrough :: Day
+  , householdEnvelopeCycleComparisonLines           :: [EnvelopeCycleComparisonLine]
+  } deriving (Eq, Show)
+
+-- | Compare one Envelope cycle against an earlier Period at the same elapsed day.
+--
+-- This deliberately does not reuse 'HouseholdEnvelopeChange'. Activity uses the
+-- bounded observers because stock Consumption/Fulfillment in Remaining are
+-- cumulative from Entitlement origin and therefore answer a different question.
+observeAlignedHouseholdEnvelopeCycleComparison
+  :: Day
+  -> Period
+  -> Period
+  -> [EnvelopeId]
+  -> ActualJournal
+  -> PlanJournal
+  -> ExpenseRoutingHistory
+  -> FulfillmentRoutingHistory
+  -> EnvelopeEntitlementHistory
+  -> Either (NonEmpty HouseholdEnvelopeCycleComparisonError) HouseholdEnvelopeCycleComparison
+observeAlignedHouseholdEnvelopeCycleComparison currentThrough currentPeriod baselinePeriod envelopes actual plans expenseRouting fulfillmentRouting entitlementHistory
+  | periodStart baselinePeriod >= periodStart currentPeriod =
+      Left (EnvelopeCycleComparisonPeriodOrderInvalid baselinePeriod currentPeriod NonEmpty.:| [])
+  | not (periodContains currentPeriod currentThrough) =
+      Left (EnvelopeCycleComparisonCurrentObservationOutsidePeriod currentThrough currentPeriod NonEmpty.:| [])
+  | not (periodContains baselinePeriod baselineThrough) =
+      Left (EnvelopeCycleComparisonAlignedBaselineOutsidePeriod baselineThrough baselinePeriod NonEmpty.:| [])
+  | otherwise = do
+      currentStock <- mapLeft
+        (fmap (EnvelopeCycleComparisonStockObservationError CurrentEnvelopeCycle))
+        (deriveHouseholdEnvelopeObservation
+          currentThrough currentPeriod actual plans expenseRouting fulfillmentRouting entitlementHistory)
+      baselineStock <- mapLeft
+        (fmap (EnvelopeCycleComparisonStockObservationError BaselineEnvelopeCycle))
+        (deriveHouseholdEnvelopeObservation
+          baselineThrough baselinePeriod actual plans expenseRouting fulfillmentRouting entitlementHistory)
+      currentActivity <- mapLeft
+        (NonEmpty.singleton . EnvelopeCycleComparisonConsumptionError CurrentEnvelopeCycle)
+        (observeEnvelopeConsumption
+          currentPeriod currentThrough actual (expenseRoutingResolver expenseRouting))
+      baselineActivity <- mapLeft
+        (NonEmpty.singleton . EnvelopeCycleComparisonConsumptionError BaselineEnvelopeCycle)
+        (observeEnvelopeConsumption
+          baselinePeriod baselineThrough actual (expenseRoutingResolver expenseRouting))
+      currentFulfillment <- mapLeft
+        (fmap (EnvelopeCycleComparisonFulfillmentError CurrentEnvelopeCycle))
+        (observeEnvelopeFulfillment
+          currentPeriod currentThrough plans actual fulfillmentRouting)
+      baselineFulfillment <- mapLeft
+        (fmap (EnvelopeCycleComparisonFulfillmentError BaselineEnvelopeCycle))
+        (observeEnvelopeFulfillment
+          baselinePeriod baselineThrough plans actual fulfillmentRouting)
+      Right HouseholdEnvelopeCycleComparison
+        { householdEnvelopeCycleComparisonCurrentPeriod = currentPeriod
+        , householdEnvelopeCycleComparisonBaselinePeriod = baselinePeriod
+        , householdEnvelopeCycleComparisonCurrentThrough = currentThrough
+        , householdEnvelopeCycleComparisonBaselineThrough = baselineThrough
+        , householdEnvelopeCycleComparisonLines = map
+            (cycleComparisonLine
+              currentStock baselineStock
+              currentActivity baselineActivity
+              currentFulfillment baselineFulfillment)
+            envelopes
+        }
+  where
+    elapsedDays = diffDays currentThrough (periodStart currentPeriod)
+    baselineThrough = addDays elapsedDays (periodStart baselinePeriod)
+
+cycleComparisonLine
+  :: HouseholdEnvelopeObservation
+  -> HouseholdEnvelopeObservation
+  -> EnvelopeConsumption
+  -> EnvelopeConsumption
+  -> EnvelopeFulfillment
+  -> EnvelopeFulfillment
+  -> EnvelopeId
+  -> EnvelopeCycleComparisonLine
+cycleComparisonLine currentStock baselineStock currentActivity baselineActivity currentFulfillment baselineFulfillment envelope =
+  EnvelopeCycleComparisonLine
+    { envelopeCycleComparisonId = envelope
+    , envelopeCycleCurrentConsumption =
+        envelopeConsumptionFor envelope currentActivity
+    , envelopeCycleBaselineConsumption =
+        envelopeConsumptionFor envelope baselineActivity
+    , envelopeCycleCurrentFulfillment =
+        envelopeFulfillmentFor envelope currentFulfillment
+    , envelopeCycleBaselineFulfillment =
+        envelopeFulfillmentFor envelope baselineFulfillment
+    , envelopeCycleCurrentEntitlement =
+        envelopeEntitlementBalance envelope (householdEnvelopeEntitlement currentStock)
+    , envelopeCycleBaselineEntitlement =
+        envelopeEntitlementBalance envelope (householdEnvelopeEntitlement baselineStock)
+    , envelopeCycleCurrentRemaining =
+        envelopeRemainingFor envelope (householdEnvelopeRemaining currentStock)
+    , envelopeCycleBaselineRemaining =
+        envelopeRemainingFor envelope (householdEnvelopeRemaining baselineStock)
+    , envelopeCycleCurrentCommitment =
+        envelopeCommitmentFor envelope (householdEnvelopeCommitment currentStock)
+    , envelopeCycleBaselineCommitment =
+        envelopeCommitmentFor envelope (householdEnvelopeCommitment baselineStock)
+    , envelopeCycleCurrentHeadroom =
+        envelopeHeadroomFor envelope (householdEnvelopeHeadroom currentStock)
+    , envelopeCycleBaselineHeadroom =
+        envelopeHeadroomFor envelope (householdEnvelopeHeadroom baselineStock)
+    }
+
+envelopeCycleConsumptionNetDifference :: EnvelopeCycleComparisonLine -> Balance
+envelopeCycleConsumptionNetDifference line =
+  consumptionNet (envelopeCycleCurrentConsumption line)
+    `subtractBalance` consumptionNet (envelopeCycleBaselineConsumption line)
+
+envelopeCycleFulfillmentNetDifference :: EnvelopeCycleComparisonLine -> Balance
+envelopeCycleFulfillmentNetDifference line =
+  fulfillmentNet (envelopeCycleCurrentFulfillment line)
+    `subtractBalance` fulfillmentNet (envelopeCycleBaselineFulfillment line)
+
+envelopeCycleEntitlementDifference :: EnvelopeCycleComparisonLine -> Balance
+envelopeCycleEntitlementDifference line =
+  envelopeCycleCurrentEntitlement line
+    `subtractBalance` envelopeCycleBaselineEntitlement line
+
+envelopeCycleRemainingDifference :: EnvelopeCycleComparisonLine -> Balance
+envelopeCycleRemainingDifference line =
+  envelopeCycleCurrentRemaining line
+    `subtractBalance` envelopeCycleBaselineRemaining line
+
+envelopeCycleCommitmentDifference :: EnvelopeCycleComparisonLine -> Balance
+envelopeCycleCommitmentDifference line =
+  envelopeCycleCurrentCommitment line
+    `subtractBalance` envelopeCycleBaselineCommitment line
+
+envelopeCycleHeadroomDifference :: EnvelopeCycleComparisonLine -> Balance
+envelopeCycleHeadroomDifference line =
+  envelopeCycleCurrentHeadroom line
+    `subtractBalance` envelopeCycleBaselineHeadroom line
 
 singleLeft
   :: (error -> HouseholdEnvelopeError)

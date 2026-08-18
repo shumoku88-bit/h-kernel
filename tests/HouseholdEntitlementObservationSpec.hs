@@ -21,6 +21,7 @@ import HKernel.Envelope
   )
 import HKernel.Envelope.Consumption
   ( consumptionCharges
+  , consumptionNet
   , consumptionRefunds
   , envelopeConsumptionFor
   )
@@ -36,6 +37,7 @@ import HKernel.Envelope.ExpenseRouting
   , InitialExpenseRoutingDecision(..)
   , mkExpenseRoutingHistoryWithInitial
   )
+import HKernel.Envelope.Fulfillment (fulfillmentApplied)
 import HKernel.Envelope.FulfillmentRouting
   ( FulfillmentRoute(..)
   , FulfillmentRoutingDecision(..)
@@ -48,6 +50,7 @@ import HKernel.Household.EnvelopeObservation
   ( EnvelopeChangeBaseline(..)
   , EnvelopeChangeBaselineError(..)
   , HouseholdEnvelopeChangeError(..)
+  , HouseholdEnvelopeCycleComparisonError(..)
   , deriveHouseholdEnvelopeObservation
   , envelopeChangeCommitment
   , envelopeChangeConsumptionCharges
@@ -57,6 +60,24 @@ import HKernel.Household.EnvelopeObservation
   , envelopeChangeFulfillmentNet
   , envelopeChangeHeadroom
   , envelopeChangeRemaining
+  , envelopeCycleBaselineConsumption
+  , envelopeCycleBaselineEntitlement
+  , envelopeCycleBaselineFulfillment
+  , envelopeCycleBaselineHeadroom
+  , envelopeCycleBaselineRemaining
+  , envelopeCycleBaselineCommitment
+  , envelopeCycleCommitmentDifference
+  , envelopeCycleConsumptionNetDifference
+  , envelopeCycleCurrentConsumption
+  , envelopeCycleCurrentEntitlement
+  , envelopeCycleCurrentFulfillment
+  , envelopeCycleCurrentHeadroom
+  , envelopeCycleCurrentRemaining
+  , envelopeCycleCurrentCommitment
+  , envelopeCycleEntitlementDifference
+  , envelopeCycleFulfillmentNetDifference
+  , envelopeCycleHeadroomDifference
+  , envelopeCycleRemainingDifference
   , envelopeExplanationCommitment
   , envelopeExplanationConsumptionCharges
   , envelopeExplanationConsumptionNet
@@ -72,10 +93,14 @@ import HKernel.Household.EnvelopeObservation
   , householdEnvelopeChangeLines
   , householdEnvelopeChangeThrough
   , householdEnvelopeConsumption
+  , householdEnvelopeCycleComparisonBaselineThrough
+  , householdEnvelopeCycleComparisonCurrentThrough
+  , householdEnvelopeCycleComparisonLines
   , householdEnvelopeEntitlement
   , householdEnvelopeExplanationLines
   , householdEnvelopeHeadroom
   , householdEnvelopeRemaining
+  , observeAlignedHouseholdEnvelopeCycleComparison
   , observeHouseholdEnvelopeChange
   , resolveEnvelopeChangeBaseline
   , resolvedEnvelopeChangeBaselineDay
@@ -235,6 +260,17 @@ main = do
         _ -> error "expected one Envelope change line"
       incompatibleExplanation = explainHouseholdEnvelope
         [foodId, retiredId] observation
+      alignedComparison = mustRight
+        (observeAlignedHouseholdEnvelopeCycleComparison
+          observed period previousPeriod envelopeOrder
+          actual plans expenseRouting fulfillmentRouting entitlementHistory)
+      alignedLine = case householdEnvelopeCycleComparisonLines alignedComparison of
+        [line] -> line
+        _ -> error "expected one aligned Envelope comparison line"
+      longCurrentPeriod = mustRight
+        (mkPeriod (fromGregorian 2026 10 1) (fromGregorian 2026 11 1))
+      shortBaselinePeriod = mustRight
+        (mkPeriod (fromGregorian 2026 9 1) (fromGregorian 2026 10 1))
 
   assertEqual "PreviousObservation baseline uses caller-supplied observation context"
     previousObservationDay earlierObserved
@@ -329,9 +365,81 @@ main = do
       Left (HouseholdEnvelopeChangePeriodMismatch beforePeriod afterPeriod) ->
         beforePeriod == previousPeriod && afterPeriod == period
       _ -> False)
+  assertEqual "aligned cycle comparison keeps equal elapsed observation days"
+    (observed, previousPeriodObserved)
+    ( householdEnvelopeCycleComparisonCurrentThrough alignedComparison
+    , householdEnvelopeCycleComparisonBaselineThrough alignedComparison
+    )
+  assertEqual "cycle activity excludes pre-period stock consumption"
+    (one jpy 40)
+    (consumptionCharges (envelopeCycleCurrentConsumption alignedLine))
+  assertEqual "cycle activity retains current-cycle refunds"
+    (one jpy 10)
+    (consumptionRefunds (envelopeCycleCurrentConsumption alignedLine))
+  assertEqual "baseline cycle has no bounded consumption in fixture"
+    mempty
+    (consumptionNet (envelopeCycleBaselineConsumption alignedLine))
+  assertEqual "aligned cycle Consumption difference compares bounded activity"
+    (one jpy 30) (envelopeCycleConsumptionNetDifference alignedLine)
+  assertEqual "aligned cycle current Fulfillment is bounded to current Period"
+    (one jpy 15)
+    (fulfillmentApplied (envelopeCycleCurrentFulfillment alignedLine))
+  assertEqual "baseline cycle has no bounded Fulfillment in fixture"
+    mempty
+    (fulfillmentApplied (envelopeCycleBaselineFulfillment alignedLine))
+  assertEqual "aligned cycle Fulfillment difference compares bounded activity"
+    (one jpy 15) (envelopeCycleFulfillmentNetDifference alignedLine)
+  assertEqual "aligned Entitlement compares position snapshots"
+    (one jpy 140, one jpy 50)
+    ( envelopeCycleCurrentEntitlement alignedLine
+    , envelopeCycleBaselineEntitlement alignedLine
+    )
+  assertEqual "aligned Entitlement position difference remains explicit"
+    (one jpy 90) (envelopeCycleEntitlementDifference alignedLine)
+  assertEqual "aligned Remaining compares stock positions"
+    (one jpy 90, one jpy 45)
+    ( envelopeCycleCurrentRemaining alignedLine
+    , envelopeCycleBaselineRemaining alignedLine
+    )
+  assertEqual "aligned Remaining position difference remains explicit"
+    (one jpy 45) (envelopeCycleRemainingDifference alignedLine)
+  assertEqual "aligned Commitment compares each cycle horizon snapshot"
+    (one jpy 20, mempty)
+    ( envelopeCycleCurrentCommitment alignedLine
+    , envelopeCycleBaselineCommitment alignedLine
+    )
+  assertEqual "aligned Commitment position difference remains explicit"
+    (one jpy 20) (envelopeCycleCommitmentDifference alignedLine)
+  assertEqual "aligned Headroom compares capacity snapshots"
+    (one jpy 70, one jpy 45)
+    ( envelopeCycleCurrentHeadroom alignedLine
+    , envelopeCycleBaselineHeadroom alignedLine
+    )
+  assertEqual "aligned Headroom position difference remains explicit"
+    (one jpy 25) (envelopeCycleHeadroomDifference alignedLine)
+  assertBool "aligned cycle comparison rejects a baseline too short for elapsed day"
+    (case observeAlignedHouseholdEnvelopeCycleComparison
+        (fromGregorian 2026 10 31)
+        longCurrentPeriod
+        shortBaselinePeriod
+        envelopeOrder
+        actual plans expenseRouting fulfillmentRouting entitlementHistory of
+      Left errors -> any isAlignedBaselineOutside (toListNE errors)
+      Right _ -> False)
 
 one :: Commodity -> Integer -> Balance
 one commodity value = singletonBalance (mkAmount commodity (quantityFromInteger value))
+
+isAlignedBaselineOutside :: HouseholdEnvelopeCycleComparisonError -> Bool
+isAlignedBaselineOutside err = case err of
+  EnvelopeCycleComparisonAlignedBaselineOutsidePeriod day rejectedPeriod ->
+    day == fromGregorian 2026 10 1
+      && rejectedPeriod == mustRight
+        (mkPeriod (fromGregorian 2026 9 1) (fromGregorian 2026 10 1))
+  _ -> False
+
+toListNE :: Foldable f => f a -> [a]
+toListNE = foldr (:) []
 
 mustRight :: Show error => Either error value -> value
 mustRight result = case result of
