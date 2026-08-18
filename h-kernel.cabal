@@ -10,6 +10,7 @@ build-type:          Simple
 tested-with:         GHC == 9.10.3, GHC == 9.12.4, GHC == 9.14.1
 extra-source-files: docs/*.md
                   , docs/INDEX.toml
+                  , experiments/ghcup-home/Main.hs
                   , tests/fixtures/editor/*.journal
 
 common common-defaults
@@ -118,588 +119,227 @@ library h-kernel-editor
                     , HKernel.Editor.Interaction.PlanCompleteAdvance
                     , HKernel.Editor.HouseholdWorkspace
                     , HKernel.Editor.IssueAppend
-                    , HKernel.Editor.IssueRealize
+                    , HKernel.Editor.PlanAppend
+                    , HKernel.Editor.PlanEdit
                     , HKernel.Editor.PlanLifecycle
-                    , HKernel.Editor.PlanCompleteAdvance
-                    , HKernel.Editor.TransactionBlock
-    other-modules:    HKernel.Editor.PlanIdentity
-                    , HKernel.Editor.SourceAppend
+                    , HKernel.Editor.RelationAppend
     build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
                     , h-kernel
                     , h-kernel-household
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
-                    , directory >= 1.3 && < 1.4
     hs-source-dirs:   editor-src
 
 library h-kernel-household-application
     import:           common-defaults
     exposed-modules:  HKernel.Household.Application
-                    , HKernel.Household.Temporal
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
+                    , directory >= 1.3 && < 1.4
+                    , filepath >= 1.4 && < 1.6
                     , h-kernel
+                    , h-kernel-editor
                     , h-kernel-household
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
-                    , transformers
-    hs-source-dirs:   household-app-src
+    hs-source-dirs:   household-application-src
 
 executable h-kernel
     import:           common-defaults
     main-is:          Main.hs
+    hs-source-dirs:   app
     build-depends:    base >= 4.14 && < 5
-                    , directory
-                    , filepath >= 1.4 && < 1.6
                     , h-kernel
+                    , text >= 1.2 && < 2.2
+
+executable h-kernel-editor
+    import:           common-defaults
+    main-is:          Main.hs
+    other-modules:    HKernel.Editor.TUI.Actual
+                    , HKernel.Editor.TUI.Actual.AccountSelector
+                    , HKernel.Editor.TUI.Actual.Daily
+                    , HKernel.Editor.TUI.Actual.General
+                    , HKernel.Editor.TUI.Actual.Income
+                    , HKernel.Editor.TUI.Actual.Reconcile
+                    , HKernel.Editor.TUI.Actual.Record
+                    , HKernel.Editor.TUI.Actual.Reverse
+                    , HKernel.Editor.TUI.Actual.Shared
+                    , HKernel.Editor.TUI.Home
+                    , HKernel.Editor.TUI.Maintenance
+                    , HKernel.Editor.TUI.Maintenance.Accounts
+                    , HKernel.Editor.TUI.Maintenance.Entitlement
+                    , HKernel.Editor.TUI.Maintenance.Issue
+                    , HKernel.Editor.TUI.Model
+                    , HKernel.Editor.TUI.Plan
+                    , HKernel.Editor.TUI.Plan.CompleteAdvance
+                    , HKernel.Editor.TUI.Plan.Edit
+                    , HKernel.Editor.TUI.Plan.Workspace
+                    , HKernel.Editor.TUI.Report
+                    , HKernel.Editor.TUI.ReportStyle
+                    , HKernel.Editor.TUI.Settings
+    hs-source-dirs:   editor-tui-app
+    build-depends:    base >= 4.14 && < 5
+                    , brick >= 2.1 && < 2.12
+                    , h-kernel
+                    , h-kernel-editor
+                    , h-kernel-household
+                    , h-kernel-household-application
+                    , microlens >= 0.4 && < 0.5
+                    , microlens-mtl >= 0.2 && < 0.3
+                    , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
+                    , vector >= 0.12 && < 0.14
+                    , vty >= 6.2 && < 6.6
+                    , vty-crossplatform >= 0.4 && < 0.6
+
+executable h-kernel-editor-dump
+    import:           common-defaults
+    main-is:          Main.hs
+    other-modules:    HKernel.Editor.TUI.ReportStyle
+    hs-source-dirs:   editor-dump-app
+                  , editor-tui-app
+    build-depends:    base >= 4.14 && < 5
+                    , h-kernel
+                    , h-kernel-editor
                     , h-kernel-household
                     , h-kernel-household-application
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
-    hs-source-dirs:   app
 
-
-test-suite h-kernel-editor-actual-append-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorActualAppendSpec.hs
+executable h-kernel-concierge
+    import:           common-defaults
+    main-is:          Main.hs
+    hs-source-dirs:   concierge-app
     build-depends:    base >= 4.14 && < 5
                     , h-kernel
                     , h-kernel-editor
-                    , text
-                    , time
-                    , QuickCheck
-
-test-suite h-kernel-editor-actual-workspace-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorActualWorkspaceSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-editor
-                    , text
-
-test-suite h-kernel-editor-actual-reverse-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorActualReverseSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-editor
-                    , text
-                    , time
+                    , h-kernel-household
+                    , h-kernel-household-application
+                    , text >= 1.2 && < 2.2
+                    , time >= 1.9 && < 1.15
 
 test-suite h-kernel-test
     import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , QuickCheck
-                    , text
-                    , time
-
-test-suite h-kernel-application-config-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          ApplicationConfigSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-
-test-suite h-kernel-account-profile-contract-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          AccountProfileContractSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
-                    , h-kernel
-                    , h-kernel-household
-                    , text
-
-test-suite h-kernel-backing-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          BackingSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-
-test-suite h-kernel-balance-law-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          BalanceLawSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , QuickCheck
-                    , text
-
-test-suite h-kernel-daily-target-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          DailyTargetSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
-                    , h-kernel
-                    , h-kernel-household
-                    , text
-                    , time
-
-test-suite h-kernel-household-backing-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          HouseholdBackingSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
-                    , h-kernel
-                    , h-kernel-household
-                    , text
-                    , time
-
-test-suite h-kernel-household-cycle-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          HouseholdCycleSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-household
-                    , text
-                    , time
-
-test-suite h-kernel-household-entitlement-observation-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          HouseholdEntitlementObservationSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
-                    , h-kernel
-                    , h-kernel-household
-                    , text
-                    , time
-
-test-suite h-kernel-account-journal-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          AccountJournalSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-
-test-suite h-kernel-actual-journal-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          ActualJournalSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-actual-reversal-integrity-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          ActualReversalIntegritySpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-
-test-suite h-kernel-balance-sheet-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          BalanceSheetSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-loader-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          LoaderSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , directory
-                    , filepath
-                    , h-kernel
-                    , text
-
-test-suite h-kernel-report-book-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          ReportBookSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-report-config-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          ReportConfigSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-report-matrix-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          ReportMatrixSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-
-test-suite h-kernel-daily-flow-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          DailyFlowSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , containers
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-monthly-accounts-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          MonthlyAccountsSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-cycle-accounts-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          CycleAccountsSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-period-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          PeriodSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , time
-
-test-suite h-kernel-household-report-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          HouseholdReportSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-household
-                    , h-kernel-household-application
-                    , text
-                    , time
-
-test-suite h-kernel-household-issue-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          HouseholdIssueSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-editor
-                    , text
-                    , time
-
-test-suite h-kernel-household-issue-tsv-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          HouseholdIssueTSVSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-household
-                    , text
-                    , time
-
-test-suite h-kernel-plan-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          PlanSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-plan-journal-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          PlanJournalSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-
-test-suite h-kernel-plan-completion-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          PlanCompletionSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-plan-reservation-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          PlanReservationSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-recent-transactions-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          RecentTransactionsSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-envelope-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EnvelopeSpec.hs
-    other-modules:    EnvelopeCommitmentHeadroomSpec
-                    , EnvelopeConfigSpec
+    other-modules:    AccountJournalSpec
+                    , ActualJournalSpec
+                    , AmountSpec
+                    , BackingSpec
+                    , BalanceSheetSpec
+                    , CLIArgsSpec
+                    , CommoditySpec
+                    , ConfigSpec
+                    , CycleSpec
+                    , EditorAccountAppendSpec
+                    , EditorActualAppendSpec
+                    , EditorActualReverseSpec
+                    , EditorActualWorkspaceSpec
+                    , EditorCLIArgsSpec
+                    , EditorEntitlementTransferAppendSpec
+                    , EditorInteractionSpec
+                    , EditorIssueAppendSpec
+                    , EditorPlanAppendSpec
+                    , EditorPlanEditSpec
+                    , EditorPlanLifecycleSpec
+                    , EditorRelationAppendSpec
+                    , EngineSpec
+                    , EntitlementConfigSpec
+                    , EntitlementJournalSpec
+                    , EntitlementSpec
+                    , EnvelopeCommitmentSpec
                     , EnvelopeConsumptionSpec
-                    , EnvelopeEntitlementHistorySpec
-                    , EnvelopeEntitlementJournalSpec
-                    , EnvelopeEntitlementSpec
                     , EnvelopeExpenseRoutingSpec
-                    , EnvelopeFulfillmentRoutingTSVSpec
                     , EnvelopeFulfillmentSpec
+                    , EnvelopeFulfillmentRoutingSpec
+                    , EnvelopeHeadroomSpec
+                    , EnvelopeHistorySpec
+                    , EnvelopeIdentitySpec
+                    , EnvelopePolicySpec
                     , EnvelopeRemainingSpec
+                    , EnvelopeStockOriginSpec
+                    , HouseholdApplicationSpec
+                    , HouseholdBackingSpec
+                    , HouseholdConfigSpec
+                    , HouseholdCycleSpec
+                    , HouseholdDailyTargetSpec
+                    , HouseholdIssueRelationTSVSpec
+                    , HouseholdIssueTSVSpec
+                    , HouseholdPolicySpec
+                    , HouseholdReportSpec
+                    , JournalSpec
+                    , LedgerSpec
+                    , LoaderSpec
+                    , MoneySpec
+                    , PeriodSpec
+                    , PlanCompletionSpec
+                    , PlanJournalSpec
+                    , PlanOpenSpec
+                    , PlanReservationSpec
+                    , ProfitAndLossSpec
+                    , RenderSpec
+                    , ReportConfigSpec
+                    , ReportCycleAccountsSpec
+                    , ReportDailyFlowSpec
+                    , ReportMatrixSpec
+                    , ReportPlanSpec
+                    , ReportPresentationSpec
+                    , ReportSectionSpec
+                    , ReportSpec
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-cli-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          CLISpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , text
-                    , time
-
-test-suite h-kernel-editor-source-publication-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorSourcePublicationSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , text >= 1.2 && < 2.2
                     , directory >= 1.3 && < 1.4
-                    , h-kernel
-                    , h-kernel-editor
-
-executable h-kernel-editor-cli
-    import:           common-defaults
-    main-is:          Main.hs
-    build-depends:    base >= 4.14 && < 5
-                    , text >= 1.2 && < 2.2
-                    , time >= 1.9 && < 1.15
                     , filepath >= 1.4 && < 1.6
                     , h-kernel
+                    , h-kernel-editor
                     , h-kernel-household
                     , h-kernel-household-application
-                    , h-kernel-editor
-    hs-source-dirs:   editor-app
-
-executable h-kernel-editor-tui
-    import:           common-defaults
-    main-is:          Main.hs
-    other-modules:    HKernel.Editor.TUI.Actual
-                    , HKernel.Editor.TUI.Actual.AccountSelector
-                    , HKernel.Editor.TUI.Actual.Daily
-                    , HKernel.Editor.TUI.Actual.Record
-                    , HKernel.Editor.TUI.Actual.Reverse
-                    , HKernel.Editor.TUI.Actual.Workspace
-                    , HKernel.Editor.TUI.Home
-                    , HKernel.Editor.TUI.Maintenance
-                    , HKernel.Editor.TUI.Maintenance.Accounts
-                    , HKernel.Editor.TUI.Maintenance.Entitlement
-                    , HKernel.Editor.TUI.Maintenance.Issues
-                    , HKernel.Editor.TUI.Model
-                    , HKernel.Editor.TUI.Plan
-                    , HKernel.Editor.TUI.Plan.CompleteAdvance
-                    , HKernel.Editor.TUI.Plan.Lifecycle
-                    , HKernel.Editor.TUI.Plan.Workspace
-                    , HKernel.Editor.TUI.Report
-                    , HKernel.Editor.TUI.ReportStyle
-                    , HKernel.Editor.TUI.Settings
-    build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
-                    , directory >= 1.3 && < 1.4
+                    , scientific >= 0.3 && < 0.4
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
-                    , filepath >= 1.4 && < 1.6
-                    , brick >= 1.0
-                    , vty >= 6.0
-                    , vty-crossplatform
-                    , microlens
-                    , microlens-mtl
-                    , vector
-                    , h-kernel
-                    , h-kernel-household
-                    , h-kernel-household-application
-                    , h-kernel-editor
-    hs-source-dirs:   editor-tui-app
-    ghc-options:      -threaded
+                    , toml-parser >= 2.0.2 && < 2.1
+                    , vector >= 0.12 && < 0.14
 
-executable h-kernel-editor-haskeline
+test-suite editor-tui-issue-realize-test
     import:           common-defaults
-    main-is:          Main.hs
-    build-depends:    base >= 4.14 && < 5
-                    , containers >= 0.6 && < 0.8
-                    , haskeline >= 0.8.4 && < 0.9
-                    , text >= 1.2 && < 2.2
-                    , time >= 1.9 && < 1.15
-                    , h-kernel
-                    , h-kernel-household
-                    , h-kernel-household-application
-                    , h-kernel-editor
-    hs-source-dirs:   editor-haskeline-app
-
-test-suite h-kernel-editor-account-append-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorAccountAppendSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-editor
-                    , text
-                    , time
-
-test-suite h-kernel-editor-entitlement-transfer-append-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorEntitlementTransferAppendSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-household
-                    , h-kernel-editor
-                    , text
-                    , time
-
-test-suite h-kernel-editor-issue-append-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorIssueAppendSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-household
-                    , h-kernel-editor
-                    , text
-                    , time
-
-test-suite h-kernel-editor-plan-lifecycle-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorPlanLifecycleSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-editor
-                    , text
-                    , time
-
-test-suite h-kernel-editor-plan-retirement-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorPlanRetirementSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-editor
-                    , text
-                    , time
-
-test-suite h-kernel-editor-plan-complete-advance-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorPlanCompleteAdvanceSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , directory >= 1.3 && < 1.4
-                    , h-kernel
-                    , h-kernel-editor
-                    , text
-                    , time
-
-test-suite h-kernel-editor-cli-contract-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorCLIContractSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-household
-                    , h-kernel-editor
-                    , text
-                    , time
-
-test-suite h-kernel-editor-tui-actual-add-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorTUIActualAddSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , h-kernel
-                    , h-kernel-editor
-                    , text
-
-test-suite h-kernel-editor-tui-issue-realize-test
-    import:           test-defaults
     type:             exitcode-stdio-1.0
     main-is:          EditorTUIIssueRealizeSpec.hs
     other-modules:    HKernel.Editor.TUI.Actual
                     , HKernel.Editor.TUI.Actual.AccountSelector
                     , HKernel.Editor.TUI.Actual.Daily
+                    , HKernel.Editor.TUI.Actual.General
+                    , HKernel.Editor.TUI.Actual.Income
+                    , HKernel.Editor.TUI.Actual.Reconcile
                     , HKernel.Editor.TUI.Actual.Record
                     , HKernel.Editor.TUI.Actual.Reverse
-                    , HKernel.Editor.TUI.Actual.Workspace
+                    , HKernel.Editor.TUI.Actual.Shared
+                    , HKernel.Editor.TUI.Home
+                    , HKernel.Editor.TUI.Maintenance
+                    , HKernel.Editor.TUI.Maintenance.Accounts
+                    , HKernel.Editor.TUI.Maintenance.Entitlement
+                    , HKernel.Editor.TUI.Maintenance.Issue
                     , HKernel.Editor.TUI.Model
+                    , HKernel.Editor.TUI.Plan
+                    , HKernel.Editor.TUI.Plan.CompleteAdvance
+                    , HKernel.Editor.TUI.Plan.Edit
+                    , HKernel.Editor.TUI.Plan.Workspace
+                    , HKernel.Editor.TUI.Report
+                    , HKernel.Editor.TUI.ReportStyle
+                    , HKernel.Editor.TUI.Settings
+    hs-source-dirs:   tests
+                  , editor-tui-app
     build-depends:    base >= 4.14 && < 5
+                    , brick >= 2.1 && < 2.12
                     , containers >= 0.6 && < 0.8
-                    , directory >= 1.3 && < 1.4
+                    , h-kernel
+                    , h-kernel-editor
+                    , h-kernel-household
+                    , h-kernel-household-application
+                    , microlens >= 0.4 && < 0.5
+                    , microlens-mtl >= 0.2 && < 0.3
+                    , scientific >= 0.3 && < 0.4
                     , text >= 1.2 && < 2.2
                     , time >= 1.9 && < 1.15
-                    , filepath >= 1.4 && < 1.6
-                    , brick >= 1.0
-                    , vty >= 6.0
-                    , vty-crossplatform
-                    , microlens
-                    , microlens-mtl
-                    , vector
-                    , h-kernel
-                    , h-kernel-household
-                    , h-kernel-household-application
-                    , h-kernel-editor
-    hs-source-dirs:   tests editor-tui-app
-
-test-suite h-kernel-canonical-household-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          CanonicalHouseholdSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , text >= 1.2 && < 2.2
-                    , time >= 1.9 && < 1.15
-                    , directory >= 1.3 && < 1.4
-                    , filepath >= 1.4 && < 1.6
-                    , h-kernel
-                    , h-kernel-household
-                    , h-kernel-household-application
-                    , h-kernel-editor
-
-test-suite h-kernel-editor-account-publication-test
-    import:           test-defaults
-    type:             exitcode-stdio-1.0
-    main-is:          EditorAccountPublicationSpec.hs
-    build-depends:    base >= 4.14 && < 5
-                    , directory >= 1.3 && < 1.4
-                    , filepath >= 1.4 && < 1.6
-                    , h-kernel
-                    , h-kernel-household
-                    , h-kernel-household-application
-                    , h-kernel-editor
-                    , text >= 1.2 && < 2.2
+                    , vector >= 0.12 && < 0.14
+                    , vty >= 6.2 && < 6.6
+                    , vty-crossplatform >= 0.4 && < 0.6
