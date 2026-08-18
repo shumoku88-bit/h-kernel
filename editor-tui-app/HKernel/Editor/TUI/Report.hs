@@ -16,13 +16,17 @@ module HKernel.Editor.TUI.Report
   ) where
 
 import Brick
+import Brick.Forms
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import qualified Brick.Widgets.List as L
 import qualified Graphics.Vty as V
+import Lens.Micro (Lens', Traversal', singular)
 
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Calendar (Day)
+import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import qualified Data.Vector as Vec
 
 import HKernel.Editor.TUI.Model
@@ -124,7 +128,24 @@ drawWorkspace context =
   where
     selected = contextSelectedReport context
 
-type PickerState = L.List Name ReportChoice
+data PickerItem
+  = PickerReport ReportChoice
+  | PickerPreviousObservation
+  | PickerExplicitDay
+  deriving (Eq, Show)
+
+data TemporalInputKind
+  = PreviousObservationInput
+  | ExplicitDayInput
+  deriving (Eq, Show)
+
+data TemporalInput = TemporalInput
+  { temporalDayText :: Text
+  } deriving (Eq, Show)
+
+data PickerState
+  = PickerList (L.List Name PickerItem)
+  | PickerDate TemporalInputKind (Maybe Text) (Form TemporalInput AppEvent Name)
 
 data PickerAction
   = PickerMaintain
@@ -134,54 +155,221 @@ data PickerAction
   deriving (Eq, Show)
 
 openPicker :: ReportChoice -> PickerState
-openPicker selected =
-  L.listMoveTo selectedIndex
-    (L.list ReportPickerList (Vec.fromList reportChoices) 1)
+openPicker selected = pickerListAt (pickerItemForReport selected)
+
+pickerListAt :: PickerItem -> PickerState
+pickerListAt selected =
+  PickerList
+    (L.listMoveTo (pickerItemIndex selected)
+      (L.list ReportPickerList (Vec.fromList pickerItems) 1))
+
+pickerItemForReport :: ReportChoice -> PickerItem
+pickerItemForReport report = case report of
+  ReportEnvelopeChangeFromPreviousObservation _ -> PickerPreviousObservation
+  ReportEnvelopeChange PreviousObservation -> PickerPreviousObservation
+  ReportEnvelopeChange (ExplicitDay _) -> PickerExplicitDay
+  _ -> PickerReport report
+
+pickerItemIndex :: PickerItem -> Int
+pickerItemIndex item = go 0 pickerItems
   where
-    selectedIndex = reportChoiceIndex selected
+    go _ [] = 0
+    go index (candidate : rest)
+      | candidate == item = index
+      | otherwise = go (index + 1) rest
 
--- | Render the modal picker for the named Household reports.
+pickerItems :: [PickerItem]
+pickerItems =
+  [ PickerReport ReportTrialBalance
+  , PickerReport ReportBalanceSheet
+  , PickerReport ReportProfitAndLoss
+  , PickerReport ReportDailyFlow
+  , PickerReport ReportMonthlyAccounts
+  , PickerReport (ReportHousehold HouseholdCycleAccounts)
+  , PickerReport (ReportHousehold HouseholdDailyTarget)
+  , PickerReport (ReportHousehold HouseholdEnvelopeBacking)
+  , PickerReport (ReportEnvelopeChange CycleStart)
+  , PickerReport (ReportEnvelopeChange PreviousDay)
+  , PickerPreviousObservation
+  , PickerExplicitDay
+  , PickerReport ReportEnvelopeAlignedPreviousCycle
+  ]
+
+pickerItemAt :: Int -> Maybe PickerItem
+pickerItemAt row = case drop row pickerItems of
+  [] -> Nothing
+  item : _ -> Just item
+
+temporalDayTextL :: Lens' TemporalInput Text
+temporalDayTextL f input =
+  (\value -> input { temporalDayText = value }) <$> f (temporalDayText input)
+
+mkTemporalForm :: Form TemporalInput AppEvent Name
+mkTemporalForm =
+  setFormFocus DateField
+    (newForm
+      [ editTextField temporalDayTextL DateField (Just 1)
+      ]
+      (TemporalInput ""))
+
+zoomPickerList :: Traversal' PickerState (L.List Name PickerItem)
+zoomPickerList f (PickerList choices) = PickerList <$> f choices
+zoomPickerList _ state = pure state
+
+zoomTemporalForm :: Traversal' PickerState (Form TemporalInput AppEvent Name)
+zoomTemporalForm f (PickerDate kind message form) =
+  PickerDate kind message <$> f form
+zoomTemporalForm _ state = pure state
+
+-- | Render the modal picker for named Household reports and the two temporal
+-- requests that require explicit caller context before they become reports.
 drawPicker :: PickerState -> Widget Name
-drawPicker choices =
-  center
-    (borderWithLabel (str "Choose Household Report")
-      (hLimit 64
-        (vLimit 22
+drawPicker state = case state of
+  PickerList choices ->
+    center
+      (borderWithLabel (str "Choose Household Report")
+        (hLimit 68
+          (vLimit 24
+            (padAll 1
+              (L.renderList renderPickerItem True choices
+                <=> str " "
+                <=> strWrap "[wheel/↑/↓ or j/k] Move   [click/Enter] Open   [Esc] Back   [Q] Quit")))))
+  PickerDate kind message form ->
+    center
+      (borderWithLabel (str (temporalInputTitle kind))
+        (hLimit 68
           (padAll 1
-            (L.renderList renderReportChoice True choices
+            ( strWrap (temporalInputExplanation kind)
               <=> str " "
-              <=> strWrap "[wheel/↑/↓ or j/k] Move   [click/Enter] Open   [Esc] Back   [Q] Quit")))))
+              <=> str "Date (YYYY-MM-DD):"
+              <=> renderForm form
+              <=> maybe emptyWidget
+                    (padTop (Pad 1) . withAttr (attrName "warning") . txtWrap)
+                    message
+              <=> str " "
+              <=> strWrap "[Enter] Open report   [Esc] Report list   [Q] Quit"))))
 
--- | Keep picker-local list movement and selection inside the Report owner.
--- Main only interprets the resulting application transition.
+renderPickerItem :: Bool -> PickerItem -> Widget Name
+renderPickerItem selected item
+  | selected = withAttr L.listSelectedAttr row
+  | otherwise = row
+  where
+    row = txt (pickerItemLabel item)
+
+pickerItemLabel :: PickerItem -> Text
+pickerItemLabel item = case item of
+  PickerReport report -> reportChoiceLabel report
+  PickerPreviousObservation -> "Envelope Change: Since previous observation..."
+  PickerExplicitDay -> "Envelope Change: Since chosen day..."
+
+temporalInputTitle :: TemporalInputKind -> String
+temporalInputTitle kind = case kind of
+  PreviousObservationInput -> "Envelope Change: Previous observation"
+  ExplicitDayInput -> "Envelope Change: Chosen day"
+
+temporalInputExplanation :: TemporalInputKind -> String
+temporalInputExplanation kind = case kind of
+  PreviousObservationInput ->
+    "Enter the day you mean by the previous observation. The TUI passes this context explicitly; it is never inferred from accounting evidence."
+  ExplicitDayInput ->
+    "Enter the exact earlier day you want to compare. The domain keeps it inside the same cycle and never silently crosses a Period boundary."
+
+-- | Keep picker-local list movement, temporal context entry, and selection
+-- inside the Report owner. Main only interprets the resulting application
+-- transition after a complete ReportChoice exists.
 handlePickerEvent
   :: BrickEvent Name AppEvent
   -> EventM Name PickerState PickerAction
-handlePickerEvent event = case event of
+handlePickerEvent event = do
+  state <- get
+  case state of
+    PickerList _ -> handlePickerListEvent event
+    PickerDate kind _ form -> handlePickerDateEvent kind form event
+
+handlePickerListEvent
+  :: BrickEvent Name AppEvent
+  -> EventM Name PickerState PickerAction
+handlePickerListEvent event = case event of
   MouseDown ReportPickerList V.BScrollUp _ _ -> do
-    L.handleListEvent (V.EvKey V.KUp [])
+    zoom (singular zoomPickerList) (L.handleListEvent (V.EvKey V.KUp []))
     pure PickerMaintain
   MouseDown ReportPickerList V.BScrollDown _ _ -> do
-    L.handleListEvent (V.EvKey V.KDown [])
+    zoom (singular zoomPickerList) (L.handleListEvent (V.EvKey V.KDown []))
     pure PickerMaintain
   MouseDown ReportPickerList V.BLeft _ (Location (_, row)) ->
-    pure (maybe PickerMaintain PickerOpen (reportChoiceAt row))
+    maybe (pure PickerMaintain) openPickerItem (pickerItemAt row)
   VtyEvent (V.EvKey V.KEsc []) -> pure PickerBack
   VtyEvent (V.EvKey (V.KChar 'q') []) -> pure PickerQuit
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> pure PickerQuit
   VtyEvent (V.EvKey V.KEnter []) -> do
-    choices <- get
-    pure $ case L.listSelectedElement choices of
-      Nothing -> PickerBack
-      Just (_, choice) -> PickerOpen choice
+    state <- get
+    case state of
+      PickerList choices -> case L.listSelectedElement choices of
+        Nothing -> pure PickerBack
+        Just (_, item) -> openPickerItem item
+      _ -> pure PickerMaintain
   VtyEvent vtyEvent -> do
-    L.handleListEventVi L.handleListEvent vtyEvent
+    zoom (singular zoomPickerList)
+      (L.handleListEventVi L.handleListEvent vtyEvent)
     pure PickerMaintain
   _ -> pure PickerMaintain
 
--- | Reports exposed by the interactive TUI. Object-oriented views such as
--- Actual history, Plans, and Issues stay in their owning workspace sections;
--- broader renderers remain available to CLI/export publication paths.
+openPickerItem :: PickerItem -> EventM Name PickerState PickerAction
+openPickerItem item = case item of
+  PickerReport choice -> pure (PickerOpen choice)
+  PickerPreviousObservation -> do
+    put (PickerDate PreviousObservationInput Nothing mkTemporalForm)
+    pure PickerMaintain
+  PickerExplicitDay -> do
+    put (PickerDate ExplicitDayInput Nothing mkTemporalForm)
+    pure PickerMaintain
+
+handlePickerDateEvent
+  :: TemporalInputKind
+  -> Form TemporalInput AppEvent Name
+  -> BrickEvent Name AppEvent
+  -> EventM Name PickerState PickerAction
+handlePickerDateEvent kind form event = case event of
+  VtyEvent (V.EvKey V.KEsc []) -> do
+    put (pickerListAt (temporalPickerItem kind))
+    pure PickerMaintain
+  VtyEvent (V.EvKey (V.KChar 'q') []) -> pure PickerQuit
+  VtyEvent (V.EvKey (V.KChar 'Q') []) -> pure PickerQuit
+  VtyEvent (V.EvKey V.KEnter []) ->
+    case parseTemporalDay (temporalDayText (formState form)) of
+      Left message -> do
+        put (PickerDate kind (Just message) form)
+        pure PickerMaintain
+      Right day -> pure (PickerOpen (temporalReportChoice kind day))
+  _ -> do
+    zoom (singular zoomTemporalForm) (handleFormEvent event)
+    current <- get
+    case current of
+      PickerDate currentKind _ currentForm ->
+        put (PickerDate currentKind Nothing currentForm)
+      _ -> pure ()
+    pure PickerMaintain
+
+temporalPickerItem :: TemporalInputKind -> PickerItem
+temporalPickerItem kind = case kind of
+  PreviousObservationInput -> PickerPreviousObservation
+  ExplicitDayInput -> PickerExplicitDay
+
+temporalReportChoice :: TemporalInputKind -> Day -> ReportChoice
+temporalReportChoice kind day = case kind of
+  PreviousObservationInput -> ReportEnvelopeChangeFromPreviousObservation day
+  ExplicitDayInput -> ReportEnvelopeChange (ExplicitDay day)
+
+parseTemporalDay :: Text -> Either Text Day
+parseTemporalDay text =
+  case parseTimeM True defaultTimeLocale "%Y-%m-%d"
+      (T.unpack (T.strip text)) of
+    Nothing -> Left "Date must be YYYY-MM-DD."
+    Just day -> Right day
+
+-- | Reports exposed by deterministic next/previous cycling. Contextual temporal
+-- requests live in 'pickerItems' because they are incomplete until a day is
+-- supplied explicitly.
 reportChoices :: [ReportChoice]
 reportChoices =
   [ ReportTrialBalance
@@ -228,13 +416,6 @@ reportSelectionForKey current key = case key of
   'R' -> Just (cycleReportBack current)
   _ -> Nothing
 
-renderReportChoice :: Bool -> ReportChoice -> Widget Name
-renderReportChoice selected choice
-  | selected = withAttr L.listSelectedAttr row
-  | otherwise = row
-  where
-    row = txt (reportChoiceLabel choice)
-
 reportChoiceLabel :: ReportChoice -> Text
 reportChoiceLabel choice = case choice of
   ReportTrialBalance -> "Account Balances"
@@ -255,6 +436,8 @@ reportChoiceLabel choice = case choice of
     PreviousDay -> "Envelope Change: Since previous day"
     PreviousObservation -> "Envelope Change: Since previous observation"
     ExplicitDay day -> "Envelope Change: Since " <> renderDay day
+  ReportEnvelopeChangeFromPreviousObservation day ->
+    "Envelope Change: Since previous observation (" <> renderDay day <> ")"
   ReportEnvelopeAlignedPreviousCycle ->
     "Envelope Comparison: Previous cycle"
   ReportRecentTransactions -> "Recent Actual"
@@ -279,6 +462,19 @@ renderSelectedReport context = case contextSelectedReport context of
       Left err -> reportText
         (renderTemporalUnavailable pres (reportChoiceLabel (ReportEnvelopeChange baseline)) err)
       Right change -> reportText (renderEnvelopeChange pres baseline change)
+  ReportEnvelopeChangeFromPreviousObservation previousObservation ->
+    case householdEnvelopeChangeFromBaseline
+        (contextObservationDay context)
+        (Just previousObservation)
+        PreviousObservation
+        state of
+      Left err -> reportText
+        (renderTemporalUnavailable pres
+          (reportChoiceLabel
+            (ReportEnvelopeChangeFromPreviousObservation previousObservation))
+          err)
+      Right change -> reportText
+        (renderEnvelopeChange pres PreviousObservation change)
   ReportEnvelopeAlignedPreviousCycle ->
     case householdEnvelopeAlignedPreviousCycle (contextObservationDay context) state of
       Left err -> reportText
@@ -335,7 +531,7 @@ renderEnvelopeChange presentation baseline change = T.intercalate "\n"
 renderEnvelopeChangeLine
   :: PresentationConfig
   -> EnvelopeChangeLine
-  -> [HKernel.Render.TerminalStyle.Cell]
+  -> [Cell]
 renderEnvelopeChangeLine presentation line =
   [ plainCell (envelopeIdText (envelopeChangeId line))
   , signedBalanceCellWith presentation (envelopeChangeEntitlement line)
@@ -398,7 +594,7 @@ renderEnvelopeCycleComparison presentation comparison = T.intercalate "\n"
 renderActivityLine
   :: PresentationConfig
   -> EnvelopeCycleComparisonLine
-  -> [HKernel.Render.TerminalStyle.Cell]
+  -> [Cell]
 renderActivityLine presentation line =
   [ plainCell (envelopeIdText (envelopeCycleComparisonId line))
   , signedBalanceCellWith presentation
@@ -418,7 +614,7 @@ renderActivityLine presentation line =
 renderPositionLine
   :: PresentationConfig
   -> EnvelopeCycleComparisonLine
-  -> [HKernel.Render.TerminalStyle.Cell]
+  -> [Cell]
 renderPositionLine presentation line =
   [ plainCell (envelopeIdText (envelopeCycleComparisonId line))
   , signedBalanceCellWith presentation (envelopeCycleCurrentEntitlement line)
@@ -474,7 +670,11 @@ reportText :: Text -> Widget Name
 reportText = ReportStyle.renderTerminalReport
 
 cycleReport :: ReportChoice -> ReportChoice
-cycleReport choice = go reportChoices
+cycleReport choice = case choice of
+  ReportEnvelopeChangeFromPreviousObservation _ -> ReportEnvelopeAlignedPreviousCycle
+  ReportEnvelopeChange (ExplicitDay _) -> ReportEnvelopeAlignedPreviousCycle
+  ReportEnvelopeChange PreviousObservation -> ReportEnvelopeAlignedPreviousCycle
+  _ -> go reportChoices
   where
     go [] = ReportTrialBalance
     go [_] = ReportTrialBalance
@@ -483,9 +683,13 @@ cycleReport choice = go reportChoices
       | otherwise = go (next : rest)
 
 cycleReportBack :: ReportChoice -> ReportChoice
-cycleReportBack choice = case reverse reportChoices of
-  [] -> ReportTrialBalance
-  lastChoice : _ -> go lastChoice reportChoices
+cycleReportBack choice = case choice of
+  ReportEnvelopeChangeFromPreviousObservation _ -> ReportEnvelopeChange PreviousDay
+  ReportEnvelopeChange (ExplicitDay _) -> ReportEnvelopeChange PreviousDay
+  ReportEnvelopeChange PreviousObservation -> ReportEnvelopeChange PreviousDay
+  _ -> case reverse reportChoices of
+    [] -> ReportTrialBalance
+    lastChoice : _ -> go lastChoice reportChoices
   where
     go previous [] = previous
     go previous (current : rest)
