@@ -438,7 +438,7 @@ isAlignedBaselineOutside err = case err of
         (mkPeriod (fromGregorian 2026 9 1) (fromGregorian 2026 10 1))
   _ -> False
 
-toListNE :: NonEmpty a -> [a]
+toListNE :: Foldable f => f a -> [a]
 toListNE = foldr (:) []
 
 mustRight :: Show error => Either error value -> value
