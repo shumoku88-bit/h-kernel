@@ -33,12 +33,58 @@ import HKernel.Editor.TUI.Model
   , contextHouseholdState
   )
 import qualified HKernel.Editor.TUI.ReportStyle as ReportStyle
+import HKernel.Envelope.Consumption (consumptionNet)
+import HKernel.Envelope.Fulfillment (fulfillmentNet)
+import HKernel.Envelope.Identity (envelopeIdText)
 import HKernel.Household.Application (HouseholdState(..))
+import HKernel.Household.EnvelopeObservation
+  ( EnvelopeChangeBaseline(..)
+  , EnvelopeChangeLine
+  , EnvelopeCycleComparisonLine
+  , HouseholdEnvelopeChange
+  , HouseholdEnvelopeCycleComparison
+  , envelopeChangeCommitment
+  , envelopeChangeConsumptionNet
+  , envelopeChangeEntitlement
+  , envelopeChangeFulfillmentNet
+  , envelopeChangeHeadroom
+  , envelopeChangeId
+  , envelopeChangeRemaining
+  , envelopeCycleBaselineCommitment
+  , envelopeCycleBaselineConsumption
+  , envelopeCycleBaselineEntitlement
+  , envelopeCycleBaselineFulfillment
+  , envelopeCycleBaselineHeadroom
+  , envelopeCycleBaselineRemaining
+  , envelopeCycleCommitmentDifference
+  , envelopeCycleConsumptionNetDifference
+  , envelopeCycleCurrentCommitment
+  , envelopeCycleCurrentConsumption
+  , envelopeCycleCurrentEntitlement
+  , envelopeCycleCurrentFulfillment
+  , envelopeCycleCurrentHeadroom
+  , envelopeCycleCurrentRemaining
+  , envelopeCycleEntitlementDifference
+  , envelopeCycleFulfillmentNetDifference
+  , envelopeCycleHeadroomDifference
+  , envelopeCycleRemainingDifference
+  , envelopeCycleComparisonId
+  , householdEnvelopeChangeFrom
+  , householdEnvelopeChangeLines
+  , householdEnvelopeChangeThrough
+  , householdEnvelopeCycleComparisonBaselineThrough
+  , householdEnvelopeCycleComparisonCurrentThrough
+  , householdEnvelopeCycleComparisonLines
+  )
 import HKernel.Household.Report.Render
   ( HouseholdReportSection(..)
   , IssueVisibility(..)
   , renderHouseholdReportSection
   , renderReportBookWithHouseholdPresentation
+  )
+import HKernel.Household.Temporal
+  ( householdEnvelopeAlignedPreviousCycle
+  , householdEnvelopeChangeFromBaseline
   )
 import HKernel.Render
   ( renderBalanceSheetWithPresentation
@@ -48,9 +94,20 @@ import HKernel.Render
   , renderRecentTransactionsWithPresentation
   , renderTrialBalanceWithPresentation
   )
+import HKernel.Render.TerminalStyle
+  ( Alignment(..)
+  , plainCell
+  , renderTerminalTable
+  , signedBalanceCellWith
+  , terminalDim
+  , terminalHeaderWith
+  , terminalMeta
+  , terminalSectionWith
+  )
 import HKernel.Report (ReportBook(..))
 import HKernel.Report.Config (reportConfigurationPresentation)
 import HKernel.Report.Plan (ReportPlanError(..))
+import HKernel.Report.Presentation (PresentationConfig)
 
 -- | Render the Reports section of the Household workspace. Report bodies stay
 -- intentionally two-dimensional and retain horizontal scrolling; only the TUI
@@ -134,6 +191,9 @@ reportChoices =
   , ReportHousehold HouseholdCycleAccounts
   , ReportHousehold HouseholdDailyTarget
   , ReportHousehold HouseholdEnvelopeBacking
+  , ReportEnvelopeChange CycleStart
+  , ReportEnvelopeChange PreviousDay
+  , ReportEnvelopeAlignedPreviousCycle
   ]
 
 reportChoiceIndex :: ReportChoice -> Int
@@ -189,6 +249,13 @@ reportChoiceLabel choice = case choice of
       OpenIssuesOnly -> "Open Issues"
       AllIssues -> "All Issues"
     HouseholdEnvelopeBacking -> "Envelope & Backing"
+  ReportEnvelopeChange baseline -> case baseline of
+    CycleStart -> "Envelope Change: Since cycle start"
+    PreviousDay -> "Envelope Change: Since previous day"
+    PreviousObservation -> "Envelope Change: Since previous observation"
+    ExplicitDay day -> "Envelope Change: Since " <> renderDay day
+  ReportEnvelopeAlignedPreviousCycle ->
+    "Envelope Comparison: Previous cycle"
   ReportRecentTransactions -> "Recent Actual"
   ReportCombinedBook -> "Full Household Report"
 
@@ -205,6 +272,17 @@ renderSelectedReport context = case contextSelectedReport context of
   ReportMonthlyAccounts -> withReportBook $ \(ReportBook _ _ _ _ _ monthly) ->
     reportText (renderMonthlyAccountsWithPresentation pres monthly)
   ReportHousehold section -> renderHouseholdSection section
+  ReportEnvelopeChange baseline ->
+    case householdEnvelopeChangeFromBaseline
+        (contextObservationDay context) Nothing baseline state of
+      Left err -> reportText
+        (renderTemporalUnavailable pres (reportChoiceLabel (ReportEnvelopeChange baseline)) err)
+      Right change -> reportText (renderEnvelopeChange pres baseline change)
+  ReportEnvelopeAlignedPreviousCycle ->
+    case householdEnvelopeAlignedPreviousCycle (contextObservationDay context) state of
+      Left err -> reportText
+        (renderTemporalUnavailable pres "Envelope Comparison: Previous cycle" err)
+      Right comparison -> reportText (renderEnvelopeCycleComparison pres comparison)
   ReportRecentTransactions -> withReportBook $ \(ReportBook _ _ _ _ recent _) ->
     reportText (renderRecentTransactionsWithPresentation pres recent)
   ReportCombinedBook -> withReportBook $ \book -> case householdSurface of
@@ -223,6 +301,161 @@ renderSelectedReport context = case contextSelectedReport context of
     renderHouseholdSection section = case householdSurface of
       Left err -> reportText ("Report surface error: " <> T.pack (show err))
       Right surface -> reportText (renderHouseholdReportSection pres section surface)
+
+renderEnvelopeChange
+  :: PresentationConfig
+  -> EnvelopeChangeBaseline
+  -> HouseholdEnvelopeChange
+  -> Text
+renderEnvelopeChange presentation baseline change = T.intercalate "\n"
+  [ terminalHeaderWith presentation "Envelope Change"
+  , terminalMeta
+      ("Baseline: " <> renderBaseline baseline
+        <> " | From: " <> renderDay (householdEnvelopeChangeFrom change)
+        <> " | Through: " <> renderDay (householdEnvelopeChangeThrough change))
+  , terminalMeta "Every difference is later minus earlier; same-Period Change never crosses the cycle boundary."
+  , ""
+  , renderTerminalTable columns rows Nothing
+  , ""
+  ]
+  where
+    columns =
+      [ ("Envelope", AlignLeft)
+      , ("Entitlement diff", AlignRight)
+      , ("Consumption diff", AlignRight)
+      , ("Fulfillment diff", AlignRight)
+      , ("Remaining diff", AlignRight)
+      , ("Commitment diff", AlignRight)
+      , ("Headroom diff", AlignRight)
+      ]
+    rows = map (renderEnvelopeChangeLine presentation)
+      (householdEnvelopeChangeLines change)
+
+renderEnvelopeChangeLine
+  :: PresentationConfig
+  -> EnvelopeChangeLine
+  -> [HKernel.Render.TerminalStyle.Cell]
+renderEnvelopeChangeLine presentation line =
+  [ plainCell (envelopeIdText (envelopeChangeId line))
+  , signedBalanceCellWith presentation (envelopeChangeEntitlement line)
+  , signedBalanceCellWith presentation (envelopeChangeConsumptionNet line)
+  , signedBalanceCellWith presentation (envelopeChangeFulfillmentNet line)
+  , signedBalanceCellWith presentation (envelopeChangeRemaining line)
+  , signedBalanceCellWith presentation (envelopeChangeCommitment line)
+  , signedBalanceCellWith presentation (envelopeChangeHeadroom line)
+  ]
+
+renderEnvelopeCycleComparison
+  :: PresentationConfig
+  -> HouseholdEnvelopeCycleComparison
+  -> Text
+renderEnvelopeCycleComparison presentation comparison = T.intercalate "\n"
+  [ terminalHeaderWith presentation "Envelope Previous-Cycle Comparison"
+  , terminalMeta
+      ("Current through: "
+        <> renderDay (householdEnvelopeCycleComparisonCurrentThrough comparison)
+        <> " | Previous aligned through: "
+        <> renderDay (householdEnvelopeCycleComparisonBaselineThrough comparison))
+  , terminalMeta "Activity is Period-bounded; positions are snapshots at the aligned observation days."
+  , ""
+  , terminalSectionWith presentation "Cycle activity"
+  , renderTerminalTable activityColumns activityRows Nothing
+  , ""
+  , terminalSectionWith presentation "Aligned positions"
+  , renderTerminalTable positionColumns positionRows Nothing
+  , ""
+  ]
+  where
+    lines' = householdEnvelopeCycleComparisonLines comparison
+    activityColumns =
+      [ ("Envelope", AlignLeft)
+      , ("Use now", AlignRight)
+      , ("Use prev", AlignRight)
+      , ("Use diff", AlignRight)
+      , ("Fulfill now", AlignRight)
+      , ("Fulfill prev", AlignRight)
+      , ("Fulfill diff", AlignRight)
+      ]
+    activityRows = map (renderActivityLine presentation) lines'
+    positionColumns =
+      [ ("Envelope", AlignLeft)
+      , ("Entitlement now", AlignRight)
+      , ("Prev", AlignRight)
+      , ("Diff", AlignRight)
+      , ("Remaining now", AlignRight)
+      , ("Prev", AlignRight)
+      , ("Diff", AlignRight)
+      , ("Commitment now", AlignRight)
+      , ("Prev", AlignRight)
+      , ("Diff", AlignRight)
+      , ("Headroom now", AlignRight)
+      , ("Prev", AlignRight)
+      , ("Diff", AlignRight)
+      ]
+    positionRows = map (renderPositionLine presentation) lines'
+
+renderActivityLine
+  :: PresentationConfig
+  -> EnvelopeCycleComparisonLine
+  -> [HKernel.Render.TerminalStyle.Cell]
+renderActivityLine presentation line =
+  [ plainCell (envelopeIdText (envelopeCycleComparisonId line))
+  , signedBalanceCellWith presentation
+      (consumptionNet (envelopeCycleCurrentConsumption line))
+  , signedBalanceCellWith presentation
+      (consumptionNet (envelopeCycleBaselineConsumption line))
+  , signedBalanceCellWith presentation
+      (envelopeCycleConsumptionNetDifference line)
+  , signedBalanceCellWith presentation
+      (fulfillmentNet (envelopeCycleCurrentFulfillment line))
+  , signedBalanceCellWith presentation
+      (fulfillmentNet (envelopeCycleBaselineFulfillment line))
+  , signedBalanceCellWith presentation
+      (envelopeCycleFulfillmentNetDifference line)
+  ]
+
+renderPositionLine
+  :: PresentationConfig
+  -> EnvelopeCycleComparisonLine
+  -> [HKernel.Render.TerminalStyle.Cell]
+renderPositionLine presentation line =
+  [ plainCell (envelopeIdText (envelopeCycleComparisonId line))
+  , signedBalanceCellWith presentation (envelopeCycleCurrentEntitlement line)
+  , signedBalanceCellWith presentation (envelopeCycleBaselineEntitlement line)
+  , signedBalanceCellWith presentation (envelopeCycleEntitlementDifference line)
+  , signedBalanceCellWith presentation (envelopeCycleCurrentRemaining line)
+  , signedBalanceCellWith presentation (envelopeCycleBaselineRemaining line)
+  , signedBalanceCellWith presentation (envelopeCycleRemainingDifference line)
+  , signedBalanceCellWith presentation (envelopeCycleCurrentCommitment line)
+  , signedBalanceCellWith presentation (envelopeCycleBaselineCommitment line)
+  , signedBalanceCellWith presentation (envelopeCycleCommitmentDifference line)
+  , signedBalanceCellWith presentation (envelopeCycleCurrentHeadroom line)
+  , signedBalanceCellWith presentation (envelopeCycleBaselineHeadroom line)
+  , signedBalanceCellWith presentation (envelopeCycleHeadroomDifference line)
+  ]
+
+renderTemporalUnavailable
+  :: Show error
+  => PresentationConfig
+  -> Text
+  -> error
+  -> Text
+renderTemporalUnavailable presentation title err = T.intercalate "\n"
+  [ terminalHeaderWith presentation title
+  , terminalMeta "Status: NOT AVAILABLE"
+  , terminalDim (T.pack (show err))
+  , ""
+  ]
+
+renderBaseline :: EnvelopeChangeBaseline -> Text
+renderBaseline baseline = case baseline of
+  PreviousObservation -> "previous observation"
+  PreviousDay -> "previous day"
+  CycleStart -> "cycle start"
+  ExplicitDay day -> renderDay day
+
+renderDay :: Show day => day -> Text
+renderDay = T.pack . show
 
 renderReportPlanError :: ReportPlanError -> Text
 renderReportPlanError errorValue = case errorValue of
