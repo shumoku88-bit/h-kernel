@@ -42,7 +42,12 @@ main = do
         , ("Home stacks observations at 60 columns", homeUsesStackedLayout 60)
         , ("Home remains side-by-side at 80 columns", not (homeUsesStackedLayout 80))
         , ("Home remains side-by-side at 120 columns", not (homeUsesStackedLayout 120))
-        , ("narrow Planned Transactions failure stays local to that report section", testIndependentHomeObservations)
+        , ("Household surface survives narrow Planned Transactions failure", availabilitySurfaceAvailable)
+        , ("Planned Transactions alone records local unavailability", availabilityPlannedUnavailable)
+        , ("full renderer keeps Daily Target and Envelope beside unavailable Plans", availabilityRendererKeepsIndependentSections)
+        , ("Cycle observation remains available beside unavailable Planned Transactions", availabilityCycleAvailable)
+        , ("current-cycle ReportBook remains available beside unavailable Planned Transactions", availabilityReportBookAvailable)
+        , ("role-neutral open Plan observation retains unsupported payment shape", availabilityOpenPlanAvailable)
         ]
   mapM_ print results
   if all snd results then exitSuccess else exitFailure
@@ -67,59 +72,79 @@ testClosedIssueCannotStart =
       Nothing -> True
       Just _ -> False
 
-testIndependentHomeObservations :: Bool
-testIndependentHomeObservations =
-  case mkHouseholdRoot "." of
+availabilityContext :: Maybe AppContext
+availabilityContext = do
+  root <- either (const Nothing) Just (mkHouseholdRoot ".")
+  household <- either (const Nothing) Just
+    (admitCanonicalHousehold
+      root
+      availabilityAccounts
+      availabilityActual
+      availabilityPlan
+      availabilityEntitlement
+      availabilityEnvelope
+      availabilityHousehold
+      availabilityReport
+      availabilityIssues)
+  let snapshot = HouseholdWriteSnapshot
+        { householdWriteSnapshotState = household
+        , householdWriteSnapshotAccountsSource = availabilityAccounts
+        , householdWriteSnapshotActualSource = availabilityActual
+        , householdWriteSnapshotPlanSource = availabilityPlan
+        , householdWriteSnapshotEntitlementSource = availabilityEntitlement
+        , householdWriteSnapshotIssuesSource = availabilityIssues
+        }
+  pure (makeWorkspaceContext availabilityObservation snapshot)
+
+availabilitySurfaceAvailable :: Bool
+availabilitySurfaceAvailable = case availabilityContext of
+  Nothing -> False
+  Just context -> case contextHouseholdReportSurface context of
     Left _ -> False
-    Right root -> case admitCanonicalHousehold
-        root
-        availabilityAccounts
-        availabilityActual
-        availabilityPlan
-        availabilityEntitlement
-        availabilityEnvelope
-        availabilityHousehold
-        availabilityReport
-        availabilityIssues of
-      Left _ -> False
-      Right household ->
-        let snapshot = HouseholdWriteSnapshot
-              { householdWriteSnapshotState = household
-              , householdWriteSnapshotAccountsSource = availabilityAccounts
-              , householdWriteSnapshotActualSource = availabilityActual
-              , householdWriteSnapshotPlanSource = availabilityPlan
-              , householdWriteSnapshotEntitlementSource = availabilityEntitlement
-              , householdWriteSnapshotIssuesSource = availabilityIssues
-              }
-            context = makeWorkspaceContext availabilityObservation snapshot
-            surfaceLocalUnavailable = case contextHouseholdReportSurface context of
-              Left _ -> False
-              Right surface ->
-                let plannedUnavailable = case
-                      householdPlannedTransactionsAvailability surface of
-                      HouseholdPlannedTransactionsUnavailable _ -> True
-                      HouseholdPlannedTransactionsAvailable _ -> False
-                    rendered = renderHouseholdReportSections
-                      defaultPresentationConfig surface
-                in plannedUnavailable
-                    && "Planned Transactions" `T.isInfixOf` rendered
-                    && "Status: NOT AVAILABLE" `T.isInfixOf` rendered
-                    && "Daily Target" `T.isInfixOf` rendered
-                    && "Envelope & Backing" `T.isInfixOf` rendered
-            cycleAvailable = case contextHouseholdCycleObservation context of
-              Left _ -> False
-              Right _ -> True
-            reportBookAvailable = case contextResolvedReportBook context of
-              Left _ -> False
-              Right _ -> True
-            planAvailable = case contextOpenPlanObservation context of
-              Left _ -> False
-              Right plans ->
-                "P200" `elem` map (planIdText . identifiedPlanId) plans
-        in surfaceLocalUnavailable
-            && cycleAvailable
-            && reportBookAvailable
-            && planAvailable
+    Right _ -> True
+
+availabilityPlannedUnavailable :: Bool
+availabilityPlannedUnavailable = case availabilityContext of
+  Nothing -> False
+  Just context -> case contextHouseholdReportSurface context of
+    Left _ -> False
+    Right surface -> case householdPlannedTransactionsAvailability surface of
+      HouseholdPlannedTransactionsUnavailable _ -> True
+      HouseholdPlannedTransactionsAvailable _ -> False
+
+availabilityRendererKeepsIndependentSections :: Bool
+availabilityRendererKeepsIndependentSections = case availabilityContext of
+  Nothing -> False
+  Just context -> case contextHouseholdReportSurface context of
+    Left _ -> False
+    Right surface ->
+      let rendered = renderHouseholdReportSections defaultPresentationConfig surface
+      in "Planned Transactions" `T.isInfixOf` rendered
+          && "Status: NOT AVAILABLE" `T.isInfixOf` rendered
+          && "Daily Target" `T.isInfixOf` rendered
+          && "Envelope & Backing" `T.isInfixOf` rendered
+
+availabilityCycleAvailable :: Bool
+availabilityCycleAvailable = case availabilityContext of
+  Nothing -> False
+  Just context -> case contextHouseholdCycleObservation context of
+    Left _ -> False
+    Right _ -> True
+
+availabilityReportBookAvailable :: Bool
+availabilityReportBookAvailable = case availabilityContext of
+  Nothing -> False
+  Just context -> case contextResolvedReportBook context of
+    Left _ -> False
+    Right _ -> True
+
+availabilityOpenPlanAvailable :: Bool
+availabilityOpenPlanAvailable = case availabilityContext of
+  Nothing -> False
+  Just context -> case contextOpenPlanObservation context of
+    Left _ -> False
+    Right plans ->
+      "P200" `elem` map (planIdText . identifiedPlanId) plans
 
 entryDay :: Day
 entryDay = read "2026-08-08"
