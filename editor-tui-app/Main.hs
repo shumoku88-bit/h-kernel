@@ -29,12 +29,14 @@ import HKernel.Editor.TUI.Model
   , AppEvent
   , HouseholdSection(..)
   , Name(..)
+  , ReportChoice(..)
   , makeWorkspaceContext
   )
 import qualified HKernel.Editor.TUI.Plan as Plan
 import qualified HKernel.Editor.TUI.Report as Report
 import qualified HKernel.Editor.TUI.Settings as Settings
 import HKernel.Household.Application (loadCanonicalHouseholdWriteSnapshot)
+import HKernel.Household.EnvelopeObservation (EnvelopeChangeBaseline(..))
 
 data ActualReturn
   = ActualReturnWorkspace
@@ -199,9 +201,20 @@ handleHomeEvent context selectedDay event = case event of
       Home.HomeSelectDay day -> put (AppWrapper currentContext (Home day))
       Home.HomeRecord day -> put (AppWrapper currentContext
         (ActualFlow (ActualReturnHome day) (Actual.startRecord day)))
+      Home.HomeObserveChange day -> openChange currentContext day
   where
     switchSection section =
       put (AppWrapper (context { contextCurrentSection = section }) Workspace)
+    openChange currentContext day = do
+      put (AppWrapper
+        (currentContext
+          { contextCurrentSection = ReportsSection
+          , contextSelectedReport = ReportEnvelopeChange (ExplicitDay day)
+          })
+        Workspace)
+      let reportsViewport = viewportScroll ReportsViewport
+      vScrollToBeginning reportsViewport
+      hScrollToBeginning reportsViewport
 
 handleWorkspaceEvent :: AppContext -> BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 handleWorkspaceEvent context event = case event of
