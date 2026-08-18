@@ -77,6 +77,8 @@ main = do
   testInMemoryAdmission
   testFirstFailurePrecedence
   testNativePlanMetadataFailsClosed
+  testUnselectedMultiPostingPlanDoesNotBlockAdmission
+  testSelectedMultiPostingDailyTargetFailsLocally
   testMissingSourceFailure
   testUnknownIncludeRejected
   testNativeAccountAppend
@@ -438,6 +440,59 @@ testNativePlanMetadataFailsClosed = do
       HouseholdDailyTargetPlanMetadataFailed _ -> pure ()
       other -> die ("Expected HouseholdDailyTargetPlanMetadataFailed, got: " <> show other)
     Right _ -> die "Partial native reservation metadata unexpectedly fell back or succeeded"
+
+testUnselectedMultiPostingPlanDoesNotBlockAdmission :: IO ()
+testUnselectedMultiPostingPlanDoesNotBlockAdmission = do
+  let root = case mkHouseholdRoot "." of
+        Right r -> r
+        Left _ -> error "unreachable"
+      accounts = syntheticAccounts <> T.unlines
+        [ ""
+        , "account Expenses:Utilities"
+        , "  type: Expense"
+        , "  commodity: JPY"
+        ]
+      plan = syntheticPlan <> T.unlines
+        [ ""
+        , "2026-07-26 * Split household costs"
+        , "  ; plan-id: P200"
+        , "  Assets:Bank            -3000 JPY"
+        , "  Expenses:Groceries      1000 JPY"
+        , "  Expenses:Utilities      2000 JPY"
+        ]
+  case admitCanonicalHousehold root accounts syntheticActual plan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues of
+    Left errs -> die
+      ("Unselected valid multi-posting Plan blocked Household admission:\n"
+        <> unlines (map show (NonEmpty.toList errs)))
+    Right _ -> pure ()
+
+testSelectedMultiPostingDailyTargetFailsLocally :: IO ()
+testSelectedMultiPostingDailyTargetFailsLocally = do
+  let root = case mkHouseholdRoot "." of
+        Right r -> r
+        Left _ -> error "unreachable"
+      accounts = syntheticAccounts <> T.unlines
+        [ ""
+        , "account Expenses:Utilities"
+        , "  type: Expense"
+        , "  commodity: JPY"
+        ]
+      plan = syntheticPlan <> T.unlines
+        [ ""
+        , "2026-07-26 * Split household costs"
+        , "  ; plan-id: P200"
+        , "  ; daily-target-id: split-costs"
+        , "  Assets:Bank            -3000 JPY"
+        , "  Expenses:Groceries      1000 JPY"
+        , "  Expenses:Utilities      2000 JPY"
+        ]
+  case admitCanonicalHousehold root accounts syntheticActual plan syntheticEntitlement syntheticEnvelopeToml syntheticHouseholdToml syntheticReportToml syntheticIssues of
+    Left errs -> case NonEmpty.head errs of
+      HouseholdDailyTargetPlanProjectionFailed _ -> pure ()
+      other -> die
+        ("Expected selected multi-posting Plan to fail only at Daily Target projection, got: "
+          <> show other)
+    Right _ -> die "Selected multi-posting Daily Target Plan unexpectedly projected as binary"
 
 testMissingSourceFailure :: IO ()
 testMissingSourceFailure = do

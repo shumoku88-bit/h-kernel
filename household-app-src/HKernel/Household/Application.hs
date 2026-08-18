@@ -15,6 +15,7 @@ import Control.Exception (IOException)
 import Control.Monad.Trans.Except (ExceptT(..), runExceptT)
 import Data.Bifunctor (first)
 import Data.List.NonEmpty (NonEmpty)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (Day)
@@ -54,11 +55,14 @@ import HKernel.Household.Config
   )
 import HKernel.Household.DailyTarget
   ( DailyTargetAssetSelection
+  , DailyTargetObligationSelection
   , DailyTargetPlanJournalError
   , DailyTargetScope
   , DailyTargetSelectionError
   , admitDailyTargetPlanJournalSelections
+  , dailyTargetObligationSelectionDeclaration
   , dailyTargetScopeFromSelections
+  , declaredDailyTargetObligationPlanId
   )
 import HKernel.Household.EnvelopeHistory
   ( HouseholdEnvelopeHistory
@@ -82,7 +86,6 @@ import HKernel.Household.Report
   ( HouseholdReportSurface
   , HouseholdSourceError
   , admitPlanJournal
-  , admittedOutgoingPlanValues
   , buildHouseholdReportSurfaceFromAdmitted
   )
 import HKernel.HouseholdIssue (HouseholdIssue)
@@ -102,15 +105,21 @@ import HKernel.Loader
   , journalRootObservationTransactionSources
   , loadJournalRootObservationFromSource
   )
-import HKernel.Plan (PlanId)
+import HKernel.Plan (CommittedOutgoingPlan, PlanId)
 import HKernel.Plan.Journal
-  ( PlanJournal
+  ( ClassifiedPlanTransaction(..)
+  , PlanJournal
   , PlanJournalError(..)
+  , PlanLifecycleError
+  , PlanReportProjectionError
   , admitPlanJournalFromResolvedJournal
   , admitPlanJournalFromResolvedSources
+  , admitPlanRetirements
   , identifiedPlanId
   , planJournalTransactions
   , planJournalValue
+  , projectCommittedOutgoingPlans
+  , projectedCommittedOutgoingPlan
   )
 import HKernel.Report.Config
   ( ReportConfiguration
@@ -154,6 +163,7 @@ data HouseholdLoadError
   | HouseholdPlanLoadFailed LoadError
   | HouseholdPlanParseFailed (NonEmpty PlanJournalError)
   | HouseholdPlanRegistryDisagreement FilePath Text
+  | HouseholdPlanLifecycleAdmissionFailed (NonEmpty PlanLifecycleError)
   | HouseholdEntitlementParseFailed (NonEmpty EntitlementJournalError)
   | HouseholdEnvelopePolicyParseFailed [Text]
   | HouseholdPolicyParseFailed [Text]
@@ -164,6 +174,7 @@ data HouseholdLoadError
   | HouseholdReportConfigParseFailed [Text]
   | HouseholdIssuesParseFailed (NonEmpty HouseholdIssueTSVError)
   | HouseholdDailyTargetPlanMetadataFailed (NonEmpty DailyTargetPlanJournalError)
+  | HouseholdDailyTargetPlanProjectionFailed (NonEmpty PlanReportProjectionError)
   | HouseholdDailyTargetScopeFailed (NonEmpty DailyTargetSelectionError)
   | HouseholdPlanProjectionFailed (NonEmpty HouseholdSourceError)
   | HouseholdReportCalculationFailed (NonEmpty HouseholdSourceError)
@@ -320,6 +331,8 @@ assembleCanonicalHouseholdState
   -> [HouseholdIssue]
   -> Either (NonEmpty HouseholdLoadError) HouseholdState
 assembleCanonicalHouseholdState root paths accountsRegistry actualJournal planJournal entitlementHistory envelopePolicy configuration envelopeHistory policy reportConfig issues = do
+  _ <- first (pure . HouseholdPlanLifecycleAdmissionFailed)
+    (admitPlanRetirements planJournal)
   dailyScope <- assembleDailyScope
     accountsRegistry
     (householdConfigurationDailyTargetAssets configuration)
@@ -346,16 +359,38 @@ assembleDailyScope
   -> PlanJournal
   -> Either (NonEmpty HouseholdLoadError) DailyTargetScope
 assembleDailyScope registry assetSelections planJournal = do
-  admittedPlans <- first (pure . HouseholdPlanProjectionFailed)
-    (admitPlanJournal planJournal)
   obligationSelections <- first (pure . HouseholdDailyTargetPlanMetadataFailed)
     (admitDailyTargetPlanJournalSelections planJournal)
+  selectedPlans <- first (pure . HouseholdDailyTargetPlanProjectionFailed)
+    (projectDailyTargetSelectedPlans planJournal obligationSelections)
   first (pure . HouseholdDailyTargetScopeFailed)
     (dailyTargetScopeFromSelections
       registry
-      (admittedOutgoingPlanValues admittedPlans)
+      selectedPlans
       assetSelections
       obligationSelections)
+
+-- | Apply the current outgoing obligation shape only after Daily Target source
+-- evidence has declared a Plan relevant. Ordinary Plans remain admitted even
+-- when the narrower Daily Target value cannot represent their Posting shape.
+projectDailyTargetSelectedPlans
+  :: PlanJournal
+  -> [DailyTargetObligationSelection]
+  -> Either (NonEmpty PlanReportProjectionError) [CommittedOutgoingPlan]
+projectDailyTargetSelectedPlans planJournal selections =
+  fmap (map projectedCommittedOutgoingPlan)
+    (projectCommittedOutgoingPlans planJournal selectedTransactions)
+  where
+    selectedIds = Set.fromList
+      [ declaredDailyTargetObligationPlanId
+          (dailyTargetObligationSelectionDeclaration selection)
+      | selection <- selections
+      ]
+    selectedTransactions =
+      [ OutgoingPlanTransaction identified
+      | identified <- planJournalTransactions planJournal
+      , identifiedPlanId identified `Set.member` selectedIds
+      ]
 
 resolveInMemoryJournal
   :: Text
