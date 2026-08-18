@@ -136,12 +136,12 @@ drawFlow state = case state of
             (vBox
               [ renderReverseTarget targetId transaction
               , str " "
-              , str "The original transaction stays immutable; Reverse appends its exact inverse."
-              , str "Reversal identity is generated automatically."
+              , strWrap "The original transaction stays immutable; Reverse appends its exact inverse."
+              , strWrap "Reversal identity is generated automatically."
               , str " "
               , renderForm form
               , str " "
-              , str "[Tab] Next field | [Esc] Actual | [Enter] Preview"
+              , strWrap "[Tab] Next field | [Esc] Actual | [Enter] Preview"
               ]))))
   Preview targetId transaction preview _ ->
     center
@@ -152,15 +152,15 @@ drawFlow state = case state of
               <=> str " "
               <=> renderReversePreview preview
               <=> str " "
-              <=> str (previewControls preview)))))
+              <=> strWrap (previewControls preview)))))
   Unavailable message ->
     center
       (borderWithLabel (str "Reverse unavailable")
         (hLimit 80
           (padAll 1
-            ( withAttr (attrName "warning") (txt message)
+            ( withAttr (attrName "warning") (txtWrap message)
               <=> str " "
-              <=> str "[Enter/Esc] Back to Actual | [Q] Quit"))))
+              <=> strWrap "[Enter/Esc] Back to Actual | [Q] Quit"))))
 
 handleFlowEvent
   :: AppContext
@@ -223,7 +223,7 @@ handlePreview targetId transaction preview form event = case event of
 renderReverseTarget :: ActualTransactionId -> Transaction -> Widget Name
 renderReverseTarget targetId transaction =
   vBox
-    ( txt (T.pack (show (transactionDate transaction))
+    ( txtWrap (T.pack (show (transactionDate transaction))
         <> "  [" <> actualTransactionIdText targetId <> "]  "
         <> transactionDescription transaction)
       : map renderPosting (NonEmpty.toList (transactionPostings transaction))
@@ -231,7 +231,7 @@ renderReverseTarget targetId transaction =
 
 renderPosting :: Posting -> Widget Name
 renderPosting posting =
-  txt ("  " <> HKernel.Account.accountName (postingAccount posting) <> "  "
+  txtWrap ("  " <> HKernel.Account.accountName (postingAccount posting) <> "  "
     <> renderQuantity (amountQuantity amount) <> " "
     <> commodityCode (amountCommodity amount))
   where
@@ -241,14 +241,14 @@ renderReversePreview :: ActualReverseInputPreview -> Widget Name
 renderReversePreview preview = case preview of
   ActualReverseInputRejected inputError ->
     withAttr (attrName "error")
-      (txt ("Input rejected: " <> T.pack (show inputError)))
+      (txtWrap ("Input rejected: " <> T.pack (show inputError)))
   ActualReverseCandidateRejected sourceErrors ->
     withAttr (attrName "error")
-      (txt (T.intercalate "\n" (map (T.pack . show) (NonEmpty.toList sourceErrors))))
+      (txtWrap (T.intercalate "\n" (map (T.pack . show) (NonEmpty.toList sourceErrors))))
   ActualReverseCandidateReady block ->
     withAttr (attrName "success")
-      (str "Validation successful. Source unmodified.")
-      <=> str " " <=> txt block
+      (strWrap "Validation successful. Source unmodified.")
+      <=> str " " <=> txtWrap block
 
 previewControls :: ActualReverseInputPreview -> String
 previewControls preview = case preview of
