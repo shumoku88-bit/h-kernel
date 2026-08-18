@@ -30,6 +30,12 @@ module HKernel.Household.EnvelopeObservation
   , envelopeExplanationRemaining
   , envelopeExplanationCommitment
   , envelopeExplanationHeadroom
+  , EnvelopeChangeBaseline(..)
+  , ResolvedEnvelopeChangeBaseline
+  , EnvelopeChangeBaselineError(..)
+  , resolveEnvelopeChangeBaseline
+  , resolvedEnvelopeChangeBaseline
+  , resolvedEnvelopeChangeBaselineDay
   , HouseholdEnvelopeChangeError(..)
   , HouseholdEnvelopeChange
   , EnvelopeChangeLine
@@ -54,7 +60,7 @@ module HKernel.Household.EnvelopeObservation
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
-import Data.Time.Calendar (Day)
+import Data.Time.Calendar (Day, addDays)
 import HKernel.Actual.Journal (ActualJournal)
 import HKernel.Envelope.Commitment
   ( EnvelopeCommitment
@@ -110,7 +116,11 @@ import HKernel.Envelope.Remaining
   )
 import HKernel.Envelope.StockOrigin (StockOrigin)
 import HKernel.Money (Balance, Commodity, subtractBalance)
-import HKernel.Period (Period)
+import HKernel.Period
+  ( Period
+  , periodContains
+  , periodStart
+  )
 import HKernel.Plan.Journal (PlanJournal)
 
 data HouseholdEnvelopeObservation = HouseholdEnvelopeObservation
@@ -245,6 +255,77 @@ explainHouseholdEnvelope envelopes observation =
         , envelopeExplanationHeadroom =
             envelopeHeadroomFor envelope headroom
         }
+
+-- | Semantic selection of the earlier observation used by one same-Period
+-- Envelope Change. Selecting a baseline is a temporal question, not arithmetic.
+data EnvelopeChangeBaseline
+  = PreviousObservation
+  | PreviousDay
+  | CycleStart
+  | ExplicitDay Day
+  deriving (Eq, Show)
+
+-- | One baseline request after its temporal coordinate has been validated.
+data ResolvedEnvelopeChangeBaseline = ResolvedEnvelopeChangeBaseline
+  { resolvedEnvelopeChangeBaseline    :: EnvelopeChangeBaseline
+  , resolvedEnvelopeChangeBaselineDay :: Day
+  } deriving (Eq, Show)
+
+-- | Baseline requests fail closed instead of silently changing the meaning of
+-- Change. In particular, previous observation is context supplied by the caller
+-- and is never inferred from accounting evidence.
+data EnvelopeChangeBaselineError
+  = EnvelopeChangeThroughOutsidePeriod Day Period
+  | EnvelopeChangePreviousObservationUnavailable
+  | EnvelopeChangePreviousObservationNotBefore Day Day
+  | EnvelopeChangeBaselineDayOutsidePeriod EnvelopeChangeBaseline Day Period
+  | EnvelopeChangeBaselineDayAfterObservation EnvelopeChangeBaseline Day Day
+  deriving (Eq, Show)
+
+-- | Resolve the earlier day for one same-Period Change without reading sources.
+--
+-- The optional previous observation day belongs to observation context, such as
+-- a TUI session or explicit observation history. 'ExplicitDay' may equal the
+-- later day for an intentional zero-length comparison. 'PreviousObservation'
+-- must be strictly earlier because "previous" itself carries temporal meaning.
+resolveEnvelopeChangeBaseline
+  :: Period
+  -> Day
+  -> Maybe Day
+  -> EnvelopeChangeBaseline
+  -> Either EnvelopeChangeBaselineError ResolvedEnvelopeChangeBaseline
+resolveEnvelopeChangeBaseline period through previousObservation baseline
+  | not (periodContains period through) =
+      Left (EnvelopeChangeThroughOutsidePeriod through period)
+  | otherwise = case baseline of
+      PreviousObservation -> case previousObservation of
+        Nothing -> Left EnvelopeChangePreviousObservationUnavailable
+        Just day -> do
+          validateInside PreviousObservation day
+          if day < through
+            then resolved PreviousObservation day
+            else Left (EnvelopeChangePreviousObservationNotBefore day through)
+      PreviousDay -> do
+        let day = addDays (-1) through
+        validateInside PreviousDay day
+        resolved PreviousDay day
+      CycleStart ->
+        resolved CycleStart (periodStart period)
+      ExplicitDay day -> do
+        validateInside baseline day
+        if day <= through
+          then resolved baseline day
+          else Left (EnvelopeChangeBaselineDayAfterObservation baseline day through)
+  where
+    validateInside requested day
+      | periodContains period day = Right ()
+      | otherwise = Left
+          (EnvelopeChangeBaselineDayOutsidePeriod requested day period)
+
+    resolved requested day = Right ResolvedEnvelopeChangeBaseline
+      { resolvedEnvelopeChangeBaseline = requested
+      , resolvedEnvelopeChangeBaselineDay = day
+      }
 
 -- | Reasons two typed Envelope explanations do not denote one comparable
 -- change coordinate. Change never silently crosses a period boundary, reverses
