@@ -10,6 +10,7 @@ module HKernel.Editor.TUI.Shell
   , draw
   , moveSection
   , nextFocus
+  , previousFocus
   ) where
 
 import Brick
@@ -100,7 +101,7 @@ drawSectionSurface focused body =
     [ withAttr (if focused then attrName "shellFocus" else attrName "shellMuted")
         (strWrap (if focused
           then "[Surface] interaction focus"
-          else "Surface · press Right/Enter to interact"))
+          else "Surface · press Right/Enter or Tab to interact"))
     , padTop (Pad 1) (padBottom Max body)
     ]
 
@@ -109,11 +110,11 @@ drawHelp focus = withAttr (attrName "shellMuted") (strWrap message)
   where
     message = case focus of
       CalendarFocus ->
-        "Calendar: arrows/hjkl move day · t today · r record · Tab sections · q quit"
+        "Calendar: arrows/hjkl move day · t today · r record · Tab next focus · Shift-Tab previous focus · q quit"
       SectionFocus ->
-        "Sections: Up/Down or j/k select · Right/Enter surface · Left calendar · Tab surface"
+        "Sections: Up/Down or j/k select · Right/Enter surface · Left calendar · Tab/Shift-Tab focus · q quit"
       SurfaceFocus ->
-        "Surface: section owns arrows/Tab and its own keys · Esc sections · q quit"
+        "Surface: section owns arrows and local keys · Tab next focus · Shift-Tab sections · q quit"
 
 focusLabel :: Bool -> Text -> Widget Name
 focusLabel focused label
@@ -153,6 +154,12 @@ nextFocus focus = case focus of
   CalendarFocus -> SectionFocus
   SectionFocus -> SurfaceFocus
   SurfaceFocus -> CalendarFocus
+
+previousFocus :: ShellFocus -> ShellFocus
+previousFocus focus = case focus of
+  CalendarFocus -> SurfaceFocus
+  SectionFocus -> CalendarFocus
+  SurfaceFocus -> SectionFocus
 
 moveSection :: Int -> HouseholdSection -> HouseholdSection
 moveSection delta section = toEnum nextIndex
