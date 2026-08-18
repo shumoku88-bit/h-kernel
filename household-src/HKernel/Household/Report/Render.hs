@@ -84,7 +84,7 @@ renderHouseholdReportSection presentation section surface =
       renderPlans
         presentation
         (currentCycleAccountsPeriod (householdCurrentCycleAccounts surface))
-        (householdPlannedTransactions surface)
+        (householdPlannedTransactionsAvailability surface)
     HouseholdIssues visibility ->
       renderHouseholdIssuesWithPresentation
         presentation visibility (householdIssues surface)
