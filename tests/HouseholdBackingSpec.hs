@@ -23,7 +23,6 @@ import HKernel.Envelope.Consumption
   , envelopeConsumptionUnmanaged
   , observeEnvelopeConsumption
   )
-import qualified Data.Map.Strict as Map
 import HKernel.Envelope.Entitlement
   ( observeEnvelopeEntitlement )
 import HKernel.Envelope.EntitlementHistory (mkEnvelopeEntitlementHistory)
@@ -44,15 +43,21 @@ import HKernel.Envelope.Headroom (calculateEnvelopeHeadroom)
 import HKernel.Envelope.Identity (mkEnvelopeId)
 import HKernel.Envelope.Remaining (calculateEnvelopeRemaining)
 import HKernel.Household.Backing
+import HKernel.Journal (journalAccountRegistry)
 import HKernel.Money
 import HKernel.Period
 import HKernel.Plan (mkPositiveAmount)
-import HKernel.Plan.Journal (parsePlanJournal)
+import HKernel.Plan.Journal
+  ( parsePlanJournal
+  , planJournalTransactions
+  , planJournalValue
+  )
 import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
   characterizeHouseholdBackingLines
+  characterizeHouseholdBackingPlanProjection
   characterizeHouseholdBackingNativeDerivation
 
 characterizeHouseholdBackingLines :: IO ()
@@ -111,6 +116,44 @@ characterizeHouseholdBackingLines = do
     (one jpy 90 <> one usd (-5)) (envelopePostPlanHeadroom food)
   assertEqual "pool-local shortage survives another pool surplus"
     (one jpy (-20)) (backingPoolGrossSurplus cashPool)
+
+characterizeHouseholdBackingPlanProjection :: IO ()
+characterizeHouseholdBackingPlanProjection = do
+  let jpy = mustRight (mkCommodity "JPY")
+      cash = mustRight (mkAccount "assets:cash")
+      period = mustRight
+        (mkPeriod (fromGregorian 2026 8 1) (fromGregorian 2026 9 1))
+      planJournal = mustRight (parsePlanJournal (T.unlines
+        [ "account assets:cash"
+        , "  type: Asset"
+        , "account assets:savings"
+        , "  type: Asset"
+        , ""
+        , "2026-08-10 transfer"
+        , "  ; plan-id: plan-transfer"
+        , "  assets:cash     -30 JPY"
+        , "  assets:savings   30 JPY"
+        , ""
+        , "2026-09-01 outside horizon"
+        , "  ; plan-id: plan-later"
+        , "  assets:cash     -40 JPY"
+        , "  assets:savings   40 JPY"
+        ]))
+      projected = mustRight
+        (projectHouseholdBackingPlans
+          period
+          (journalAccountRegistry (planJournalValue planJournal))
+          (planJournalTransactions planJournal))
+      expected =
+        [ HouseholdBackingPlan
+            { householdBackingPlanSource = cash
+            , householdBackingPlanAmount = mustRight
+                (mkPositiveAmount (mkAmount jpy (quantityFromInteger 30)))
+            }
+        ]
+  assertEqual
+    "Backing owns source-Asset projection from role-neutral Plan evidence"
+    expected projected
 
 characterizeHouseholdBackingNativeDerivation :: IO ()
 characterizeHouseholdBackingNativeDerivation = do
