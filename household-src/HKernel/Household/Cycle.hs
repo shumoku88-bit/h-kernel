@@ -35,8 +35,7 @@ import HKernel.Household.Policy
   )
 import HKernel.Journal (journalAccountRegistry)
 import HKernel.Ledger
-  ( Posting
-  , postingAccount
+  ( postingAccount
   , postingAmount
   , transactionDate
   , transactionPostings
@@ -45,8 +44,7 @@ import HKernel.Money (amountQuantity, zeroQuantity)
 import HKernel.Period (Period, PeriodError, mkPeriod)
 import HKernel.Plan (PlanId)
 import HKernel.Plan.Journal
-  ( IdentifiedPlanTransaction
-  , PlanJournal
+  ( PlanJournal
   , PlanLifecycleError
   , admitPlanRetirements
   , identifiedPlanId
@@ -66,7 +64,18 @@ data HouseholdCycleError
   | HouseholdCyclePlanShapeError PlanId
   | HouseholdCycleAnchorsUnavailable
   | HouseholdCyclePeriodError PeriodError
-  deriving (Eq, Show)
+  deriving (Eq)
+
+instance Show HouseholdCycleError where
+  show cycleError = case cycleError of
+    HouseholdCyclePlanLifecycleError lifecycleError ->
+      "HouseholdCyclePlanLifecycleError " <> show lifecycleError
+    HouseholdCyclePlanShapeError planId ->
+      "HouseholdCyclePlanShapeError " <> show planId
+    HouseholdCycleAnchorsUnavailable ->
+      "income-anchor cycle requires two observed Actual anchors and one future Plan anchor"
+    HouseholdCyclePeriodError periodError ->
+      "HouseholdCyclePeriodError " <> show periodError
 
 data IncomingCycleAnchor = IncomingCycleAnchor
   { incomingAnchorId   :: PlanId
