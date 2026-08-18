@@ -182,7 +182,8 @@ issueClosedDateL f input =
 
 issueDecisionMemoL :: Lens' IssueCloseInput Text
 issueDecisionMemoL f input =
-  (\value -> input { issueDecisionMemoText = value }) <$> f (issueDecisionMemoText input)
+  (\value -> input { issueDecisionMemoText = value })
+    <$> f (issueDecisionMemoText input)
 
 labelField :: String -> Widget Name -> Widget Name
 labelField labelText widget =
@@ -242,7 +243,7 @@ drawFlow state = case state of
     , "[Tab] Next field   [Enter] Preview   [Esc] Issues"
     ]
   AddPreview result _ -> previewBox "Issue Preview"
-    (renderPreviewResult (txt . candidateBlock) result)
+    (renderPreviewResult (txtWrap . candidateBlock) result)
     (previewControls result)
   DueInput issue form -> inputBox "Update Issue Due" form
     [ "Selected: " <> T.unpack (issueIdText (householdIssueId issue))
@@ -259,7 +260,7 @@ drawFlow state = case state of
       (hLimit 78 (padAll 1
         (renderIssue issue
           <=> str " "
-          <=> str "[R] Resolve   [D] Drop   [Esc] Issues"))))
+          <=> strWrap "[R] Resolve   [D] Drop   [Esc] Issues"))))
   CloseInput issue disposition form -> inputBox
     (case disposition of ResolveIssue -> "Resolve Issue"; DropIssue -> "Drop Issue")
     form
@@ -279,7 +280,7 @@ inputBox title form helpLines =
     (borderWithLabel (str title)
       (hLimit 82
         (padAll 1
-          (renderForm form <=> str " " <=> vBox (map str helpLines)))))
+          (renderForm form <=> str " " <=> vBox (map strWrap helpLines)))))
 
 previewBox :: String -> Widget Name -> String -> Widget Name
 previewBox title body controls =
@@ -288,14 +289,14 @@ previewBox title body controls =
       (hLimit 88
         (vLimit 32
           (padAll 1
-            (body <=> str " " <=> str controls)))))
+            (body <=> str " " <=> strWrap controls)))))
 
 renderPreviewResult
   :: (preview -> Widget Name)
   -> PreviewResult preview
   -> Widget Name
 renderPreviewResult renderPreview result = case result of
-  PreviewRejected message -> withAttr (attrName "error") (txt message)
+  PreviewRejected message -> withAttr (attrName "error") (txtWrap message)
   PreviewReady preview -> renderPreview preview
 
 previewControls :: PreviewResult preview -> String
@@ -305,11 +306,15 @@ previewControls result = case result of
 
 renderIssueDuePreview :: IssueDueUpdatePreview -> Widget Name
 renderIssueDuePreview preview =
-  txt (dueUpdateOriginalRow preview) <=> str " -> " <=> txt (dueUpdateCandidateRow preview)
+  txtWrap (dueUpdateOriginalRow preview)
+    <=> str " -> "
+    <=> txtWrap (dueUpdateCandidateRow preview)
 
 renderIssueClosePreview :: IssueClosePreview -> Widget Name
 renderIssueClosePreview preview =
-  txt (closeOriginalRow preview) <=> str " -> " <=> txt (closeCandidateRow preview)
+  txtWrap (closeOriginalRow preview)
+    <=> str " -> "
+    <=> txtWrap (closeCandidateRow preview)
 
 handleFlowEvent
   :: AppContext
@@ -514,16 +519,18 @@ publishCandidate context request = do
 drawWorkspace :: AppContext -> Widget Name
 drawWorkspace context =
   vBox
-    [ borderWithLabel (str
-        ("Household Notebook (issues.tsv) | View: "
-          <> issueWorkspaceFilterLabel (contextIssueFilter context)
-          <> " | Open: " <> show openCount
-          <> " | Closed: " <> show closedCount))
-        (vLimit 18 (L.renderList renderIssueItem True (contextIssueList context)))
+    [ borderWithLabel (str "Issues (issues.tsv)")
+        (vBox
+          [ strWrap
+              ("View: " <> issueWorkspaceFilterLabel (contextIssueFilter context)
+                <> " | Open: " <> show openCount
+                <> " | Closed: " <> show closedCount)
+          , vLimit 18 (L.renderList renderIssueItem True (contextIssueList context))
+          ])
     , borderWithLabel (str "Selected Issue")
         (padAll 1 (renderSelectedIssue context))
-    , str "[O] Open   [C] Closed   [L] All   [j/k/Arrows] Move"
-    , str "[R] Realize as Actual (Open)   [Enter] Resolve/Drop   [U] Due   [A] Add Issue   [1-7] Sections   [q] Quit"
+    , strWrap "[O] Open   [C] Closed   [L] All   [j/k/Arrows] Move"
+    , strWrap "[R] Realize as Actual (Open)   [Enter] Resolve/Drop   [U] Due   [A] Add Issue   [1-7] Sections   [q] Quit"
     ]
   where
     (openCount, closedCount) = contextIssueCounts context
@@ -540,6 +547,8 @@ renderIssueItem selected issue
     lifecycle = case householdIssueStatus issue of
       Open -> ""
       _ -> "  " <> renderIssueClosedDisplay (householdIssueClosed issue)
+    -- The list has item height 1, so the summary remains one line. The selected
+    -- detail pane below is the lossless, wrapping presentation of the Issue.
     row = txt ("[" <> T.pack (show (householdIssueStatus issue)) <> "]  "
       <> renderIssueDueDisplay (householdIssueDue issue) <> "  "
       <> T.pack (show (householdIssueRecordedOn issue)) <> "  "
@@ -554,17 +563,17 @@ renderSelectedIssue context = case L.listSelectedElement (contextIssueList conte
 renderIssue :: HouseholdIssue -> Widget Name
 renderIssue issue =
   vBox
-    [ txt ("[" <> T.pack (show (householdIssueStatus issue)) <> "]  "
+    [ txtWrap ("[" <> T.pack (show (householdIssueStatus issue)) <> "]  "
         <> T.pack (show (householdIssueRecordedOn issue))
         <> "  " <> issueIdText (householdIssueId issue))
-    , txt ("Due: " <> renderIssueDueDisplay (householdIssueDue issue))
-    , txt ("Closed: " <> renderIssueClosedDisplay (householdIssueClosed issue))
-    , txt ("Text: " <> householdIssueText issue)
+    , txtWrap ("Due: " <> renderIssueDueDisplay (householdIssueDue issue))
+    , txtWrap ("Closed: " <> renderIssueClosedDisplay (householdIssueClosed issue))
+    , txtWrap ("Text: " <> householdIssueText issue)
     , maybe emptyWidget
-        (\amount -> txt ("Amount: " <> renderQuantity (amountQuantity amount)
+        (\amount -> txtWrap ("Amount: " <> renderQuantity (amountQuantity amount)
           <> " " <> commodityCode (amountCommodity amount)))
         (householdIssueAmount issue)
-    , txt ("Details: " <> householdIssueDetails issue)
+    , txtWrap ("Details: " <> householdIssueDetails issue)
     ]
 
 handleWorkspaceEvent
