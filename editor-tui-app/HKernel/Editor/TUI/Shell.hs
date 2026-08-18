@@ -18,6 +18,7 @@ import Brick.Widgets.List qualified as L
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Vector qualified as Vec
 
@@ -96,11 +97,10 @@ drawRightPane context selectedDay focus sectionBody = case focus of
 drawSectionSurface :: Bool -> Widget Name -> Widget Name
 drawSectionSurface focused body =
   vBox
-    [ clickable ShellSurface
-        (withAttr (if focused then attrName "shellFocus" else attrName "shellMuted")
-          (strWrap (if focused
-            then "[Surface] interaction focus"
-            else "Surface · press Right/Enter to interact")))
+    [ withAttr (if focused then attrName "shellFocus" else attrName "shellMuted")
+        (strWrap (if focused
+          then "[Surface] interaction focus"
+          else "Surface · press Right/Enter to interact"))
     , padTop (Pad 1) (padBottom Max body)
     ]
 
