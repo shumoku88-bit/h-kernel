@@ -43,7 +43,6 @@ import HKernel.Editor.TUI.Model
   , contextHouseholdState
   )
 import HKernel.Household.Application (HouseholdState(..))
-import HKernel.Household.Report (HouseholdReportSurface)
 import HKernel.HouseholdIssue
   ( HouseholdIssue
   , householdIssueAmount
@@ -64,11 +63,11 @@ import HKernel.Money
   , commodityCode
   , renderQuantity
   )
-import HKernel.Plan
-  ( CommittedOutgoingPlan
-  , committedPlanAmount
-  , committedPlanMemo
-  , positiveAmountValue
+import HKernel.Plan (planIdText)
+import HKernel.Plan.Journal
+  ( IdentifiedPlanTransaction
+  , identifiedPlanId
+  , identifiedPlanTransaction
   )
 import HKernel.Report.Config (reportConfigurationPresentation)
 import HKernel.Report.Presentation
@@ -198,7 +197,7 @@ chunksOf width values =
 markerForDay :: AppContext -> Day -> Maybe CalendarMarker
 markerForDay context day =
   selectCalendarMarker markers
-    (hasOpenPaymentPlan context day)
+    (hasOpenPlan context day)
     (hasOpenIssueDue context day)
     (isCycleEnd context day)
   where
@@ -211,35 +210,37 @@ configuredMarkers =
     . householdStateReportConfig
     . contextHouseholdState
 
-hasOpenPaymentPlan :: AppContext -> Day -> Bool
-hasOpenPaymentPlan context day = not (null (plansOn context day))
+hasOpenPlan :: AppContext -> Day -> Bool
+hasOpenPlan context day = case plansOn context day of
+  Left _ -> False
+  Right plans -> not (null plans)
 
 hasOpenIssueDue :: AppContext -> Day -> Bool
 hasOpenIssueDue context day = not (null (issuesDueOn context day))
 
 isCycleEnd :: AppContext -> Day -> Bool
-isCycleEnd context day = cycleEndDay context == Just day
+isCycleEnd context day = case cycleEndDay context of
+  Left _ -> False
+  Right endDay -> endDay == day
 
 actualsOn :: AppContext -> Day -> [Transaction]
 actualsOn context day =
   homeActualTransactionsOn day
     (householdStateActualJournal (contextHouseholdState context))
 
-plansOn :: AppContext -> Day -> [CommittedOutgoingPlan]
-plansOn context day =
-  maybe [] (homePlannedTransactionsOn day) (householdSurface context)
+plansOn :: AppContext -> Day -> Either Text [IdentifiedPlanTransaction]
+plansOn context day = case contextOpenPlanObservation context of
+  Left errors -> Left (T.pack (show errors))
+  Right plans -> Right (homePlannedTransactionsOn day plans)
 
 issuesDueOn :: AppContext -> Day -> [HouseholdIssue]
 issuesDueOn context day =
   homeIssuesDueOn day (householdStateIssues (contextHouseholdState context))
 
-cycleEndDay :: AppContext -> Maybe Day
-cycleEndDay context = homeCycleEndDay <$> householdSurface context
-
-householdSurface :: AppContext -> Maybe HouseholdReportSurface
-householdSurface context = case contextHouseholdReportSurface context of
-  Left _ -> Nothing
-  Right surface -> Just surface
+cycleEndDay :: AppContext -> Either Text Day
+cycleEndDay context = case contextHouseholdCycleObservation context of
+  Left errors -> Left (T.pack (show errors))
+  Right observation -> Right (homeCycleEndDay observation)
 
 drawDayPane :: AppContext -> Day -> Widget Name
 drawDayPane context selectedDay =
@@ -255,7 +256,6 @@ drawDayPane context selectedDay =
               ++ issueSection
               ++ [str " "]
               ++ cycleSection
-              ++ projectionNote
             )))))
   where
     actualValues = actualsOn context selectedDay
@@ -265,24 +265,23 @@ drawDayPane context selectedDay =
       [] -> [str "  none recorded"]
       values -> concatMap renderActual values
     planSection = str "Plans" : case planValues of
-      [] -> [str "  none"]
-      values -> map renderPlan values
+      Left reason ->
+        [ withAttr (attrName "warning")
+            (txtWrap ("  unavailable for this observation: " <> reason))
+        ]
+      Right [] -> [str "  none"]
+      Right values -> concatMap renderPlan values
     issueSection = str "Issues due" : case issueValues of
       [] -> [str "  none"]
       values -> map renderIssue values
-    cycleSection =
-      [ str "Cycle"
-      , if cycleEndDay context == Just selectedDay
-          then str "  end day"
-          else str "  none"
-      ]
-    projectionNote = case contextHouseholdReportSurface context of
-      Left _ ->
-        [ str " "
-        , withAttr (attrName "warning")
-            (strWrap "Plan/cycle projection unavailable for this observation.")
+    cycleSection = str "Cycle" : case cycleEndDay context of
+      Left reason ->
+        [ withAttr (attrName "warning")
+            (txtWrap ("  unavailable for this observation: " <> reason))
         ]
-      Right _ -> []
+      Right endDay
+        | endDay == selectedDay -> [str "  end day"]
+        | otherwise -> [str "  none"]
 
 renderActual :: Transaction -> [Widget Name]
 renderActual transaction =
@@ -294,10 +293,14 @@ renderPosting posting =
   txtWrap ("    " <> accountName (postingAccount posting) <> "  "
     <> renderAmount (postingAmount posting))
 
-renderPlan :: CommittedOutgoingPlan -> Widget Name
-renderPlan plan =
-  txtWrap ("  " <> committedPlanMemo plan <> "  "
-    <> renderAmount (positiveAmountValue (committedPlanAmount plan)))
+renderPlan :: IdentifiedPlanTransaction -> [Widget Name]
+renderPlan identified =
+  txtWrap
+      ("  " <> planIdText (identifiedPlanId identified)
+        <> "  " <> transactionDescription transaction)
+    : map renderPosting (NonEmpty.toList (transactionPostings transaction))
+  where
+    transaction = identifiedPlanTransaction identified
 
 renderIssue :: HouseholdIssue -> Widget Name
 renderIssue issue =

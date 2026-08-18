@@ -36,7 +36,6 @@ import HKernel.Editor.HouseholdWorkspace
   , issuesForWorkspace
   , workspaceAccounts
   , workspaceIssueCounts
-  , workspaceOpenPlansAt
   , workspaceReportBookAt
   , workspaceTransactions
   )
@@ -47,13 +46,23 @@ import HKernel.Household.Application
   , buildHouseholdReportSurfaceFromHousehold
   , loadCanonicalHouseholdWriteSnapshot
   )
-import HKernel.Household.Report (HouseholdReportSurface(..))
+import HKernel.Household.Cycle
+  ( HouseholdCycleError
+  , HouseholdCycleObservation
+  , householdCycleCurrentPeriod
+  , observeHouseholdCycle
+  )
+import HKernel.Household.Policy (householdPolicyCycle)
+import HKernel.Household.Report (HouseholdReportSurface)
 import HKernel.Household.Report.Render (HouseholdReportSection)
 import HKernel.HouseholdIssue (HouseholdIssue)
 import HKernel.Ledger (Transaction)
 import HKernel.Plan.Journal (IdentifiedPlanTransaction)
+import HKernel.Plan.Open
+  ( PlanObservationError
+  , resolveOpenPlanTransactionsAt
+  )
 import HKernel.Report (ReportBook)
-import HKernel.Report.CycleAccounts (currentCycleAccountsPeriod)
 import HKernel.Report.Plan (ReportPlanError)
 
 data Name
@@ -142,19 +151,21 @@ data ReportChoice
   deriving (Eq, Show)
 
 data AppContext = AppContext
-  { contextHouseholdSnapshot       :: HouseholdWriteSnapshot
-  , contextCurrentSection          :: HouseholdSection
-  , contextSelectedReport          :: ReportChoice
-  , contextObservationDay          :: Day
-  , contextResolvedReportBook      :: Either ReportPlanError ReportBook
-  , contextHouseholdReportSurface  :: Either (NonEmpty HouseholdLoadError) HouseholdReportSurface
-  , contextEntryDay                :: Day
-  , contextWorkspaceAccounts       :: L.List Name (Maybe Account)
-  , contextWorkspaceList           :: L.List Name Transaction
-  , contextWorkspaceFocus          :: WorkspaceFocus
-  , contextPlanList                :: L.List Name IdentifiedPlanTransaction
-  , contextIssueFilter             :: IssueWorkspaceFilter
-  , contextIssueList               :: L.List Name HouseholdIssue
+  { contextHouseholdSnapshot          :: HouseholdWriteSnapshot
+  , contextCurrentSection             :: HouseholdSection
+  , contextSelectedReport             :: ReportChoice
+  , contextObservationDay             :: Day
+  , contextResolvedReportBook         :: Either ReportPlanError ReportBook
+  , contextHouseholdCycleObservation  :: Either (NonEmpty HouseholdCycleError) HouseholdCycleObservation
+  , contextOpenPlanObservation        :: Either (NonEmpty PlanObservationError) [IdentifiedPlanTransaction]
+  , contextHouseholdReportSurface     :: Either (NonEmpty HouseholdLoadError) HouseholdReportSurface
+  , contextEntryDay                   :: Day
+  , contextWorkspaceAccounts          :: L.List Name (Maybe Account)
+  , contextWorkspaceList              :: L.List Name Transaction
+  , contextWorkspaceFocus             :: WorkspaceFocus
+  , contextPlanList                   :: L.List Name IdentifiedPlanTransaction
+  , contextIssueFilter                :: IssueWorkspaceFilter
+  , contextIssueList                  :: L.List Name HouseholdIssue
   }
 
 type AppEvent = ()
@@ -193,6 +204,8 @@ makeWorkspaceContext today snapshot =
     , contextObservationDay = today
     , contextResolvedReportBook =
         workspaceReportBookAt today actualJournal currentCycle reportConfig
+    , contextHouseholdCycleObservation = cycleObservation
+    , contextOpenPlanObservation = openPlanObservation
     , contextHouseholdReportSurface = householdSurface
     , contextEntryDay = today
     , contextWorkspaceAccounts = L.list WorkspaceAccountList
@@ -213,12 +226,18 @@ makeWorkspaceContext today snapshot =
     issues = householdStateIssues state
     accounts = workspaceAccounts (householdStateAccountsRegistry state)
     transactions = workspaceTransactions actualJournal
-    openPlans = workspaceOpenPlansAt today planJournal actualJournal
+    cycleObservation = observeHouseholdCycle
+      today
+      actualJournal
+      planJournal
+      (householdPolicyCycle (householdStatePolicy state))
+    openPlanObservation = resolveOpenPlanTransactionsAt today planJournal actualJournal
+    openPlans = either (const []) id openPlanObservation
     householdSurface = buildHouseholdReportSurfaceFromHousehold today state
-    currentCycle = case householdSurface of
-      Left _ -> Nothing
-      Right surface -> Just
-        (currentCycleAccountsPeriod (householdCurrentCycleAccounts surface))
+    currentCycle = either
+      (const Nothing)
+      (Just . householdCycleCurrentPeriod)
+      cycleObservation
 
 reloadWorkspaceContext :: AppContext -> IO (Maybe AppContext)
 reloadWorkspaceContext context = do
