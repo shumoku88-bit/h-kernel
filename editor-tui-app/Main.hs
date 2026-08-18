@@ -130,16 +130,10 @@ handleHomeEvent context selectedDay event = case event of
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
   VtyEvent (V.EvKey (V.KChar '\t') []) ->
     put (AppWrapper context (Workspace selectedDay Shell.SectionFocus))
-  VtyEvent (V.EvKey V.KEsc []) -> halt
+  VtyEvent (V.EvKey V.KBackTab []) ->
+    put (AppWrapper context (Workspace selectedDay Shell.SurfaceFocus))
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
-  VtyEvent (V.EvKey (V.KChar '1') []) -> switchSection ActualSection
-  VtyEvent (V.EvKey (V.KChar '2') []) -> switchSection PlansSection
-  VtyEvent (V.EvKey (V.KChar '3') []) -> switchSection EntitlementSection
-  VtyEvent (V.EvKey (V.KChar '4') []) -> switchSection AccountsSection
-  VtyEvent (V.EvKey (V.KChar '5') []) -> switchSection IssuesSection
-  VtyEvent (V.EvKey (V.KChar '6') []) -> switchSection ReportsSection
-  VtyEvent (V.EvKey (V.KChar '7') []) -> switchSection SettingsSection
   _ -> do
     action <- zoom zoomContext (Home.handleLocalEvent selectedDay event)
     AppWrapper currentContext _ <- get
@@ -176,22 +170,12 @@ handleWorkspaceEvent context selectedDay focus event = case event of
     vScrollToBeginning (viewportScroll HomeDayViewport)
     put (AppWrapper context (Home day))
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
-  VtyEvent (V.EvKey (V.KChar '\t') []) -> case focus of
-    Shell.SurfaceFocus -> handleSectionSurfaceEvent context selectedDay event
-    _ -> switchFocus (Shell.nextFocus focus)
-  VtyEvent (V.EvKey V.KEsc []) -> case focus of
-    Shell.SurfaceFocus ->
-      put (AppWrapper context (Workspace selectedDay Shell.SectionFocus))
-    _ -> halt
+  VtyEvent (V.EvKey (V.KChar '\t') []) ->
+    switchFocus (Shell.nextFocus focus)
+  VtyEvent (V.EvKey V.KBackTab []) ->
+    switchFocus (Shell.previousFocus focus)
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
-  VtyEvent (V.EvKey (V.KChar '1') []) -> switchSection ActualSection
-  VtyEvent (V.EvKey (V.KChar '2') []) -> switchSection PlansSection
-  VtyEvent (V.EvKey (V.KChar '3') []) -> switchSection EntitlementSection
-  VtyEvent (V.EvKey (V.KChar '4') []) -> switchSection AccountsSection
-  VtyEvent (V.EvKey (V.KChar '5') []) -> switchSection IssuesSection
-  VtyEvent (V.EvKey (V.KChar '6') []) -> switchSection ReportsSection
-  VtyEvent (V.EvKey (V.KChar '7') []) -> switchSection SettingsSection
   _ -> case focus of
     Shell.CalendarFocus -> put (AppWrapper context (Home selectedDay))
     Shell.SectionFocus -> handleSectionNavigation context selectedDay event
