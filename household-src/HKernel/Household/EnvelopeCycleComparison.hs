@@ -46,6 +46,7 @@ import HKernel.Actual.Journal (ActualJournal)
 import HKernel.Envelope.Commitment (envelopeCommitmentFor)
 import HKernel.Envelope.Consumption
   ( ConsumptionAmounts
+  , EnvelopeConsumption
   , EnvelopeConsumptionError
   , consumptionNet
   , envelopeConsumptionFor
@@ -58,7 +59,8 @@ import HKernel.Envelope.ExpenseRouting
   , expenseRoutingResolver
   )
 import HKernel.Envelope.Fulfillment
-  ( EnvelopeFulfillmentError
+  ( EnvelopeFulfillment
+  , EnvelopeFulfillmentError
   , FulfillmentAmounts
   , envelopeFulfillmentFor
   , fulfillmentNet
@@ -70,6 +72,7 @@ import HKernel.Envelope.Identity (EnvelopeId)
 import HKernel.Envelope.Remaining (envelopeRemainingFor)
 import HKernel.Household.EnvelopeObservation
   ( HouseholdEnvelopeError
+  , HouseholdEnvelopeObservation
   , deriveHouseholdEnvelopeObservation
   , householdEnvelopeCommitment
   , householdEnvelopeEntitlement
@@ -198,12 +201,12 @@ observeAlignedHouseholdEnvelopeCycleComparison currentThrough currentPeriod base
     baselineThrough = addDays elapsedDays (periodStart baselinePeriod)
 
 lineFor
-  :: HKernel.Household.EnvelopeObservation.HouseholdEnvelopeObservation
-  -> HKernel.Household.EnvelopeObservation.HouseholdEnvelopeObservation
-  -> HKernel.Envelope.Consumption.EnvelopeConsumption
-  -> HKernel.Envelope.Consumption.EnvelopeConsumption
-  -> HKernel.Envelope.Fulfillment.EnvelopeFulfillment
-  -> HKernel.Envelope.Fulfillment.EnvelopeFulfillment
+  :: HouseholdEnvelopeObservation
+  -> HouseholdEnvelopeObservation
+  -> EnvelopeConsumption
+  -> EnvelopeConsumption
+  -> EnvelopeFulfillment
+  -> EnvelopeFulfillment
   -> EnvelopeId
   -> EnvelopeCycleComparisonLine
 lineFor currentStock baselineStock currentConsumption baselineConsumption currentFulfillment baselineFulfillment envelope =
