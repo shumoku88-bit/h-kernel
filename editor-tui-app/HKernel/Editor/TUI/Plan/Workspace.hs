@@ -59,8 +59,8 @@ drawWorkspace context =
           (L.renderList renderPlanItem True (contextPlanList context)))
     , borderWithLabel (str "Selected Plan")
         (padAll 1 (renderSelectedPlan context))
-    , str "[j/k/Arrows] Move   [Enter/C] Complete & Advance   [A] Add   [E] Edit"
-    , str "[X] Cancel   [R] Replace   [1-7] Sections   [q] Quit"
+    , strWrap "[j/k/Arrows] Move   [Enter/C] Complete & Advance   [A] Add   [E] Edit"
+    , strWrap "[X] Cancel   [R] Replace   [1-7] Sections   [q] Quit"
     ]
 
 handleWorkspaceEvent
@@ -113,7 +113,7 @@ renderIdentifiedPlan :: IdentifiedPlanTransaction -> Widget Name
 renderIdentifiedPlan identified =
   let transaction = identifiedPlanTransaction identified
   in vBox
-    ( txt (T.pack (show (transactionDate transaction))
+    ( txtWrap (T.pack (show (transactionDate transaction))
         <> "  [" <> planIdText (identifiedPlanId identified) <> "]  "
         <> transactionDescription transaction)
       : map renderPosting (NonEmpty.toList (transactionPostings transaction))
@@ -121,7 +121,7 @@ renderIdentifiedPlan identified =
 
 renderPosting :: Posting -> Widget Name
 renderPosting posting =
-  txt ("  " <> accountName (postingAccount posting) <> "  "
+  txtWrap ("  " <> accountName (postingAccount posting) <> "  "
     <> renderQuantity (amountQuantity amount) <> " "
     <> commodityCode (amountCommodity amount))
   where
