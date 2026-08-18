@@ -60,7 +60,7 @@ drawWorkspace context =
     , borderWithLabel (str "Selected Plan")
         (padAll 1 (renderSelectedPlan context))
     , strWrap "[j/k/Arrows] Move   [Enter/C] Complete & Advance   [A] Add   [E] Edit"
-    , strWrap "[X] Cancel   [R] Replace   [1-7] Sections   [q] Quit"
+    , strWrap "[X] Cancel   [R] Replace"
     ]
 
 handleWorkspaceEvent
