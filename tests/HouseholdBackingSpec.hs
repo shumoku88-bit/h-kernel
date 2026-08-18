@@ -110,8 +110,18 @@ characterizeHouseholdBackingLines = do
     (one jpy 100 <> one usd (-2)) (envelopeSignedTotal report)
   assertEqual "funding remains pool-local before aggregation"
     (one jpy 250 <> one usd 4) (envelopeFundingBalance report)
+  assertEqual "funding commitment aggregates open Plan source claims"
+    (one jpy 40) (envelopeFundingCommitment report)
+  assertEqual "available funding subtracts funding commitments exactly"
+    (one jpy 210 <> one usd 4) (envelopeAvailableFunding report)
   assertEqual "negative Envelope does not cancel positive required backing"
     (one jpy 120 <> one usd 3) (envelopeBackingRequired report)
+  assertEqual "available backing required follows Headroom rather than Remaining"
+    (one jpy 90 <> one usd 3) (envelopeAvailableBackingRequired report)
+  assertEqual "gross surplus preserves pool-local shortage before aggregation"
+    (one jpy 130 <> one usd 1) (envelopeBackingSurplus report)
+  assertEqual "available surplus preserves Plan-aware funding and claims"
+    (one jpy 120 <> one usd 1) (envelopeAvailableBackingSurplus report)
   assertEqual "headroom subtracts open Plan reserve"
     (one jpy 90 <> one usd (-5)) (envelopePostPlanHeadroom food)
   assertEqual "pool-local shortage survives another pool surplus"
