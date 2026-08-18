@@ -10,11 +10,6 @@ executable h-kernel-ghcup-home
     ghc-options:      -Wall -Werror=incomplete-patterns
     build-depends:    base >= 4.14 && < 5
                     , brick
-                    , directory
-                    , filepath
-                    , h-kernel
-                    , h-kernel:h-kernel-editor
-                    , h-kernel:h-kernel-household-application
                     , text
                     , time
                     , vty
