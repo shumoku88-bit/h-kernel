@@ -234,6 +234,9 @@ handleWorkspaceEvent context event = case event of
         Actual.OpenRecord -> put (AppWrapper currentContext
           (ActualFlow ActualReturnWorkspace
             (Actual.startRecord (contextEntryDay currentContext))))
+        Actual.OpenReconcile account -> put (AppWrapper currentContext
+          (ActualFlow ActualReturnWorkspace
+            (Actual.startReconcile currentContext account)))
         Actual.OpenReverse -> put (AppWrapper currentContext
           (ActualFlow ActualReturnWorkspace
             (Actual.startSelectedReverse currentContext)))

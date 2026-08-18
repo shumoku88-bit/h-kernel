@@ -14,15 +14,17 @@ module HKernel.Editor.TUI.Actual
   , startIncome
   , startIssueRealize
   , startRecord
+  , startReconcile
   , startSelectedReverse
   , toggleWorkspaceFocus
   ) where
 
 import Brick
+import Brick.Forms
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import qualified Graphics.Vty as V
-import Lens.Micro (Traversal', singular)
+import Lens.Micro (Lens', Traversal', singular)
 
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
@@ -30,12 +32,31 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (Day)
 import System.IO.Error (isDoesNotExistError, tryIOError)
+import Text.Read (readMaybe)
 
+import HKernel.Account
+  ( Account
+  , accountName
+  , declaredAccountDefaultCommodity
+  , lookupAccountDeclaration
+  )
+import HKernel.Actual.Journal (actualJournalValue)
 import HKernel.Application.Config (HouseholdRoot, HouseholdSourcePaths(..))
 import HKernel.Editor.ActualAppend
   ( ActualAddWriteFailure(..)
   , ActualAddWriteOutcome(..)
   , classifyActualAddWriteResult
+  )
+import HKernel.Editor.ActualWorkspace
+  ( AccountReconciliation
+  , externalBalanceObservedOn
+  , externalBalanceValue
+  , observeExternalBalance
+  , reconcileAccountBalance
+  , reconciliationDifference
+  , reconciliationExternalObservation
+  , reconciliationLedgerBalance
+  , reconciliationMatches
   )
 import HKernel.Editor.IssueRealize
   ( IssueRealizeIntent
@@ -54,7 +75,7 @@ import qualified HKernel.Editor.TUI.Actual.Workspace as Workspace
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
   , AppEvent
-  , Name
+  , Name(..)
   , contextHouseholdState
   , contextIssuesSource
   , contextSource
@@ -66,11 +87,22 @@ import HKernel.Household.Application
   , loadCanonicalHousehold
   )
 import HKernel.HouseholdIssue (HouseholdIssue)
+import HKernel.Money
+  ( Balance
+  , balanceEntries
+  , commodityCode
+  , mkAmount
+  , mkCommodity
+  , parseQuantity
+  , renderQuantity
+  , singletonBalance
+  )
 
 data State event
   = DailyFlow (Daily.State event)
   | RecordFlow (Record.State event)
   | ReverseFlow (Reverse.State event)
+  | ReconcileFlow (ReconcileState event)
   | WriteOutcome ActualAddWriteOutcome
   | RealizeWriteOutcome Text
   | ReturnToWorkspace
@@ -87,6 +119,19 @@ data PublishResult
   | RealizationFailed AppContext Text
   | ReloadFailed
 
+data ReconcileInput = ReconcileInput
+  { reconcileBalanceText   :: Text
+  , reconcileCommodityText :: Text
+  , reconcileDateText      :: Text
+  }
+
+data ReconcileState event
+  = ReconcileInputState Account (Form ReconcileInput event Name)
+  | ReconcileResultState
+      Account
+      (Either Text AccountReconciliation)
+      (Form ReconcileInput event Name)
+
 startDaily :: Day -> State event
 startDaily = DailyFlow . Daily.startDaily
 
@@ -99,14 +144,61 @@ startRecord = RecordFlow . Record.startRecord
 startIssueRealize :: Day -> HouseholdIssue -> Maybe (State event)
 startIssueRealize day issue = RecordFlow <$> Record.startIssueRealize day issue
 
+startReconcile :: AppContext -> Account -> State event
+startReconcile context account =
+  ReconcileFlow (ReconcileInputState account (mkReconcileForm context account))
+
 startSelectedReverse :: AppContext -> State event
 startSelectedReverse = ReverseFlow . Reverse.startSelected
+
+reconcileBalanceTextL :: Lens' ReconcileInput Text
+reconcileBalanceTextL f input =
+  (\value -> input { reconcileBalanceText = value })
+    <$> f (reconcileBalanceText input)
+
+reconcileCommodityTextL :: Lens' ReconcileInput Text
+reconcileCommodityTextL f input =
+  (\value -> input { reconcileCommodityText = value })
+    <$> f (reconcileCommodityText input)
+
+reconcileDateTextL :: Lens' ReconcileInput Text
+reconcileDateTextL f input =
+  (\value -> input { reconcileDateText = value })
+    <$> f (reconcileDateText input)
+
+mkReconcileForm
+  :: AppContext
+  -> Account
+  -> Form ReconcileInput event Name
+mkReconcileForm context account =
+  setFormFocus AmountField
+    (newForm
+      [ label "External balance:"
+          @@= editTextField reconcileBalanceTextL AmountField (Just 1)
+      , label "Commodity:"
+          @@= editTextField reconcileCommodityTextL AccountCommodityField (Just 1)
+      , label "Observed on:"
+          @@= editTextField reconcileDateTextL DateField (Just 1)
+      ] initialInput)
+  where
+    label labelText widget =
+      padBottom (Pad 1)
+        ((vLimit 1 (hLimit 20 (str labelText <+> fill ' '))) <+> widget)
+    registry = householdStateAccountsRegistry (contextHouseholdState context)
+    defaultCommodity =
+      lookupAccountDeclaration account registry >>= declaredAccountDefaultCommodity
+    initialInput = ReconcileInput
+      { reconcileBalanceText = ""
+      , reconcileCommodityText = maybe "" commodityCode defaultCommodity
+      , reconcileDateText = T.pack (show (contextObservationDay context))
+      }
 
 drawFlow :: AppContext -> State AppEvent -> Widget Name
 drawFlow context state = case state of
   DailyFlow dailyState -> Daily.drawFlow context dailyState
   RecordFlow recordState -> Record.drawFlow context recordState
   ReverseFlow reverseState -> Reverse.drawFlow reverseState
+  ReconcileFlow reconcileState -> drawReconcileFlow reconcileState
   WriteOutcome outcome ->
     center
       (borderWithLabel (str "Actual Write Result")
@@ -124,6 +216,72 @@ drawFlow context state = case state of
   PublishRequested _ -> emptyWidget
   QuitRequested -> emptyWidget
 
+drawReconcileFlow :: ReconcileState AppEvent -> Widget Name
+drawReconcileFlow reconcileState = case reconcileState of
+  ReconcileInputState account form ->
+    center
+      (borderWithLabel (str "Compare Account Balance")
+        (hLimit 76
+          (padAll 1
+            (vBox
+              [ txtWrap ("Account: " <> accountName account)
+              , strWrap "External balance is temporary observation evidence. It will not modify actual.journal."
+              , str " "
+              , renderForm form
+              , str " "
+              , strWrap "[Tab] Next field | [Enter] Compare | [Esc] Actual"
+              ]))))
+  ReconcileResultState account result _ ->
+    center
+      (borderWithLabel (str "Account Reconciliation")
+        (hLimit 76
+          (padAll 1
+            (case result of
+              Left message ->
+                withAttr (attrName "error")
+                  (txtWrap ("Input rejected: " <> message))
+                  <=> str " "
+                  <=> strWrap "[Esc/B] Edit | [Enter] Actual | [Q] Quit"
+              Right reconciliation ->
+                renderReconciliation account reconciliation
+                  <=> str " "
+                  <=> strWrap "[Esc/B] Edit | [Enter] Actual | [Q] Quit"))))
+
+renderReconciliation :: Account -> AccountReconciliation -> Widget Name
+renderReconciliation account reconciliation =
+  vBox
+    [ txtWrap ("Account: " <> accountName account)
+    , txtWrap ("Observed on: " <> T.pack (show observedOn))
+    , str " "
+    , txtWrap ("External observed: " <> renderBalance externalBalance)
+    , txtWrap ("Canonical ledger:  " <> renderBalance ledgerBalance)
+    , txtWrap ("Difference:        " <> renderBalance difference)
+    , str " "
+    , status
+    , str " "
+    , strWrap "Difference = external observed balance - canonical ledger balance. No source was modified."
+    ]
+  where
+    external = reconciliationExternalObservation reconciliation
+    observedOn = externalBalanceObservedOn external
+    externalBalance = externalBalanceValue external
+    ledgerBalance = reconciliationLedgerBalance reconciliation
+    difference = reconciliationDifference reconciliation
+    status
+      | reconciliationMatches reconciliation =
+          withAttr (attrName "success") (str "Status: MATCHED")
+      | otherwise =
+          withAttr (attrName "warning")
+            (str "Status: DIFFERENCE | inspect this Account's Actual history")
+
+renderBalance :: Balance -> Text
+renderBalance balance = case balanceEntries balance of
+  [] -> "0"
+  entries -> T.intercalate ", "
+    [ renderQuantity quantity <> " " <> commodityCode commodity
+    | (commodity, quantity) <- entries
+    ]
+
 zoomDailyFlow :: Traversal' (State AppEvent) (Daily.State AppEvent)
 zoomDailyFlow f (DailyFlow state) = DailyFlow <$> f state
 zoomDailyFlow _ state = pure state
@@ -135,6 +293,18 @@ zoomRecordFlow _ state = pure state
 zoomReverseFlow :: Traversal' (State AppEvent) (Reverse.State AppEvent)
 zoomReverseFlow f (ReverseFlow state) = ReverseFlow <$> f state
 zoomReverseFlow _ state = pure state
+
+zoomReconcileFlow :: Traversal' (State AppEvent) (ReconcileState AppEvent)
+zoomReconcileFlow f (ReconcileFlow state) = ReconcileFlow <$> f state
+zoomReconcileFlow _ state = pure state
+
+zoomReconcileForm
+  :: Traversal'
+      (ReconcileState AppEvent)
+      (Form ReconcileInput AppEvent Name)
+zoomReconcileForm f (ReconcileInputState account form) =
+  ReconcileInputState account <$> f form
+zoomReconcileForm _ state = pure state
 
 handleFlowEvent
   :: AppContext
@@ -169,6 +339,13 @@ handleFlowEvent context event = do
         Reverse.FlowQuit -> put QuitRequested
         Reverse.FlowPublish block ->
           put (PublishRequested (PublishActual (contextEntryDay context) block))
+    ReconcileFlow _ -> do
+      action <- zoom (singular zoomReconcileFlow)
+        (handleReconcileEvent context event)
+      case action of
+        ReconcileMaintain -> pure ()
+        ReconcileReturn -> put ReturnToWorkspace
+        ReconcileQuit -> put QuitRequested
     WriteOutcome _ -> case event of
       VtyEvent (V.EvKey V.KEsc []) -> put ReturnToWorkspace
       VtyEvent (V.EvKey (V.KChar 'q') []) -> put QuitRequested
@@ -182,6 +359,58 @@ handleFlowEvent context event = do
     ReturnToWorkspace -> pure ()
     PublishRequested _ -> pure ()
     QuitRequested -> pure ()
+
+data ReconcileAction
+  = ReconcileMaintain
+  | ReconcileReturn
+  | ReconcileQuit
+
+handleReconcileEvent
+  :: AppContext
+  -> BrickEvent Name AppEvent
+  -> EventM Name (ReconcileState AppEvent) ReconcileAction
+handleReconcileEvent context event = do
+  state <- get
+  case state of
+    ReconcileInputState account form -> case event of
+      VtyEvent (V.EvKey V.KEsc []) -> pure ReconcileReturn
+      VtyEvent (V.EvKey V.KEnter []) -> do
+        put (ReconcileResultState account
+          (prepareReconciliation context account (formState form)) form)
+        pure ReconcileMaintain
+      _ -> zoom zoomReconcileForm (handleFormEvent event) >> pure ReconcileMaintain
+    ReconcileResultState account _ form -> case event of
+      VtyEvent (V.EvKey V.KEsc []) -> back account form
+      VtyEvent (V.EvKey (V.KChar 'b') []) -> back account form
+      VtyEvent (V.EvKey (V.KChar 'B') []) -> back account form
+      VtyEvent (V.EvKey V.KEnter []) -> pure ReconcileReturn
+      VtyEvent (V.EvKey (V.KChar 'q') []) -> pure ReconcileQuit
+      VtyEvent (V.EvKey (V.KChar 'Q') []) -> pure ReconcileQuit
+      _ -> pure ReconcileMaintain
+  where
+    back account form = put (ReconcileInputState account form) >> pure ReconcileMaintain
+
+prepareReconciliation
+  :: AppContext
+  -> Account
+  -> ReconcileInput
+  -> Either Text AccountReconciliation
+prepareReconciliation context account input = do
+  observedOn <- case
+      (readMaybe (T.unpack (T.strip (reconcileDateText input))) :: Maybe Day) of
+    Nothing -> Left ("Invalid observation date: " <> reconcileDateText input)
+    Just day -> Right day
+  quantity <- case parseQuantity (T.strip (reconcileBalanceText input)) of
+    Left err -> Left ("Invalid external balance: " <> T.pack (show err))
+    Right value -> Right value
+  commodity <- case mkCommodity (T.strip (reconcileCommodityText input)) of
+    Left err -> Left ("Invalid commodity: " <> T.pack (show err))
+    Right value -> Right value
+  let external = observeExternalBalance account observedOn
+        (singletonBalance (mkAmount commodity quantity))
+      journal = actualJournalValue
+        (householdStateActualJournal (contextHouseholdState context))
+  Right (reconcileAccountBalance journal external)
 
 drawWorkspace :: AppContext -> Widget Name
 drawWorkspace = Workspace.drawWorkspace

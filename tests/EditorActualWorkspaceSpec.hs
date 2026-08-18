@@ -21,20 +21,36 @@ import HKernel.Actual.Journal
   , actualJournalValue
   , actualTransactionEntryIdentity
   , actualTransactionEntrySource
+  , actualTransactionEntryTransaction
   , parseActualJournal
   )
 import HKernel.Editor.ActualWorkspace
   ( ActualIdentityPromotionError(..)
   , ActualReverseAvailability(..)
   , actualReverseAvailability
+  , externalBalanceValue
   , identityPromotionCandidateCompleteSource
   , newestTransactionEntriesForAccount
+  , observeExternalBalance
   , prepareActualIdentityPromotion
+  , reconcileAccountBalance
+  , reconciliationDifference
+  , reconciliationExternalObservation
+  , reconciliationLedgerBalance
+  , reconciliationMatches
   , transactionEntriesForAccount
   )
 import HKernel.Journal
   ( journalAccountRegistry
   , journalTransactionSourceHeaderLine
+  )
+import HKernel.Ledger (transactionDate)
+import HKernel.Money
+  ( balanceEntries
+  , mkAmount
+  , mkCommodity
+  , parseQuantity
+  , singletonBalance
   )
 import HKernel.Plan.Completion
   ( actualTransactionIdText
@@ -55,7 +71,7 @@ main = do
             map declaredAccount
               (accountDeclarations (journalAccountRegistry journal))
       pure
-        [ ("no Account filter preserves all Actual transactions"
+        [("no Account filter preserves all Actual transactions"
           , length (transactionEntriesForAccount Nothing transactions)
               == length transactions)
         , ("selected Account retains matching Actual transactions"
@@ -170,6 +186,50 @@ main = do
         , actualReverseAvailability reverseJournal reversalEntry
             == ActualReverseAvailable reversalId
         )
+      reconciliationJournal = mustRight (parseActualJournal reconciliationSource)
+      reconciliationEntries = actualJournalTransactionEntries reconciliationJournal
+      (rewardDay, purchaseDay) = case map
+          (transactionDate . actualTransactionEntryTransaction)
+          reconciliationEntries of
+        [firstDay, secondDay] -> (firstDay, secondDay)
+        _ -> error "invalid reconciliation fixture: expected two transactions"
+      reconciliationLedger = actualJournalValue reconciliationJournal
+      reconciliationRegistry = journalAccountRegistry reconciliationLedger
+      paypay = mustJust
+        (accountNamed "assets:paypay"
+          (map declaredAccount (accountDeclarations reconciliationRegistry)))
+      jpy = mustRight (mkCommodity "JPY")
+      quantity = mustRight . parseQuantity
+      external710 = singletonBalance (mkAmount jpy (quantity "710"))
+      external700 = singletonBalance (mkAmount jpy (quantity "700"))
+      external1000 = singletonBalance (mkAmount jpy (quantity "1000"))
+      differenceObservation = observeExternalBalance
+        paypay purchaseDay external710
+      differenceReconciliation = reconcileAccountBalance
+        reconciliationLedger differenceObservation
+      matchedReconciliation = reconcileAccountBalance reconciliationLedger
+        (observeExternalBalance paypay purchaseDay external700)
+      historicalReconciliation = reconcileAccountBalance reconciliationLedger
+        (observeExternalBalance paypay rewardDay external1000)
+      differenceLawResult =
+        ( "reconciliation difference is exact external minus ledger"
+        , balanceEntries (reconciliationLedgerBalance differenceReconciliation)
+            == [(jpy, quantity "700")]
+          && balanceEntries (reconciliationDifference differenceReconciliation)
+            == [(jpy, quantity "10")]
+        )
+      matchLawResult =
+        ( "matching external observation is the unique zero difference"
+        , reconciliationMatches matchedReconciliation
+          && null (balanceEntries (reconciliationDifference matchedReconciliation))
+        )
+      observationDayResult =
+        ( "reconciliation compares the ledger at the external observation day"
+        , reconciliationMatches historicalReconciliation
+          && externalBalanceValue
+              (reconciliationExternalObservation historicalReconciliation)
+            == external1000
+        )
       results = fixtureResults ++
         [ alignmentResult
         , sourceEvidenceResult
@@ -181,6 +241,9 @@ main = do
         , reverseIdentityResult
         , alreadyReversedResult
         , reverseOfReverseResult
+        , differenceLawResult
+        , matchLawResult
+        , observationDayResult
         ]
 
   mapM_ print results
@@ -216,6 +279,11 @@ mustRight :: Show error => Either error value -> value
 mustRight result = case result of
   Left err -> error ("invalid test setup: " ++ show err)
   Right value -> value
+
+mustJust :: Maybe value -> value
+mustJust value = case value of
+  Nothing -> error "invalid test setup: expected value"
+  Just found -> found
 
 duplicateShapeSource :: Text
 duplicateShapeSource = T.unlines
@@ -261,4 +329,27 @@ reverseAvailabilitySource = T.unlines
   , "  ; reverses: actual-target"
   , "  assets:cash  100 JPY"
   , "  expenses:food  -100 JPY"
+  ]
+
+reconciliationSource :: Text
+reconciliationSource = T.unlines
+  [ "account assets:paypay"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , ""
+  , "account income:rewards"
+  , "  type: Income"
+  , "  commodity: JPY"
+  , ""
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  , ""
+  , "2026-08-10 Reward"
+  , "  assets:paypay  1000 JPY"
+  , "  income:rewards  -1000 JPY"
+  , ""
+  , "2026-08-15 Purchase"
+  , "  assets:paypay  -300 JPY"
+  , "  expenses:food  300 JPY"
   ]
