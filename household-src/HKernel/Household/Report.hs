@@ -209,6 +209,7 @@ buildHouseholdReportSurfaceFromAdmitted observation actualJournal planJournal po
   let retiredPlanIds = retiredPlanIdsAt observation retirements
       completionDeclarations = actualJournalCompletionDeclarations actualJournal
       identifiedActuals = actualJournalIdentifiedTransactions actualJournal
+  validateCompletionPlanReferences planJournal completionDeclarations
   openFundingTransactions <- mapLeft
     (fmap (sourceError "plan.journal" 0 . tshow))
     (resolveOpenPlanTransactionsAt observation planJournal actualJournal)
@@ -419,18 +420,27 @@ completionDeclarationsForOutgoingPlans
   -> [CommittedOutgoingPlan]
   -> [PlanCompletionDeclaration]
   -> Either (NonEmpty HouseholdSourceError) [PlanCompletionDeclaration]
-completionDeclarationsForOutgoingPlans planJournal outgoingPlans declarations =
+completionDeclarationsForOutgoingPlans planJournal outgoingPlans declarations = do
+  validateCompletionPlanReferences planJournal declarations
+  pure
+    [ declaration
+    | declaration <- declarations
+    , Set.member (declaredCompletionPlanId declaration) outgoingPlanIds
+    ]
+  where
+    outgoingPlanIds = Set.fromList (map committedPlanId outgoingPlans)
+
+validateCompletionPlanReferences
+  :: PlanJournal
+  -> [PlanCompletionDeclaration]
+  -> Either (NonEmpty HouseholdSourceError) ()
+validateCompletionPlanReferences planJournal declarations =
   case NonEmpty.nonEmpty unknownErrors of
     Just errors -> Left errors
-    Nothing -> Right
-      [ declaration
-      | declaration <- declarations
-      , Set.member (declaredCompletionPlanId declaration) outgoingPlanIds
-      ]
+    Nothing -> Right ()
   where
     knownPlanIds = Set.fromList
       (map identifiedPlanId (planJournalTransactions planJournal))
-    outgoingPlanIds = Set.fromList (map committedPlanId outgoingPlans)
     unknownErrors =
       [ sourceError "actual.journal" 0
           ("completion relation refers to unknown PlanId " <> planIdText planId)
