@@ -272,7 +272,7 @@ temporalInputExplanation kind = case kind of
   PreviousObservationInput ->
     "Enter the day you mean by the previous observation. The TUI passes this context explicitly; it is never inferred from accounting evidence."
   ExplicitDayInput ->
-    "Enter the exact earlier day you want to compare. The domain keeps it inside the same cycle and never silently crosses a Period boundary."
+    "Enter the exact day you want to compare. It must stay inside the same cycle and may equal the current observation for an intentional zero-length comparison."
 
 -- | Keep picker-local list movement, temporal context entry, and selection
 -- inside the Report owner. Main only interprets the resulting application
