@@ -82,6 +82,7 @@ data HomeAction
   = HomeMaintain
   | HomeSelectDay Day
   | HomeRecord Day
+  | HomeObserveChange Day
   deriving (Eq, Show)
 
 -- | Handle only interaction local to the calendar surface. Application-shell
@@ -92,6 +93,7 @@ handleLocalEvent
   -> EventM Name AppContext HomeAction
 handleLocalEvent selectedDay event = case event of
   MouseDown (CalendarDay day) V.BLeft _ _ -> selectDay day
+  MouseDown (HomeChangeFrom day) V.BLeft _ _ -> pure (HomeObserveChange day)
   MouseDown HomeDayViewport V.BScrollUp _ _ -> do
     vScrollBy (viewportScroll HomeDayViewport) (-3)
     pure HomeMaintain
@@ -106,6 +108,7 @@ handleLocalEvent selectedDay event = case event of
   VtyEvent (V.EvKey (V.KChar 'T') []) -> today
   VtyEvent (V.EvKey (V.KChar 'r') []) -> pure (HomeRecord selectedDay)
   VtyEvent (V.EvKey (V.KChar 'R') []) -> pure (HomeRecord selectedDay)
+  VtyEvent (V.EvKey V.KEnter []) -> pure (HomeObserveChange selectedDay)
   _ -> pure HomeMaintain
   where
     selectDay day = do
@@ -123,6 +126,9 @@ draw context selectedDay =
   vBox
     [ responsiveWhen homeUsesStackedLayout compactLayout wideLayout
     , padTop (Pad 1) (drawLegend context)
+    , padTop (Pad 1)
+        (clickable (HomeChangeFrom selectedDay)
+          (strWrap "[Enter/click] Envelope change from selected day to observation"))
     , strWrap "[Arrows] Day   [t] Today   [r] Record   [1-7] Sections   [q] Quit"
     ]
   where
