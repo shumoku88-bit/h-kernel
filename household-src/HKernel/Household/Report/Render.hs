@@ -591,7 +591,7 @@ renderEnvelopeExplanation presentation explanation = T.intercalate "\n"
           Nothing
       ]
 
-    explanationRows :: EnvelopeExplanationLine -> [[TerminalCell]]
+    explanationRows :: EnvelopeExplanationLine -> [[Cell]]
     explanationRows line =
       [ [plainCell "Entitlement", signedBalanceCellWith presentation
           (envelopeExplanationEntitlement line)]
