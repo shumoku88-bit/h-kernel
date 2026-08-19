@@ -11,6 +11,7 @@ import HKernel.Editor.TUI.Model
   ( AppContext(..)
   , makeWorkspaceContext
   )
+import HKernel.Editor.TUI.Shell (shellUsesStackedLayout)
 import HKernel.Editor.TUI.SourcePreview (sourcePreviewText)
 import HKernel.Household.Application
   ( HouseholdWriteSnapshot(..)
@@ -46,6 +47,10 @@ main = do
         , ("Home stacks roomier calendar at 80 columns", homeUsesStackedLayout 80)
         , ("Home becomes side-by-side at 87 columns", not (homeUsesStackedLayout 87))
         , ("Home remains side-by-side at 120 columns", not (homeUsesStackedLayout 120))
+        , ("production shell stacks at 60 columns", shellUsesStackedLayout 60)
+        , ("production shell stacks at 80 columns", shellUsesStackedLayout 80)
+        , ("production shell becomes side-by-side at 87 columns", not (shellUsesStackedLayout 87))
+        , ("production shell remains side-by-side at 120 columns", not (shellUsesStackedLayout 120))
         , ("Household surface survives narrow Planned Transactions failure", availabilitySurfaceAvailable)
         , ("Planned Transactions alone records local unavailability", availabilityPlannedUnavailable)
         , ("full renderer keeps Daily Target and Envelope beside unavailable Plans", availabilityRendererKeepsIndependentSections)
