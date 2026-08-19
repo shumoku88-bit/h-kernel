@@ -64,6 +64,7 @@ import HKernel.Editor.TUI.Model
   , contextHouseholdState
   , reloadWorkspaceContext
   )
+import HKernel.Editor.TUI.Scroll qualified as Scroll
 import HKernel.Household.Application
   ( HouseholdState(..)
   , loadCanonicalHousehold
@@ -279,7 +280,7 @@ drawWorkspace context =
               , vBox (map renderEnvelopeDef
                   (currentEnvelopePolicyDefinitions (householdStateEnvelopePolicy state)))
               ])))
-    , strWrap "[Enter/M] New transfer   [1-7] Sections   [q] Quit"
+    , strWrap "[Enter/M] New transfer   [wheel] Scroll"
     ]
   where
     state = contextHouseholdState context
@@ -297,17 +298,14 @@ renderEnvelopeDef definition =
 handleWorkspaceEvent
   :: BrickEvent Name AppEvent
   -> EventM Name s WorkspaceAction
-handleWorkspaceEvent event = case event of
-  MouseDown EntitlementViewport V.BScrollUp _ _ -> do
-    vScrollBy (viewportScroll EntitlementViewport) (-3)
-    pure WorkspaceMaintain
-  MouseDown EntitlementViewport V.BScrollDown _ _ -> do
-    vScrollBy (viewportScroll EntitlementViewport) 3
-    pure WorkspaceMaintain
-  VtyEvent (V.EvKey V.KEnter []) -> pure WorkspaceStartTransfer
-  VtyEvent (V.EvKey (V.KChar 'm') []) -> pure WorkspaceStartTransfer
-  VtyEvent (V.EvKey (V.KChar 'M') []) -> pure WorkspaceStartTransfer
-  _ -> pure WorkspaceMaintain
+handleWorkspaceEvent event =
+  case Scroll.viewportWheelHandler EntitlementViewport Scroll.VerticalOnly event of
+    Just scroll -> scroll >> pure WorkspaceMaintain
+    Nothing -> case event of
+      VtyEvent (V.EvKey V.KEnter []) -> pure WorkspaceStartTransfer
+      VtyEvent (V.EvKey (V.KChar 'm') []) -> pure WorkspaceStartTransfer
+      VtyEvent (V.EvKey (V.KChar 'M') []) -> pure WorkspaceStartTransfer
+      _ -> pure WorkspaceMaintain
 
 showText :: Show value => value -> Text
 showText = T.pack . show
