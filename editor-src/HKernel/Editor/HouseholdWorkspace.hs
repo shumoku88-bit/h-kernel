@@ -17,6 +17,11 @@ module HKernel.Editor.HouseholdWorkspace
   , publishIssueRealizeFromObservedSources
   , publishIssueRealizeFromObservedSourcesUsing
   , IssueRealizeWriteError(..)
+  , HomeActualObservation(..)
+  , homeActualObservationOn
+  , HomeIssueObservationError(..)
+  , HomeIssueObservation(..)
+  , homeIssueObservationOn
   , homeActualTransactionsOn
   , homeCycleEndDay
   , homeIssuesDueOn
@@ -30,6 +35,8 @@ module HKernel.Editor.HouseholdWorkspace
   ) where
 
 import Data.List (sortOn)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Set as Set
 import Data.Time.Calendar (Day, addDays, toModifiedJulianDay)
 
@@ -67,9 +74,13 @@ import HKernel.Household.Cycle
   )
 import HKernel.HouseholdIssue
   ( HouseholdIssue
+  , IssueClosed(..)
   , IssueDue(..)
+  , IssueId
   , IssueStatus(..)
+  , householdIssueClosed
   , householdIssueDue
+  , householdIssueId
   , householdIssueRecordedOn
   , householdIssueStatus
   )
@@ -177,7 +188,84 @@ visibleWith visibility issue = case visibility of
   ClosedIssueFilter -> householdIssueStatus issue /= Open
   AllIssueFilter -> True
 
+-- | Selected-day Actual knowledge at one explicit observation horizon.
+--
+-- A future focus coordinate is not an empty Actual day: it is unavailable from
+-- the earlier knowledge horizon even when the admitted source already contains
+-- future-dated transactions. This keeps source contents from leaking across the
+-- observation boundary while preserving available-empty as a distinct result.
+data HomeActualObservation
+  = HomeActualAvailable [Transaction]
+  | HomeActualUnavailable
+  deriving (Eq, Show)
+
+homeActualObservationOn
+  :: Day
+  -> Day
+  -> ActualJournal
+  -> HomeActualObservation
+homeActualObservationOn observedThrough selectedDay actualJournal
+  | selectedDay > observedThrough = HomeActualUnavailable
+  | otherwise = HomeActualAvailable
+      (homeActualTransactionsOn selectedDay actualJournal)
+
+-- | An older closed Issue without closure-time evidence cannot answer whether
+-- it was still open at an earlier observation horizon.
+data HomeIssueObservationError
+  = HomeIssueClosureUndetermined IssueId
+  deriving (Eq, Show)
+
+-- | Due-Issue knowledge for one selected day at one observation horizon.
+-- Empty and unavailable remain distinct: an invisible future-recorded Issue is
+-- simply absent, while a relevant historical Issue with unknown closure time
+-- makes the due projection unavailable rather than being guessed open/closed.
+data HomeIssueObservation
+  = HomeIssueAvailable [HouseholdIssue]
+  | HomeIssueUnavailable (NonEmpty HomeIssueObservationError)
+  deriving (Eq, Show)
+
+homeIssueObservationOn
+  :: Day
+  -> Day
+  -> [HouseholdIssue]
+  -> HomeIssueObservation
+homeIssueObservationOn observedThrough selectedDay issues =
+  case NonEmpty.nonEmpty uncertain of
+    Just errors -> HomeIssueUnavailable errors
+    Nothing -> HomeIssueAvailable
+      [ issue
+      | issue <- relevant
+      , issueKnownOpenAt observedThrough issue
+      ]
+  where
+    relevant =
+      [ issue
+      | issue <- issues
+      , householdIssueRecordedOn issue <= observedThrough
+      , householdIssueDue issue == DueOn selectedDay
+      ]
+    uncertain =
+      [ HomeIssueClosureUndetermined (householdIssueId issue)
+      | issue <- relevant
+      , householdIssueStatus issue /= Open
+      , householdIssueClosed issue == ClosedUndetermined
+      ]
+
+issueKnownOpenAt :: Day -> HouseholdIssue -> Bool
+issueKnownOpenAt observedThrough issue = case householdIssueStatus issue of
+  Open -> True
+  Resolved -> closedAfterObservation
+  Dropped -> closedAfterObservation
+  where
+    closedAfterObservation = case householdIssueClosed issue of
+      ClosedOn day -> day > observedThrough
+      NotClosed -> False
+      ClosedUndetermined -> False
+
 -- | Day-local Actual facts for calendar/detail deliveries.
+--
+-- This compatibility projection has no knowledge-horizon coordinate. New Home
+-- observation code should use 'homeActualObservationOn'.
 homeActualTransactionsOn :: Day -> ActualJournal -> [Transaction]
 homeActualTransactionsOn selectedDay actualJournal =
   [ transaction
@@ -201,6 +289,10 @@ homePlannedTransactionsOn selectedDay plans =
 
 -- | Open Issues due on one day. Closed history remains available through the
 -- canonical Issue source and explicit workspace filters.
+--
+-- This compatibility projection reads current lifecycle state only. New Home
+-- observation code should use 'homeIssueObservationOn' when an observation
+-- horizon matters.
 homeIssuesDueOn :: Day -> [HouseholdIssue] -> [HouseholdIssue]
 homeIssuesDueOn selectedDay issues =
   [ issue
