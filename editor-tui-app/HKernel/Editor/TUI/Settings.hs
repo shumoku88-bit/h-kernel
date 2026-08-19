@@ -9,7 +9,6 @@ module HKernel.Editor.TUI.Settings
 
 import Brick
 import Brick.Widgets.Border
-import qualified Graphics.Vty as V
 
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -21,6 +20,7 @@ import HKernel.Editor.TUI.Model
   , Name(..)
   , contextHouseholdState
   )
+import HKernel.Editor.TUI.Scroll qualified as Scroll
 import HKernel.Household.Application (HouseholdState(..))
 import HKernel.Household.Policy
   ( householdCycleIncomeAccount
@@ -65,9 +65,7 @@ drawWorkspace context =
 handleWorkspaceEvent
   :: BrickEvent Name AppEvent
   -> EventM Name s ()
-handleWorkspaceEvent event = case event of
-  MouseDown SettingsViewport V.BScrollUp _ _ ->
-    vScrollBy (viewportScroll SettingsViewport) (-3)
-  MouseDown SettingsViewport V.BScrollDown _ _ ->
-    vScrollBy (viewportScroll SettingsViewport) 3
-  _ -> pure ()
+handleWorkspaceEvent event =
+  case Scroll.viewportWheelHandler SettingsViewport Scroll.VerticalOnly event of
+    Just scroll -> scroll
+    Nothing -> pure ()
