@@ -21,6 +21,7 @@ import HKernel.Editor.TUI.Model
   , Name(..)
   , contextPlanListL
   )
+import HKernel.Editor.TUI.Scroll qualified as Scroll
 import HKernel.Ledger
   ( Posting
   , postingAccount
@@ -59,39 +60,37 @@ drawWorkspace context =
           (L.renderList renderPlanItem True (contextPlanList context)))
     , borderWithLabel (str "Selected Plan")
         (padAll 1 (renderSelectedPlan context))
-    , strWrap "[j/k/Arrows] Move   [Enter/C] Complete & Advance   [A] Add   [E] Edit"
+    , strWrap "[j/k/Arrows/wheel] Move   [Enter/C] Complete & Advance   [A] Add   [E] Edit"
     , strWrap "[X] Cancel   [R] Replace"
     ]
 
 handleWorkspaceEvent
   :: BrickEvent Name AppEvent
   -> EventM Name AppContext WorkspaceAction
-handleWorkspaceEvent event = case event of
-  MouseDown PlanList V.BScrollUp _ _ -> do
-    zoom contextPlanListL (L.handleListEvent (V.EvKey V.KUp []))
+handleWorkspaceEvent event = case Scroll.listWheelEvent PlanList event of
+  Just wheelEvent -> do
+    zoom contextPlanListL (L.handleListEvent wheelEvent)
     pure MaintainContext
-  MouseDown PlanList V.BScrollDown _ _ -> do
-    zoom contextPlanListL (L.handleListEvent (V.EvKey V.KDown []))
-    pure MaintainContext
-  MouseDown PlanList V.BLeft _ (Location (_, row)) -> do
-    zoom contextPlanListL (modify (L.listMoveTo row))
-    pure MaintainContext
-  VtyEvent (V.EvKey (V.KChar 'a') []) -> pure OpenAdd
-  VtyEvent (V.EvKey (V.KChar 'A') []) -> pure OpenAdd
-  VtyEvent (V.EvKey (V.KChar 'e') []) -> pure OpenEdit
-  VtyEvent (V.EvKey (V.KChar 'E') []) -> pure OpenEdit
-  VtyEvent (V.EvKey (V.KChar 'x') []) -> pure OpenCancel
-  VtyEvent (V.EvKey (V.KChar 'X') []) -> pure OpenCancel
-  VtyEvent (V.EvKey (V.KChar 'r') []) -> pure OpenReplace
-  VtyEvent (V.EvKey (V.KChar 'R') []) -> pure OpenReplace
-  VtyEvent (V.EvKey V.KEnter []) -> pure OpenCompletion
-  VtyEvent (V.EvKey (V.KChar 'c') []) -> pure OpenCompletion
-  VtyEvent (V.EvKey (V.KChar 'C') []) -> pure OpenCompletion
-  VtyEvent (V.EvKey vtyKey vtyMods) -> do
-    zoom contextPlanListL
-      (L.handleListEventVi L.handleListEvent (V.EvKey vtyKey vtyMods))
-    pure MaintainContext
-  _ -> pure MaintainContext
+  Nothing -> case event of
+    MouseDown PlanList V.BLeft _ (Location (_, row)) -> do
+      zoom contextPlanListL (modify (L.listMoveTo row))
+      pure MaintainContext
+    VtyEvent (V.EvKey (V.KChar 'a') []) -> pure OpenAdd
+    VtyEvent (V.EvKey (V.KChar 'A') []) -> pure OpenAdd
+    VtyEvent (V.EvKey (V.KChar 'e') []) -> pure OpenEdit
+    VtyEvent (V.EvKey (V.KChar 'E') []) -> pure OpenEdit
+    VtyEvent (V.EvKey (V.KChar 'x') []) -> pure OpenCancel
+    VtyEvent (V.EvKey (V.KChar 'X') []) -> pure OpenCancel
+    VtyEvent (V.EvKey (V.KChar 'r') []) -> pure OpenReplace
+    VtyEvent (V.EvKey (V.KChar 'R') []) -> pure OpenReplace
+    VtyEvent (V.EvKey V.KEnter []) -> pure OpenCompletion
+    VtyEvent (V.EvKey (V.KChar 'c') []) -> pure OpenCompletion
+    VtyEvent (V.EvKey (V.KChar 'C') []) -> pure OpenCompletion
+    VtyEvent (V.EvKey vtyKey vtyMods) -> do
+      zoom contextPlanListL
+        (L.handleListEventVi L.handleListEvent (V.EvKey vtyKey vtyMods))
+      pure MaintainContext
+    _ -> pure MaintainContext
 
 renderPlanItem :: Bool -> IdentifiedPlanTransaction -> Widget Name
 renderPlanItem selected identified
