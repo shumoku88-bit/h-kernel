@@ -130,7 +130,7 @@ requireConciergeHouseholdDirectory = do
   case configured of
     Just directory -> pure directory
     Nothing -> dieText
-      "concierge Household root is not configured; use tools/concierge --base DIR, HKERNEL_LEDGER_DATA_DIR, or ledger-data.local"
+      "concierge Household root is not configured; use tools/hk --base DIR, HKERNEL_LEDGER_DATA_DIR, or ledger-data.local"
 
 stableConciergeObservation :: Day -> FilePath -> IO ConciergeObservation
 stableConciergeObservation today directory = do
@@ -225,7 +225,7 @@ renderConciergeObservation command observation = do
     "overview" ->
       header "OVERVIEW"
         <> "evidence_level: canonical-report\n"
-        <> "next: use `tools/concierge export` only when exact root-source evidence is needed\n"
+        <> "next: use `tools/hk concierge export` only when exact root-source evidence is needed\n"
         <> reportBlock
     "export" ->
       header "EVIDENCE"
@@ -517,3 +517,113 @@ runDefaultJournalReportBook latest journal configuration = do
   TIO.putStr
     (renderReportBookWithPresentation
       presentation (reportBookWithPlan resolvedPlan journal))
+
+resolveReportConfigPath :: Maybe FilePath -> IO (Maybe FilePath)
+resolveReportConfigPath householdDirectory = do
+  configured <- lookupEnv "HKERNEL_REPORT_CONFIG"
+  case configured of
+    Just path -> pure (Just path)
+    Nothing -> do
+      householdPath <- case householdDirectory of
+        Nothing -> pure Nothing
+        Just directory -> existingHouseholdReportConfigPath directory
+      case householdPath of
+        Just path -> pure (Just path)
+        Nothing -> do
+          exists <- doesFileExist defaultReportConfigPath
+          pure (if exists then Just defaultReportConfigPath else Nothing)
+
+existingHouseholdReportConfigPath :: FilePath -> IO (Maybe FilePath)
+existingHouseholdReportConfigPath directory =
+  case mkHouseholdRoot directory of
+    Left _ -> pure Nothing
+    Right root -> do
+      let path = householdReportConfigPath (householdSourcePaths root)
+      exists <- doesFileExist path
+      pure (if exists then Just path else Nothing)
+
+defaultReportConfigPath :: FilePath
+defaultReportConfigPath = "report.toml"
+
+resolveConfiguredLedgerDataDirectory :: IO (Maybe FilePath)
+resolveConfiguredLedgerDataDirectory = do
+  configured <- lookupEnv "HKERNEL_LEDGER_DATA_DIR"
+  case configured of
+    Just path -> pure (Just path)
+    Nothing -> do
+      exists <- doesFileExist ledgerDataLocalPath
+      if not exists
+        then pure Nothing
+        else do
+          result <- tryIOError (TIO.readFile ledgerDataLocalPath)
+          case result of
+            Left err -> dieText
+              ("cannot read local ledger-data configuration: " <> tshow err)
+            Right value
+              | T.null (T.strip value) -> dieText
+                  "ledger-data.local must contain a ledger data directory path"
+              | otherwise -> pure (Just (T.unpack (T.strip value)))
+
+ledgerDataLocalPath :: FilePath
+ledgerDataLocalPath = "ledger-data.local"
+
+renderReportPlanError :: ReportPlanError -> Text
+renderReportPlanError errorValue = case errorValue of
+  InvalidReportRange reportName start end ->
+    "invalid " <> reportName <> " range: start " <> tshow start
+      <> " is after end " <> tshow end
+  CurrentCycleContextRequired reportName ->
+    reportName
+      <> " range current-cycle-to-date requires canonical Household cycle context"
+  CurrentCycleObservationOutsidePeriod reportName observation ->
+    reportName <> " current-cycle-to-date observation " <> tshow observation
+      <> " is outside the resolved current cycle"
+
+executeWithPresentation
+  :: PresentationConfig
+  -> JournalCommand
+  -> Journal
+  -> Text
+executeWithPresentation presentation command journal = case command of
+  Check ->
+    "Journal is valid: "
+      <> tshow (length (journalTransactions journal))
+      <> " transactions\n"
+  RunDefaultReportBook day ->
+    renderReportBookWithPresentation
+      presentation (reportBookAsOf day journal)
+  RunReportBook dateRange ->
+    renderReportBookWithPresentation
+      presentation (reportBook dateRange journal)
+  RunTrialBalance _ day ->
+    renderTrialBalanceWithPresentation
+      presentation (trialBalanceAsOf day journal)
+  RunBalanceSheet _ day ->
+    renderBalanceSheetWithPresentation
+      presentation (balanceSheetAsOf day journal)
+  RunProfitAndLoss _ dateRange ->
+    renderProfitAndLossWithPresentation
+      presentation (profitAndLoss dateRange journal)
+  RunDailyFlow _ dateRange ->
+    renderDailyFlowWithPresentation
+      presentation (dailyFlow dateRange journal)
+  RunMonthlyAccounts _ dateRange ->
+    renderMonthlyAccountsWithPresentation
+      presentation (monthlyAccounts dateRange journal)
+  RunRecentTransactions _ day ->
+    renderRecentTransactionsWithPresentation presentation
+      (recentTransactions defaultRecentCount day journal)
+  RunCycleAccounts current previous ->
+    renderCycleAccountsWithPresentation presentation
+      (cycleAccounts current previous journal)
+
+dieWithUsage :: Text -> IO value
+dieWithUsage message = dieText (message <> "\n\n" <> usage)
+
+dieText :: Text -> IO value
+dieText message = do
+  TIO.hPutStrLn stderr message
+  exitFailure
+
+tshow :: Show value => value -> Text
+tshow = T.pack . show
