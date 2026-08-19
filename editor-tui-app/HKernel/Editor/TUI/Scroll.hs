@@ -28,8 +28,9 @@ standardHorizontalWheelStep :: Int
 standardHorizontalWheelStep = 4
 
 -- | Translate mouse wheel input over one viewport into a Brick scroll action.
--- Shift-wheel is horizontal only for two-dimensional viewports. Keeping the
--- policy here prevents individual surfaces from growing their own wheel steps.
+-- Native horizontal wheel events are preferred when the terminal provides
+-- them. Shift-wheel remains a compatibility path for terminals that encode
+-- horizontal intent as modified vertical wheel input.
 viewportWheelHandler
   :: Ord name
   => name
@@ -37,14 +38,20 @@ viewportWheelHandler
   -> BrickEvent name event
   -> Maybe (EventM name state ())
 viewportWheelHandler target axes event = case event of
+  MouseDown name V.BScrollLeft _ _
+    | name == target && axes == VerticalAndHorizontal ->
+        Just (hScrollBy scroller (-standardHorizontalWheelStep))
+  MouseDown name V.BScrollRight _ _
+    | name == target && axes == VerticalAndHorizontal ->
+        Just (hScrollBy scroller standardHorizontalWheelStep)
   MouseDown name V.BScrollUp modifiers _
-    | name == target -> Just (scroll (-1) modifiers)
+    | name == target -> Just (scrollVerticalOrShiftHorizontal (-1) modifiers)
   MouseDown name V.BScrollDown modifiers _
-    | name == target -> Just (scroll 1 modifiers)
+    | name == target -> Just (scrollVerticalOrShiftHorizontal 1 modifiers)
   _ -> Nothing
   where
     scroller = viewportScroll target
-    scroll direction modifiers
+    scrollVerticalOrShiftHorizontal direction modifiers
       | axes == VerticalAndHorizontal && V.MShift `elem` modifiers =
           hScrollBy scroller (direction * standardHorizontalWheelStep)
       | otherwise =
