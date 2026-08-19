@@ -148,7 +148,7 @@ main = do
     '?'
     (calendarMarkerValue (calendarIssueDueMarker partialCalendarMarkers))
   assertEqual "unconfigured calendar roles retain defaults"
-    ('$', '|', '+')
+    ('.', '|', '*')
     ( calendarMarkerValue (calendarPlanDueMarker partialCalendarMarkers)
     , calendarMarkerValue (calendarCycleEndMarker partialCalendarMarkers)
     , calendarMarkerValue (calendarMultipleMarker partialCalendarMarkers)
@@ -161,7 +161,7 @@ main = do
         (reportConfigurationPresentation legacyConfiguration)
       legacyRendered = renderReportConfiguration legacyConfiguration
   assertEqual "legacy nested calendar markers remain readable during migration"
-    ('^', '!', '|', '+')
+    ('^', '!', '|', '*')
     ( calendarMarkerValue (calendarPlanDueMarker legacyMarkers)
     , calendarMarkerValue (calendarIssueDueMarker legacyMarkers)
     , calendarMarkerValue (calendarCycleEndMarker legacyMarkers)
@@ -169,7 +169,7 @@ main = do
     )
   assertEqual "legacy input is canonically rendered into the shared direct shape"
     True
-    ("multiple-marker = \"+\"" `T.isInfixOf` legacyRendered)
+    ("multiple-marker = \"*\"" `T.isInfixOf` legacyRendered)
   assertLeft "legacy and direct calendar shapes cannot be mixed"
     (parseReportConfiguration
       (T.replace calendarMarkersTable mixedCalendarMarkersTable validConfig))
@@ -255,7 +255,8 @@ main = do
 
 characterizeCurrentCycleRange :: Journal -> Day -> IO ()
 characterizeCurrentCycleRange journal latest = do
-  let configuration = mustRight (parseReportConfiguration currentCycleConfig)
+  let configuration = mustRight
+        (parseReportConfiguration currentCycleConfig)
       plan = reportConfigurationPlan configuration
       period = mustRight
         (mkPeriod (fromGregorian 2026 7 15) (fromGregorian 2026 8 15))
@@ -479,7 +480,7 @@ journalInput = T.unlines
 assertCalendarDefaults :: String -> CalendarMarkers -> IO ()
 assertCalendarDefaults label markers =
   assertEqual label
-    ('$', '!', '|', '+')
+    ('.', '!', '|', '*')
     ( calendarMarkerValue (calendarPlanDueMarker markers)
     , calendarMarkerValue (calendarIssueDueMarker markers)
     , calendarMarkerValue (calendarCycleEndMarker markers)
