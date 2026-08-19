@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+CABAL=${HKERNEL_CABAL:-cabal}
+BASE_DIR=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --base)
+      [ "$#" -ge 2 ] || { printf 'error: --base requires a directory path argument\n' >&2; exit 2; }
+      BASE_DIR=$2
+      shift 2
+      ;;
+    --base=*) BASE_DIR=${1#--base=}; shift ;;
+    *) printf 'error: tools/check-household accepts only --base DIR\n' >&2; exit 2 ;;
+  esac
+done
+
+if [ -n "$BASE_DIR" ]; then
+  data_dir=$BASE_DIR
+elif [ -n "${HKERNEL_LEDGER_DATA_DIR:-}" ]; then
+  data_dir=$HKERNEL_LEDGER_DATA_DIR
+elif [ -f "$ROOT/ledger-data.local" ]; then
+  data_dir=$(awk 'NF { print; exit }' "$ROOT/ledger-data.local")
+else
+  printf 'error: Household root not configured. Specify --base DIR, set HKERNEL_LEDGER_DATA_DIR, or create ledger-data.local\n' >&2
+  exit 2
+fi
+
+cd "$ROOT"
+export HKERNEL_LEDGER_DATA_DIR="$data_dir"
+exec "$CABAL" run exe:h-kernel -- all >/dev/null

@@ -1,0 +1,88 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT"
+
+printf 'cabal-components\n'
+awk '
+  function trim(value) {
+    sub(/^[ \t]+/, "", value)
+    sub(/[ \t]+$/, "", value)
+    return value
+  }
+  function start_component(kind, name) {
+    current_kind = kind
+    current_name = name
+    field = ""
+    printf "%s %s\n", kind, name
+  }
+  function emit(label, value) {
+    value = trim(value)
+    sub(/^,[ \t]*/, "", value)
+    if (value != "") printf "  %s %s\n", label, value
+  }
+  /^[^ \t]/ {
+    field = ""
+    if ($1 == "library") {
+      name = $2
+      if (name == "") name = "h-kernel"
+      start_component("library", name)
+    } else if ($1 == "executable") {
+      start_component("executable", $2)
+    } else if ($1 == "test-suite") {
+      start_component("test-suite", $2)
+    } else {
+      current_kind = ""
+      current_name = ""
+    }
+    next
+  }
+  current_kind != "" && /^[ \t]+[A-Za-z0-9-]+:/ {
+    line = $0
+    sub(/^[ \t]+/, "", line)
+    key = line
+    sub(/:.*/, "", key)
+    value = line
+    sub(/^[^:]+:[ \t]*/, "", value)
+    field = ""
+    if (key == "exposed-modules" && current_kind == "library") {
+      field = "public"
+      emit(field, value)
+    } else if (key == "other-modules") {
+      field = "internal"
+      emit(field, value)
+    } else if (key == "hs-source-dirs") {
+      field = "source"
+      emit(field, value)
+    } else if (key == "main-is") {
+      field = "main"
+      emit(field, value)
+    }
+    next
+  }
+  current_kind != "" && field != "" && /^[ \t]+,/ {
+    emit(field, $0)
+    next
+  }
+' h-kernel.cabal
+
+printf '\nactive-documents\n'
+awk '
+  /^\[\[documents\]\]/ { path = ""; role = ""; next }
+  /^path[ \t]*=[ \t]*"/ {
+    value = $0
+    sub(/^path[ \t]*=[ \t]*"/, "", value)
+    sub(/"[ \t]*$/, "", value)
+    path = value
+    next
+  }
+  /^role[ \t]*=[ \t]*"/ {
+    value = $0
+    sub(/^role[ \t]*=[ \t]*"/, "", value)
+    sub(/"[ \t]*$/, "", value)
+    role = value
+    if (path != "") printf "  %s %s\n", role, path
+    next
+  }
+' docs/INDEX.toml
