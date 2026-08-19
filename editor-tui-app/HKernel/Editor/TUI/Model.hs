@@ -7,10 +7,12 @@ module HKernel.Editor.TUI.Model
   , WorkspaceFocus(..)
   , contextAccountsSource
   , contextEntitlementSource
+  , contextHouseholdCycleObservation
   , contextHouseholdState
   , contextIssueCounts
   , contextIssueListL
   , contextIssuesSource
+  , contextOpenPlanObservation
   , contextPlanListL
   , contextPlanSource
   , contextSource
@@ -36,6 +38,7 @@ import HKernel.Editor.HouseholdWorkspace
   , issuesForWorkspace
   , workspaceAccounts
   , workspaceIssueCounts
+  , workspaceOpenPlanObservationAt
   , workspaceReportBookAt
   , workspaceTransactions
   )
@@ -59,10 +62,7 @@ import HKernel.Household.Report.Render (HouseholdReportSection)
 import HKernel.HouseholdIssue (HouseholdIssue)
 import HKernel.Ledger (Transaction)
 import HKernel.Plan.Journal (IdentifiedPlanTransaction)
-import HKernel.Plan.Open
-  ( PlanObservationError
-  , resolveOpenPlanTransactionsAt
-  )
+import HKernel.Plan.Open (PlanObservationError)
 import HKernel.Report (ReportBook)
 import HKernel.Report.Plan (ReportPlanError)
 
@@ -167,8 +167,6 @@ data AppContext = AppContext
   , contextSelectedReport             :: ReportChoice
   , contextObservationDay             :: Day
   , contextResolvedReportBook         :: Either ReportPlanError ReportBook
-  , contextHouseholdCycleObservation  :: Either (NonEmpty HouseholdCycleError) HouseholdCycleObservation
-  , contextOpenPlanObservation        :: Either (NonEmpty PlanObservationError) [IdentifiedPlanTransaction]
   , contextHouseholdReportSurface     :: Either (NonEmpty HouseholdLoadError) HouseholdReportSurface
   , contextEntryDay                   :: Day
   , contextWorkspaceAccounts          :: L.List Name (Maybe Account)
@@ -183,6 +181,33 @@ type AppEvent = ()
 
 contextHouseholdState :: AppContext -> HouseholdState
 contextHouseholdState = householdWriteSnapshotState . contextHouseholdSnapshot
+
+-- | Lightweight temporal observations are derived from the admitted Household
+-- and the explicit observation coordinate instead of being cached beside UI
+-- state. This keeps one semantic owner and prevents stale duplicate values when
+-- the context is projected differently by the shell.
+contextHouseholdCycleObservation
+  :: AppContext
+  -> Either (NonEmpty HouseholdCycleError) HouseholdCycleObservation
+contextHouseholdCycleObservation context =
+  observeHouseholdCycle
+    (contextObservationDay context)
+    (householdStateActualJournal state)
+    (householdStatePlanJournal state)
+    (householdPolicyCycle (householdStatePolicy state))
+  where
+    state = contextHouseholdState context
+
+contextOpenPlanObservation
+  :: AppContext
+  -> Either (NonEmpty PlanObservationError) [IdentifiedPlanTransaction]
+contextOpenPlanObservation context =
+  workspaceOpenPlanObservationAt
+    (contextObservationDay context)
+    (householdStatePlanJournal state)
+    (householdStateActualJournal state)
+  where
+    state = contextHouseholdState context
 
 contextAccountsSource :: AppContext -> Text
 contextAccountsSource = householdWriteSnapshotAccountsSource . contextHouseholdSnapshot
@@ -215,8 +240,6 @@ makeWorkspaceContext today snapshot =
     , contextObservationDay = today
     , contextResolvedReportBook =
         workspaceReportBookAt today actualJournal currentCycle reportConfig
-    , contextHouseholdCycleObservation = cycleObservation
-    , contextOpenPlanObservation = openPlanObservation
     , contextHouseholdReportSurface = householdSurface
     , contextEntryDay = today
     , contextWorkspaceAccounts = L.list WorkspaceAccountList
@@ -242,7 +265,7 @@ makeWorkspaceContext today snapshot =
       actualJournal
       planJournal
       (householdPolicyCycle (householdStatePolicy state))
-    openPlanObservation = resolveOpenPlanTransactionsAt today planJournal actualJournal
+    openPlanObservation = workspaceOpenPlanObservationAt today planJournal actualJournal
     openPlans = either (const []) id openPlanObservation
     householdSurface = buildHouseholdReportSurfaceFromHousehold today state
     currentCycle = either
