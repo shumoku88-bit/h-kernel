@@ -40,6 +40,7 @@ import HKernel.Editor.TUI.Model
   , contextWorkspaceAccountsL
   , contextWorkspaceListL
   )
+import HKernel.Editor.TUI.Scroll qualified as Scroll
 import HKernel.Household.Application (HouseholdState(..))
 import HKernel.Ledger
   ( Posting
@@ -91,7 +92,7 @@ drawWorkspace context =
         (padAll 1 (renderWorkspaceSelection context))
     , txtWrap ("Filter: " <> workspaceFilterText context)
     , vBox
-        [ txtWrap "Navigate: [Left/Right] Pane  [j/k/Arrows] Move"
+        [ txtWrap "Navigate: [Left/Right] Pane  [j/k/Arrows/wheel] Move"
         , txtWrap "Record:   [a] Expense  [i] Income  [r] General transaction"
         , txtWrap ("Observe:  " <> workspaceReconcileHint context)
         , txtWrap "Action:   [Enter] Reverse selected"
@@ -101,52 +102,50 @@ drawWorkspace context =
 handleWorkspaceEvent
   :: BrickEvent Name AppEvent
   -> EventM Name AppContext WorkspaceAction
-handleWorkspaceEvent event = case event of
-  MouseDown WorkspaceAccountList V.BScrollUp _ _ ->
-    selectAccountEvent (V.EvKey V.KUp [])
-  MouseDown WorkspaceAccountList V.BScrollDown _ _ ->
-    selectAccountEvent (V.EvKey V.KDown [])
-  MouseDown WorkspaceAccountList V.BLeft _ (Location (_, row)) -> do
-    zoom contextWorkspaceAccountsL (modify (L.listMoveTo row))
-    modify (\ctx -> applyWorkspaceAccountFilter
-      (ctx { contextWorkspaceFocus = AccountsFocus }))
-    pure MaintainContext
-  MouseDown WorkspaceTransactionList V.BScrollUp _ _ ->
-    selectTransactionEvent (V.EvKey V.KUp [])
-  MouseDown WorkspaceTransactionList V.BScrollDown _ _ ->
-    selectTransactionEvent (V.EvKey V.KDown [])
-  MouseDown WorkspaceTransactionList V.BLeft _ (Location (_, row)) -> do
-    zoom contextWorkspaceListL (modify (L.listMoveTo row))
-    modify (\ctx -> ctx { contextWorkspaceFocus = TransactionsFocus })
-    pure MaintainContext
-  VtyEvent (V.EvKey (V.KChar 'a') []) -> pure OpenDaily
-  VtyEvent (V.EvKey (V.KChar 'A') []) -> pure OpenDaily
-  VtyEvent (V.EvKey (V.KChar 'i') []) -> pure OpenIncome
-  VtyEvent (V.EvKey (V.KChar 'I') []) -> pure OpenIncome
-  VtyEvent (V.EvKey (V.KChar 'r') []) -> pure OpenRecord
-  VtyEvent (V.EvKey (V.KChar 'R') []) -> pure OpenRecord
-  VtyEvent (V.EvKey (V.KChar 'c') []) -> selectedReconcileAction
-  VtyEvent (V.EvKey (V.KChar 'C') []) -> selectedReconcileAction
-  VtyEvent (V.EvKey V.KEnter []) -> do
-    context <- get
-    if contextWorkspaceFocus context == AccountsFocus
-      then do
+handleWorkspaceEvent event =
+  case Scroll.listWheelEvent WorkspaceAccountList event of
+    Just wheelEvent -> selectAccountEvent wheelEvent
+    Nothing -> case Scroll.listWheelEvent WorkspaceTransactionList event of
+      Just wheelEvent -> selectTransactionEvent wheelEvent
+      Nothing -> handleNonWheel event
+  where
+    handleNonWheel currentEvent = case currentEvent of
+      MouseDown WorkspaceAccountList V.BLeft _ (Location (_, row)) -> do
+        zoom contextWorkspaceAccountsL (modify (L.listMoveTo row))
+        modify (\ctx -> applyWorkspaceAccountFilter
+          (ctx { contextWorkspaceFocus = AccountsFocus }))
+        pure MaintainContext
+      MouseDown WorkspaceTransactionList V.BLeft _ (Location (_, row)) -> do
+        zoom contextWorkspaceListL (modify (L.listMoveTo row))
         modify (\ctx -> ctx { contextWorkspaceFocus = TransactionsFocus })
         pure MaintainContext
-      else pure OpenReverse
-  VtyEvent (V.EvKey V.KLeft []) -> do
-    modify (\ctx -> ctx { contextWorkspaceFocus = AccountsFocus })
-    pure MaintainContext
-  VtyEvent (V.EvKey V.KRight []) -> do
-    modify (\ctx -> ctx { contextWorkspaceFocus = TransactionsFocus })
-    pure MaintainContext
-  VtyEvent (V.EvKey vtyKey vtyMods) -> do
-    context <- get
-    case contextWorkspaceFocus context of
-      AccountsFocus -> selectAccountEvent (V.EvKey vtyKey vtyMods)
-      TransactionsFocus -> selectTransactionEvent (V.EvKey vtyKey vtyMods)
-  _ -> pure MaintainContext
-  where
+      VtyEvent (V.EvKey (V.KChar 'a') []) -> pure OpenDaily
+      VtyEvent (V.EvKey (V.KChar 'A') []) -> pure OpenDaily
+      VtyEvent (V.EvKey (V.KChar 'i') []) -> pure OpenIncome
+      VtyEvent (V.EvKey (V.KChar 'I') []) -> pure OpenIncome
+      VtyEvent (V.EvKey (V.KChar 'r') []) -> pure OpenRecord
+      VtyEvent (V.EvKey (V.KChar 'R') []) -> pure OpenRecord
+      VtyEvent (V.EvKey (V.KChar 'c') []) -> selectedReconcileAction
+      VtyEvent (V.EvKey (V.KChar 'C') []) -> selectedReconcileAction
+      VtyEvent (V.EvKey V.KEnter []) -> do
+        context <- get
+        if contextWorkspaceFocus context == AccountsFocus
+          then do
+            modify (\ctx -> ctx { contextWorkspaceFocus = TransactionsFocus })
+            pure MaintainContext
+          else pure OpenReverse
+      VtyEvent (V.EvKey V.KLeft []) -> do
+        modify (\ctx -> ctx { contextWorkspaceFocus = AccountsFocus })
+        pure MaintainContext
+      VtyEvent (V.EvKey V.KRight []) -> do
+        modify (\ctx -> ctx { contextWorkspaceFocus = TransactionsFocus })
+        pure MaintainContext
+      VtyEvent (V.EvKey vtyKey vtyMods) -> do
+        context <- get
+        case contextWorkspaceFocus context of
+          AccountsFocus -> selectAccountEvent (V.EvKey vtyKey vtyMods)
+          TransactionsFocus -> selectTransactionEvent (V.EvKey vtyKey vtyMods)
+      _ -> pure MaintainContext
     selectedReconcileAction = do
       context <- get
       pure (maybe MaintainContext OpenReconcile (selectedWorkspaceAccount context))
