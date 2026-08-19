@@ -44,6 +44,7 @@ import HKernel.Editor.TUI.Model
   , Name(..)
   , contextHouseholdState
   )
+import HKernel.Editor.TUI.Scroll qualified as Scroll
 import HKernel.Household.Application (HouseholdState(..))
 import HKernel.HouseholdIssue
   ( HouseholdIssue
@@ -93,34 +94,32 @@ handleLocalEvent
   :: Day
   -> BrickEvent Name AppEvent
   -> EventM Name AppContext HomeAction
-handleLocalEvent selectedDay event = case event of
-  MouseDown (CalendarDay day) V.BLeft _ _ -> selectDay day
-  MouseDown (HomeChangeFrom day) V.BLeft _ _ -> pure (HomeObserveChange day)
-  MouseDown HomeDayViewport V.BScrollUp _ _ -> do
-    vScrollBy (viewportScroll HomeDayViewport) (-3)
-    pure HomeMaintain
-  MouseDown HomeDayViewport V.BScrollDown _ _ -> do
-    vScrollBy (viewportScroll HomeDayViewport) 3
-    pure HomeMaintain
-  VtyEvent (V.EvKey V.KLeft []) -> selectDay (addDays (-1) selectedDay)
-  VtyEvent (V.EvKey V.KRight []) -> selectDay (addDays 1 selectedDay)
-  VtyEvent (V.EvKey V.KUp []) -> selectDay (addDays (-7) selectedDay)
-  VtyEvent (V.EvKey V.KDown []) -> selectDay (addDays 7 selectedDay)
-  VtyEvent (V.EvKey (V.KChar 'h') []) -> selectDay (addDays (-1) selectedDay)
-  VtyEvent (V.EvKey (V.KChar 'H') []) -> selectDay (addDays (-1) selectedDay)
-  VtyEvent (V.EvKey (V.KChar 'l') []) -> selectDay (addDays 1 selectedDay)
-  VtyEvent (V.EvKey (V.KChar 'L') []) -> selectDay (addDays 1 selectedDay)
-  VtyEvent (V.EvKey (V.KChar 'k') []) -> selectDay (addDays (-7) selectedDay)
-  VtyEvent (V.EvKey (V.KChar 'K') []) -> selectDay (addDays (-7) selectedDay)
-  VtyEvent (V.EvKey (V.KChar 'j') []) -> selectDay (addDays 7 selectedDay)
-  VtyEvent (V.EvKey (V.KChar 'J') []) -> selectDay (addDays 7 selectedDay)
-  VtyEvent (V.EvKey (V.KChar 't') []) -> today
-  VtyEvent (V.EvKey (V.KChar 'T') []) -> today
-  VtyEvent (V.EvKey (V.KChar 'r') []) -> pure (HomeRecord selectedDay)
-  VtyEvent (V.EvKey (V.KChar 'R') []) -> pure (HomeRecord selectedDay)
-  VtyEvent (V.EvKey V.KEnter []) -> pure (HomeObserveChange selectedDay)
-  _ -> pure HomeMaintain
+handleLocalEvent selectedDay event =
+  case Scroll.viewportWheelHandler HomeDayViewport Scroll.VerticalOnly event of
+    Just scroll -> scroll >> pure HomeMaintain
+    Nothing -> handleNonWheel event
   where
+    handleNonWheel currentEvent = case currentEvent of
+      MouseDown (CalendarDay day) V.BLeft _ _ -> selectDay day
+      MouseDown (HomeChangeFrom day) V.BLeft _ _ -> pure (HomeObserveChange day)
+      VtyEvent (V.EvKey V.KLeft []) -> selectDay (addDays (-1) selectedDay)
+      VtyEvent (V.EvKey V.KRight []) -> selectDay (addDays 1 selectedDay)
+      VtyEvent (V.EvKey V.KUp []) -> selectDay (addDays (-7) selectedDay)
+      VtyEvent (V.EvKey V.KDown []) -> selectDay (addDays 7 selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'h') []) -> selectDay (addDays (-1) selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'H') []) -> selectDay (addDays (-1) selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'l') []) -> selectDay (addDays 1 selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'L') []) -> selectDay (addDays 1 selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'k') []) -> selectDay (addDays (-7) selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'K') []) -> selectDay (addDays (-7) selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'j') []) -> selectDay (addDays 7 selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'J') []) -> selectDay (addDays 7 selectedDay)
+      VtyEvent (V.EvKey (V.KChar 't') []) -> today
+      VtyEvent (V.EvKey (V.KChar 'T') []) -> today
+      VtyEvent (V.EvKey (V.KChar 'r') []) -> pure (HomeRecord selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'R') []) -> pure (HomeRecord selectedDay)
+      VtyEvent (V.EvKey V.KEnter []) -> pure (HomeObserveChange selectedDay)
+      _ -> pure HomeMaintain
     selectDay day = do
       vScrollToBeginning (viewportScroll HomeDayViewport)
       pure (HomeSelectDay day)
@@ -139,7 +138,7 @@ draw context selectedDay =
     , padTop (Pad 1)
         (clickable (HomeChangeFrom selectedDay)
           (strWrap "[Enter/click] Envelope change from selected day to observation"))
-    , strWrap "[Arrows] Day   [t] Today   [r] Record   [1-7] Sections   [q] Quit"
+    , strWrap "[Arrows] Day   [t] Today   [r] Record   [Tab] Sections   [q] Quit"
     ]
   where
     calendar = hLimit 39 (drawCalendarWithFocus False context selectedDay)
