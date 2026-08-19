@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | GHCup-inspired application shell over the admitted editor context.
+-- | Production application shell over the admitted editor context.
 --
 -- The shell owns presentation focus only. Calendar observations and section
 -- surfaces remain projections of the shared 'AppContext'; no Household facts
@@ -32,6 +32,7 @@ import HKernel.Editor.TUI.Model
   , HouseholdSection(..)
   , Name(..)
   , contextIssueCounts
+  , contextOpenPlanObservation
   )
 
 data ShellFocus
@@ -142,7 +143,9 @@ focusLabel focused label
 sectionStatus :: AppContext -> HouseholdSection -> (Text, AttrName, Text)
 sectionStatus context section = case section of
   ActualSection -> ordinary (countOf (contextWorkspaceList context) <> " rec")
-  PlansSection -> ordinary (countOf (contextPlanList context) <> " open")
+  PlansSection -> case contextOpenPlanObservation context of
+    Left _ -> unavailable "unavailable"
+    Right plans -> ordinary (T.pack (show (length plans)) <> " open")
   EntitlementSection -> ordinary "observe"
   AccountsSection -> ordinary (T.pack (show accountCount))
   IssuesSection
@@ -152,6 +155,7 @@ sectionStatus context section = case section of
   SettingsSection -> ordinary "ready"
   where
     ordinary summary = ("✓", attrName "success", summary)
+    unavailable summary = ("?", attrName "warning", summary)
     countOf = T.pack . show . Vec.length . L.listElements
     accountCount = Vec.length
       (Vec.filter isJust (L.listElements (contextWorkspaceAccounts context)))
