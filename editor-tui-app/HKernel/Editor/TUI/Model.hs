@@ -159,6 +159,7 @@ data ReportChoice
   | ReportHousehold HouseholdReportSection
   | ReportEnvelopeChange EnvelopeChangeBaseline
   | ReportEnvelopeChangeFromPreviousObservation Day
+  | ReportEnvelopeChangeBetween Day Day
   | ReportEnvelopeAlignedPreviousCycle
   | ReportRecentTransactions
   | ReportCombinedBook
