@@ -63,6 +63,7 @@ import HKernel.Editor.TUI.Model
   , setIssueWorkspaceFilter
   )
 import HKernel.Editor.TUI.Scroll qualified as Scroll
+import HKernel.Editor.TUI.SourcePreview (renderSourcePreview)
 import HKernel.Household.Application
   ( HouseholdState(..)
   , loadCanonicalHousehold
@@ -244,7 +245,7 @@ drawFlow state = case state of
     , "[Tab] Next field   [Enter] Preview   [Esc] Issues"
     ]
   AddPreview result _ -> previewBox "Issue Preview"
-    (renderPreviewResult (txtWrap . candidateBlock) result)
+    (renderPreviewResult (renderSourcePreview . candidateBlock) result)
     (previewControls result)
   DueInput issue form -> inputBox "Update Issue Due" form
     [ "Selected: " <> T.unpack (issueIdText (householdIssueId issue))
@@ -307,15 +308,15 @@ previewControls result = case result of
 
 renderIssueDuePreview :: IssueDueUpdatePreview -> Widget Name
 renderIssueDuePreview preview =
-  txtWrap (dueUpdateOriginalRow preview)
+  renderSourcePreview (dueUpdateOriginalRow preview)
     <=> str " -> "
-    <=> txtWrap (dueUpdateCandidateRow preview)
+    <=> renderSourcePreview (dueUpdateCandidateRow preview)
 
 renderIssueClosePreview :: IssueClosePreview -> Widget Name
 renderIssueClosePreview preview =
-  txtWrap (closeOriginalRow preview)
+  renderSourcePreview (closeOriginalRow preview)
     <=> str " -> "
-    <=> txtWrap (closeCandidateRow preview)
+    <=> renderSourcePreview (closeCandidateRow preview)
 
 handleFlowEvent
   :: AppContext
