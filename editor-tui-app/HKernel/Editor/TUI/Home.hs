@@ -7,6 +7,8 @@
 module HKernel.Editor.TUI.Home
   ( HomeAction(..)
   , draw
+  , drawCalendarWithFocus
+  , drawDayPaneFull
   , handleLocalEvent
   , homeUsesStackedLayout
   ) where
@@ -31,10 +33,13 @@ import Lens.Micro ((^.))
 
 import HKernel.Account (accountName)
 import HKernel.Editor.HouseholdWorkspace
-  ( homeActualTransactionsOn
+  ( HomeActualObservation(..)
+  , HomeIssueObservation(..)
+  , homeActualObservationOn
   , homeCycleEndDay
-  , homeIssuesDueOn
+  , homeIssueObservationOn
   , homePlannedTransactionsOn
+  , workspaceOpenPlanObservationAt
   )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
@@ -42,6 +47,7 @@ import HKernel.Editor.TUI.Model
   , Name(..)
   , contextHouseholdState
   )
+import HKernel.Editor.TUI.Scroll qualified as Scroll
 import HKernel.Household.Application (HouseholdState(..))
 import HKernel.HouseholdIssue
   ( HouseholdIssue
@@ -86,31 +92,37 @@ data HomeAction
   deriving (Eq, Show)
 
 -- | Handle only interaction local to the calendar surface. Application-shell
--- navigation (Home/section tabs, quit, section-number keys) remains in Main.
+-- navigation remains in Main.
 handleLocalEvent
   :: Day
   -> BrickEvent Name AppEvent
   -> EventM Name AppContext HomeAction
-handleLocalEvent selectedDay event = case event of
-  MouseDown (CalendarDay day) V.BLeft _ _ -> selectDay day
-  MouseDown (HomeChangeFrom day) V.BLeft _ _ -> pure (HomeObserveChange day)
-  MouseDown HomeDayViewport V.BScrollUp _ _ -> do
-    vScrollBy (viewportScroll HomeDayViewport) (-3)
-    pure HomeMaintain
-  MouseDown HomeDayViewport V.BScrollDown _ _ -> do
-    vScrollBy (viewportScroll HomeDayViewport) 3
-    pure HomeMaintain
-  VtyEvent (V.EvKey V.KLeft []) -> selectDay (addDays (-1) selectedDay)
-  VtyEvent (V.EvKey V.KRight []) -> selectDay (addDays 1 selectedDay)
-  VtyEvent (V.EvKey V.KUp []) -> selectDay (addDays (-7) selectedDay)
-  VtyEvent (V.EvKey V.KDown []) -> selectDay (addDays 7 selectedDay)
-  VtyEvent (V.EvKey (V.KChar 't') []) -> today
-  VtyEvent (V.EvKey (V.KChar 'T') []) -> today
-  VtyEvent (V.EvKey (V.KChar 'r') []) -> pure (HomeRecord selectedDay)
-  VtyEvent (V.EvKey (V.KChar 'R') []) -> pure (HomeRecord selectedDay)
-  VtyEvent (V.EvKey V.KEnter []) -> pure (HomeObserveChange selectedDay)
-  _ -> pure HomeMaintain
+handleLocalEvent selectedDay event =
+  case Scroll.viewportWheelHandler HomeDayViewport Scroll.VerticalOnly event of
+    Just scroll -> scroll >> pure HomeMaintain
+    Nothing -> handleNonWheel event
   where
+    handleNonWheel currentEvent = case currentEvent of
+      MouseDown (CalendarDay day) V.BLeft _ _ -> selectDay day
+      MouseDown (HomeChangeFrom day) V.BLeft _ _ -> pure (HomeObserveChange day)
+      VtyEvent (V.EvKey V.KLeft []) -> selectDay (addDays (-1) selectedDay)
+      VtyEvent (V.EvKey V.KRight []) -> selectDay (addDays 1 selectedDay)
+      VtyEvent (V.EvKey V.KUp []) -> selectDay (addDays (-7) selectedDay)
+      VtyEvent (V.EvKey V.KDown []) -> selectDay (addDays 7 selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'h') []) -> selectDay (addDays (-1) selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'H') []) -> selectDay (addDays (-1) selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'l') []) -> selectDay (addDays 1 selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'L') []) -> selectDay (addDays 1 selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'k') []) -> selectDay (addDays (-7) selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'K') []) -> selectDay (addDays (-7) selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'j') []) -> selectDay (addDays 7 selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'J') []) -> selectDay (addDays 7 selectedDay)
+      VtyEvent (V.EvKey (V.KChar 't') []) -> today
+      VtyEvent (V.EvKey (V.KChar 'T') []) -> today
+      VtyEvent (V.EvKey (V.KChar 'r') []) -> pure (HomeRecord selectedDay)
+      VtyEvent (V.EvKey (V.KChar 'R') []) -> pure (HomeRecord selectedDay)
+      VtyEvent (V.EvKey V.KEnter []) -> pure (HomeObserveChange selectedDay)
+      _ -> pure HomeMaintain
     selectDay day = do
       vScrollToBeginning (viewportScroll HomeDayViewport)
       pure (HomeSelectDay day)
@@ -129,10 +141,10 @@ draw context selectedDay =
     , padTop (Pad 1)
         (clickable (HomeChangeFrom selectedDay)
           (strWrap "[Enter/click] Envelope change from selected day to observation"))
-    , strWrap "[Arrows] Day   [t] Today   [r] Record   [1-7] Sections   [q] Quit"
+    , strWrap "[Arrows] Day   [t] Today   [r] Record   [Tab] Sections   [q] Quit"
     ]
   where
-    calendar = hLimit 39 (drawCalendar context selectedDay)
+    calendar = hLimit 39 (drawCalendarWithFocus False context selectedDay)
     dayPane = drawDayPane context selectedDay
     wideLayout = hBox
       [ calendar
@@ -148,7 +160,7 @@ draw context selectedDay =
 homeUsesStackedLayout :: Int -> Bool
 homeUsesStackedLayout width = width < 87
 
--- | Select a presentation using only Brick's rendering context. Terminal
+-- | Select a presentation using only Brick's current render context. Terminal
 -- dimensions remain presentation evidence and never enter Household state.
 responsiveWhen :: (Int -> Bool) -> Widget name -> Widget name -> Widget name
 responsiveWhen useCompact compact wide =
@@ -159,11 +171,17 @@ responsiveWhen useCompact compact wide =
         then compact
         else wide
 
-drawCalendar :: AppContext -> Day -> Widget Name
-drawCalendar context selectedDay =
-  borderWithLabel (str (formatTime defaultTimeLocale "%B %Y" selectedDay))
+-- | Draw the real Household calendar. Focus decoration is presentation-only;
+-- the selected day and markers keep their existing admitted semantics.
+drawCalendarWithFocus :: Bool -> AppContext -> Day -> Widget Name
+drawCalendarWithFocus focused context selectedDay =
+  borderWithLabel monthLabel
     (padAll 1 (vBox (weekdayHeader : map drawWeek weeks)))
   where
+    rawMonthLabel = T.pack (formatTime defaultTimeLocale "%B %Y" selectedDay)
+    monthLabel
+      | focused = withAttr (attrName "shellFocus") (txt ("[" <> rawMonthLabel <> "]"))
+      | otherwise = txt rawMonthLabel
     (year, month, _) = toGregorian selectedDay
     monthLength = gregorianMonthLength year month
     firstDay = fromGregorian year month 1
@@ -222,26 +240,38 @@ hasOpenPlan context day = case plansOn context day of
   Right plans -> not (null plans)
 
 hasOpenIssueDue :: AppContext -> Day -> Bool
-hasOpenIssueDue context day = not (null (issuesDueOn context day))
+hasOpenIssueDue context day = case issuesDueOn context day of
+  HomeIssueUnavailable _ -> False
+  HomeIssueAvailable issues -> not (null issues)
 
 isCycleEnd :: AppContext -> Day -> Bool
 isCycleEnd context day = case cycleEndDay context of
   Left _ -> False
   Right endDay -> endDay == day
 
-actualsOn :: AppContext -> Day -> [Transaction]
+actualsOn :: AppContext -> Day -> HomeActualObservation
 actualsOn context day =
-  homeActualTransactionsOn day
+  homeActualObservationOn
+    (contextObservationDay context)
+    day
     (householdStateActualJournal (contextHouseholdState context))
 
 plansOn :: AppContext -> Day -> Either Text [IdentifiedPlanTransaction]
-plansOn context day = case contextOpenPlanObservation context of
+plansOn context day = case workspaceOpenPlanObservationAt
+    (contextObservationDay context)
+    (householdStatePlanJournal state)
+    (householdStateActualJournal state) of
   Left errors -> Left (T.pack (show errors))
   Right plans -> Right (homePlannedTransactionsOn day plans)
+  where
+    state = contextHouseholdState context
 
-issuesDueOn :: AppContext -> Day -> [HouseholdIssue]
+issuesDueOn :: AppContext -> Day -> HomeIssueObservation
 issuesDueOn context day =
-  homeIssuesDueOn day (householdStateIssues (contextHouseholdState context))
+  homeIssueObservationOn
+    (contextObservationDay context)
+    day
+    (householdStateIssues (contextHouseholdState context))
 
 cycleEndDay :: AppContext -> Either Text Day
 cycleEndDay context = case contextHouseholdCycleObservation context of
@@ -250,26 +280,50 @@ cycleEndDay context = case contextHouseholdCycleObservation context of
 
 drawDayPane :: AppContext -> Day -> Widget Name
 drawDayPane context selectedDay =
-  borderWithLabel (str (formatTime defaultTimeLocale "%A, %Y-%m-%d" selectedDay))
-    (vLimit 17
-      (viewport HomeDayViewport Vertical
-        (padAll 1
-          (vBox
-            ( actualSection
-              ++ [str " "]
-              ++ planSection
-              ++ [str " "]
-              ++ issueSection
-              ++ [str " "]
-              ++ cycleSection
-            )))))
+  borderWithLabel dayLabel
+    (vLimit 17 (drawDayViewport context selectedDay))
+  where
+    dayLabel = str (formatTime defaultTimeLocale "%A, %Y-%m-%d" selectedDay)
+
+-- | Full-height variant for the persistent application shell. It renders the
+-- same selected-day projection as Home and retains the Home change affordance;
+-- only the presentation allocation is different.
+drawDayPaneFull :: AppContext -> Day -> Widget Name
+drawDayPaneFull context selectedDay =
+  vBox
+    [ borderWithLabel dayLabel
+        (padBottom Max (drawDayViewport context selectedDay))
+    , padTop (Pad 1)
+        (clickable (HomeChangeFrom selectedDay)
+          (strWrap "[Enter/click] Envelope change from selected day to observation"))
+    ]
+  where
+    dayLabel = str (formatTime defaultTimeLocale "%A, %Y-%m-%d" selectedDay)
+
+drawDayViewport :: AppContext -> Day -> Widget Name
+drawDayViewport context selectedDay =
+  viewport HomeDayViewport Vertical
+    (padAll 1
+      (vBox
+        ( actualSection
+          ++ [str " "]
+          ++ planSection
+          ++ [str " "]
+          ++ issueSection
+          ++ [str " "]
+          ++ cycleSection
+        )))
   where
     actualValues = actualsOn context selectedDay
     planValues = plansOn context selectedDay
     issueValues = issuesDueOn context selectedDay
     actualSection = str "Actual" : case actualValues of
-      [] -> [str "  none recorded"]
-      values -> concatMap renderActual values
+      HomeActualUnavailable ->
+        [ withAttr (attrName "warning")
+            (strWrap "  unavailable beyond this observation horizon")
+        ]
+      HomeActualAvailable [] -> [str "  none recorded"]
+      HomeActualAvailable values -> concatMap renderActual values
     planSection = str "Plans" : case planValues of
       Left reason ->
         [ withAttr (attrName "warning")
@@ -278,8 +332,12 @@ drawDayPane context selectedDay =
       Right [] -> [str "  none"]
       Right values -> concatMap renderPlan values
     issueSection = str "Issues due" : case issueValues of
-      [] -> [str "  none"]
-      values -> map renderIssue values
+      HomeIssueUnavailable errors ->
+        [ withAttr (attrName "warning")
+            (txtWrap ("  unavailable for this observation: " <> T.pack (show errors)))
+        ]
+      HomeIssueAvailable [] -> [str "  none"]
+      HomeIssueAvailable values -> map renderIssue values
     cycleSection = str "Cycle" : case cycleEndDay context of
       Left reason ->
         [ withAttr (attrName "warning")

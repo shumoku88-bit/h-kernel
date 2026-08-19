@@ -56,6 +56,7 @@ import HKernel.Editor.TUI.Model
   , contextHouseholdState
   , reloadWorkspaceContext
   )
+import HKernel.Editor.TUI.Scroll qualified as Scroll
 import HKernel.Household.Application
   ( HouseholdState(..)
   , loadCanonicalHousehold
@@ -244,7 +245,7 @@ drawWorkspace context =
             (vBox (map renderAccountDecl
               (accountDeclarations
                 (householdStateAccountsRegistry (contextHouseholdState context)))))))
-    , strWrap "[Enter/A] Add Account   [1-7] Sections   [q] Quit"
+    , strWrap "[Enter/A] Add Account   [wheel] Scroll"
     ]
 
 renderAccountDecl :: AccountDeclaration -> Widget Name
@@ -257,17 +258,14 @@ renderAccountDecl declaration =
 handleWorkspaceEvent
   :: BrickEvent Name AppEvent
   -> EventM Name s WorkspaceAction
-handleWorkspaceEvent event = case event of
-  MouseDown AccountsViewport V.BScrollUp _ _ -> do
-    vScrollBy (viewportScroll AccountsViewport) (-3)
-    pure WorkspaceMaintain
-  MouseDown AccountsViewport V.BScrollDown _ _ -> do
-    vScrollBy (viewportScroll AccountsViewport) 3
-    pure WorkspaceMaintain
-  VtyEvent (V.EvKey V.KEnter []) -> pure WorkspaceStartAdd
-  VtyEvent (V.EvKey (V.KChar 'a') []) -> pure WorkspaceStartAdd
-  VtyEvent (V.EvKey (V.KChar 'A') []) -> pure WorkspaceStartAdd
-  _ -> pure WorkspaceMaintain
+handleWorkspaceEvent event =
+  case Scroll.viewportWheelHandler AccountsViewport Scroll.VerticalOnly event of
+    Just scroll -> scroll >> pure WorkspaceMaintain
+    Nothing -> case event of
+      VtyEvent (V.EvKey V.KEnter []) -> pure WorkspaceStartAdd
+      VtyEvent (V.EvKey (V.KChar 'a') []) -> pure WorkspaceStartAdd
+      VtyEvent (V.EvKey (V.KChar 'A') []) -> pure WorkspaceStartAdd
+      _ -> pure WorkspaceMaintain
 
 showText :: Show value => value -> Text
 showText = T.pack . show

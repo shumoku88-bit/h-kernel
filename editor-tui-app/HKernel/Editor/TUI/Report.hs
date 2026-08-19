@@ -37,6 +37,7 @@ import HKernel.Editor.TUI.Model
   , contextHouseholdState
   )
 import qualified HKernel.Editor.TUI.ReportStyle as ReportStyle
+import HKernel.Editor.TUI.Scroll qualified as Scroll
 import HKernel.Envelope.Consumption (consumptionNet)
 import HKernel.Envelope.Fulfillment (fulfillmentNet)
 import HKernel.Envelope.Identity (envelopeIdText)
@@ -122,8 +123,8 @@ drawWorkspace context =
   vBox
     [ borderWithLabel (txt ("Household Report: " <> reportChoiceLabel selected))
         (viewport ReportsViewport Both (renderSelectedReport context))
-    , strWrap "[Enter] Choose report   [wheel/↑↓←→] Scroll   [PgUp/PgDn] Page   [Shift+←→] Horizontal page"
-    , strWrap "[Home/End] Top/Bottom   [r/R] Next/Previous report   [1-7] Switch section   [q] Quit"
+    , strWrap "[Enter] Choose report   [wheel/↑↓←→] Scroll   [Shift+wheel] Horizontal   [PgUp/PgDn] Page"
+    , strWrap "[Home/End] Top/Bottom   [Shift+←→] Horizontal page   [r/R] Next/Previous report"
     ]
   where
     selected = contextSelectedReport context
@@ -289,30 +290,28 @@ handlePickerEvent event = do
 handlePickerListEvent
   :: BrickEvent Name AppEvent
   -> EventM Name PickerState PickerAction
-handlePickerListEvent event = case event of
-  MouseDown ReportPickerList V.BScrollUp _ _ -> do
-    zoom (singular zoomPickerList) (L.handleListEvent (V.EvKey V.KUp []))
+handlePickerListEvent event = case Scroll.listWheelEvent ReportPickerList event of
+  Just wheelEvent -> do
+    zoom (singular zoomPickerList) (L.handleListEvent wheelEvent)
     pure PickerMaintain
-  MouseDown ReportPickerList V.BScrollDown _ _ -> do
-    zoom (singular zoomPickerList) (L.handleListEvent (V.EvKey V.KDown []))
-    pure PickerMaintain
-  MouseDown ReportPickerList V.BLeft _ (Location (_, row)) ->
-    maybe (pure PickerMaintain) openPickerItem (pickerItemAt row)
-  VtyEvent (V.EvKey V.KEsc []) -> pure PickerBack
-  VtyEvent (V.EvKey (V.KChar 'q') []) -> pure PickerQuit
-  VtyEvent (V.EvKey (V.KChar 'Q') []) -> pure PickerQuit
-  VtyEvent (V.EvKey V.KEnter []) -> do
-    state <- get
-    case state of
-      PickerList choices -> case L.listSelectedElement choices of
-        Nothing -> pure PickerBack
-        Just (_, item) -> openPickerItem item
-      _ -> pure PickerMaintain
-  VtyEvent vtyEvent -> do
-    zoom (singular zoomPickerList)
-      (L.handleListEventVi L.handleListEvent vtyEvent)
-    pure PickerMaintain
-  _ -> pure PickerMaintain
+  Nothing -> case event of
+    MouseDown ReportPickerList V.BLeft _ (Location (_, row)) ->
+      maybe (pure PickerMaintain) openPickerItem (pickerItemAt row)
+    VtyEvent (V.EvKey V.KEsc []) -> pure PickerBack
+    VtyEvent (V.EvKey (V.KChar 'q') []) -> pure PickerQuit
+    VtyEvent (V.EvKey (V.KChar 'Q') []) -> pure PickerQuit
+    VtyEvent (V.EvKey V.KEnter []) -> do
+      state <- get
+      case state of
+        PickerList choices -> case L.listSelectedElement choices of
+          Nothing -> pure PickerBack
+          Just (_, item) -> openPickerItem item
+        _ -> pure PickerMaintain
+    VtyEvent vtyEvent -> do
+      zoom (singular zoomPickerList)
+        (L.handleListEventVi L.handleListEvent vtyEvent)
+      pure PickerMaintain
+    _ -> pure PickerMaintain
 
 openPickerItem :: PickerItem -> EventM Name PickerState PickerAction
 openPickerItem item = case item of
@@ -398,10 +397,9 @@ reportChoiceAt row = case drop row reportChoices of
   [] -> Nothing
   choice : _ -> Just choice
 
--- | Interpret only Report-specific direct-selection keys.
---
--- Application-shell keys such as section switching, scrolling, quitting, and
--- opening the picker remain owned by @Main@.
+-- | Interpret only Report-specific direct-selection keys. Shell focus traversal
+-- and application quit stay outside this owner; report selection and scrolling
+-- remain local to the Report surface.
 reportSelectionForKey :: ReportChoice -> Char -> Maybe ReportChoice
 reportSelectionForKey current key = case key of
   't' -> Just ReportTrialBalance
@@ -703,53 +701,51 @@ data WorkspaceAction
 handleWorkspaceEvent
   :: BrickEvent Name AppEvent
   -> EventM Name AppContext WorkspaceAction
-handleWorkspaceEvent event = case event of
-  MouseDown ReportsViewport V.BScrollUp _ _ -> do
-    vScrollBy reportsViewport (-3)
-    pure MaintainContext
-  MouseDown ReportsViewport V.BScrollDown _ _ -> do
-    vScrollBy reportsViewport 3
-    pure MaintainContext
-  VtyEvent (V.EvKey V.KEnter []) -> pure OpenPicker
-  VtyEvent (V.EvKey V.KUp []) -> do
-    vScrollBy reportsViewport (-1)
-    pure MaintainContext
-  VtyEvent (V.EvKey V.KDown []) -> do
-    vScrollBy reportsViewport 1
-    pure MaintainContext
-  VtyEvent (V.EvKey V.KLeft [V.MShift]) -> do
-    hScrollPage reportsViewport Up
-    pure MaintainContext
-  VtyEvent (V.EvKey V.KRight [V.MShift]) -> do
-    hScrollPage reportsViewport Down
-    pure MaintainContext
-  VtyEvent (V.EvKey V.KLeft []) -> do
-    hScrollBy reportsViewport (-4)
-    pure MaintainContext
-  VtyEvent (V.EvKey V.KRight []) -> do
-    hScrollBy reportsViewport 4
-    pure MaintainContext
-  VtyEvent (V.EvKey V.KPageUp []) -> do
-    vScrollPage reportsViewport Up
-    pure MaintainContext
-  VtyEvent (V.EvKey V.KPageDown []) -> do
-    vScrollPage reportsViewport Down
-    pure MaintainContext
-  VtyEvent (V.EvKey V.KHome []) -> do
-    vScrollToBeginning reportsViewport
-    pure MaintainContext
-  VtyEvent (V.EvKey V.KEnd []) -> do
-    vScrollToEnd reportsViewport
-    pure MaintainContext
-  VtyEvent (V.EvKey (V.KChar key) []) -> do
-    context <- get
-    case reportSelectionForKey (contextSelectedReport context) key of
-      Nothing -> pure MaintainContext
-      Just report -> do
-        modify (\ctx -> ctx { contextSelectedReport = report })
-        vScrollToBeginning reportsViewport
-        hScrollToBeginning reportsViewport
-        pure MaintainContext
-  _ -> pure MaintainContext
+handleWorkspaceEvent event =
+  case Scroll.viewportWheelHandler ReportsViewport Scroll.VerticalAndHorizontal event of
+    Just scroll -> scroll >> pure MaintainContext
+    Nothing -> handleNonWheel event
   where
+    handleNonWheel currentEvent = case currentEvent of
+      VtyEvent (V.EvKey V.KEnter []) -> pure OpenPicker
+      VtyEvent (V.EvKey V.KUp []) -> do
+        vScrollBy reportsViewport (-1)
+        pure MaintainContext
+      VtyEvent (V.EvKey V.KDown []) -> do
+        vScrollBy reportsViewport 1
+        pure MaintainContext
+      VtyEvent (V.EvKey V.KLeft [V.MShift]) -> do
+        hScrollPage reportsViewport Up
+        pure MaintainContext
+      VtyEvent (V.EvKey V.KRight [V.MShift]) -> do
+        hScrollPage reportsViewport Down
+        pure MaintainContext
+      VtyEvent (V.EvKey V.KLeft []) -> do
+        hScrollBy reportsViewport (-4)
+        pure MaintainContext
+      VtyEvent (V.EvKey V.KRight []) -> do
+        hScrollBy reportsViewport 4
+        pure MaintainContext
+      VtyEvent (V.EvKey V.KPageUp []) -> do
+        vScrollPage reportsViewport Up
+        pure MaintainContext
+      VtyEvent (V.EvKey V.KPageDown []) -> do
+        vScrollPage reportsViewport Down
+        pure MaintainContext
+      VtyEvent (V.EvKey V.KHome []) -> do
+        vScrollToBeginning reportsViewport
+        pure MaintainContext
+      VtyEvent (V.EvKey V.KEnd []) -> do
+        vScrollToEnd reportsViewport
+        pure MaintainContext
+      VtyEvent (V.EvKey (V.KChar key) []) -> do
+        context <- get
+        case reportSelectionForKey (contextSelectedReport context) key of
+          Nothing -> pure MaintainContext
+          Just report -> do
+            modify (\ctx -> ctx { contextSelectedReport = report })
+            vScrollToBeginning reportsViewport
+            hScrollToBeginning reportsViewport
+            pure MaintainContext
+      _ -> pure MaintainContext
     reportsViewport = viewportScroll ReportsViewport
