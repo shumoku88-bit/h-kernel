@@ -38,7 +38,6 @@ import qualified HKernel.Editor.TUI.Report as Report
 import qualified HKernel.Editor.TUI.Settings as Settings
 import qualified HKernel.Editor.TUI.Shell as Shell
 import HKernel.Household.Application (loadCanonicalHouseholdWriteSnapshot)
-import HKernel.Household.EnvelopeObservation (EnvelopeChangeBaseline(..))
 
 data ActualReturn
   = ActualReturnWorkspace Day
@@ -153,7 +152,8 @@ handleHomeEvent
   -> EventM Name AppWrapper ()
 handleHomeEvent context selectedDay rangeStart event = case event of
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
-  MouseDown (HomeChangeFrom day) V.BLeft _ _ -> chooseThrough day
+  MouseDown (HomeChangeFrom day) V.BLeft _ _ ->
+    put (AppWrapper context (Home day (Just day)))
   VtyEvent (V.EvKey (V.KChar ' ') []) ->
     put (AppWrapper context (Home selectedDay (Just selectedDay)))
   VtyEvent (V.EvKey V.KEnter []) -> chooseThrough selectedDay
@@ -183,8 +183,7 @@ handleHomeEvent context selectedDay rangeStart event = case event of
         (Workspace selectedDay Shell.SectionFocus))
     chooseThrough day = chooseThroughWith context day
     chooseThroughWith currentContext through = case rangeStart of
-      Nothing ->
-        put (AppWrapper currentContext (Home through (Just through)))
+      Nothing -> pure ()
       Just from -> openChange currentContext from through
     openChange currentContext from through = do
       put (AppWrapper
