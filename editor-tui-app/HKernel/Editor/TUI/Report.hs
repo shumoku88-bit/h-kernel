@@ -169,6 +169,7 @@ pickerItemForReport report = case report of
   ReportEnvelopeChangeFromPreviousObservation _ -> PickerPreviousObservation
   ReportEnvelopeChange PreviousObservation -> PickerPreviousObservation
   ReportEnvelopeChange (ExplicitDay _) -> PickerExplicitDay
+  ReportEnvelopeChangeBetween _ _ -> PickerExplicitDay
   _ -> PickerReport report
 
 pickerItemIndex :: PickerItem -> Int
@@ -436,6 +437,8 @@ reportChoiceLabel choice = case choice of
     ExplicitDay day -> "Envelope Change: Since " <> renderDay day
   ReportEnvelopeChangeFromPreviousObservation day ->
     "Envelope Change: Since previous observation (" <> renderDay day <> ")"
+  ReportEnvelopeChangeBetween from through ->
+    "Envelope Change: " <> renderDay from <> " → " <> renderDay through
   ReportEnvelopeAlignedPreviousCycle ->
     "Envelope Comparison: Previous cycle"
   ReportRecentTransactions -> "Recent Actual"
@@ -473,6 +476,12 @@ renderSelectedReport context = case contextSelectedReport context of
           err)
       Right change -> reportText
         (renderEnvelopeChange pres PreviousObservation change)
+  ReportEnvelopeChangeBetween from through ->
+    case householdEnvelopeChangeFromBaseline through Nothing (ExplicitDay from) state of
+      Left err -> reportText
+        (renderTemporalUnavailable pres
+          (reportChoiceLabel (ReportEnvelopeChangeBetween from through)) err)
+      Right change -> reportText (renderEnvelopeChangeBetween pres change)
   ReportEnvelopeAlignedPreviousCycle ->
     case householdEnvelopeAlignedPreviousCycle (contextObservationDay context) state of
       Left err -> reportText
@@ -502,13 +511,38 @@ renderEnvelopeChange
   -> EnvelopeChangeBaseline
   -> HouseholdEnvelopeChange
   -> Text
-renderEnvelopeChange presentation baseline change = T.intercalate "\n"
+renderEnvelopeChange presentation baseline =
+  renderEnvelopeChangeWithBasis presentation
+    ("Baseline request: " <> renderBaseline baseline)
+
+renderEnvelopeChangeBetween
+  :: PresentationConfig
+  -> HouseholdEnvelopeChange
+  -> Text
+renderEnvelopeChangeBetween presentation =
+  renderEnvelopeChangeWithBasis presentation
+    "Selection: explicit Calendar FROM/THROUGH observations"
+
+renderEnvelopeChangeWithBasis
+  :: PresentationConfig
+  -> Text
+  -> HouseholdEnvelopeChange
+  -> Text
+renderEnvelopeChangeWithBasis presentation basis change = T.intercalate "\n"
   [ terminalHeaderWith presentation "Envelope Change"
+  , terminalMeta basis
   , terminalMeta
-      ("Baseline: " <> renderBaseline baseline
-        <> " | From: " <> renderDay (householdEnvelopeChangeFrom change)
-        <> " | Through: " <> renderDay (householdEnvelopeChangeThrough change))
-  , terminalMeta "Every difference is later minus earlier; same-Period Change never crosses the cycle boundary."
+      ("FROM observation: through " <> renderDay (householdEnvelopeChangeFrom change)
+        <> " | THROUGH observation: through "
+        <> renderDay (householdEnvelopeChangeThrough change))
+  , terminalMeta
+      "Meaning: each endpoint is a cumulative typed Envelope observation through that inclusive day."
+  , terminalMeta
+      "Diff: THROUGH minus FROM. Activity dated on the FROM day is already present in the FROM observation."
+  , terminalMeta
+      "Evidence: admitted Entitlement history, Actual, Plan, Expense routing, and Fulfillment routing."
+  , terminalMeta
+      "Scope: same Household cycle only; this view rereads no source and writes no canonical data."
   , ""
   , renderTerminalTable columns rows Nothing
   , ""
@@ -672,6 +706,7 @@ cycleReport choice = case choice of
   ReportEnvelopeChangeFromPreviousObservation _ -> ReportEnvelopeAlignedPreviousCycle
   ReportEnvelopeChange (ExplicitDay _) -> ReportEnvelopeAlignedPreviousCycle
   ReportEnvelopeChange PreviousObservation -> ReportEnvelopeAlignedPreviousCycle
+  ReportEnvelopeChangeBetween _ _ -> ReportEnvelopeAlignedPreviousCycle
   _ -> go reportChoices
   where
     go [] = ReportTrialBalance
@@ -685,6 +720,7 @@ cycleReportBack choice = case choice of
   ReportEnvelopeChangeFromPreviousObservation _ -> ReportEnvelopeChange PreviousDay
   ReportEnvelopeChange (ExplicitDay _) -> ReportEnvelopeChange PreviousDay
   ReportEnvelopeChange PreviousObservation -> ReportEnvelopeChange PreviousDay
+  ReportEnvelopeChangeBetween _ _ -> ReportEnvelopeChange PreviousDay
   _ -> case reverse reportChoices of
     [] -> ReportTrialBalance
     lastChoice : _ -> go lastChoice reportChoices
