@@ -107,13 +107,6 @@ initialExpenseFormState day = ExpenseFormState
   , expenseFormItemCountText = "1"
   }
 
-expenseDateTextL :: Lens' ExpenseFormState Text
-expenseDateTextL f state =
-  (\value -> state { expenseFormInput = input { expenseDateText = value } })
-    <$> f (expenseDateText input)
-  where
-    input = expenseFormInput state
-
 expenseDescriptionTextL :: Lens' ExpenseFormState Text
 expenseDescriptionTextL f state =
   (\value -> state
@@ -155,9 +148,7 @@ mkExpenseForm :: Day -> Form ExpenseFormState event Name
 mkExpenseForm day =
   setFormFocus ExpenseDescriptionField
     (newForm
-      [ label "Date:"
-          @@= editTextField expenseDateTextL ExpenseDateField (Just 1)
-      , label "Description:"
+      [ label "Description:"
           @@= editTextField expenseDescriptionTextL ExpenseDescriptionField (Just 1)
       , label "Pay from:"
           @@= editTextField expensePaymentAccountTextL ExpensePaymentField (Just 1)
@@ -297,8 +288,8 @@ drawExpenseInput context form =
       (hLimit 86
         (padAll 1
           (vBox
-            [ txt ("Date: " <> dateSummary context
-                (expenseDateText (expenseFormInput state)))
+            [ txt ("Entry day: " <> T.pack (show (contextEntryDay context)))
+            , strWrap "The entry day is already fixed by the current TUI context."
             , strWrap "One payment can be divided across one or more Expense categories."
             , strWrap "Breakdown amounts stay positive; the balancing payment posting is derived exactly at preview."
             , str " "
@@ -483,11 +474,9 @@ handleExpensePreview context preview form event = case event of
   _ -> pure FlowMaintain
   where
     back = put (ExpenseInput form) >> pure FlowMaintain
-    stickyDay = fromMaybe (contextEntryDay context)
-      (readMaybe (T.unpack
-        (expenseDateText (expenseFormInput (formState form)))))
     publish = case preview of
-      ActualExpenseCandidateReady block -> pure (FlowPublish stickyDay block)
+      ActualExpenseCandidateReady block ->
+        pure (FlowPublish (contextEntryDay context) block)
       _ -> pure FlowMaintain
 
 renderExpensePreview :: ActualExpensePreview -> Widget Name
@@ -509,10 +498,6 @@ expensePreviewControls preview = case preview of
   _ -> "[Esc/B] Back | [Q] Quit"
 
 -- Income ---------------------------------------------------------------------
-
-addDateTextL :: Lens' ActualAddInput Text
-addDateTextL f input =
-  (\value -> input { addDateText = value }) <$> f (addDateText input)
 
 addDescriptionTextL :: Lens' ActualAddInput Text
 addDescriptionTextL f input =
@@ -542,8 +527,6 @@ mkIncomeForm day =
           @@= editTextField addToAccountTextL ToAccountField (Just 1)
       , label "Income source:"
           @@= editTextField addFromAccountTextL FromAccountField (Just 1)
-      , label "Date:"
-          @@= editTextField addDateTextL DateField (Just 1)
       ]
       (initialActualAddInputForDay day))
   where
@@ -588,7 +571,7 @@ incomeFieldName target = case target of
 incomeNextField :: AccountSelectionTarget -> Name
 incomeNextField target = case target of
   SelectToAccount -> FromAccountField
-  SelectFromAccount -> DateField
+  SelectFromAccount -> AmountField
 
 drawIncomeInput :: AppContext -> Form ActualAddInput AppEvent Name -> Widget Name
 drawIncomeInput context form =
@@ -596,7 +579,8 @@ drawIncomeInput context form =
     (borderWithLabel (str "Income")
       (padAll 1
         (vBox
-          [ txt ("Date: " <> dateSummary context (addDateText (formState form)))
+          [ txt ("Entry day: " <> T.pack (show (contextEntryDay context)))
+          , strWrap "The entry day is already fixed by the current TUI context."
           , strWrap "Amount accepts a quantity only when Account defaults determine the commodity."
           , strWrap "Account fields expose existing typed Accounts inline; exact text remains available."
           , str " "
@@ -720,10 +704,9 @@ handleIncomePreview context preview form event = case event of
   _ -> pure FlowMaintain
   where
     back = put (IncomeInput form) >> pure FlowMaintain
-    stickyDay = fromMaybe (contextEntryDay context)
-      (readMaybe (T.unpack (addDateText (formState form))))
     publish = case preview of
-      ActualAddCandidateReady block -> pure (FlowPublish stickyDay block)
+      ActualAddCandidateReady block ->
+        pure (FlowPublish (contextEntryDay context) block)
       _ -> pure FlowMaintain
 
 renderIncomePreview :: ActualAddPreview -> Widget Name
@@ -775,10 +758,3 @@ handleFlowEvent context event = do
     ExpensePreview preview form -> handleExpensePreview context preview form event
     IncomeInput form -> handleIncomeInput context form event
     IncomePreview preview form -> handleIncomePreview context preview form event
-
-dateSummary :: AppContext -> Text -> Text
-dateSummary context value
-  | value == T.pack (show today) = "Today  " <> value
-  | otherwise = "Other  " <> value
-  where
-    today = contextObservationDay context
