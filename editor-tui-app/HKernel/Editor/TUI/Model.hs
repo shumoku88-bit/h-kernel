@@ -172,7 +172,7 @@ data WorkspaceReloadFailure
 workspaceReloadFailureText :: WorkspaceReloadFailure -> Text
 workspaceReloadFailureText failure = case failure of
   HouseholdReloadFailed errors ->
-    "Household reload failed: " <> T.pack (show errors)
+    T.pack "Household reload failed: " <> T.pack (show errors)
   PostReloadValidationFailed message -> message
 
 data AppContext = AppContext
