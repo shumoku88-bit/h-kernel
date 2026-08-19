@@ -43,6 +43,7 @@ import HKernel.Editor.TUI.Model
   ( AppContext
   , AppEvent
   , Name
+  , WorkspaceReloadFailure
   )
 import HKernel.HouseholdIssue (HouseholdIssue)
 
@@ -65,7 +66,7 @@ data PublishRequest
 data PublishResult
   = Published AppContext
   | PublicationFailed Text
-  | ReloadFailed
+  | ReloadFailed WorkspaceReloadFailure
 
 data EntitlementWorkspaceAction
   = EntitlementActionMaintain
@@ -213,13 +214,13 @@ publishCandidate context request = case request of
     pure $ case result of
       Entitlement.Published fresh -> Published fresh
       Entitlement.PublicationFailed message -> PublicationFailed message
-      Entitlement.ReloadFailed -> ReloadFailed
+      Entitlement.ReloadFailed failure -> ReloadFailed failure
   PublishAccount source preview -> do
     result <- Accounts.publishCandidate context source preview
     pure $ case result of
       Accounts.Published fresh -> Published fresh
       Accounts.PublicationFailed message -> PublicationFailed message
-      Accounts.ReloadFailed -> ReloadFailed
+      Accounts.ReloadFailed failure -> ReloadFailed failure
   PublishIssueAdd preview -> publishIssue (Issues.PublishAdd preview)
   PublishIssueDueUpdate preview -> publishIssue (Issues.PublishDueUpdate preview)
   PublishIssueClose preview -> publishIssue (Issues.PublishClose preview)
@@ -229,4 +230,4 @@ publishCandidate context request = case request of
       pure $ case result of
         Issues.Published fresh -> Published fresh
         Issues.PublicationFailed message -> PublicationFailed message
-        Issues.ReloadFailed -> ReloadFailed
+        Issues.ReloadFailed failure -> ReloadFailed failure
