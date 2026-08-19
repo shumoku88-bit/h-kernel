@@ -129,7 +129,7 @@ drawHelp focus = withAttr (attrName "shellMuted") (strWrap message)
   where
     message = case focus of
       CalendarFocus ->
-        "Calendar: arrows/hjkl move day · t today · r record · Enter change · Tab next focus · Shift-Tab previous focus · q quit"
+        "Calendar: arrows/hjkl move day · t today · r record · Space mark FROM · Enter compare THROUGH · Esc clear FROM · Tab next focus · Shift-Tab previous focus · q quit"
       SectionFocus ->
         "Sections: Up/Down or j/k select · Right/Enter surface · Left calendar · Tab/Shift-Tab focus · q quit"
       SurfaceFocus ->
