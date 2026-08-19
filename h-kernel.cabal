@@ -10,7 +10,6 @@ build-type:          Simple
 tested-with:         GHC == 9.10.3, GHC == 9.12.4, GHC == 9.14.1
 extra-source-files: docs/*.md
                   , docs/INDEX.toml
-                  , experiments/ghcup-home/Main.hs
                   , tests/fixtures/editor/*.journal
 
 common common-defaults
@@ -665,6 +664,7 @@ test-suite h-kernel-editor-tui-issue-realize-test
                     , HKernel.Editor.TUI.Home
                     , HKernel.Editor.TUI.Model
                     , HKernel.Editor.TUI.Scroll
+                    , HKernel.Editor.TUI.Shell
                     , HKernel.Editor.TUI.SourcePreview
     build-depends:    base >= 4.14 && < 5
                     , containers >= 0.6 && < 0.8
