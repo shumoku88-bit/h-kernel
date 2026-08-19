@@ -76,6 +76,7 @@ import HKernel.Editor.TUI.Model
   ( AppContext(..)
   , AppEvent
   , Name(..)
+  , WorkspaceReloadFailure(..)
   , contextHouseholdState
   , contextIssuesSource
   , contextSource
@@ -117,7 +118,7 @@ data PublishResult
   = Published AppContext
   | PublicationFailed ActualAddWriteOutcome
   | RealizationFailed AppContext Text
-  | ReloadFailed
+  | ReloadFailed WorkspaceReloadFailure
 
 data ReconcileInput = ReconcileInput
   { reconcileBalanceText   :: Text
@@ -479,18 +480,26 @@ publishCandidate context request = case request of
               ("Issue realization write failed: "
                 <> T.pack (show operationError))
     finishRealizationFailure recoverySafe message
-      | not recoverySafe = pure ReloadFailed
+      | not recoverySafe = pure
+          (ReloadFailed
+            (PostReloadValidationFailed
+              ("Issue realization failed and automatic recovery could not establish a safe source state: "
+                <> message)))
       | otherwise = do
           reloadedContext <- reloadAndAdmitRealization False context
           pure $ case reloadedContext of
-            Nothing -> ReloadFailed
-            Just freshContext -> RealizationFailed freshContext message
+            Left failure -> ReloadFailed failure
+            Right freshContext -> RealizationFailed freshContext message
     reloadAfter stickyContext = do
       reloadedContext <- reloadWorkspaceContext stickyContext
-      pure (maybe ReloadFailed Published reloadedContext)
+      pure $ case reloadedContext of
+        Left failure -> ReloadFailed failure
+        Right freshContext -> Published freshContext
     reloadRealizationAfter stickyContext = do
       reloadedContext <- reloadAndAdmitRealization True stickyContext
-      pure (maybe ReloadFailed Published reloadedContext)
+      pure $ case reloadedContext of
+        Left failure -> ReloadFailed failure
+        Right freshContext -> Published freshContext
 
 readOptionalRelationSource :: FilePath -> IO (Either Text (Bool, Text))
 readOptionalRelationSource path = do
@@ -523,32 +532,46 @@ writeFailureRecoverySafe writeError = case writeError of
 reloadAndAdmitRealization
   :: Bool
   -> AppContext
-  -> IO (Maybe AppContext)
+  -> IO (Either WorkspaceReloadFailure AppContext)
 reloadAndAdmitRealization requireRelationSource context = do
   reloadedContext <- reloadWorkspaceContext context
   case reloadedContext of
-    Nothing -> pure Nothing
-    Just freshContext -> do
+    Left failure -> pure (Left failure)
+    Right freshContext -> do
       let state = contextHouseholdState freshContext
           relationPath = householdIssueRelationsPath (householdStatePaths state)
       relationRead <- tryIOError (TIO.readFile relationPath)
-      let relationSource = case relationRead of
-            Right source -> Just (True, source)
-            Left errorValue
-              | isDoesNotExistError errorValue -> Just (False, "")
-              | otherwise -> Nothing
-      pure $ do
-        (relationExists, source) <- relationSource
-        if requireRelationSource && not relationExists
-          then Nothing
-          else pure ()
-        case admitIssueRelationSource
-            (householdStateActualJournal state)
-            (householdStatePlanJournal state)
-            (householdStateIssues state)
-            source of
-          Left _ -> Nothing
-          Right _ -> Just freshContext
+      case relationRead of
+        Left errorValue
+          | isDoesNotExistError errorValue ->
+              validateRelation freshContext relationPath False ""
+          | otherwise -> pure
+              (Left
+                (PostReloadValidationFailed
+                  ("Issue relation reload read failed: "
+                    <> T.pack (show errorValue))))
+        Right source -> validateRelation freshContext relationPath True source
+  where
+    validateRelation freshContext relationPath relationExists source
+      | requireRelationSource && not relationExists =
+          pure
+            (Left
+              (PostReloadValidationFailed
+                ("Issue relation source is required after realization but is missing: "
+                  <> T.pack relationPath)))
+      | otherwise =
+          let state = contextHouseholdState freshContext
+          in pure $ case admitIssueRelationSource
+              (householdStateActualJournal state)
+              (householdStatePlanJournal state)
+              (householdStateIssues state)
+              source of
+            Left errors ->
+              Left
+                (PostReloadValidationFailed
+                  ("Issue relation post-reload admission failed: "
+                    <> T.pack (show (NonEmpty.toList errors))))
+            Right _ -> Right freshContext
 
 admitIssueRealizeAfterWrite
   :: HouseholdRoot
