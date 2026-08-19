@@ -2,6 +2,7 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+[ "$#" -eq 0 ] || { printf 'error: tools/repo-map does not accept arguments\n' >&2; exit 2; }
 cd "$ROOT"
 
 printf 'cabal-components\n'
