@@ -183,7 +183,7 @@ draw context selectedDay =
     , padTop (Pad 1) (drawLegend context)
     , padTop (Pad 1)
         (clickable (HomeChangeFrom selectedDay)
-          (strWrap "[Enter/click] Envelope change from selected day to observation"))
+          (strWrap "[Space/click] Mark FROM observation   [Enter] Compare THROUGH observation"))
     , strWrap "[Arrows] Day   [t] Today   [r] Record   [Tab] Sections   [q] Quit"
     ]
   where
@@ -349,8 +349,8 @@ drawDayPane context selectedDay =
     dayLabel = str (formatTime defaultTimeLocale "%A, %Y-%m-%d" selectedDay)
 
 -- | Full-height variant for the persistent application shell. It renders the
--- same selected-day projection as Home and retains the Home change affordance;
--- only the presentation allocation is different.
+-- same selected-day projection as Home and retains the range-selection
+-- affordance; only the presentation allocation is different.
 drawDayPaneFull :: AppContext -> Day -> Widget Name
 drawDayPaneFull context selectedDay =
   vBox
@@ -358,7 +358,7 @@ drawDayPaneFull context selectedDay =
         (padBottom Max (drawDayViewport context selectedDay))
     , padTop (Pad 1)
         (clickable (HomeChangeFrom selectedDay)
-          (strWrap "[Enter/click] Envelope change from selected day to observation"))
+          (strWrap "[Space/click] Mark FROM observation   [Enter] Compare THROUGH observation"))
     ]
   where
     dayLabel = str (formatTime defaultTimeLocale "%A, %Y-%m-%d" selectedDay)
