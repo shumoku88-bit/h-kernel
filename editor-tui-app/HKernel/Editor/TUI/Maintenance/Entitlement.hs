@@ -60,6 +60,7 @@ import HKernel.Editor.TUI.Model
   , AppEvent
   , HouseholdSection(..)
   , Name(..)
+  , WorkspaceReloadFailure
   , contextEntitlementSource
   , contextHouseholdState
   , reloadWorkspaceContext
@@ -101,7 +102,7 @@ data WorkspaceAction
 data PublishResult
   = Published AppContext
   | PublicationFailed Text
-  | ReloadFailed
+  | ReloadFailed WorkspaceReloadFailure
 
 entitlementMemoL :: Lens' EntitlementInput Text
 entitlementMemoL f input = (\value -> input { entitlementMemoText = value }) <$> f (entitlementMemoText input)
@@ -260,8 +261,8 @@ publishCandidate context preview = do
     Right () -> do
       reloaded <- reloadWorkspaceContext (context { contextCurrentSection = EntitlementSection })
       pure $ case reloaded of
-        Nothing -> ReloadFailed
-        Just fresh -> Published (fresh { contextCurrentSection = EntitlementSection })
+        Left failure -> ReloadFailed failure
+        Right fresh -> Published (fresh { contextCurrentSection = EntitlementSection })
 
 drawWorkspace :: AppContext -> Widget Name
 drawWorkspace context =
