@@ -81,10 +81,10 @@ data CalendarMarkers = CalendarMarkers
 
 defaultCalendarMarkers :: CalendarMarkers
 defaultCalendarMarkers = CalendarMarkers
-  { calendarPlanDueMarker = CalendarMarker '$'
+  { calendarPlanDueMarker = CalendarMarker '.'
   , calendarIssueDueMarker = CalendarMarker '!'
   , calendarCycleEndMarker = CalendarMarker '|'
-  , calendarMultipleMarker = CalendarMarker '+'
+  , calendarMultipleMarker = CalendarMarker '*'
   }
 
 -- | Choose presentation for three already-established, independent day facts.

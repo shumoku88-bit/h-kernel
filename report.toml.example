@@ -9,9 +9,9 @@ negative-style = "parentheses"
 
 [presentation.calendar]
 cycle-end-marker = "|"
-plan-due-marker = "$"
+plan-due-marker = "."
 issue-due-marker = "!"
-multiple-marker = "+"
+multiple-marker = "*"
 
 [reports.trial-balance]
 as-of = "latest"
