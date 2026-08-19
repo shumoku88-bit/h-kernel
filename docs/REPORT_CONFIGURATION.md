@@ -28,7 +28,7 @@ report.toml presentation values
 
 ## 設定の探索
 
-Report configurationの探索はHaskell application entrypointが所有する。`tools/hk`はHousehold rootをdeliveryするだけで、`report.toml`の意味を再実装しない。
+Report configurationの探索はHaskell application entrypointが所有する。日常TUI launcher `tools/hk` はReportをroutingせず、standalone Reportは`report` entrypointへ直接到達する。
 
 通常は次の順で設定を探す。
 
@@ -237,28 +237,3 @@ configured rangeまたはexplicit rangeでは、activityがない日もinclusive
 複数blockでは各行に`Block total`と`Period total`を表示する。`Block total`はそのblockだけ、`Period total`は解決済みrange全体を表す。単一blockでは重複する`Block total`を省略する。
 
 設定なしのlegacy default Daily Flowだけは、明示startのないthrough-windowを維持する。
-
-端末幅から`max-date-columns`を導くことはdelivery concernであり、この期間contractには含めない。
-
-## Reportごとの期間型
-
-| Report | 期間型 |
-|---|---|
-| Trial Balance | as-of |
-| Balance Sheet | as-of |
-| Profit & Loss | explicit inclusive range または `current-cycle-to-date` |
-| Daily Flow | explicit inclusive range または `current-cycle-to-date` |
-| Monthly Accounts | explicit inclusive range |
-| Recent Transactions | through day + positive count |
-
-## 境界
-
-このschemaは次をしない。
-
-- `report.toml`をサイクルごとに自動書換えする
-- cycle policyやincome anchorをReport configへ複製する
-- `current-cycle-to-date`を具体日付へcanonical renderして履歴化する
-- pure JournalからHousehold cycleを推測する
-- future/previous cycle queryを先回りして追加する
-
-設定は長く維持するquery policyを所有し、実際のcurrent cycleはHouseholdの事実と観測から毎回解決する。
