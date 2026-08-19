@@ -11,6 +11,7 @@ import HKernel.Editor.TUI.Model
   ( AppContext(..)
   , makeWorkspaceContext
   )
+import HKernel.Editor.TUI.SourcePreview (sourcePreviewText)
 import HKernel.Household.Application
   ( HouseholdWriteSnapshot(..)
   , admitCanonicalHousehold
@@ -39,6 +40,8 @@ main = do
   let results =
         [ ("ordinary Record and Issue realization enter the shared Record flow", testSharedRecordFlow)
         , ("closed Issue cannot start realization", testClosedIssueCannotStart)
+        , ("source preview removes terminal tabs", not (T.any (== '\t') previewText))
+        , ("source preview preserves Issue comments", "枠内に折り返すコメント" `T.isInfixOf` previewText)
         , ("Home stacks observations at 60 columns", homeUsesStackedLayout 60)
         , ("Home stacks roomier calendar at 80 columns", homeUsesStackedLayout 80)
         , ("Home becomes side-by-side at 87 columns", not (homeUsesStackedLayout 87))
@@ -52,6 +55,10 @@ main = do
         ]
   mapM_ print results
   if all snd results then exitSuccess else exitFailure
+
+previewText :: T.Text
+previewText = sourcePreviewText
+  "ISSUE-1\topen\t2026-08-20\tgeneral\tTitle\tnone\tnone\t枠内に折り返すコメント"
 
 testSharedRecordFlow :: Bool
 testSharedRecordFlow =
