@@ -55,6 +55,7 @@ import HKernel.Editor.TUI.Model
   , AppEvent
   , HouseholdSection(..)
   , Name
+  , WorkspaceReloadFailure
   , contextHouseholdState
   , contextPlanSource
   , contextSource
@@ -85,7 +86,7 @@ data PublishRequest
 data PublishResult
   = Published AppContext
   | PublicationFailed Text
-  | ReloadFailed
+  | ReloadFailed WorkspaceReloadFailure
 
 startSelectedCompletion :: AppContext -> Maybe (State event)
 startSelectedCompletion context = do
@@ -262,8 +263,8 @@ reloadPlans context = do
   reloaded <- reloadWorkspaceContext
     (context { contextCurrentSection = PlansSection })
   pure $ case reloaded of
-    Nothing -> ReloadFailed
-    Just freshContext -> Published
+    Left failure -> ReloadFailed failure
+    Right freshContext -> Published
       (freshContext { contextCurrentSection = PlansSection })
 
 renderWriteError :: PlanCompleteAdvanceWriteError admissionError -> Text
