@@ -62,6 +62,7 @@ import HKernel.Editor.TUI.Model
   , reloadWorkspaceContext
   , setIssueWorkspaceFilter
   )
+import HKernel.Editor.TUI.Scroll qualified as Scroll
 import HKernel.Household.Application
   ( HouseholdState(..)
   , loadCanonicalHousehold
@@ -529,8 +530,8 @@ drawWorkspace context =
           ])
     , borderWithLabel (str "Selected Issue")
         (padAll 1 (renderSelectedIssue context))
-    , strWrap "[O] Open   [C] Closed   [L] All   [j/k/Arrows] Move"
-    , strWrap "[R] Realize as Actual (Open)   [Enter] Resolve/Drop   [U] Due   [A] Add Issue   [1-7] Sections   [q] Quit"
+    , strWrap "[O] Open   [C] Closed   [L] All   [j/k/Arrows/wheel] Move"
+    , strWrap "[R] Realize as Actual (Open)   [Enter] Resolve/Drop   [U] Due   [A] Add Issue"
     ]
   where
     (openCount, closedCount) = contextIssueCounts context
@@ -579,33 +580,31 @@ renderIssue issue =
 handleWorkspaceEvent
   :: BrickEvent Name AppEvent
   -> EventM Name AppContext WorkspaceAction
-handleWorkspaceEvent event = case event of
-  MouseDown IssueList V.BScrollUp _ _ -> do
-    zoom contextIssueListL (L.handleListEvent (V.EvKey V.KUp []))
+handleWorkspaceEvent event = case Scroll.listWheelEvent IssueList event of
+  Just wheelEvent -> do
+    zoom contextIssueListL (L.handleListEvent wheelEvent)
     pure WorkspaceMaintain
-  MouseDown IssueList V.BScrollDown _ _ -> do
-    zoom contextIssueListL (L.handleListEvent (V.EvKey V.KDown []))
-    pure WorkspaceMaintain
-  MouseDown IssueList V.BLeft _ (Location (_, row)) -> do
-    zoom contextIssueListL (modify (L.listMoveTo row))
-    pure WorkspaceMaintain
-  VtyEvent (V.EvKey (V.KChar 'o') []) -> selectView OpenIssueFilter
-  VtyEvent (V.EvKey (V.KChar 'O') []) -> selectView OpenIssueFilter
-  VtyEvent (V.EvKey (V.KChar 'c') []) -> selectView ClosedIssueFilter
-  VtyEvent (V.EvKey (V.KChar 'C') []) -> selectView ClosedIssueFilter
-  VtyEvent (V.EvKey (V.KChar 'l') []) -> selectView AllIssueFilter
-  VtyEvent (V.EvKey (V.KChar 'L') []) -> selectView AllIssueFilter
-  VtyEvent (V.EvKey (V.KChar 'a') []) -> pure WorkspaceStartAdd
-  VtyEvent (V.EvKey (V.KChar 'A') []) -> pure WorkspaceStartAdd
-  VtyEvent (V.EvKey (V.KChar 'u') []) -> openSelectedIssueDueUpdate
-  VtyEvent (V.EvKey (V.KChar 'U') []) -> openSelectedIssueDueUpdate
-  VtyEvent (V.EvKey (V.KChar 'r') []) -> openSelectedIssueRealize
-  VtyEvent (V.EvKey (V.KChar 'R') []) -> openSelectedIssueRealize
-  VtyEvent (V.EvKey V.KEnter []) -> openSelectedIssueClose
-  VtyEvent (V.EvKey vtyKey vtyMods) -> do
-    zoom contextIssueListL (L.handleListEventVi L.handleListEvent (V.EvKey vtyKey vtyMods))
-    pure WorkspaceMaintain
-  _ -> pure WorkspaceMaintain
+  Nothing -> case event of
+    MouseDown IssueList V.BLeft _ (Location (_, row)) -> do
+      zoom contextIssueListL (modify (L.listMoveTo row))
+      pure WorkspaceMaintain
+    VtyEvent (V.EvKey (V.KChar 'o') []) -> selectView OpenIssueFilter
+    VtyEvent (V.EvKey (V.KChar 'O') []) -> selectView OpenIssueFilter
+    VtyEvent (V.EvKey (V.KChar 'c') []) -> selectView ClosedIssueFilter
+    VtyEvent (V.EvKey (V.KChar 'C') []) -> selectView ClosedIssueFilter
+    VtyEvent (V.EvKey (V.KChar 'l') []) -> selectView AllIssueFilter
+    VtyEvent (V.EvKey (V.KChar 'L') []) -> selectView AllIssueFilter
+    VtyEvent (V.EvKey (V.KChar 'a') []) -> pure WorkspaceStartAdd
+    VtyEvent (V.EvKey (V.KChar 'A') []) -> pure WorkspaceStartAdd
+    VtyEvent (V.EvKey (V.KChar 'u') []) -> openSelectedIssueDueUpdate
+    VtyEvent (V.EvKey (V.KChar 'U') []) -> openSelectedIssueDueUpdate
+    VtyEvent (V.EvKey (V.KChar 'r') []) -> openSelectedIssueRealize
+    VtyEvent (V.EvKey (V.KChar 'R') []) -> openSelectedIssueRealize
+    VtyEvent (V.EvKey V.KEnter []) -> openSelectedIssueClose
+    VtyEvent (V.EvKey vtyKey vtyMods) -> do
+      zoom contextIssueListL (L.handleListEventVi L.handleListEvent (V.EvKey vtyKey vtyMods))
+      pure WorkspaceMaintain
+    _ -> pure WorkspaceMaintain
   where
     selectView visibility = do
       modify (setIssueWorkspaceFilter visibility)
