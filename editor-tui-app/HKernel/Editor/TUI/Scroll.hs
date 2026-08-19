@@ -1,3 +1,8 @@
+-- | Shared presentation-only mouse scroll input policy for the editor TUI.
+--
+-- Raw wheel buttons belong here. Viewport owners choose an axis policy and
+-- List owners receive ordinary Up/Down Vty events so selection consequences
+-- remain local to the surface that owns the list.
 module HKernel.Editor.TUI.Scroll
   ( ScrollAxes(..)
   , listWheelEvent
