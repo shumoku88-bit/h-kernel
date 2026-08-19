@@ -532,15 +532,18 @@ renderEnvelopeChangeWithBasis presentation basis change = T.intercalate "\n"
   [ terminalHeaderWith presentation "Envelope Change"
   , terminalMeta basis
   , terminalMeta
-      ("FROM observation: through " <> renderDay (householdEnvelopeChangeFrom change)
-        <> " | THROUGH observation: through "
-        <> renderDay (householdEnvelopeChangeThrough change))
+      ("FROM observation: through " <> renderDay from
+        <> " | THROUGH observation: through " <> renderDay through)
   , terminalMeta
-      "Meaning: each endpoint is a cumulative typed Envelope observation through that inclusive day."
+      "Endpoint: each side is a typed Envelope as-of observation through an inclusive day."
+  , terminalMeta windowMeaning
+  , terminalMeta "Diff: every column is THROUGH minus FROM."
   , terminalMeta
-      "Diff: THROUGH minus FROM. Activity dated on the FROM day is already present in the FROM observation."
+      "Activity basis: evidence dated on FROM is already present in FROM; later admitted evidence through THROUGH can change the diff."
   , terminalMeta
-      "Evidence: admitted Entitlement history, Actual, Plan, Expense routing, and Fulfillment routing."
+      "Commitment basis: open Plan intent is resolved as observed at each endpoint; commitment diff is not a transaction total."
+  , terminalMeta
+      "Evidence owners: admitted Entitlement history, Actual, Plan, Expense routing, and Fulfillment routing."
   , terminalMeta
       "Scope: same Household cycle only; this view rereads no source and writes no canonical data."
   , ""
@@ -548,6 +551,13 @@ renderEnvelopeChangeWithBasis presentation basis change = T.intercalate "\n"
   , ""
   ]
   where
+    from = householdEnvelopeChangeFrom change
+    through = householdEnvelopeChangeThrough change
+    windowMeaning
+      | from == through =
+          "Window: zero-length as-of comparison; both endpoints are the same observation coordinate, so every field diff is zero."
+      | otherwise =
+          "Window: FROM is the earlier as-of state; changes first visible after FROM through THROUGH appear in the difference."
     columns =
       [ ("Envelope", AlignLeft)
       , ("Entitlement diff", AlignRight)
