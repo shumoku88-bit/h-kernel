@@ -40,6 +40,21 @@ import HKernel.Editor.ActualWorkspace
   , reconciliationMatches
   , transactionEntriesForAccount
   )
+import HKernel.Editor.HouseholdWorkspace
+  ( HomeActualObservation(..)
+  , HomeIssueObservation(..)
+  , HomeIssueObservationError(..)
+  , homeActualObservationOn
+  , homeIssueObservationOn
+  )
+import HKernel.HouseholdIssue
+  ( IssueClosed(..)
+  , IssueDue(..)
+  , IssueStatus(..)
+  , mkHouseholdIssue
+  , mkHouseholdIssueWithClosed
+  , mkIssueId
+  )
 import HKernel.Journal
   ( journalAccountRegistry
   , journalTransactionSourceHeaderLine
@@ -230,6 +245,72 @@ main = do
               (reconciliationExternalObservation historicalReconciliation)
             == external1000
         )
+      futureActualUnavailableResult =
+        ( "Home does not leak future Actual through an earlier observation horizon"
+        , homeActualObservationOn rewardDay purchaseDay reconciliationJournal
+            == HomeActualUnavailable
+        )
+      actualOwnDayAvailableResult =
+        ( "Home distinguishes an available Actual day from unavailable future knowledge"
+        , case homeActualObservationOn
+            purchaseDay purchaseDay reconciliationJournal of
+            HomeActualAvailable [transaction] ->
+              transactionDate transaction == purchaseDay
+            _ -> False
+        )
+      issueId = mustRight (mkIssueId "issue-temporal")
+      issueClosedAfterHorizon = mustRight (mkHouseholdIssueWithClosed
+        issueId
+        rewardDay
+        Resolved
+        (DueOn purchaseDay)
+        (ClosedOn purchaseDay)
+        Nothing
+        "Temporal issue"
+        "")
+      issueClosedAfterHorizonResult =
+        ( "Issue closed after the horizon remains open as-of the earlier observation"
+        , homeIssueObservationOn
+            rewardDay purchaseDay [issueClosedAfterHorizon]
+            == HomeIssueAvailable [issueClosedAfterHorizon]
+        )
+      issueClosedAtHorizonResult =
+        ( "Issue closure becomes visible at its own observation day"
+        , homeIssueObservationOn
+            purchaseDay purchaseDay [issueClosedAfterHorizon]
+            == HomeIssueAvailable []
+        )
+      issueUnknownClosure = mustRight (mkHouseholdIssue
+        (mustRight (mkIssueId "issue-unknown-closure"))
+        rewardDay
+        Resolved
+        (DueOn purchaseDay)
+        Nothing
+        "Historical closure without date"
+        "")
+      issueUnknownClosureResult =
+        ( "unknown historical closure is unavailable rather than guessed"
+        , case homeIssueObservationOn
+            rewardDay purchaseDay [issueUnknownClosure] of
+            HomeIssueUnavailable errors -> case NonEmpty.toList errors of
+              [HomeIssueClosureUndetermined _] -> True
+              _ -> False
+            _ -> False
+        )
+      issueFutureRecorded = mustRight (mkHouseholdIssue
+        (mustRight (mkIssueId "issue-future-recorded"))
+        purchaseDay
+        Open
+        (DueOn purchaseDay)
+        Nothing
+        "Not known yet"
+        "")
+      issueFutureRecordedResult =
+        ( "future-recorded Issue is absent rather than unavailable"
+        , homeIssueObservationOn
+            rewardDay purchaseDay [issueFutureRecorded]
+            == HomeIssueAvailable []
+        )
       results = fixtureResults ++
         [ alignmentResult
         , sourceEvidenceResult
@@ -244,6 +325,12 @@ main = do
         , differenceLawResult
         , matchLawResult
         , observationDayResult
+        , futureActualUnavailableResult
+        , actualOwnDayAvailableResult
+        , issueClosedAfterHorizonResult
+        , issueClosedAtHorizonResult
+        , issueUnknownClosureResult
+        , issueFutureRecordedResult
         ]
 
   mapM_ print results
