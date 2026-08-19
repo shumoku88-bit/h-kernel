@@ -26,7 +26,7 @@ standardHorizontalWheelStep = 4
 -- Shift-wheel is horizontal only for two-dimensional viewports. Keeping the
 -- policy here prevents individual surfaces from growing their own wheel steps.
 viewportWheelHandler
-  :: Eq name
+  :: Ord name
   => name
   -> ScrollAxes
   -> BrickEvent name event
