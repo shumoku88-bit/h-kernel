@@ -29,7 +29,9 @@ import HKernel.Editor.TUI.Model
   , HouseholdSection(..)
   , Name(..)
   , ReportChoice(..)
+  , WorkspaceReloadFailure
   , makeWorkspaceContext
+  , workspaceReloadFailureText
   )
 import qualified HKernel.Editor.TUI.Plan as Plan
 import qualified HKernel.Editor.TUI.Report as Report
@@ -49,7 +51,7 @@ data UIState
   | PlanFlow Day (Plan.State AppEvent)
   | MaintenanceFlow Day (Maintenance.State AppEvent)
   | ReportPicker Day Report.PickerState
-  | ShowWorkspaceReloadFailure
+  | ShowWorkspaceReloadFailure WorkspaceReloadFailure
 
 data AppWrapper = AppWrapper AppContext UIState
 
@@ -86,13 +88,14 @@ drawUI (AppWrapper context (ActualFlow _ state)) = [Actual.drawFlow context stat
 drawUI (AppWrapper _ (PlanFlow _ state)) = [Plan.drawFlow state]
 drawUI (AppWrapper _ (MaintenanceFlow _ state)) = [Maintenance.drawFlow state]
 drawUI (AppWrapper _ (ReportPicker _ choices)) = [Report.drawPicker choices]
-drawUI (AppWrapper _ ShowWorkspaceReloadFailure) =
+drawUI (AppWrapper _ (ShowWorkspaceReloadFailure failure)) =
   [ center
       (borderWithLabel (str "Household reload")
         (padAll 1
           (withAttr (attrName "error")
             (vBox
-              [ strWrap "The source write succeeded, but the Household could not reload."
+              [ strWrap "The source write completed, but the Household could not safely refresh."
+              , txtWrap (workspaceReloadFailureText failure)
               , strWrap "Restart the TUI before continuing."
               , str " "
               , strWrap "[Esc/Q] Quit"
@@ -119,7 +122,7 @@ appEvent event = do
     PlanFlow selectedDay _ -> handlePlanFlow context selectedDay event
     MaintenanceFlow selectedDay _ -> handleMaintenanceFlow context selectedDay event
     ReportPicker selectedDay _ -> handleReportPicker context selectedDay event
-    ShowWorkspaceReloadFailure -> handleExitOnlyEvent event
+    ShowWorkspaceReloadFailure _ -> handleExitOnlyEvent event
 
 handleHomeEvent
   :: AppContext
@@ -335,7 +338,8 @@ handleActualFlow context returnTarget event = do
         Actual.RealizationFailed freshContext message ->
           put (AppWrapper freshContext
             (ActualFlow currentReturn (Actual.RealizeWriteOutcome message)))
-        Actual.ReloadFailed -> put (AppWrapper context ShowWorkspaceReloadFailure)
+        Actual.ReloadFailed failure ->
+          put (AppWrapper context (ShowWorkspaceReloadFailure failure))
     _ -> pure ()
 
 returnFromActual :: AppContext -> ActualReturn -> AppWrapper
@@ -372,7 +376,8 @@ publishPlanRequest context selectedDay request = do
       put (AppWrapper freshContext (Workspace selectedDay Shell.SurfaceFocus))
     Plan.PublicationFailed message ->
       put (AppWrapper context (PlanFlow selectedDay (Plan.WriteOutcome message)))
-    Plan.ReloadFailed -> put (AppWrapper context ShowWorkspaceReloadFailure)
+    Plan.ReloadFailed failure ->
+      put (AppWrapper context (ShowWorkspaceReloadFailure failure))
 
 handleMaintenanceFlow
   :: AppContext
@@ -394,7 +399,8 @@ handleMaintenanceFlow context selectedDay event = do
         Maintenance.PublicationFailed message ->
           put (AppWrapper context
             (MaintenanceFlow selectedDay (Maintenance.WriteOutcome message)))
-        Maintenance.ReloadFailed -> put (AppWrapper context ShowWorkspaceReloadFailure)
+        Maintenance.ReloadFailed failure ->
+          put (AppWrapper context (ShowWorkspaceReloadFailure failure))
     _ -> pure ()
 
 handleExitOnlyEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()

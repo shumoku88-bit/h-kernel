@@ -52,6 +52,7 @@ import HKernel.Editor.TUI.Model
   , AppEvent
   , HouseholdSection(..)
   , Name(..)
+  , WorkspaceReloadFailure
   , contextAccountsSource
   , contextHouseholdState
   , reloadWorkspaceContext
@@ -91,7 +92,7 @@ data WorkspaceAction
 data PublishResult
   = Published AppContext
   | PublicationFailed Text
-  | ReloadFailed
+  | ReloadFailed WorkspaceReloadFailure
 
 accountNameL :: Lens' AccountInput Text
 accountNameL f input = (\value -> input { accountNameText = value }) <$> f (accountNameText input)
@@ -233,8 +234,8 @@ publishCandidate context source preview = do
     Right () -> do
       reloaded <- reloadWorkspaceContext (context { contextCurrentSection = AccountsSection })
       pure $ case reloaded of
-        Nothing -> ReloadFailed
-        Just fresh -> Published (fresh { contextCurrentSection = AccountsSection })
+        Left failure -> ReloadFailed failure
+        Right fresh -> Published (fresh { contextCurrentSection = AccountsSection })
 
 drawWorkspace :: AppContext -> Widget Name
 drawWorkspace context =

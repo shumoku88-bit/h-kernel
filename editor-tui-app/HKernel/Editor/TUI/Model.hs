@@ -5,6 +5,7 @@ module HKernel.Editor.TUI.Model
   , Name(..)
   , ReportChoice(..)
   , WorkspaceFocus(..)
+  , WorkspaceReloadFailure(..)
   , contextAccountsSource
   , contextEntitlementSource
   , contextHouseholdCycleObservation
@@ -22,12 +23,14 @@ module HKernel.Editor.TUI.Model
   , makeWorkspaceContext
   , reloadWorkspaceContext
   , setIssueWorkspaceFilter
+  , workspaceReloadFailureText
   ) where
 
 import qualified Brick.Widgets.List as L
 import Data.List.NonEmpty (NonEmpty)
 import Lens.Micro (Lens')
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 import qualified Data.Vector as Vec
 
@@ -161,6 +164,17 @@ data ReportChoice
   | ReportCombinedBook
   deriving (Eq, Show)
 
+data WorkspaceReloadFailure
+  = HouseholdReloadFailed (NonEmpty HouseholdLoadError)
+  | PostReloadValidationFailed Text
+  deriving (Show)
+
+workspaceReloadFailureText :: WorkspaceReloadFailure -> Text
+workspaceReloadFailureText failure = case failure of
+  HouseholdReloadFailed errors ->
+    T.pack "Household reload failed: " <> T.pack (show errors)
+  PostReloadValidationFailed message -> message
+
 data AppContext = AppContext
   { contextHouseholdSnapshot          :: HouseholdWriteSnapshot
   , contextCurrentSection             :: HouseholdSection
@@ -273,14 +287,16 @@ makeWorkspaceContext today snapshot =
       (Just . householdCycleCurrentPeriod)
       cycleObservation
 
-reloadWorkspaceContext :: AppContext -> IO (Maybe AppContext)
+reloadWorkspaceContext
+  :: AppContext
+  -> IO (Either WorkspaceReloadFailure AppContext)
 reloadWorkspaceContext context = do
   let root = householdStateRoot (contextHouseholdState context)
   loadResult <- loadCanonicalHouseholdWriteSnapshot root
-  case loadResult of
-    Left _ -> pure Nothing
+  pure $ case loadResult of
+    Left errors -> Left (HouseholdReloadFailed errors)
     Right snapshot ->
-      pure (Just
+      Right
         (setIssueWorkspaceFilter
           (contextIssueFilter context)
           ((makeWorkspaceContext
@@ -288,7 +304,7 @@ reloadWorkspaceContext context = do
               snapshot)
             { contextEntryDay = contextEntryDay context
             , contextCurrentSection = contextCurrentSection context
-            })))
+            }))
 
 contextWorkspaceAccountsL :: Lens' AppContext (L.List Name (Maybe Account))
 contextWorkspaceAccountsL f context =
