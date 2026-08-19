@@ -55,6 +55,7 @@ import HKernel.Editor.TUI.Model
   , AppEvent
   , HouseholdSection(..)
   , Name(..)
+  , WorkspaceReloadFailure
   , contextHouseholdState
   , contextIssueCounts
   , contextIssueListL
@@ -150,7 +151,7 @@ data WorkspaceAction
 data PublishResult
   = Published AppContext
   | PublicationFailed Text
-  | ReloadFailed
+  | ReloadFailed WorkspaceReloadFailure
 
 issueRecordedDateL :: Lens' IssueInput Text
 issueRecordedDateL f input =
@@ -515,8 +516,8 @@ publishCandidate context request = do
     Right () -> do
       reloaded <- reloadWorkspaceContext (context { contextCurrentSection = IssuesSection })
       pure $ case reloaded of
-        Nothing -> ReloadFailed
-        Just fresh -> Published (fresh { contextCurrentSection = IssuesSection })
+        Left failure -> ReloadFailed failure
+        Right fresh -> Published (fresh { contextCurrentSection = IssuesSection })
 
 drawWorkspace :: AppContext -> Widget Name
 drawWorkspace context =
