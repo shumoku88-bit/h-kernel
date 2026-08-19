@@ -13,9 +13,11 @@ import HKernel.Editor.TUI.Home
   )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
+  , WorkspaceReloadFailure(..)
   , contextHouseholdCycleObservation
   , contextOpenPlanObservation
   , makeWorkspaceContext
+  , workspaceReloadFailureText
   )
 import HKernel.Editor.TUI.Shell (shellUsesStackedLayout)
 import HKernel.Editor.TUI.SourcePreview (sourcePreviewText)
@@ -61,6 +63,7 @@ main = do
         , ("production shell becomes side-by-side at 87 columns", not (shellUsesStackedLayout 87))
         , ("production shell remains side-by-side at 120 columns", not (shellUsesStackedLayout 120))
         , ("calendar marker keeps unavailable distinct from observed-empty", calendarUnavailableDistinct)
+        , ("reload failure keeps diagnostic detail", reloadDiagnosticDetailRetained)
         , ("Household surface survives narrow Planned Transactions failure", availabilitySurfaceAvailable)
         , ("Planned Transactions alone records local unavailability", availabilityPlannedUnavailable)
         , ("full renderer keeps Daily Target and Envelope beside unavailable Plans", availabilityRendererKeepsIndependentSections)
@@ -105,6 +108,11 @@ calendarUnavailableDistinct =
     _ -> False
   where
     markers = presentationCalendarMarkers defaultPresentationConfig
+
+reloadDiagnosticDetailRetained :: Bool
+reloadDiagnosticDetailRetained =
+  workspaceReloadFailureText (PostReloadValidationFailed "reload-detail")
+    == "reload-detail"
 
 availabilityContext :: Maybe AppContext
 availabilityContext = do
