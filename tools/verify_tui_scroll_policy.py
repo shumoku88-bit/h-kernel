@@ -7,7 +7,12 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 TUI_ROOT = ROOT / "editor-tui-app"
 SCROLL_OWNER = TUI_ROOT / "HKernel" / "Editor" / "TUI" / "Scroll.hs"
-RAW_WHEEL_TOKENS = ("BScrollUp", "BScrollDown")
+RAW_WHEEL_TOKENS = (
+    "BScrollUp",
+    "BScrollDown",
+    "BScrollLeft",
+    "BScrollRight",
+)
 VIEWPORT_PATTERN = re.compile(
     r"\bviewport\s+([A-Z][A-Za-z0-9_]*)\s+(Vertical|Horizontal|Both)\b"
 )
