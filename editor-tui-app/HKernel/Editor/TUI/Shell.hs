@@ -11,9 +11,11 @@ module HKernel.Editor.TUI.Shell
   , moveSection
   , nextFocus
   , previousFocus
+  , shellUsesStackedLayout
   ) where
 
 import Brick
+import Brick.Types (availWidthL, getContext)
 import Brick.Widgets.Border (borderWithLabel)
 import Brick.Widgets.List qualified as L
 import Data.Maybe (isJust)
@@ -22,6 +24,7 @@ import Data.Text qualified as T
 import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Vector qualified as Vec
+import Lens.Micro ((^.))
 
 import HKernel.Editor.TUI.Home qualified as Home
 import HKernel.Editor.TUI.Model
@@ -37,9 +40,9 @@ data ShellFocus
   | SurfaceFocus
   deriving (Eq, Show)
 
--- | Draw one persistent shell. The calendar and major-function rail stay on
--- the left; the right side is selected-day detail while the calendar owns
--- focus, otherwise it is the selected production section surface.
+-- | Draw one persistent shell. Wide terminals keep the calendar/function rail
+-- beside the selected surface. Narrow terminals stack the same two regions so
+-- the production TUI remains usable in split panes without changing semantics.
 draw
   :: AppContext
   -> Day
@@ -48,19 +51,34 @@ draw
   -> Widget Name
 draw context selectedDay focus sectionBody =
   vBox
-    [ hBox
-        [ hLimit 39 (drawRail context selectedDay focus)
-        , padLeft (Pad 1) (drawRightPane context selectedDay focus sectionBody)
-        ]
+    [ responsiveWhen shellUsesStackedLayout compactLayout wideLayout
     , padTop (Pad 1) (drawHelp focus)
     ]
+  where
+    rail = hLimit 39 (drawRail context selectedDay focus)
+    right = drawRightPane context selectedDay focus sectionBody
+    wideLayout = hBox [rail, padLeft (Pad 1) right]
+    compactLayout = vBox [rail, padTop (Pad 1) right]
+
+-- | Keep the old Home width breakpoint as the application-shell breakpoint.
+-- At 87 columns the 39-column rail, gap, and useful right surface fit together.
+shellUsesStackedLayout :: Int -> Bool
+shellUsesStackedLayout width = width < 87
+
+responsiveWhen :: (Int -> Bool) -> Widget name -> Widget name -> Widget name
+responsiveWhen useCompact compact wide =
+  Widget Greedy Fixed $ do
+    context <- getContext
+    render $
+      if useCompact (context ^. availWidthL)
+        then compact
+        else wide
 
 drawRail :: AppContext -> Day -> ShellFocus -> Widget Name
 drawRail context selectedDay focus =
   vBox
     [ Home.drawCalendarWithFocus (focus == CalendarFocus) context selectedDay
     , padTop (Pad 1) (drawSectionRail context focus)
-    , fill ' '
     ]
 
 drawSectionRail :: AppContext -> ShellFocus -> Widget Name
@@ -110,7 +128,7 @@ drawHelp focus = withAttr (attrName "shellMuted") (strWrap message)
   where
     message = case focus of
       CalendarFocus ->
-        "Calendar: arrows/hjkl move day · t today · r record · Tab next focus · Shift-Tab previous focus · q quit"
+        "Calendar: arrows/hjkl move day · t today · r record · Enter change · Tab next focus · Shift-Tab previous focus · q quit"
       SectionFocus ->
         "Sections: Up/Down or j/k select · Right/Enter surface · Left calendar · Tab/Shift-Tab focus · q quit"
       SurfaceFocus ->
