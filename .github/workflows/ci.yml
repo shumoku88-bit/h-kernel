@@ -34,9 +34,10 @@ jobs:
       - name: Check report scripts
         run: |
           sh -n report report-build report-benchmark report-verify report-snapshot report-real-snapshot tools/hk
-          python3 -m py_compile tools/report_sections.py tools/verify_report_corpus.py tools/verify_daily_command_hub.py tools/verify_repository_context.py tools/verify_household_report_config_resolution.py
+          python3 -m py_compile tools/report_sections.py tools/verify_report_corpus.py tools/verify_daily_command_hub.py tools/verify_repository_context.py tools/verify_household_report_config_resolution.py tools/verify_tui_scroll_policy.py
           python3 tools/verify_daily_command_hub.py
           python3 tools/verify_repository_context.py
+          python3 tools/verify_tui_scroll_policy.py
           if tools/hk concierge issue >/dev/null 2>&1; then
             echo 'concierge unexpectedly accepted writer-like subcommand' >&2
             exit 1
