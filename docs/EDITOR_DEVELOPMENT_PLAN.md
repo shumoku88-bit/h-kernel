@@ -88,7 +88,7 @@ CLIにexplicit source pathやsource-shaped grammarが残ること自体を負債
 
 Householdを跨ぐoperationは、individual source pathsを利用者へ列挙させず一つの`HouseholdRoot`から必要coordinateを解決してよい。これはgeneric repository/session abstractionではなく、そのoperationが必要とする明示的なsource topologyである。
 
-CLIを整理する場合はcurrent usageの具体的摩擦から始め、見た目を揃えるためだけにsource ownership、source format、writer authorityを変更しない。`tools/hk`は既存ownerへのrouterであり、会計ruleを所有しない。
+CLIを整理する場合はcurrent usageの具体的摩擦から始め、見た目を揃えるためだけにsource ownership、source format、writer authorityを変更しない。`tools/hk`はBrick TUI launcherだけを所有し、CLI command grammarや他deliveryをroutingしない。低水準operationは必要なnamed adapterへ直接到達する。
 
 ## Current practical priorities
 
