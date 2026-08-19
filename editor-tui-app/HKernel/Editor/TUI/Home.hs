@@ -33,10 +33,13 @@ import Lens.Micro ((^.))
 
 import HKernel.Account (accountName)
 import HKernel.Editor.HouseholdWorkspace
-  ( homeActualTransactionsOn
+  ( HomeActualObservation(..)
+  , HomeIssueObservation(..)
+  , homeActualObservationOn
   , homeCycleEndDay
-  , homeIssuesDueOn
+  , homeIssueObservationOn
   , homePlannedTransactionsOn
+  , workspaceOpenPlanObservationAt
   )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
@@ -237,26 +240,38 @@ hasOpenPlan context day = case plansOn context day of
   Right plans -> not (null plans)
 
 hasOpenIssueDue :: AppContext -> Day -> Bool
-hasOpenIssueDue context day = not (null (issuesDueOn context day))
+hasOpenIssueDue context day = case issuesDueOn context day of
+  HomeIssueUnavailable _ -> False
+  HomeIssueAvailable issues -> not (null issues)
 
 isCycleEnd :: AppContext -> Day -> Bool
 isCycleEnd context day = case cycleEndDay context of
   Left _ -> False
   Right endDay -> endDay == day
 
-actualsOn :: AppContext -> Day -> [Transaction]
+actualsOn :: AppContext -> Day -> HomeActualObservation
 actualsOn context day =
-  homeActualTransactionsOn day
+  homeActualObservationOn
+    (contextObservationDay context)
+    day
     (householdStateActualJournal (contextHouseholdState context))
 
 plansOn :: AppContext -> Day -> Either Text [IdentifiedPlanTransaction]
-plansOn context day = case contextOpenPlanObservation context of
+plansOn context day = case workspaceOpenPlanObservationAt
+    (contextObservationDay context)
+    (householdStatePlanJournal state)
+    (householdStateActualJournal state) of
   Left errors -> Left (T.pack (show errors))
   Right plans -> Right (homePlannedTransactionsOn day plans)
+  where
+    state = contextHouseholdState context
 
-issuesDueOn :: AppContext -> Day -> [HouseholdIssue]
+issuesDueOn :: AppContext -> Day -> HomeIssueObservation
 issuesDueOn context day =
-  homeIssuesDueOn day (householdStateIssues (contextHouseholdState context))
+  homeIssueObservationOn
+    (contextObservationDay context)
+    day
+    (householdStateIssues (contextHouseholdState context))
 
 cycleEndDay :: AppContext -> Either Text Day
 cycleEndDay context = case contextHouseholdCycleObservation context of
@@ -271,12 +286,17 @@ drawDayPane context selectedDay =
     dayLabel = str (formatTime defaultTimeLocale "%A, %Y-%m-%d" selectedDay)
 
 -- | Full-height variant for the persistent application shell. It renders the
--- same selected-day projection as Home; only the presentation allocation is
--- different.
+-- same selected-day projection as Home and retains the Home change affordance;
+-- only the presentation allocation is different.
 drawDayPaneFull :: AppContext -> Day -> Widget Name
 drawDayPaneFull context selectedDay =
-  borderWithLabel dayLabel
-    (padBottom Max (drawDayViewport context selectedDay))
+  vBox
+    [ borderWithLabel dayLabel
+        (padBottom Max (drawDayViewport context selectedDay))
+    , padTop (Pad 1)
+        (clickable (HomeChangeFrom selectedDay)
+          (strWrap "[Enter/click] Envelope change from selected day to observation"))
+    ]
   where
     dayLabel = str (formatTime defaultTimeLocale "%A, %Y-%m-%d" selectedDay)
 
@@ -298,8 +318,12 @@ drawDayViewport context selectedDay =
     planValues = plansOn context selectedDay
     issueValues = issuesDueOn context selectedDay
     actualSection = str "Actual" : case actualValues of
-      [] -> [str "  none recorded"]
-      values -> concatMap renderActual values
+      HomeActualUnavailable ->
+        [ withAttr (attrName "warning")
+            (strWrap "  unavailable beyond this observation horizon")
+        ]
+      HomeActualAvailable [] -> [str "  none recorded"]
+      HomeActualAvailable values -> concatMap renderActual values
     planSection = str "Plans" : case planValues of
       Left reason ->
         [ withAttr (attrName "warning")
@@ -308,8 +332,12 @@ drawDayViewport context selectedDay =
       Right [] -> [str "  none"]
       Right values -> concatMap renderPlan values
     issueSection = str "Issues due" : case issueValues of
-      [] -> [str "  none"]
-      values -> map renderIssue values
+      HomeIssueUnavailable errors ->
+        [ withAttr (attrName "warning")
+            (txtWrap ("  unavailable for this observation: " <> T.pack (show errors)))
+        ]
+      HomeIssueAvailable [] -> [str "  none"]
+      HomeIssueAvailable values -> map renderIssue values
     cycleSection = str "Cycle" : case cycleEndDay context of
       Left reason ->
         [ withAttr (attrName "warning")
