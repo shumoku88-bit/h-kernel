@@ -14,6 +14,7 @@ VIEWPORT_PATTERN = re.compile(
 
 
 def main() -> None:
+    """Keep raw wheel translation centralized and every viewport wheel-aware."""
     findings: list[str] = []
     source_texts: dict[Path, str] = {
         path: path.read_text(encoding="utf-8")
