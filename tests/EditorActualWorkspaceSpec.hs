@@ -258,6 +258,11 @@ main = do
               transactionDate transaction == purchaseDay
             _ -> False
         )
+      actualAvailableEmptyResult =
+        ( "Home preserves available-empty Actual separately from unavailable"
+        , homeActualObservationOn purchaseDay rewardDay alignedJournal
+            == HomeActualAvailable []
+        )
       issueId = mustRight (mkIssueId "issue-temporal")
       issueClosedAfterHorizon = mustRight (mkHouseholdIssueWithClosed
         issueId
@@ -327,6 +332,7 @@ main = do
         , observationDayResult
         , futureActualUnavailableResult
         , actualOwnDayAvailableResult
+        , actualAvailableEmptyResult
         , issueClosedAfterHorizonResult
         , issueClosedAtHorizonResult
         , issueUnknownClosureResult
