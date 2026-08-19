@@ -5,7 +5,9 @@
 -- This module owns no Household facts. It renders pure projections from the
 -- shared editor workspace boundary onto a month matrix and selected-day pane.
 module HKernel.Editor.TUI.Home
-  ( HomeAction(..)
+  ( CalendarMarkerObservation(..)
+  , HomeAction(..)
+  , calendarMarkerObservation
   , draw
   , drawCalendarWithFocus
   , drawDayPaneFull
@@ -45,6 +47,7 @@ import HKernel.Editor.TUI.Model
   ( AppContext(..)
   , AppEvent
   , Name(..)
+  , contextHouseholdCycleObservation
   , contextHouseholdState
   )
 import HKernel.Editor.TUI.Scroll qualified as Scroll
@@ -90,6 +93,28 @@ data HomeAction
   | HomeRecord Day
   | HomeObserveChange Day
   deriving (Eq, Show)
+
+-- | Calendar summary cells must distinguish a fully observed empty day from a
+-- day whose Plan, Issue, or Cycle observation is unavailable. The calendar is
+-- intentionally conservative: one unavailable input makes the summary marker
+-- unavailable rather than pretending the missing fact is absent.
+data CalendarMarkerObservation
+  = CalendarMarkerAvailable (Maybe CalendarMarker)
+  | CalendarMarkerUnavailable
+  deriving (Eq, Show)
+
+calendarMarkerObservation
+  :: CalendarMarkers
+  -> Either planError Bool
+  -> Either issueError Bool
+  -> Either cycleError Bool
+  -> CalendarMarkerObservation
+calendarMarkerObservation markers planDue issueDue cycleEnd =
+  case (planDue, issueDue, cycleEnd) of
+    (Right hasPlan, Right hasIssue, Right isEnd) ->
+      CalendarMarkerAvailable
+        (selectCalendarMarker markers hasPlan hasIssue isEnd)
+    _ -> CalendarMarkerUnavailable
 
 -- | Handle only interaction local to the calendar surface. Application-shell
 -- navigation remains in Main.
@@ -196,15 +221,19 @@ drawCalendarWithFocus focused context selectedDay =
     drawCell Nothing = str "     "
     drawCell (Just day) =
       let (_, _, dayOfMonth) = toGregorian day
-          marker = maybe ' ' calendarMarkerValue (markerForDay context day)
           dayLabel = T.justifyRight 2 ' ' (T.pack (show dayOfMonth))
-          markerLabel = " " <> T.singleton marker <> " "
           dayNumber =
             if day == contextObservationDay context && day /= selectedDay
               then modifyDefAttr (`V.withStyle` V.dim) (txt dayLabel)
               else txt dayLabel
+          markerWidget = case markerObservationForDay context day of
+            CalendarMarkerAvailable Nothing -> txt "   "
+            CalendarMarkerAvailable (Just marker) ->
+              txt (" " <> T.singleton (calendarMarkerValue marker) <> " ")
+            CalendarMarkerUnavailable ->
+              withAttr (attrName "warning") (txt " ? ")
           cell = clickable (CalendarDay day)
-            (hBox [dayNumber, txt markerLabel])
+            (hBox [dayNumber, markerWidget])
       in if day == selectedDay
           then withAttr (attrName "homeSelectedDay") cell
           else cell
@@ -215,17 +244,16 @@ chunksOf width values =
   let (chunk, rest) = splitAt width values
   in chunk : chunksOf width rest
 
--- | Calendar attention facts stay independent. A single fact gets its own
--- marker; overlaps get the configured multiple marker instead of a priority
--- winner. Actual existence remains visible in the selected-day pane.
-markerForDay :: AppContext -> Day -> Maybe CalendarMarker
-markerForDay context day =
-  selectCalendarMarker markers
-    (hasOpenPlan context day)
-    (hasOpenIssueDue context day)
-    (isCycleEnd context day)
+markerObservationForDay :: AppContext -> Day -> CalendarMarkerObservation
+markerObservationForDay context day =
+  calendarMarkerObservation markers planFact issueFact cycleFact
   where
     markers = configuredMarkers context
+    planFact = not . null <$> plansOn context day
+    issueFact = case issuesDueOn context day of
+      HomeIssueUnavailable _ -> Left ()
+      HomeIssueAvailable issues -> Right (not (null issues))
+    cycleFact = (== day) <$> cycleEndDay context
 
 configuredMarkers :: AppContext -> CalendarMarkers
 configuredMarkers =
@@ -233,21 +261,6 @@ configuredMarkers =
     . reportConfigurationPresentation
     . householdStateReportConfig
     . contextHouseholdState
-
-hasOpenPlan :: AppContext -> Day -> Bool
-hasOpenPlan context day = case plansOn context day of
-  Left _ -> False
-  Right plans -> not (null plans)
-
-hasOpenIssueDue :: AppContext -> Day -> Bool
-hasOpenIssueDue context day = case issuesDueOn context day of
-  HomeIssueUnavailable _ -> False
-  HomeIssueAvailable issues -> not (null issues)
-
-isCycleEnd :: AppContext -> Day -> Bool
-isCycleEnd context day = case cycleEndDay context of
-  Left _ -> False
-  Right endDay -> endDay == day
 
 actualsOn :: AppContext -> Day -> HomeActualObservation
 actualsOn context day =
@@ -382,7 +395,7 @@ drawLegend context =
     ( markerText (calendarPlanDueMarker markers) <> " Plan due   "
       <> markerText (calendarIssueDueMarker markers) <> " Issue due   "
       <> markerText (calendarCycleEndMarker markers) <> " Cycle end   "
-      <> markerText (calendarMultipleMarker markers) <> " Multiple"
+      <> markerText (calendarMultipleMarker markers) <> " Multiple   ? Unavailable"
     )
   where
     markers = configuredMarkers context

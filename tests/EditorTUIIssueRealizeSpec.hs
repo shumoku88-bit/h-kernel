@@ -6,9 +6,15 @@ import Data.Text qualified as T
 import Data.Time.Calendar (Day, fromGregorian)
 import HKernel.Application.Config (mkHouseholdRoot)
 import HKernel.Editor.TUI.Actual (State(..), startIssueRealize, startRecord)
-import HKernel.Editor.TUI.Home (homeUsesStackedLayout)
+import HKernel.Editor.TUI.Home
+  ( CalendarMarkerObservation(..)
+  , calendarMarkerObservation
+  , homeUsesStackedLayout
+  )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
+  , contextHouseholdCycleObservation
+  , contextOpenPlanObservation
   , makeWorkspaceContext
   )
 import HKernel.Editor.TUI.Shell (shellUsesStackedLayout)
@@ -33,7 +39,10 @@ import HKernel.HouseholdIssue
   )
 import HKernel.Plan (planIdText)
 import HKernel.Plan.Journal (identifiedPlanId)
-import HKernel.Report.Presentation (defaultPresentationConfig)
+import HKernel.Report.Presentation
+  ( defaultPresentationConfig
+  , presentationCalendarMarkers
+  )
 import System.Exit (exitFailure, exitSuccess)
 
 main :: IO ()
@@ -51,6 +60,7 @@ main = do
         , ("production shell stacks at 80 columns", shellUsesStackedLayout 80)
         , ("production shell becomes side-by-side at 87 columns", not (shellUsesStackedLayout 87))
         , ("production shell remains side-by-side at 120 columns", not (shellUsesStackedLayout 120))
+        , ("calendar marker keeps unavailable distinct from observed-empty", calendarUnavailableDistinct)
         , ("Household surface survives narrow Planned Transactions failure", availabilitySurfaceAvailable)
         , ("Planned Transactions alone records local unavailability", availabilityPlannedUnavailable)
         , ("full renderer keeps Daily Target and Envelope beside unavailable Plans", availabilityRendererKeepsIndependentSections)
@@ -84,6 +94,17 @@ testClosedIssueCannotStart =
     Just issue -> case startIssueRealize entryDay issue of
       Nothing -> True
       Just _ -> False
+
+calendarUnavailableDistinct :: Bool
+calendarUnavailableDistinct =
+  case
+      ( calendarMarkerObservation markers (Left ()) (Right False) (Right False)
+      , calendarMarkerObservation markers (Right False) (Right False) (Right False)
+      ) of
+    (CalendarMarkerUnavailable, CalendarMarkerAvailable Nothing) -> True
+    _ -> False
+  where
+    markers = presentationCalendarMarkers defaultPresentationConfig
 
 availabilityContext :: Maybe AppContext
 availabilityContext = do
