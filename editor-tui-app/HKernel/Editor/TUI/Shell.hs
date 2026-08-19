@@ -154,7 +154,7 @@ sectionStatus context section = case section of
   ReportsSection -> ordinary "ready"
   SettingsSection -> ordinary "ready"
   where
-    ordinary summary = ("✓", attrName "success", summary)
+    ordinary summary = ("·", attrName "shellMuted", summary)
     unavailable summary = ("?", attrName "warning", summary)
     countOf = T.pack . show . Vec.length . L.listElements
     accountCount = Vec.length
