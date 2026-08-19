@@ -5,7 +5,8 @@
 -- This module owns no Household facts. It renders pure projections from the
 -- shared editor workspace boundary onto a month matrix and selected-day pane.
 module HKernel.Editor.TUI.Home
-  ( CalendarMarkerObservation(..)
+  ( CalendarMarkerRole(..)
+  , CalendarMarkerObservation(..)
   , HomeAction(..)
   , calendarMarkerObservation
   , draw
@@ -84,7 +85,6 @@ import HKernel.Report.Presentation
   , CalendarMarkers(..)
   , calendarMarkerValue
   , presentationCalendarMarkers
-  , selectCalendarMarker
   )
 
 data HomeAction
@@ -94,12 +94,21 @@ data HomeAction
   | HomeObserveChange Day
   deriving (Eq, Show)
 
+-- | Semantic presentation role for one already-established calendar fact.
+-- Colors are renderer-only; the role never changes Household meaning.
+data CalendarMarkerRole
+  = CalendarPlanDue
+  | CalendarIssueDue
+  | CalendarCycleEnd
+  | CalendarMultiple
+  deriving (Eq, Show)
+
 -- | Calendar summary cells must distinguish a fully observed empty day from a
 -- day whose Plan, Issue, or Cycle observation is unavailable. The calendar is
 -- intentionally conservative: one unavailable input makes the summary marker
 -- unavailable rather than pretending the missing fact is absent.
 data CalendarMarkerObservation
-  = CalendarMarkerAvailable (Maybe CalendarMarker)
+  = CalendarMarkerAvailable (Maybe (CalendarMarkerRole, CalendarMarker))
   | CalendarMarkerUnavailable
   deriving (Eq, Show)
 
@@ -112,9 +121,18 @@ calendarMarkerObservation
 calendarMarkerObservation markers planDue issueDue cycleEnd =
   case (planDue, issueDue, cycleEnd) of
     (Right hasPlan, Right hasIssue, Right isEnd) ->
-      CalendarMarkerAvailable
-        (selectCalendarMarker markers hasPlan hasIssue isEnd)
+      CalendarMarkerAvailable (observedMarker hasPlan hasIssue isEnd)
     _ -> CalendarMarkerUnavailable
+  where
+    observedMarker hasPlan hasIssue isEnd = case (hasPlan, hasIssue, isEnd) of
+      (False, False, False) -> Nothing
+      (True, False, False) ->
+        Just (CalendarPlanDue, calendarPlanDueMarker markers)
+      (False, True, False) ->
+        Just (CalendarIssueDue, calendarIssueDueMarker markers)
+      (False, False, True) ->
+        Just (CalendarCycleEnd, calendarCycleEndMarker markers)
+      _ -> Just (CalendarMultiple, calendarMultipleMarker markers)
 
 -- | Handle only interaction local to the calendar surface. Application-shell
 -- navigation remains in Main.
@@ -201,7 +219,7 @@ responsiveWhen useCompact compact wide =
 drawCalendarWithFocus :: Bool -> AppContext -> Day -> Widget Name
 drawCalendarWithFocus focused context selectedDay =
   borderWithLabel monthLabel
-    (padAll 1 (vBox (weekdayHeader : map drawWeek weeks)))
+    (padAll 1 (vBox (weekdayHeader : map drawWeek weeks ++ [calendarLegend])))
   where
     rawMonthLabel = T.pack (formatTime defaultTimeLocale "%B %Y" selectedDay)
     monthLabel
@@ -224,12 +242,12 @@ drawCalendarWithFocus focused context selectedDay =
           dayLabel = T.justifyRight 2 ' ' (T.pack (show dayOfMonth))
           dayNumber =
             if day == contextObservationDay context && day /= selectedDay
-              then modifyDefAttr (`V.withStyle` V.dim) (txt dayLabel)
+              then modifyDefAttr (`V.withStyle` V.bold) (txt dayLabel)
               else txt dayLabel
           markerWidget = case markerObservationForDay context day of
             CalendarMarkerAvailable Nothing -> txt "   "
-            CalendarMarkerAvailable (Just marker) ->
-              txt (" " <> T.singleton (calendarMarkerValue marker) <> " ")
+            CalendarMarkerAvailable (Just (role, marker)) ->
+              hBox [str " ", drawCalendarMarker role marker, str " "]
             CalendarMarkerUnavailable ->
               withAttr (attrName "warning") (txt " ? ")
           cell = clickable (CalendarDay day)
@@ -237,6 +255,38 @@ drawCalendarWithFocus focused context selectedDay =
       in if day == selectedDay
           then withAttr (attrName "homeSelectedDay") cell
           else cell
+    markers = configuredMarkers context
+    calendarLegend = padTop (Pad 1) (drawCalendarLegend markers)
+
+drawCalendarMarker :: CalendarMarkerRole -> CalendarMarker -> Widget Name
+drawCalendarMarker role marker =
+  modifyDefAttr decorate (txt (T.singleton (calendarMarkerValue marker)))
+  where
+    decorate attr = case role of
+      CalendarPlanDue -> V.withForeColor attr V.cyan
+      CalendarIssueDue -> V.withForeColor attr V.yellow
+      CalendarCycleEnd -> V.withForeColor attr V.magenta
+      CalendarMultiple ->
+        V.withStyle (V.withForeColor attr V.white) V.bold
+
+drawCalendarLegend :: CalendarMarkers -> Widget Name
+drawCalendarLegend markers =
+  vBox
+    [ hBox
+        [ drawCalendarMarker CalendarPlanDue (calendarPlanDueMarker markers)
+        , str " Plan  "
+        , drawCalendarMarker CalendarIssueDue (calendarIssueDueMarker markers)
+        , str " Issue  "
+        , drawCalendarMarker CalendarCycleEnd (calendarCycleEndMarker markers)
+        , str " Cycle"
+        ]
+    , hBox
+        [ drawCalendarMarker CalendarMultiple (calendarMultipleMarker markers)
+        , str " Multi  "
+        , withAttr (attrName "warning") (str "?")
+        , str " Unavailable"
+        ]
+    ]
 
 chunksOf :: Int -> [value] -> [[value]]
 chunksOf _ [] = []
@@ -390,13 +440,4 @@ renderAmount amount =
     <> " " <> commodityCode (amountCommodity amount)
 
 drawLegend :: AppContext -> Widget Name
-drawLegend context =
-  txtWrap
-    ( markerText (calendarPlanDueMarker markers) <> " Plan due   "
-      <> markerText (calendarIssueDueMarker markers) <> " Issue due   "
-      <> markerText (calendarCycleEndMarker markers) <> " Cycle end   "
-      <> markerText (calendarMultipleMarker markers) <> " Multiple   ? Unavailable"
-    )
-  where
-    markers = configuredMarkers context
-    markerText = T.singleton . calendarMarkerValue
+drawLegend context = drawCalendarLegend (configuredMarkers context)
