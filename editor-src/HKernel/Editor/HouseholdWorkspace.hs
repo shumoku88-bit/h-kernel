@@ -29,6 +29,7 @@ module HKernel.Editor.HouseholdWorkspace
   , issuesForWorkspace
   , workspaceAccounts
   , workspaceIssueCounts
+  , workspaceOpenPlanObservationAt
   , workspaceOpenPlansAt
   , workspaceReportBookAt
   , workspaceTransactions
@@ -37,7 +38,6 @@ module HKernel.Editor.HouseholdWorkspace
 import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Set as Set
 import Data.Time.Calendar (Day, addDays, toModifiedJulianDay)
 
 import HKernel.Account
@@ -67,7 +67,6 @@ import HKernel.Editor.IssueRealize
   , publishIssueRealizeFromObservedSourcesUsing
   , IssueRealizeWriteError(..)
   )
-import HKernel.Editor.PlanLifecycle (planInactiveIdsAt)
 import HKernel.Household.Cycle
   ( HouseholdCycleObservation
   , householdCycleCurrentPeriod
@@ -89,9 +88,11 @@ import HKernel.Period (Period, periodEndExclusive)
 import HKernel.Plan.Journal
   ( IdentifiedPlanTransaction
   , PlanJournal
-  , identifiedPlanId
   , identifiedPlanTransaction
-  , planJournalTransactions
+  )
+import HKernel.Plan.Open
+  ( PlanObservationError
+  , resolveOpenPlanTransactionsAt
   )
 import HKernel.Report (ReportBook, reportBookWithPlan)
 import HKernel.Report.Config
@@ -124,22 +125,31 @@ workspaceTransactions =
     . map actualTransactionEntryTransaction
     . actualJournalTransactionEntries
 
--- | Open Plan choices at one observation day. A lifecycle-invalid admitted
--- state exposes no mutation targets rather than treating invalid Plans as open.
+-- | Typed open-Plan observation at one explicit knowledge horizon.
+--
+-- Lifecycle/completion failure remains unavailable evidence instead of being
+-- collapsed into an empty list of mutation targets. Presentation adapters that
+-- need to distinguish no open Plans from an invalid observation should use this
+-- function directly.
+workspaceOpenPlanObservationAt
+  :: Day
+  -> PlanJournal
+  -> ActualJournal
+  -> Either (NonEmpty PlanObservationError) [IdentifiedPlanTransaction]
+workspaceOpenPlanObservationAt = resolveOpenPlanTransactionsAt
+
+-- | Compatibility projection for callers that can only consume a list.
+-- Observation failure intentionally exposes no mutation targets, but new Home
+-- and delivery code should retain the typed failure through
+-- 'workspaceOpenPlanObservationAt' rather than confusing it with available-empty.
 workspaceOpenPlansAt
   :: Day
   -> PlanJournal
   -> ActualJournal
   -> [IdentifiedPlanTransaction]
 workspaceOpenPlansAt observedOn planJournal actualJournal =
-  filter isOpen allPlans
-  where
-    allPlans = planJournalTransactions planJournal
-    inactivePlanIds = case planInactiveIdsAt observedOn planJournal actualJournal of
-      Right ids -> ids
-      Left _ -> Set.fromList (map identifiedPlanId allPlans)
-    isOpen identified =
-      identifiedPlanId identified `Set.notMember` inactivePlanIds
+  either (const []) id
+    (workspaceOpenPlanObservationAt observedOn planJournal actualJournal)
 
 -- | Report selection is a rebuildable projection of the admitted Actual journal
 -- and report configuration. Household-relative queries receive only the
