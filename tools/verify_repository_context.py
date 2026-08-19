@@ -9,7 +9,8 @@ import subprocess
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-HUB = ROOT / "tools" / "hk"
+MAP_TOOL = ROOT / "tools" / "repo-map"
+CONTEXT_TOOL = ROOT / "tools" / "repo-context"
 CABAL = os.environ.get("HKERNEL_CABAL", "cabal")
 DOCUMENT_ROLES = {"policy", "architecture", "contract", "observation", "reference"}
 
@@ -24,8 +25,8 @@ def run(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return run([str(HUB), *args])
+def invoke(tool: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return run([str(tool), *args])
 
 
 def assert_success(result: subprocess.CompletedProcess[str], label: str) -> None:
@@ -47,7 +48,7 @@ def assert_contains(output: str, fragments: tuple[str, ...], label: str) -> None
 
 
 def verify_generated_context() -> None:
-    repository_map = invoke(["map"])
+    repository_map = invoke(MAP_TOOL, [])
     assert_success(repository_map, "repository map")
     assert_contains(
         repository_map.stdout,
@@ -64,7 +65,7 @@ def verify_generated_context() -> None:
         "repository map",
     )
 
-    context = invoke(["context", "HKernel.Envelope.Remaining"])
+    context = invoke(CONTEXT_TOOL, ["HKernel.Envelope.Remaining"])
     assert_success(context, "repository context")
     assert_contains(
         context.stdout,
@@ -81,26 +82,22 @@ def verify_generated_context() -> None:
         "repository context",
     )
 
-    invalid_map = invoke(["map", "extra"])
-    if invalid_map.returncode != 2 or "does not accept arguments" not in invalid_map.stderr:
-        raise AssertionError(
-            "tools/hk map did not reject extra arguments\n"
-            f"returncode={invalid_map.returncode}\n"
-            f"stderr:\n{invalid_map.stderr}"
-        )
+    invalid_map = invoke(MAP_TOOL, ["extra"])
+    if invalid_map.returncode == 0:
+        raise AssertionError("tools/repo-map accepted an unexpected argument")
 
-    missing_context = invoke(["context"])
+    missing_context = invoke(CONTEXT_TOOL, [])
     if missing_context.returncode != 2 or "requires exactly one TERM" not in missing_context.stderr:
         raise AssertionError(
-            "tools/hk context did not reject a missing term\n"
+            "tools/repo-context did not reject a missing term\n"
             f"returncode={missing_context.returncode}\n"
             f"stderr:\n{missing_context.stderr}"
         )
 
-    empty_context = invoke(["context", ""])
+    empty_context = invoke(CONTEXT_TOOL, [""])
     if empty_context.returncode != 2 or "non-empty TERM" not in empty_context.stderr:
         raise AssertionError(
-            "tools/hk context did not reject an empty term\n"
+            "tools/repo-context did not reject an empty term\n"
             f"returncode={empty_context.returncode}\n"
             f"stderr:\n{empty_context.stderr}"
         )

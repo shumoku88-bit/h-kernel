@@ -130,7 +130,7 @@ requireConciergeHouseholdDirectory = do
   case configured of
     Just directory -> pure directory
     Nothing -> dieText
-      "concierge Household root is not configured; use tools/hk --base DIR, HKERNEL_LEDGER_DATA_DIR, or ledger-data.local"
+      "concierge Household root is not configured; use tools/concierge --base DIR, HKERNEL_LEDGER_DATA_DIR, or ledger-data.local"
 
 stableConciergeObservation :: Day -> FilePath -> IO ConciergeObservation
 stableConciergeObservation today directory = do
@@ -225,7 +225,7 @@ renderConciergeObservation command observation = do
     "overview" ->
       header "OVERVIEW"
         <> "evidence_level: canonical-report\n"
-        <> "next: use `tools/hk concierge export` only when exact root-source evidence is needed\n"
+        <> "next: use `tools/concierge export` only when exact root-source evidence is needed\n"
         <> reportBlock
     "export" ->
       header "EVIDENCE"

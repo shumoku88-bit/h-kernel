@@ -7,10 +7,10 @@
 依頼がHouseholdの支出、残高、予定、Issue、Envelope、過去の判断などについての**家計相談**なら、通常のrepository開発手順へ入らない。read-only concierge modeとして扱い、Household evidenceは次だけから取得する。
 
 ```sh
-tools/hk concierge overview
+tools/concierge overview
 ```
 
-追加のsource evidenceが必要な場合だけ`tools/hk concierge export`、一度にcomplete observationが必要なら`tools/hk concierge packet`を使う。consultation中に`actual-add`、`actual-multi`、`actual-reverse`、`account`、`plan`、`budget`、`issue`、`edit`を呼ばない。日付、memo、金額、Account shape、source positionの類似からidentityやrelationを推測しない。
+追加のsource evidenceが必要な場合だけ`tools/concierge export`、一度にcomplete observationが必要なら`tools/concierge packet`を使う。consultation中にwriter capabilityへ切り替えない。日付、memo、金額、Account shape、source positionの類似からidentityやrelationを推測しない。
 
 相談の結果として実際のHousehold変更を依頼された場合は、consultation modeを終了したことを明示してから、通常のadmitted writer workflowへ切り替える。助言とwriter effectを一つの暗黙経路に混ぜない。
 
@@ -20,12 +20,12 @@ tools/hk concierge overview
 
 1. remoteの最新`main` SHA、open PR、直近commit、関連branchを確認する。
 2. 対象fileと並行作業の変更fileを比較し、実在する重複を避ける。
-3. 対象領域がまだ広い場合は、`tools/hk context TERM`でcurrent source、test、active documentの候補を絞る。componentと公開境界の全体像が必要な場合だけ`tools/hk map`を見る。
+3. 対象領域がまだ広い場合は、`tools/repo-context TERM`でcurrent source、test、active documentの候補を絞る。componentと公開境界の全体像が必要な場合だけ`tools/repo-map`を見る。
 4. 対象領域のarchitecture、contract、source ownership文書と実コードを読む。
 5. editorまたはwriter effectへ触れる場合は、[`docs/EDITOR_DEVELOPMENT_PLAN.md`](docs/EDITOR_DEVELOPMENT_PLAN.md)でcurrent capabilityとsafe writer law、[`docs/WRITER_AUTHORITY.md`](docs/WRITER_AUTHORITY.md)でsource別authorityとcutover gateを確認する。
 6. private household sourceへ触れる場合は、[`docs/HOUSEHOLD_CANONICAL_SOURCE.md`](docs/HOUSEHOLD_CANONICAL_SOURCE.md)でcanonical source shapeとcurrent reader topologyを確認し、writer authority、公開境界、実データが維持されることを先に確認する。
 
-`tools/hk map`と`tools/hk context`の出力は、`h-kernel.cabal`、Haskell source、test、`docs/INDEX.toml`からその場で作る探索viewであり、設計上のauthorityではない。出力を文書として保存したり、別の手書き目録へ転記したりしない。
+`tools/repo-map`と`tools/repo-context`の出力は、`h-kernel.cabal`、Haskell source、test、`docs/INDEX.toml`からその場で作る探索viewであり、設計上のauthorityではない。出力を文書として保存したり、別の手書き目録へ転記したりしない。
 
 ## 判断基準
 
@@ -60,13 +60,13 @@ tools/hk concierge overview
 repository全体のcomponent、public/internal module、test-suite、active document ownershipを現在の正本から見る。
 
 ```sh
-tools/hk map
+tools/repo-map
 ```
 
 特定のmodule、型、関数、domain語から、直接言及するsource、test、documentを絞る。
 
 ```sh
-tools/hk context HKernel.Envelope.Remaining
+tools/repo-context HKernel.Envelope.Remaining
 ```
 
 これは検索開始点を狭くするためのviewであり、依存関係や意味論を推測して補完するものではない。必要なownerへ到達した後は、実コード、型、export、contractを正本として読む。
@@ -76,22 +76,24 @@ tools/hk context HKernel.Envelope.Remaining
 通常のrepository qualificationは次の一つを入口とする。
 
 ```sh
-tools/hk check
+tools/check
 ```
 
 Reportへ影響する場合は、必要なfocused testに加えて次を実行する。
 
 ```sh
-tools/hk check-report
+tools/check-report
 ```
 
 正規世帯sourceへ影響する場合は、private sourceの内容を出力せず次を追加実行する。
 
 ```sh
-tools/hk --base /absolute/path/to/private-ledger-data check-household
+tools/check-household --base /absolute/path/to/private-ledger-data
 ```
 
 `cabal`、`report-*`、verification scriptの個別呼び出しはCIやtool実装を調査するときだけ使い、通常作業の入口として重複させない。
+
+`tools/hk`は日常利用のBrick TUI launcherだけを所有する。repository探索、qualification、concierge、writer commandをroutingしない。
 
 ## 文書入口
 

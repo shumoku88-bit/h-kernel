@@ -16,7 +16,7 @@ editorの現在地は[`EDITOR_DEVELOPMENT_PLAN.md`](EDITOR_DEVELOPMENT_PLAN.md)�
 external source / user intent
           |
           v
-report app / editor CLI / editor TUI / tools/hk
+report app / editor CLI / editor TUI / focused launchers
           |
           v
 explicit loader or writer effect
@@ -64,7 +64,7 @@ h-kernel-editor
         post-admission and restore-capable writer result
 ```
 
-Delivery adapterはlibraryとは別に置く。CLI/TUI/shell routerへ会計ruleやwriter lawを複製しない。
+Delivery adapterはlibraryとは別に置く。CLI/TUI/shell launcherへ会計ruleやwriter lawを複製しない。
 
 このcomponent一覧は現在の意味を説明する地図であり、layer数やmodule数を維持するための設計目標ではない。既存ownerの直接な関数と値で十分な処理にwrapper、context、service、generic helperを追加しない。新しい境界は、実在するdomain invariant、lifecycle、dependency direction、effect ownershipのいずれかを明瞭にするときだけ導入する。
 
@@ -95,7 +95,9 @@ CLIやTUIはこの順序を複製しない。UI stateへcomplete private source�
 
 ### 4.3 Application and terminal
 
-report app、editor app、Brick TUI、shell launcherは引数、環境変数、標準入出力、終了状態、terminal eventを扱う。会計ruleやsource admissionをadapter都合で再実装しない。
+report app、editor app、Brick TUI、focused shell launcherは引数、環境変数、標準入出力、終了状態、terminal eventを扱う。会計ruleやsource admissionをadapter都合で再実装しない。
+
+`tools/hk`はHousehold rootを解決してBrick TUIを起動するだけで、他deliveryやqualificationをroutingしない。`tools/concierge`、`tools/repo-*`、`tools/check*`もそれぞれ一つのread-only consultation、repository observation、qualification責任だけを持つ。
 
 ## 5. Domain invariants
 
@@ -165,7 +167,9 @@ h-kernel-household-application -> h-kernel + h-kernel-household
 h-kernel-editor                -> h-kernel + h-kernel-household
 report app                     -> admitted report owners
 editor adapters                -> h-kernel-editor
-tools/hk                       -> existing adapters / checks
+tools/hk                       -> editor TUI only
+tools/concierge                -> read-only h-kernel concierge app
+repository tools               -> development observation / qualification only
 ```
 
 禁止:

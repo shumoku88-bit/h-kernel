@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+[ "$#" -eq 1 ] || { printf 'error: tools/repo-context requires exactly one TERM\n' >&2; exit 2; }
+term=$1
+[ -n "$term" ] || { printf 'error: tools/repo-context requires a non-empty TERM\n' >&2; exit 2; }
+
+cd "$ROOT"
+printf 'query %s\n\nmap-matches\n' "$term"
+"$ROOT/tools/repo-map" | awk -v query="$term" '
+  BEGIN { needle = tolower(query) }
+  index(tolower($0), needle) > 0 { print "  " $0 }
+'
+
+haskell_matches=$(git grep -l -i -F -e "$term" -- '*.hs' '*.lhs' || true)
+printf '\nsource-haskell\n'
+printf '%s\n' "$haskell_matches" | LC_ALL=C sort -u | awk 'NF && $0 !~ /^tests\// { print "  " $0 }'
+printf '\ntest-haskell\n'
+printf '%s\n' "$haskell_matches" | LC_ALL=C sort -u | awk 'NF && $0 ~ /^tests\// { print "  " $0 }'
+
+document_matches=$(git grep -l -i -F -e "$term" -- 'docs/*.md' AGENTS.md README.md || true)
+printf '\ndocuments\n'
+printf '%s\n' "$document_matches" | LC_ALL=C sort -u | awk 'NF { print "  " $0 }'

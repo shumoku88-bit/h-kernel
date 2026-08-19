@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+CABAL=${HKERNEL_CABAL:-cabal}
+cd "$ROOT"
+python3 tools/verify_repository_context.py
+"$CABAL" build all
+"$CABAL" test all
+exec python3 tools/verify_repository_context.py --ownership

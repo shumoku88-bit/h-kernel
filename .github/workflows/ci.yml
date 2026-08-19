@@ -33,17 +33,20 @@ jobs:
       # Keep the cheapest failures ahead of Haskell setup and compilation.
       - name: Check report scripts
         run: |
-          sh -n report report-build report-benchmark report-verify report-snapshot report-real-snapshot tools/hk
-          python3 -m py_compile tools/report_sections.py tools/verify_report_corpus.py tools/verify_daily_command_hub.py tools/verify_repository_context.py tools/verify_household_report_config_resolution.py tools/verify_tui_scroll_policy.py
-          python3 tools/verify_daily_command_hub.py
+          sh -n report report-build report-benchmark report-verify report-snapshot report-real-snapshot tools/hk tools/concierge tools/repo-map tools/repo-context tools/check tools/check-report tools/check-household
+          python3 -m py_compile tools/report_sections.py tools/verify_report_corpus.py tools/verify_repository_context.py tools/verify_household_report_config_resolution.py tools/verify_tui_scroll_policy.py
           python3 tools/verify_repository_context.py
           python3 tools/verify_tui_scroll_policy.py
-          if tools/hk concierge issue >/dev/null 2>&1; then
+          if tools/hk report >/dev/null 2>&1; then
+            echo 'tools/hk unexpectedly retained command-hub routing' >&2
+            exit 1
+          fi
+          if tools/concierge issue >/dev/null 2>&1; then
             echo 'concierge unexpectedly accepted writer-like subcommand' >&2
             exit 1
           fi
-          if tools/hk concierge overview extra >/dev/null 2>&1; then
-            echo 'concierge unexpectedly forwarded extra arguments' >&2
+          if tools/concierge overview extra >/dev/null 2>&1; then
+            echo 'concierge unexpectedly accepted extra arguments' >&2
             exit 1
           fi
 
@@ -95,7 +98,7 @@ jobs:
       - name: Verify concierge boundary
         run: |
           cabal run -v0 exe:h-kernel -- concierge self-check
-          tools/hk concierge protocol | grep -F 'write_capability: none' >/dev/null
+          tools/concierge protocol | grep -F 'write_capability: none' >/dev/null
 
       - name: Test
         run: cabal test all -j --test-show-details=direct
