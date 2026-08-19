@@ -38,14 +38,13 @@ import qualified HKernel.Editor.TUI.Report as Report
 import qualified HKernel.Editor.TUI.Settings as Settings
 import qualified HKernel.Editor.TUI.Shell as Shell
 import HKernel.Household.Application (loadCanonicalHouseholdWriteSnapshot)
-import HKernel.Household.EnvelopeObservation (EnvelopeChangeBaseline(..))
 
 data ActualReturn
   = ActualReturnWorkspace Day
   | ActualReturnHome Day
 
 data UIState
-  = Home Day
+  = Home Day (Maybe Day)
   | Workspace Day Shell.ShellFocus
   | ActualFlow ActualReturn (Actual.State AppEvent)
   | PlanFlow Day (Plan.State AppEvent)
@@ -80,8 +79,10 @@ zoomContext f (AppWrapper context state) =
   (\updated -> AppWrapper updated state) <$> f context
 
 drawUI :: AppWrapper -> [Widget Name]
-drawUI (AppWrapper context (Home selectedDay)) =
-  [ Shell.draw context selectedDay Shell.CalendarFocus (drawSectionBody context) ]
+drawUI (AppWrapper context (Home selectedDay rangeStart)) =
+  [ Shell.draw context selectedDay Shell.CalendarFocus (drawSectionBody context)
+      <=> padTop (Pad 1) (drawCalendarRangeStatus selectedDay rangeStart)
+  ]
 drawUI (AppWrapper context (Workspace selectedDay focus)) =
   [ Shell.draw context selectedDay focus (drawSectionBody context) ]
 drawUI (AppWrapper context (ActualFlow _ state)) = [Actual.drawFlow context state]
@@ -102,6 +103,25 @@ drawUI (AppWrapper _ (ShowWorkspaceReloadFailure failure)) =
               ]))))
   ]
 
+drawCalendarRangeStatus :: Day -> Maybe Day -> Widget Name
+drawCalendarRangeStatus selectedDay rangeStart = case rangeStart of
+  Nothing ->
+    withAttr (attrName "shellMuted")
+      (strWrap "Observation range: [Space] mark FROM · move calendar cursor · [Enter] compare THROUGH")
+  Just from
+    | selectedDay < from ->
+        withAttr (attrName "warning")
+          (strWrap
+            ("Observation range: FROM through " <> show from
+              <> " · THROUGH cursor through " <> show selectedDay
+              <> " precedes FROM · [Space] replace FROM · [Esc] clear"))
+    | otherwise ->
+        withAttr (attrName "shellFocus")
+          (strWrap
+            ("Observation range: FROM through " <> show from
+              <> " → THROUGH through " <> show selectedDay
+              <> " · [Enter] compare · [Space] replace FROM · [Esc] clear"))
+
 drawSectionBody :: AppContext -> Widget Name
 drawSectionBody context = case contextCurrentSection context of
   ActualSection -> Actual.drawWorkspace context
@@ -116,7 +136,7 @@ appEvent :: BrickEvent Name AppEvent -> EventM Name AppWrapper ()
 appEvent event = do
   AppWrapper context state <- get
   case state of
-    Home selectedDay -> handleHomeEvent context selectedDay event
+    Home selectedDay rangeStart -> handleHomeEvent context selectedDay rangeStart event
     Workspace selectedDay focus -> handleWorkspaceEvent context selectedDay focus event
     ActualFlow returnTarget _ -> handleActualFlow context returnTarget event
     PlanFlow selectedDay _ -> handlePlanFlow context selectedDay event
@@ -127,10 +147,19 @@ appEvent event = do
 handleHomeEvent
   :: AppContext
   -> Day
+  -> Maybe Day
   -> BrickEvent Name AppEvent
   -> EventM Name AppWrapper ()
-handleHomeEvent context selectedDay event = case event of
+handleHomeEvent context selectedDay rangeStart event = case event of
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
+  MouseDown (HomeChangeFrom day) V.BLeft _ _ ->
+    put (AppWrapper context (Home day (Just day)))
+  VtyEvent (V.EvKey (V.KChar ' ') []) ->
+    put (AppWrapper context (Home selectedDay (Just selectedDay)))
+  VtyEvent (V.EvKey V.KEnter []) -> chooseThrough selectedDay
+  VtyEvent (V.EvKey V.KEsc []) -> case rangeStart of
+    Nothing -> pure ()
+    Just _ -> put (AppWrapper context (Home selectedDay Nothing))
   VtyEvent (V.EvKey (V.KChar '\t') []) ->
     put (AppWrapper context (Workspace selectedDay Shell.SectionFocus))
   VtyEvent (V.EvKey V.KBackTab []) ->
@@ -142,22 +171,27 @@ handleHomeEvent context selectedDay event = case event of
     AppWrapper currentContext _ <- get
     case action of
       Home.HomeMaintain -> pure ()
-      Home.HomeSelectDay day -> put (AppWrapper currentContext (Home day))
+      Home.HomeSelectDay day ->
+        put (AppWrapper currentContext (Home day rangeStart))
       Home.HomeRecord day -> put (AppWrapper currentContext
         (ActualFlow (ActualReturnHome day) (Actual.startRecord day)))
-      Home.HomeObserveChange day -> openChange currentContext day
+      Home.HomeObserveChange day -> chooseThroughWith currentContext day
   where
     switchSection section =
       put (AppWrapper
         (context { contextCurrentSection = section })
         (Workspace selectedDay Shell.SectionFocus))
-    openChange currentContext day = do
+    chooseThrough day = chooseThroughWith context day
+    chooseThroughWith currentContext through = case rangeStart of
+      Nothing -> pure ()
+      Just from -> openChange currentContext from through
+    openChange currentContext from through = do
       put (AppWrapper
         (currentContext
           { contextCurrentSection = ReportsSection
-          , contextSelectedReport = ReportEnvelopeChange (ExplicitDay day)
+          , contextSelectedReport = ReportEnvelopeChangeBetween from through
           })
-        (Workspace day Shell.SurfaceFocus))
+        (Workspace through Shell.SurfaceFocus))
       let reportsViewport = viewportScroll ReportsViewport
       vScrollToBeginning reportsViewport
       hScrollToBeginning reportsViewport
@@ -171,7 +205,7 @@ handleWorkspaceEvent
 handleWorkspaceEvent context selectedDay focus event = case event of
   MouseDown (CalendarDay day) V.BLeft _ _ -> do
     vScrollToBeginning (viewportScroll HomeDayViewport)
-    put (AppWrapper context (Home day))
+    put (AppWrapper context (Home day Nothing))
   MouseDown (SectionTab section) V.BLeft _ _ -> switchSection section
   VtyEvent (V.EvKey (V.KChar '\t') []) ->
     switchFocus (Shell.nextFocus focus)
@@ -180,12 +214,12 @@ handleWorkspaceEvent context selectedDay focus event = case event of
   VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
   VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
   _ -> case focus of
-    Shell.CalendarFocus -> put (AppWrapper context (Home selectedDay))
+    Shell.CalendarFocus -> put (AppWrapper context (Home selectedDay Nothing))
     Shell.SectionFocus -> handleSectionNavigation context selectedDay event
     Shell.SurfaceFocus -> handleSectionSurfaceEvent context selectedDay event
   where
     switchFocus next = case next of
-      Shell.CalendarFocus -> put (AppWrapper context (Home selectedDay))
+      Shell.CalendarFocus -> put (AppWrapper context (Home selectedDay Nothing))
       nextFocus -> put (AppWrapper context (Workspace selectedDay nextFocus))
     switchSection section =
       put (AppWrapper
@@ -207,7 +241,7 @@ handleSectionNavigation context selectedDay event = case event of
   VtyEvent (V.EvKey V.KRight []) -> enterSurface
   VtyEvent (V.EvKey V.KEnter []) -> enterSurface
   VtyEvent (V.EvKey V.KLeft []) ->
-    put (AppWrapper context (Home selectedDay))
+    put (AppWrapper context (Home selectedDay Nothing))
   _ -> pure ()
   where
     move delta =
@@ -346,7 +380,7 @@ returnFromActual :: AppContext -> ActualReturn -> AppWrapper
 returnFromActual context (ActualReturnWorkspace selectedDay) =
   AppWrapper context (Workspace selectedDay Shell.SurfaceFocus)
 returnFromActual context (ActualReturnHome selectedDay) =
-  AppWrapper context (Home selectedDay)
+  AppWrapper context (Home selectedDay Nothing)
 
 handlePlanFlow
   :: AppContext
@@ -450,7 +484,7 @@ main = do
             <> unlines (map show (NonEmpty.toList errs)))
         Right value -> pure value
       let context = makeWorkspaceContext today snapshot
-          initialState = AppWrapper context (Home today)
+          initialState = AppWrapper context (Home today Nothing)
           buildVty = do
             vty <- mkVty V.defaultConfig
             V.setMode (V.outputIface vty) V.Mouse True
