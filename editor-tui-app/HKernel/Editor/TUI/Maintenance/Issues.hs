@@ -25,7 +25,6 @@ import Lens.Micro (Lens', Traversal')
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 
 import HKernel.Application.Config (HouseholdSourcePaths(..))
@@ -101,13 +100,12 @@ data PreviewResult preview
   | PreviewReady preview
 
 data IssueInput = IssueInput
-  { issueRecordedDateText :: Text
-  , issueCategoryText     :: Text
-  , issueTitleText        :: Text
-  , issueDueText          :: Text
-  , issueAmountText       :: Text
-  , issueCommodityText    :: Text
-  , issueDetailsText      :: Text
+  { issueCategoryText  :: Text
+  , issueTitleText     :: Text
+  , issueDueText       :: Text
+  , issueAmountText    :: Text
+  , issueCommodityText :: Text
+  , issueDetailsText   :: Text
   } deriving (Eq, Show)
 
 data IssueDueInput = IssueDueInput
@@ -115,8 +113,7 @@ data IssueDueInput = IssueDueInput
   } deriving (Eq, Show)
 
 data IssueCloseInput = IssueCloseInput
-  { issueClosedDateText   :: Text
-  , issueDecisionMemoText :: Text
+  { issueDecisionMemoText :: Text
   } deriving (Eq, Show)
 
 data State event
@@ -153,35 +150,33 @@ data PublishResult
   | PublicationFailed Text
   | ReloadFailed WorkspaceReloadFailure
 
-issueRecordedDateL :: Lens' IssueInput Text
-issueRecordedDateL f input =
-  (\value -> input { issueRecordedDateText = value }) <$> f (issueRecordedDateText input)
-
 issueCategoryL :: Lens' IssueInput Text
-issueCategoryL f input = (\value -> input { issueCategoryText = value }) <$> f (issueCategoryText input)
+issueCategoryL f input =
+  (\value -> input { issueCategoryText = value }) <$> f (issueCategoryText input)
 
 issueTitleL :: Lens' IssueInput Text
-issueTitleL f input = (\value -> input { issueTitleText = value }) <$> f (issueTitleText input)
+issueTitleL f input =
+  (\value -> input { issueTitleText = value }) <$> f (issueTitleText input)
 
 issueDueL :: Lens' IssueInput Text
-issueDueL f input = (\value -> input { issueDueText = value }) <$> f (issueDueText input)
+issueDueL f input =
+  (\value -> input { issueDueText = value }) <$> f (issueDueText input)
 
 issueAmountL :: Lens' IssueInput Text
-issueAmountL f input = (\value -> input { issueAmountText = value }) <$> f (issueAmountText input)
+issueAmountL f input =
+  (\value -> input { issueAmountText = value }) <$> f (issueAmountText input)
 
 issueCommodityL :: Lens' IssueInput Text
-issueCommodityL f input = (\value -> input { issueCommodityText = value }) <$> f (issueCommodityText input)
+issueCommodityL f input =
+  (\value -> input { issueCommodityText = value }) <$> f (issueCommodityText input)
 
 issueDetailsL :: Lens' IssueInput Text
-issueDetailsL f input = (\value -> input { issueDetailsText = value }) <$> f (issueDetailsText input)
+issueDetailsL f input =
+  (\value -> input { issueDetailsText = value }) <$> f (issueDetailsText input)
 
 issueDueUpdateL :: Lens' IssueDueInput Text
 issueDueUpdateL f input =
   (\value -> input { issueDueUpdateText = value }) <$> f (issueDueUpdateText input)
-
-issueClosedDateL :: Lens' IssueCloseInput Text
-issueClosedDateL f input =
-  (\value -> input { issueClosedDateText = value }) <$> f (issueClosedDateText input)
 
 issueDecisionMemoL :: Lens' IssueCloseInput Text
 issueDecisionMemoL f input =
@@ -195,15 +190,14 @@ labelField labelText widget =
 mkIssueForm :: Form IssueInput event Name
 mkIssueForm =
   newForm
-    [ labelField "Recorded:" @@= editTextField issueRecordedDateL IssueRecordedDateField (Just 1)
-    , labelField "Category:" @@= editTextField issueCategoryL IssueCategoryField (Just 1)
+    [ labelField "Category:" @@= editTextField issueCategoryL IssueCategoryField (Just 1)
     , labelField "Title:" @@= editTextField issueTitleL IssueTitleField (Just 1)
     , labelField "Due:" @@= editTextField issueDueL IssueDueField (Just 1)
     , labelField "Amount:" @@= editTextField issueAmountL IssueAmountField (Just 1)
     , labelField "Commodity:" @@= editTextField issueCommodityL IssueCommodityField (Just 1)
     , labelField "Details:" @@= editTextField issueDetailsL IssueDetailsField (Just 1)
     ]
-    (IssueInput "" "general" "" "?" "" "" "")
+    (IssueInput "general" "" "?" "" "" "")
 
 mkIssueDueForm :: HouseholdIssue -> Form IssueDueInput event Name
 mkIssueDueForm issue =
@@ -215,10 +209,9 @@ mkIssueDueForm issue =
 mkIssueCloseForm :: Form IssueCloseInput event Name
 mkIssueCloseForm =
   newForm
-    [ labelField "Closed:" @@= editTextField issueClosedDateL IssueClosedDateField (Just 1)
-    , labelField "Decision memo:" @@= editTextField issueDecisionMemoL IssueDecisionMemoField (Just 1)
+    [ labelField "Decision memo:" @@= editTextField issueDecisionMemoL IssueDecisionMemoField (Just 1)
     ]
-    (IssueCloseInput "" "")
+    (IssueCloseInput "")
 
 startAdd :: State event
 startAdd = AddInput mkIssueForm
@@ -239,9 +232,9 @@ zoomIssueCloseForm _ state = pure state
 drawFlow :: State AppEvent -> Widget Name
 drawFlow state = case state of
   AddInput form -> inputBox "Add Household Issue" form
-    [ "Recorded: YYYY-MM-DD; blank uses today's entry date."
+    [ "Recorded date is the current entry day; it is not asked again here."
     , "Due: YYYY-MM-DD | none | ? (undetermined)."
-    , "Issue identity is generated from the recorded date."
+    , "Issue identity is generated from the recorded entry day."
     , "Leave both Amount and Commodity blank for a non-monetary Issue."
     , "[Tab] Next field   [Enter] Preview   [Esc] Issues"
     ]
@@ -268,9 +261,9 @@ drawFlow state = case state of
     (case disposition of ResolveIssue -> "Resolve Issue"; DropIssue -> "Drop Issue")
     form
     [ "Selected: " <> T.unpack (issueIdText (householdIssueId issue))
-    , "Closed: YYYY-MM-DD; blank uses today's entry date on the current schema."
-    , "Older 8/9-column sources may close only with this field blank."
-    , "[Tab] Next field   [Enter] Preview   [Esc] Back"
+    , "Close date is the current entry day on sources that store a close date."
+    , "Older 8/9-column sources still close without a stored close date."
+    , "[Enter] Preview   [Esc] Back"
     ]
   ClosePreview _ _ result _ ->
     previewBox "Issue Close Preview"
@@ -334,7 +327,8 @@ handleFlowEvent context event = do
           Right preview -> put (AddPreview (PreviewReady preview) form)
         pure FlowMaintain
       _ -> zoom zoomIssueForm (handleFormEvent event) >> pure FlowMaintain
-    AddPreview result form -> handlePreview (AddInput form) (PublishAdd <$> ready result) event
+    AddPreview result form ->
+      handlePreview (AddInput form) (PublishAdd <$> ready result) event
     DueInput issue form -> case event of
       VtyEvent (V.EvKey V.KEsc []) -> pure FlowReturn
       VtyEvent (V.EvKey V.KEnter []) -> do
@@ -347,17 +341,23 @@ handleFlowEvent context event = do
       handlePreview (DueInput issue form) (PublishDueUpdate <$> ready result) event
     CloseChoice issue -> case event of
       VtyEvent (V.EvKey V.KEsc []) -> pure FlowReturn
-      VtyEvent (V.EvKey (V.KChar 'r') []) -> put (CloseInput issue ResolveIssue mkIssueCloseForm) >> pure FlowMaintain
-      VtyEvent (V.EvKey (V.KChar 'R') []) -> put (CloseInput issue ResolveIssue mkIssueCloseForm) >> pure FlowMaintain
-      VtyEvent (V.EvKey (V.KChar 'd') []) -> put (CloseInput issue DropIssue mkIssueCloseForm) >> pure FlowMaintain
-      VtyEvent (V.EvKey (V.KChar 'D') []) -> put (CloseInput issue DropIssue mkIssueCloseForm) >> pure FlowMaintain
+      VtyEvent (V.EvKey (V.KChar 'r') []) ->
+        put (CloseInput issue ResolveIssue mkIssueCloseForm) >> pure FlowMaintain
+      VtyEvent (V.EvKey (V.KChar 'R') []) ->
+        put (CloseInput issue ResolveIssue mkIssueCloseForm) >> pure FlowMaintain
+      VtyEvent (V.EvKey (V.KChar 'd') []) ->
+        put (CloseInput issue DropIssue mkIssueCloseForm) >> pure FlowMaintain
+      VtyEvent (V.EvKey (V.KChar 'D') []) ->
+        put (CloseInput issue DropIssue mkIssueCloseForm) >> pure FlowMaintain
       _ -> pure FlowMaintain
     CloseInput issue disposition form -> case event of
       VtyEvent (V.EvKey V.KEsc []) -> put (CloseChoice issue) >> pure FlowMaintain
       VtyEvent (V.EvKey V.KEnter []) -> do
         case prepareSelectedIssueClose context issue disposition (formState form) of
-          Left message -> put (ClosePreview issue disposition (PreviewRejected message) form)
-          Right preview -> put (ClosePreview issue disposition (PreviewReady preview) form)
+          Left message ->
+            put (ClosePreview issue disposition (PreviewRejected message) form)
+          Right preview ->
+            put (ClosePreview issue disposition (PreviewReady preview) form)
         pure FlowMaintain
       _ -> zoom zoomIssueCloseForm (handleFormEvent event) >> pure FlowMaintain
     ClosePreview issue disposition result form ->
@@ -381,8 +381,7 @@ handlePreview back request event = case event of
 
 prepareIssueAdd :: AppContext -> IssueInput -> Either Text IssueAppendPreview
 prepareIssueAdd context input = do
-  recordedOn <- parseIssueDayInput
-    (contextEntryDay context) "Recorded" (issueRecordedDateText input)
+  let recordedOn = contextEntryDay context
   issueId <- either (Left . showText) Right
     (generateAvailableIssueId
       recordedOn
@@ -426,17 +425,10 @@ prepareSelectedIssueClose
   -> Either Text IssueClosePreview
 prepareSelectedIssueClose context issue disposition input =
   if householdIssueSourceUsesClosedColumn source
-    then do
-      closedOn <- parseIssueDayInput
-        (contextEntryDay context) "Closed" rawClosed
-      finish (prepareIssueCloseOn source closedOn intent)
-    else if T.null rawClosed
-      then finish (prepareIssueClose source intent)
-      else Left
-        "Issue close rejected: the current issues.tsv has no closed column; migrate the source before storing a close date."
+    then finish (prepareIssueCloseOn source (contextEntryDay context) intent)
+    else finish (prepareIssueClose source intent)
   where
     source = contextIssuesSource context
-    rawClosed = T.strip (issueClosedDateText input)
     intent = IssueCloseIntent
       { closeIssueId = householdIssueId issue
       , closeDisposition = disposition
@@ -445,15 +437,6 @@ prepareSelectedIssueClose context issue disposition input =
     finish result = case result of
       Left errors -> Left ("Issue close rejected: " <> showText (NonEmpty.toList errors))
       Right preview -> Right preview
-
-parseIssueDayInput :: Day -> Text -> Text -> Either Text Day
-parseIssueDayInput fallback label input
-  | T.null value = Right fallback
-  | otherwise = case parseTimeM True defaultTimeLocale "%F" (T.unpack value) of
-      Just day -> Right day
-      Nothing -> Left (label <> " must be YYYY-MM-DD.")
-  where
-    value = T.strip input
 
 parseIssueDueInput :: Text -> Either Text IssueDue
 parseIssueDueInput input = case T.toCaseFold (T.strip input) of
@@ -485,7 +468,8 @@ renderIssueClosedDisplay closed = case closed of
 prepareOptionalAmount :: Text -> Text -> Either Text (Maybe Amount)
 prepareOptionalAmount quantityText commodityText
   | T.null quantity && T.null commodity = Right Nothing
-  | T.null quantity || T.null commodity = Left "Issue Amount and Commodity must both be blank or both be present."
+  | T.null quantity || T.null commodity =
+      Left "Issue Amount and Commodity must both be blank or both be present."
   | otherwise = do
       parsedQuantity <- either (Left . showText) Right (parseQuantity quantity)
       parsedCommodity <- either (Left . showText) Right (mkCommodity commodity)
@@ -604,7 +588,8 @@ handleWorkspaceEvent event = case Scroll.listWheelEvent IssueList event of
     VtyEvent (V.EvKey (V.KChar 'R') []) -> openSelectedIssueRealize
     VtyEvent (V.EvKey V.KEnter []) -> openSelectedIssueClose
     VtyEvent (V.EvKey vtyKey vtyMods) -> do
-      zoom contextIssueListL (L.handleListEventVi L.handleListEvent (V.EvKey vtyKey vtyMods))
+      zoom contextIssueListL
+        (L.handleListEventVi L.handleListEvent (V.EvKey vtyKey vtyMods))
       pure WorkspaceMaintain
     _ -> pure WorkspaceMaintain
   where
