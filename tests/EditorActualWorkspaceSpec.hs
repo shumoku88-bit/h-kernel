@@ -46,6 +46,8 @@ import HKernel.Editor.HouseholdWorkspace
   , HomeIssueObservationError(..)
   , homeActualObservationOn
   , homeIssueObservationOn
+  , workspaceOpenPlanObservationAt
+  , workspaceOpenPlansAt
   )
 import HKernel.HouseholdIssue
   ( IssueClosed(..)
@@ -71,6 +73,11 @@ import HKernel.Plan.Completion
   ( actualTransactionIdText
   , mkActualTransactionId
   )
+import HKernel.Plan.Journal
+  ( PlanLifecycleError(..)
+  , parsePlanJournal
+  )
+import HKernel.Plan.Open (PlanObservationError(..))
 
 main :: IO ()
 main = do
@@ -316,6 +323,34 @@ main = do
             rewardDay purchaseDay [issueFutureRecorded]
             == HomeIssueAvailable []
         )
+      openPlanJournal = mustRight (parsePlanJournal openPlanSource)
+      emptyPlanJournal = mustRight (parsePlanJournal emptyPlanSource)
+      invalidLifecyclePlanJournal = mustRight
+        (parsePlanJournal invalidLifecyclePlanSource)
+      openPlanAvailableResult =
+        ( "typed workspace Plan observation preserves available open Plans"
+        , case workspaceOpenPlanObservationAt
+            purchaseDay openPlanJournal reconciliationJournal of
+            Right [_] -> True
+            _ -> False
+        )
+      openPlanAvailableEmptyResult =
+        ( "typed workspace Plan observation preserves available-empty"
+        , workspaceOpenPlanObservationAt
+            purchaseDay emptyPlanJournal reconciliationJournal
+            == Right []
+        )
+      openPlanUnavailableResult =
+        ( "invalid Plan lifecycle remains unavailable instead of becoming empty"
+        , case workspaceOpenPlanObservationAt
+            purchaseDay invalidLifecyclePlanJournal reconciliationJournal of
+            Left errors -> case NonEmpty.toList errors of
+              [PlanObservationLifecycleError (InvalidPlanLifecycleDate _ _)] ->
+                null (workspaceOpenPlansAt
+                  purchaseDay invalidLifecyclePlanJournal reconciliationJournal)
+              _ -> False
+            Right _ -> False
+        )
       results = fixtureResults ++
         [ alignmentResult
         , sourceEvidenceResult
@@ -337,6 +372,9 @@ main = do
         , issueClosedAtHorizonResult
         , issueUnknownClosureResult
         , issueFutureRecordedResult
+        , openPlanAvailableResult
+        , openPlanAvailableEmptyResult
+        , openPlanUnavailableResult
         ]
 
   mapM_ print results
@@ -445,4 +483,34 @@ reconciliationSource = T.unlines
   , "2026-08-15 Purchase"
   , "  assets:paypay  -300 JPY"
   , "  expenses:food  300 JPY"
+  ]
+
+emptyPlanSource :: Text
+emptyPlanSource = T.unlines
+  [ "account assets:paypay"
+  , "  type: Asset"
+  , "  commodity: JPY"
+  , ""
+  , "account expenses:food"
+  , "  type: Expense"
+  , "  commodity: JPY"
+  ]
+
+openPlanSource :: Text
+openPlanSource = emptyPlanSource <> T.unlines
+  [ ""
+  , "2026-08-20 Future household intent"
+  , "  ; plan-id: plan-open"
+  , "  assets:paypay  -200 JPY"
+  , "  expenses:food  200 JPY"
+  ]
+
+invalidLifecyclePlanSource :: Text
+invalidLifecyclePlanSource = emptyPlanSource <> T.unlines
+  [ ""
+  , "2026-08-20 Invalid lifecycle evidence"
+  , "  ; plan-id: plan-invalid-lifecycle"
+  , "  ; cancelled-on: not-a-date"
+  , "  assets:paypay  -200 JPY"
+  , "  expenses:food  200 JPY"
   ]
