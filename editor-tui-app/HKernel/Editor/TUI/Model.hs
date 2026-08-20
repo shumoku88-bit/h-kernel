@@ -262,7 +262,7 @@ makeWorkspaceContext today snapshot =
         (Vec.fromList (Nothing : map Just accounts)) 1
     , contextWorkspaceList = L.list WorkspaceTransactionList
         (Vec.fromList transactions) 1
-    , contextWorkspaceFocus = TransactionsFocus
+    , contextWorkspaceFocus = AccountsFocus
     , contextPlanList = L.list PlanList (Vec.fromList openPlans) 1
     , contextIssueFilter = OpenIssueFilter
     , contextIssueList = L.list IssueList
