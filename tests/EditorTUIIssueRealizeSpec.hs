@@ -14,6 +14,7 @@ import HKernel.Editor.TUI.Home
   )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
+  , WorkspaceFocus(..)
   , WorkspaceReloadFailure(..)
   , contextHouseholdCycleObservation
   , contextOpenPlanObservation
@@ -63,6 +64,7 @@ main = do
         , ("production shell stacks at 80 columns", shellUsesStackedLayout 80)
         , ("production shell becomes side-by-side at 87 columns", not (shellUsesStackedLayout 87))
         , ("production shell remains side-by-side at 120 columns", not (shellUsesStackedLayout 120))
+        , ("Actual workspace enters through Accounts", actualWorkspaceStartsWithAccounts)
         , ("calendar marker keeps unavailable distinct from observed-empty", calendarUnavailableDistinct)
         , ("workspace dates distinguish overdue, today, and upcoming", dateUrgencyIsObservationRelative)
         , ("reload failure keeps diagnostic detail", reloadDiagnosticDetailRetained)
@@ -107,6 +109,10 @@ dateUrgencyIsObservationRelative =
      , dateUrgencyAt observedOn observedOn
      , dateUrgencyAt observedOn (fromGregorian 2026 8 21)
      ] == [DateOverdue, DateDueToday, DateUpcoming]
+
+actualWorkspaceStartsWithAccounts :: Bool
+actualWorkspaceStartsWithAccounts =
+  maybe False ((== AccountsFocus) . contextWorkspaceFocus) availabilityContext
 
 calendarUnavailableDistinct :: Bool
 calendarUnavailableDistinct =
