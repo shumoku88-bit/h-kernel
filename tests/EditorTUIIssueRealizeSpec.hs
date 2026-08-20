@@ -39,7 +39,9 @@ import HKernel.Household.Report.Render
 import HKernel.HouseholdIssue
   ( HouseholdIssue
   , IssueDue(..)
+  , IssueId
   , IssueRelation(..)
+  , IssueRelationEvent
   , IssueStatus(..)
   , mkHouseholdIssue
   , mkIssueId
@@ -166,11 +168,7 @@ issueRelationUnavailableDistinct = case availabilityContext of
               IssueRelationsUnavailable "relation-unavailable" })
         == Left "relation-unavailable"
 
-continuationFixture :: Maybe
-  ( HKernel.HouseholdIssue.IssueId
-  , HKernel.HouseholdIssue.IssueId
-  , HKernel.HouseholdIssue.IssueRelationEvent
-  )
+continuationFixture :: Maybe (IssueId, IssueId, IssueRelationEvent)
 continuationFixture = do
   oldIssueId <- either (const Nothing) Just (mkIssueId "issue-old")
   newIssueId <- either (const Nothing) Just (mkIssueId "issue-new")
