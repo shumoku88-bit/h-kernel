@@ -72,6 +72,7 @@ import HKernel.Money
   , amountQuantity
   , commodityCode
   , renderQuantity
+  , zeroQuantity
   )
 import HKernel.Plan (planIdText)
 import HKernel.Plan.Journal
@@ -380,28 +381,28 @@ drawDayViewport context selectedDay =
     actualValues = actualsOn context selectedDay
     planValues = plansOn context selectedDay
     issueValues = issuesDueOn context selectedDay
-    actualSection = str "Actual" : case actualValues of
+    actualSection = withAttr (attrName "shellFocus") (str "Actual") : case actualValues of
       HomeActualUnavailable ->
         [ withAttr (attrName "warning")
             (strWrap "  unavailable beyond this observation horizon")
         ]
       HomeActualAvailable [] -> [str "  none recorded"]
       HomeActualAvailable values -> concatMap renderActual values
-    planSection = str "Plans" : case planValues of
+    planSection = withAttr (attrName "shellFocus") (str "Plans") : case planValues of
       Left reason ->
         [ withAttr (attrName "warning")
             (txtWrap ("  unavailable for this observation: " <> reason))
         ]
       Right [] -> [str "  none"]
       Right values -> concatMap renderPlan values
-    issueSection = str "Issues due" : case issueValues of
+    issueSection = withAttr (attrName "shellFocus") (str "Issues due") : case issueValues of
       HomeIssueUnavailable errors ->
         [ withAttr (attrName "warning")
             (txtWrap ("  unavailable for this observation: " <> T.pack (show errors)))
         ]
       HomeIssueAvailable [] -> [str "  none"]
       HomeIssueAvailable values -> map renderIssue values
-    cycleSection = str "Cycle" : case cycleEndDay context of
+    cycleSection = withAttr (attrName "shellFocus") (str "Cycle") : case cycleEndDay context of
       Left reason ->
         [ withAttr (attrName "warning")
             (txtWrap ("  unavailable for this observation: " <> reason))
@@ -417,22 +418,39 @@ renderActual transaction =
 
 renderPosting :: Posting -> Widget Name
 renderPosting posting =
-  txtWrap ("    " <> accountName (postingAccount posting) <> "  "
-    <> renderAmount (postingAmount posting))
+  hBox
+    [ txt ("    " <> accountName (postingAccount posting) <> "  ")
+    , renderSignedAmount (postingAmount posting)
+    ]
 
 renderPlan :: IdentifiedPlanTransaction -> [Widget Name]
 renderPlan identified =
-  txtWrap
-      ("  " <> planIdText (identifiedPlanId identified)
-        <> "  " <> transactionDescription transaction)
+  hBox
+      [ str "  "
+      , withAttr (attrName "journalDate")
+          (txt (planIdText (identifiedPlanId identified)))
+      , txtWrap ("  " <> transactionDescription transaction)
+      ]
     : map renderPosting (NonEmpty.toList (transactionPostings transaction))
   where
     transaction = identifiedPlanTransaction identified
 
 renderIssue :: HouseholdIssue -> Widget Name
-renderIssue issue =
-  txtWrap ("  " <> householdIssueText issue <> maybe "" (("  " <>) . renderAmount)
-    (householdIssueAmount issue))
+renderIssue issue = case householdIssueAmount issue of
+  Nothing -> txtWrap ("  " <> householdIssueText issue)
+  Just amount -> hBox
+    [ txt ("  " <> householdIssueText issue <> "  ")
+    , renderSignedAmount amount
+    ]
+
+renderSignedAmount :: Amount -> Widget Name
+renderSignedAmount amount
+  | quantity < zeroQuantity = withAttr (attrName "negativeAmount") rendered
+  | quantity > zeroQuantity = withAttr (attrName "positiveAmount") rendered
+  | otherwise = rendered
+  where
+    quantity = amountQuantity amount
+    rendered = txtWrap (renderAmount amount)
 
 renderAmount :: Amount -> Text
 renderAmount amount =

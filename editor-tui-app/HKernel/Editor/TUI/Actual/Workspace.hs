@@ -52,10 +52,12 @@ import HKernel.Ledger
   , transactionPostings
   )
 import HKernel.Money
-  ( amountCommodity
+  ( Amount
+  , amountCommodity
   , amountQuantity
   , commodityCode
   , renderQuantity
+  , zeroQuantity
   )
 import HKernel.Plan.Completion
   ( ActualTransactionId
@@ -240,13 +242,18 @@ selectedWorkspaceReverseTarget context = case selectedWorkspaceEntry context of
 
 renderWorkspaceTransaction :: Bool -> Transaction -> Widget Name
 renderWorkspaceTransaction selected transaction
-  | selected = withAttr L.listSelectedAttr row
-  | otherwise = row
+  | selected = withAttr L.listSelectedAttr plainRow
+  | otherwise = coloredRow
   where
     -- List rows intentionally remain one line because the list has item height 1.
     -- The complete transaction is preserved in the selected-detail pane below.
-    row = txt (T.pack (show (transactionDate transaction)) <> "  "
-      <> transactionDescription transaction)
+    dateText = T.pack (show (transactionDate transaction))
+    description = transactionDescription transaction
+    plainRow = txt (dateText <> "  " <> description)
+    coloredRow = hBox
+      [ withAttr (attrName "journalDate") (txt dateText)
+      , txt ("  " <> description)
+      ]
 
 renderWorkspaceSelection :: AppContext -> Widget Name
 renderWorkspaceSelection context = case selectedWorkspaceEntry context of
@@ -254,8 +261,11 @@ renderWorkspaceSelection context = case selectedWorkspaceEntry context of
   Just entry ->
     let transaction = actualTransactionEntryTransaction entry
     in vBox
-      ( [ txtWrap (T.pack (show (transactionDate transaction)) <> "  "
-            <> transactionDescription transaction)
+      ( [ hBox
+            [ withAttr (attrName "journalDate")
+                (txt (T.pack (show (transactionDate transaction))))
+            , txtWrap ("  " <> transactionDescription transaction)
+            ]
         ]
         ++ map renderPosting (NonEmpty.toList (transactionPostings transaction))
         ++ [str " ", renderReverseAvailability context entry]
@@ -277,8 +287,19 @@ renderReverseAvailability context entry =
 
 renderPosting :: Posting -> Widget Name
 renderPosting posting =
-  txtWrap ("  " <> HKernel.Account.accountName (postingAccount posting) <> "  "
-    <> renderQuantity (amountQuantity amount) <> " "
-    <> commodityCode (amountCommodity amount))
+  hBox
+    [ txt ("  " <> HKernel.Account.accountName (postingAccount posting) <> "  ")
+    , renderSignedAmount amount
+    ]
   where
     amount = postingAmount posting
+
+renderSignedAmount :: Amount -> Widget Name
+renderSignedAmount amount
+  | quantity < zeroQuantity = withAttr (attrName "negativeAmount") rendered
+  | quantity > zeroQuantity = withAttr (attrName "positiveAmount") rendered
+  | otherwise = rendered
+  where
+    quantity = amountQuantity amount
+    rendered = txtWrap
+      (renderQuantity quantity <> " " <> commodityCode (amountCommodity amount))
