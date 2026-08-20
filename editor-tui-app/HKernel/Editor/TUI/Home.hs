@@ -183,7 +183,7 @@ draw context selectedDay =
     , padTop (Pad 1) (drawLegend context)
     , padTop (Pad 1)
         (clickable (HomeChangeFrom selectedDay)
-          (strWrap "[Space/click] Mark FROM observation   [Enter] Compare THROUGH observation"))
+          (strWrap "[Enter] Change selected → current / finish marked range   [Space/click] Mark FROM"))
     , strWrap "[Arrows] Day   [t] Today   [r] Record   [Tab] Sections   [q] Quit"
     ]
   where
@@ -358,7 +358,7 @@ drawDayPaneFull context selectedDay =
         (padBottom Max (drawDayViewport context selectedDay))
     , padTop (Pad 1)
         (clickable (HomeChangeFrom selectedDay)
-          (strWrap "[Space/click] Mark FROM observation   [Enter] Compare THROUGH observation"))
+          (strWrap "[Enter] Change selected → current / finish marked range   [Space/click] Mark FROM"))
     ]
   where
     dayLabel = str (formatTime defaultTimeLocale "%A, %Y-%m-%d" selectedDay)
