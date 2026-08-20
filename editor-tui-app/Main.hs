@@ -324,6 +324,8 @@ handleSectionSurfaceEvent context selectedDay event =
           put (AppWrapper currentContext (MaintenanceFlow selectedDay flow))
         Maintenance.IssuesActionStartClose flow ->
           put (AppWrapper currentContext (MaintenanceFlow selectedDay flow))
+        Maintenance.IssuesActionStartContinuation flow ->
+          put (AppWrapper currentContext (MaintenanceFlow selectedDay flow))
         Maintenance.IssuesActionStartRealize issue ->
           case Actual.startIssueRealize (contextEntryDay currentContext) issue of
             Nothing -> pure ()
