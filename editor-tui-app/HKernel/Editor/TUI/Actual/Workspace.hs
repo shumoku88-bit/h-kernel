@@ -92,10 +92,10 @@ drawWorkspace context =
         (padAll 1 (renderWorkspaceSelection context))
     , txtWrap ("Filter: " <> workspaceFilterText context)
     , vBox
-        [ txtWrap "Navigate: [Left/Right] Pane  [j/k/Arrows/wheel] Move"
+        [ txtWrap "Navigate: [Left/Right] Pane  [j/k/Arrows/wheel] Move  [click] Select"
         , txtWrap "Record:   [a] Expense  [i] Income  [r] General transaction"
         , txtWrap ("Observe:  " <> workspaceReconcileHint context)
-        , txtWrap "Action:   [Enter] Reverse selected"
+        , txtWrap ("Action:   " <> workspaceActionHint context)
         ]
     ]
 
@@ -198,6 +198,11 @@ workspaceReconcileHint :: AppContext -> Text
 workspaceReconcileHint context = case selectedWorkspaceAccount context of
   Nothing -> "[c] Compare balance (select one Account first)"
   Just _ -> "[c] Compare external balance"
+
+workspaceActionHint :: AppContext -> Text
+workspaceActionHint context = case contextWorkspaceFocus context of
+  AccountsFocus -> "[Enter] Transactions"
+  TransactionsFocus -> "[Enter] Reverse selected"
 
 selectedWorkspaceAccount :: AppContext -> Maybe HKernel.Account.Account
 selectedWorkspaceAccount context = case L.listSelectedElement (contextWorkspaceAccounts context) of
