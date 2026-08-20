@@ -14,9 +14,11 @@ import HKernel.Editor.TUI.Home
   )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
+  , IssueRelationObservation(..)
   , WorkspaceFocus(..)
   , WorkspaceReloadFailure(..)
   , contextHouseholdCycleObservation
+  , contextIssueRelationHistory
   , contextOpenPlanObservation
   , makeWorkspaceContext
   , workspaceReloadFailureText
@@ -37,9 +39,12 @@ import HKernel.Household.Report.Render
 import HKernel.HouseholdIssue
   ( HouseholdIssue
   , IssueDue(..)
+  , IssueRelation(..)
   , IssueStatus(..)
   , mkHouseholdIssue
   , mkIssueId
+  , mkIssueRelationEvent
+  , mkIssueRelationEventId
   )
 import HKernel.Plan (planIdText)
 import HKernel.Plan.Journal (identifiedPlanId)
@@ -68,6 +73,8 @@ main = do
         , ("calendar marker keeps unavailable distinct from observed-empty", calendarUnavailableDistinct)
         , ("workspace dates distinguish overdue, today, and upcoming", dateUrgencyIsObservationRelative)
         , ("reload failure keeps diagnostic detail", reloadDiagnosticDetailRetained)
+        , ("Issue relation history distinguishes outgoing from incoming continuation", issueRelationHistoryDirectional)
+        , ("Issue relation unavailability is not observed-empty history", issueRelationUnavailableDistinct)
         , ("Household surface survives narrow Planned Transactions failure", availabilitySurfaceAvailable)
         , ("Planned Transactions alone records local unavailability", availabilityPlannedUnavailable)
         , ("full renderer keeps Daily Target and Envelope beside unavailable Plans", availabilityRendererKeepsIndependentSections)
@@ -129,6 +136,53 @@ reloadDiagnosticDetailRetained :: Bool
 reloadDiagnosticDetailRetained =
   workspaceReloadFailureText (PostReloadValidationFailed "reload-detail")
     == "reload-detail"
+
+issueRelationHistoryDirectional :: Bool
+issueRelationHistoryDirectional = case availabilityContext of
+  Nothing -> False
+  Just context -> case continuationFixture of
+    Nothing -> False
+    Just (oldIssueId, newIssueId, relation) ->
+      let observed = context
+            { contextIssueRelationObservation = IssueRelationsAvailable [relation] }
+      in case
+          ( contextIssueRelationHistory oldIssueId observed
+          , contextIssueRelationHistory newIssueId observed
+          ) of
+        (Right ([outgoing], []), Right ([], [incoming])) ->
+          outgoing == relation && incoming == relation
+        _ -> False
+
+issueRelationUnavailableDistinct :: Bool
+issueRelationUnavailableDistinct = case availabilityContext of
+  Nothing -> False
+  Just context -> case mkIssueId "issue-observed" of
+    Left _ -> False
+    Right issueId ->
+      contextIssueRelationHistory
+        issueId
+        (context
+          { contextIssueRelationObservation =
+              IssueRelationsUnavailable "relation-unavailable" })
+        == Left "relation-unavailable"
+
+continuationFixture :: Maybe
+  ( HKernel.HouseholdIssue.IssueId
+  , HKernel.HouseholdIssue.IssueId
+  , HKernel.HouseholdIssue.IssueRelationEvent
+  )
+continuationFixture = do
+  oldIssueId <- either (const Nothing) Just (mkIssueId "issue-old")
+  newIssueId <- either (const Nothing) Just (mkIssueId "issue-new")
+  eventId <- either (const Nothing) Just (mkIssueRelationEventId "rel-continue")
+  relation <- either (const Nothing) Just
+    (mkIssueRelationEvent
+      eventId
+      (fromGregorian 2026 8 19)
+      oldIssueId
+      (IssueContinuedAs newIssueId)
+      "new evidence")
+  pure (oldIssueId, newIssueId, relation)
 
 availabilityContext :: Maybe AppContext
 availabilityContext = do
