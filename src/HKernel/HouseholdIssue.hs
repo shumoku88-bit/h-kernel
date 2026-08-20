@@ -226,18 +226,20 @@ mkIssueRelationEventId value
   | otherwise = Right (IssueRelationEventId value)
 
 -- | Narrow, typed meanings currently observed between one Issue and durable
--- Plan or Actual identities.
+-- Plan, Actual, or later Issue identities.
 --
--- This deliberately does not model a universal graph. Plan and Actual targets
--- remain different constructors because "the Issue became this transaction"
--- and "this transfer funded the Issue" are different household facts even when
--- both targets are Actual transactions.
+-- This deliberately does not model a universal graph. Target kinds remain
+-- different constructors because planning, realization, funding, and a later
+-- decision episode are different household facts. 'IssueContinuedAs' points
+-- from the earlier Issue to a distinct later Issue without rewriting either
+-- Issue's lifecycle evidence.
 data IssueRelation
   = IssueConcernsPlan PlanId
   | IssuePlannedAs PlanId
   | IssuePlanningWithdrawn PlanId
   | IssueRealizedAs ActualTransactionId
   | IssueFundedBy ActualTransactionId
+  | IssueContinuedAs IssueId
   deriving (Eq, Show)
 
 -- | One append-only historical relation fact.
@@ -256,6 +258,7 @@ data IssueRelationEvent = IssueRelationEvent
 data IssueRelationEventError
   = IssueRelationDetailsHasSurroundingWhitespace
   | IssueRelationDetailsContainsControlCharacter
+  | IssueRelationTargetsSameIssue IssueId
   deriving (Eq, Show)
 
 mkIssueRelationEvent
@@ -270,6 +273,9 @@ mkIssueRelationEvent eventId recordedOn issueId relation details
       Left IssueRelationDetailsHasSurroundingWhitespace
   | T.any isControl details =
       Left IssueRelationDetailsContainsControlCharacter
+  | IssueContinuedAs targetIssueId <- relation
+  , targetIssueId == issueId =
+      Left (IssueRelationTargetsSameIssue issueId)
   | otherwise = Right IssueRelationEvent
       { issueRelationEventId = eventId
       , issueRelationRecordedOn = recordedOn
@@ -285,6 +291,7 @@ mkIssueRelationEvent eventId recordedOn issueId relation details
 -- source rows.
 data IssueRelationReferenceError
   = UnknownIssueRelationIssue IssueRelationEventId IssueId
+  | UnknownIssueRelationIssueTarget IssueRelationEventId IssueId
   | UnknownIssueRelationPlanTarget IssueRelationEventId PlanId
   | UnknownIssueRelationActualTarget IssueRelationEventId ActualTransactionId
   deriving (Eq, Show)
@@ -294,7 +301,8 @@ data IssueRelationReferenceError
 -- This operation owns existence only. It does not inspect Plan lifecycle or
 -- Issue status, so a historical or retired Plan remains a valid relation target
 -- and @planning-withdrawn@ does not require retirement metadata. Likewise it
--- does not infer Actual identity from transaction resemblance.
+-- does not infer Actual identity from transaction resemblance, and an Issue
+-- continuation does not require either Issue to have a particular status.
 --
 -- The Actual identity collection must contain only source-durable identities
 -- chosen by the caller. In particular, rebuildable runtime identities created
@@ -333,6 +341,14 @@ admitIssueRelationReferences knownIssues knownPlans durableActuals relations =
       IssuePlanningWithdrawn planId -> planErrors relation planId
       IssueRealizedAs actualId -> actualErrors relation actualId
       IssueFundedBy actualId -> actualErrors relation actualId
+      IssueContinuedAs targetIssueId -> issueTargetErrors relation targetIssueId
+
+    issueTargetErrors relation targetIssueId =
+      [ UnknownIssueRelationIssueTarget
+          (issueRelationEventId relation)
+          targetIssueId
+      | targetIssueId `Set.notMember` issueSet
+      ]
 
     planErrors relation planId =
       [ UnknownIssueRelationPlanTarget (issueRelationEventId relation) planId
