@@ -154,11 +154,17 @@ characterizeIssueRelations :: IO ()
 characterizeIssueRelations = do
   let relations = mustRight (parseIssueRelations relationSource)
       firstRelation = head relations
+      continuation = last relations
+      issue = mustRight (mkIssueId "issue-001")
+      nextIssue = mustRight (mkIssueId "issue-next")
+      missingIssue = mustRight (mkIssueId "issue-missing")
+      missingContinuation = exactlyOne
+        (mustRight (parseIssueRelations missingContinuationSource))
       wrong = exactlyOne (mustRight (parseIssueRelations wrongRelationSource))
       fixed = exactlyOne (mustRight (parseIssueRelations fixedRelationSource))
 
   assertEqual "relation owner admits one row per historical occurrence"
-    5
+    6
     (length relations)
   assertEqual "relation owner retains durable event identity"
     "rel-001"
@@ -171,17 +177,33 @@ characterizeIssueRelations = do
     (case issueRelationMeaning firstRelation of
       IssueConcernsPlan planId -> planIdText planId
       other -> error ("expected concerns-plan, got " ++ show other))
-  assertEqual "all five relation meanings survive source admission"
+  assertEqual "continued-as retains a typed later Issue target"
+    "issue-next"
+    (case issueRelationMeaning continuation of
+      IssueContinuedAs targetIssueId -> issueIdText targetIssueId
+      other -> error ("expected continued-as, got " ++ show other))
+  assertEqual "all six relation meanings survive source admission"
     [ "concerns-plan"
     , "planning-withdrawn"
     , "planned-as"
     , "funded-by"
     , "realized-as"
+    , "continued-as"
     ]
     (map relationKind relations)
   assertEqual "relation render/admit round-trip preserves typed history"
     relations
     (mustRight (parseIssueRelations (renderIssueRelations relations)))
+  assertEqual "known Issue continuation target passes reference admission"
+    (Right [continuation])
+    (admitIssueRelationReferences [issue, nextIssue] [] [] [continuation])
+  assertEqual "unknown Issue continuation target fails reference admission"
+    (Left (NonEmpty.fromList
+      [ UnknownIssueRelationIssueTarget
+          (issueRelationEventId missingContinuation)
+          missingIssue
+      ]))
+    (admitIssueRelationReferences [issue] [] [] [missingContinuation])
   assertEqual "blank/comment-only relation input invents no history"
     []
     (mustRight (parseIssueRelations "\n# no relation history yet\n"))
@@ -211,6 +233,10 @@ characterizeIssueRelations = do
     2
     "unknown issue relation kind"
     (parseIssueRelations (T.replace "concerns-plan" "linked-to" oneRelationSource))
+  assertRelationLeftAtMessageContains "Issue continuation cannot target itself"
+    2
+    "IssueRelationTargetsSameIssue"
+    (parseIssueRelations selfContinuationSource)
   assertRelationLeftAt "relation event identity is unique"
     0
     "duplicate issue relation event identity"
@@ -223,6 +249,7 @@ relationKind relation = case issueRelationMeaning relation of
   IssuePlanningWithdrawn _ -> "planning-withdrawn"
   IssueRealizedAs _ -> "realized-as"
   IssueFundedBy _ -> "funded-by"
+  IssueContinuedAs _ -> "continued-as"
 
 actualTarget :: IssueRelationEvent -> T.Text
 actualTarget relation = case issueRelationMeaning relation of
@@ -311,12 +338,25 @@ relationSource = T.unlines
   , "rel-003\t2026-08-13\tissue-001\tplanned-as\tplan-new\treplacement commitment"
   , "rel-004\t2026-08-13\tissue-001\tfunded-by\tactual-transfer\tmove funding first"
   , "rel-005\t2026-08-13\tissue-001\trealized-as\tactual-payment\tpayment occurred"
+  , "rel-006\t2026-08-19\tissue-001\tcontinued-as\tissue-next\tnew evidence opened a later decision episode"
   ]
 
 oneRelationSource :: T.Text
 oneRelationSource = T.unlines
   [ issueRelationHeader
   , "rel-001\t2026-08-13\tissue-001\tconcerns-plan\tplan-old\treview current commitment"
+  ]
+
+missingContinuationSource :: T.Text
+missingContinuationSource = T.unlines
+  [ issueRelationHeader
+  , "rel-missing-issue-target\t2026-08-19\tissue-001\tcontinued-as\tissue-missing\tlater Issue is absent"
+  ]
+
+selfContinuationSource :: T.Text
+selfContinuationSource = T.unlines
+  [ issueRelationHeader
+  , "rel-self\t2026-08-19\tissue-001\tcontinued-as\tissue-001\tnot a new decision episode"
   ]
 
 wrongRelationSource :: T.Text
@@ -418,3 +458,25 @@ assertRelationLeftAt label expectedLine expectedMessage result = case result of
     matches err =
       issueRelationTSVErrorLine err == expectedLine
         && issueRelationTSVErrorMessage err == expectedMessage
+
+assertRelationLeftAtMessageContains
+  :: String
+  -> Int
+  -> T.Text
+  -> Either (NonEmpty.NonEmpty IssueRelationTSVError) value
+  -> IO ()
+assertRelationLeftAtMessageContains label expectedLine fragment result = case result of
+  Left errors
+    | any matches (NonEmpty.toList errors) -> putStrLn ("  [PASS] " ++ label)
+    | otherwise -> do
+        putStrLn ("  [FAIL] " ++ label)
+        putStrLn ("    actual errors: " ++ show errors)
+        exitFailure
+  Right _ -> do
+    putStrLn ("  [FAIL] " ++ label)
+    putStrLn "    unexpectedly accepted relation source"
+    exitFailure
+  where
+    matches err =
+      issueRelationTSVErrorLine err == expectedLine
+        && fragment `T.isInfixOf` issueRelationTSVErrorMessage err
