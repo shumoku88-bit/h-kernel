@@ -53,7 +53,7 @@ draw
 draw context selectedDay focus sectionBody =
   vBox
     [ responsiveWhen shellUsesStackedLayout compactLayout wideLayout
-    , padTop (Pad 1) (drawHelp focus)
+    , padTop (Pad 1) (drawHelp context focus)
     ]
   where
     rail = hLimit 39 (drawRail context selectedDay focus)
@@ -124,16 +124,22 @@ drawSectionSurface focused body =
     , padTop (Pad 1) (padBottom Max body)
     ]
 
-drawHelp :: ShellFocus -> Widget Name
-drawHelp focus = withAttr (attrName "shellMuted") (strWrap message)
+drawHelp :: AppContext -> ShellFocus -> Widget Name
+drawHelp context focus = withAttr (attrName "shellMuted") (strWrap message)
   where
     message = case focus of
       CalendarFocus ->
-        "Calendar: arrows/hjkl move day · t today · r record · Space mark FROM · Enter compare THROUGH · Esc clear FROM · Tab next focus · Shift-Tab previous focus · q quit"
+        "Calendar: arrows/hjkl move day · t current observation · r record · Enter selected→current change / finish marked range · Space mark or replace FROM · Esc clear FROM · click day/select FROM · wheel day details · Tab/Shift-Tab focus · q quit"
       SectionFocus ->
-        "Sections: Up/Down or j/k select · Right/Enter surface · Left calendar · Tab/Shift-Tab focus · q quit"
-      SurfaceFocus ->
-        "Surface: section owns arrows and local keys · Tab next focus · Shift-Tab sections · q quit"
+        "Sections: Up/Down or j/k select · click section · Right/Enter surface · Left calendar · Tab/Shift-Tab focus · q quit"
+      SurfaceFocus -> surfaceHelp context
+
+surfaceHelp :: AppContext -> String
+surfaceHelp context = case contextCurrentSection context of
+  ReportsSection ->
+    "Reports: Enter choose · t balances · b balance sheet · p P&L · d daily flow · m monthly · c cycle · T daily target · E envelope/backing · r/R next/previous · arrows/wheel scroll · Shift+wheel or Shift+←→ horizontal · PgUp/PgDn page · Home/End top/bottom · Tab/Shift-Tab focus · q quit"
+  _ ->
+    "Surface: pane controls are listed above · click selectable rows · wheel scroll/move · Tab next focus · Shift-Tab sections · q quit"
 
 focusLabel :: Bool -> Text -> Widget Name
 focusLabel focused label
