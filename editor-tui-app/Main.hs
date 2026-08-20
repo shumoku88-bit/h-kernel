@@ -35,6 +35,7 @@ import HKernel.Editor.TUI.Model
   , ReportChoice(..)
   , WorkspaceReloadFailure
   , makeWorkspaceContext
+  , refreshIssueRelationObservation
   , workspaceReloadFailureText
   )
 import qualified HKernel.Editor.TUI.Plan as Plan
@@ -494,8 +495,8 @@ main = do
           ("Failed to load canonical Household:\n"
             <> unlines (map show (NonEmpty.toList errs)))
         Right value -> pure value
-      let context = makeWorkspaceContext today snapshot
-          initialState = AppWrapper context (Home today Nothing)
+      context <- refreshIssueRelationObservation (makeWorkspaceContext today snapshot)
+      let initialState = AppWrapper context (Home today Nothing)
           buildVty = do
             vty <- mkVty V.defaultConfig
             V.setMode (V.outputIface vty) V.Mouse True
