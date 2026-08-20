@@ -25,6 +25,7 @@ import Lens.Micro (Lens', Traversal')
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 
 import HKernel.Application.Config (HouseholdSourcePaths(..))
@@ -49,6 +50,7 @@ import HKernel.Editor.SourcePublication
   , WriteIntent(..)
   , publishWithPathAdmission
   )
+import HKernel.Editor.TUI.DateUrgency (withDateUrgency)
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
   , AppEvent
@@ -512,7 +514,11 @@ drawWorkspace context =
               ("View: " <> issueWorkspaceFilterLabel (contextIssueFilter context)
                 <> " | Open: " <> show openCount
                 <> " | Closed: " <> show closedCount)
-          , vLimit 18 (L.renderList renderIssueItem True (contextIssueList context))
+          , vLimit 18
+              (L.renderList
+                (renderIssueItem (contextObservationDay context))
+                True
+                (contextIssueList context))
           ])
     , borderWithLabel (str "Selected Issue")
         (padAll 1 (renderSelectedIssue context))
@@ -526,8 +532,8 @@ drawWorkspace context =
       ClosedIssueFilter -> "Closed"
       AllIssueFilter -> "All"
 
-renderIssueItem :: Bool -> HouseholdIssue -> Widget Name
-renderIssueItem selected issue
+renderIssueItem :: Day -> Bool -> HouseholdIssue -> Widget Name
+renderIssueItem observedOn selected issue
   | selected = withAttr L.listSelectedAttr row
   | otherwise = row
   where
@@ -536,11 +542,28 @@ renderIssueItem selected issue
       _ -> "  " <> renderIssueClosedDisplay (householdIssueClosed issue)
     -- The list has item height 1, so the summary remains one line. The selected
     -- detail pane below is the lossless, wrapping presentation of the Issue.
-    row = txt ("[" <> T.pack (show (householdIssueStatus issue)) <> "]  "
-      <> renderIssueDueDisplay (householdIssueDue issue) <> "  "
-      <> T.pack (show (householdIssueRecordedOn issue)) <> "  "
-      <> issueIdText (householdIssueId issue) <> "  "
-      <> householdIssueText issue <> lifecycle)
+    row = hBox
+      [ txt ("[" <> T.pack (show (householdIssueStatus issue)) <> "]  ")
+      , renderIssueDueSummary
+          observedOn
+          (householdIssueStatus issue)
+          (householdIssueDue issue)
+      , txt ("  " <> T.pack (show (householdIssueRecordedOn issue)) <> "  "
+          <> issueIdText (householdIssueId issue) <> "  "
+          <> householdIssueText issue <> lifecycle)
+      ]
+
+renderIssueDueSummary :: Day -> IssueStatus -> IssueDue -> Widget Name
+renderIssueDueSummary observedOn status due = case due of
+  DueOn day -> hBox [str "due ", renderDay day]
+  NoDueDate -> str "no due date"
+  DueUndetermined -> str "due undetermined"
+  where
+    renderDay day
+      | status == Open = withDateUrgency observedOn day dateWidget
+      | otherwise = dateWidget
+      where
+        dateWidget = txt (T.pack (show day))
 
 renderSelectedIssue :: AppContext -> Widget Name
 renderSelectedIssue context = case L.listSelectedElement (contextIssueList context) of

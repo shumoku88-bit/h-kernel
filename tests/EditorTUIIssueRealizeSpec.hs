@@ -6,6 +6,7 @@ import Data.Text qualified as T
 import Data.Time.Calendar (Day, fromGregorian)
 import HKernel.Application.Config (mkHouseholdRoot)
 import HKernel.Editor.TUI.Actual (State(..), startIssueRealize, startRecord)
+import HKernel.Editor.TUI.DateUrgency (DateUrgency(..), dateUrgencyAt)
 import HKernel.Editor.TUI.Home
   ( CalendarMarkerObservation(..)
   , calendarMarkerObservation
@@ -63,6 +64,7 @@ main = do
         , ("production shell becomes side-by-side at 87 columns", not (shellUsesStackedLayout 87))
         , ("production shell remains side-by-side at 120 columns", not (shellUsesStackedLayout 120))
         , ("calendar marker keeps unavailable distinct from observed-empty", calendarUnavailableDistinct)
+        , ("workspace dates distinguish overdue, today, and upcoming", dateUrgencyIsObservationRelative)
         , ("reload failure keeps diagnostic detail", reloadDiagnosticDetailRetained)
         , ("Household surface survives narrow Planned Transactions failure", availabilitySurfaceAvailable)
         , ("Planned Transactions alone records local unavailability", availabilityPlannedUnavailable)
@@ -97,6 +99,14 @@ testClosedIssueCannotStart =
     Just issue -> case startIssueRealize entryDay issue of
       Nothing -> True
       Just _ -> False
+
+dateUrgencyIsObservationRelative :: Bool
+dateUrgencyIsObservationRelative =
+  let observedOn = fromGregorian 2026 8 20
+  in [ dateUrgencyAt observedOn (fromGregorian 2026 8 19)
+     , dateUrgencyAt observedOn observedOn
+     , dateUrgencyAt observedOn (fromGregorian 2026 8 21)
+     ] == [DateOverdue, DateDueToday, DateUpcoming]
 
 calendarUnavailableDistinct :: Bool
 calendarUnavailableDistinct =

@@ -500,27 +500,31 @@ assertRealizeLeft label predicate result = case result of
 
 characterizeWorkspaceOrder :: IO ()
 characterizeWorkspaceOrder = do
-  let issue status day issueId = mustRight (mkHouseholdIssue
+  let issue status recordedDay due issueId = mustRight (mkHouseholdIssue
         (mustRight (mkIssueId issueId))
-        (fromGregorian 2026 8 day)
+        (fromGregorian 2026 8 recordedDay)
         status
-        DueUndetermined
+        due
         Nothing
         issueId
         "")
       sourceIssues =
-        [ issue Resolved 10 "resolved-newest"
-        , issue Open 1 "open-old"
-        , issue Dropped 9 "dropped-new"
-        , issue Open 8 "open-new"
-        , issue Resolved 2 "resolved-old"
+        [ issue Resolved 10 DueUndetermined "resolved-newest"
+        , issue Open 8 (DueOn (fromGregorian 2026 8 20)) "open-later"
+        , issue Dropped 9 DueUndetermined "dropped-new"
+        , issue Open 1 (DueOn (fromGregorian 2026 8 10)) "open-earlier"
+        , issue Resolved 2 DueUndetermined "resolved-old"
+        , issue Open 12 NoDueDate "open-no-due"
+        , issue Open 11 DueUndetermined "open-undetermined"
         ]
   assertEqual "workspace Issue counts keep open attention separate from closed history"
-    (2, 3)
+    (4, 3)
     (workspaceIssueCounts sourceIssues)
-  assertEqual "workspace defaults can project only open Issues newest-first"
-    [ "open-new"
-    , "open-old"
+  assertEqual "workspace open Issues are due-first with missing dates last"
+    [ "open-earlier"
+    , "open-later"
+    , "open-undetermined"
+    , "open-no-due"
     ]
     (map (issueIdText . householdIssueId)
       (issuesForWorkspace OpenIssueFilter sourceIssues))
@@ -532,8 +536,10 @@ characterizeWorkspaceOrder = do
     (map (issueIdText . householdIssueId)
       (issuesForWorkspace ClosedIssueFilter sourceIssues))
   assertEqual "workspace can explicitly project all Issues with open attention first"
-    [ "open-new"
-    , "open-old"
+    [ "open-earlier"
+    , "open-later"
+    , "open-undetermined"
+    , "open-no-due"
     , "resolved-newest"
     , "dropped-new"
     , "resolved-old"
@@ -542,10 +548,12 @@ characterizeWorkspaceOrder = do
       (issuesForWorkspace AllIssueFilter sourceIssues))
   assertEqual "workspace filtering does not mutate canonical source order"
     [ "resolved-newest"
-    , "open-old"
+    , "open-later"
     , "dropped-new"
-    , "open-new"
+    , "open-earlier"
     , "resolved-old"
+    , "open-no-due"
+    , "open-undetermined"
     ]
     (map (issueIdText . householdIssueId) sourceIssues)
 
