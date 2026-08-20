@@ -71,8 +71,11 @@ import HKernel.Household.Issue.Relation.TSV
   )
 import HKernel.HouseholdIssue
   ( HouseholdIssue
+  , IssueId
   , IssueRelation(..)
   , IssueRelationEvent
+  , IssueRelationEventId
+  , IssueRelationEventIdError
   , householdIssueId
   , householdIssueRecordedOn
   , householdIssueStatus
@@ -192,7 +195,7 @@ drawIssueContinuation state = case state of
             , vLimit 20 (L.renderList renderContinuationChoice True choices)
             , str " "
             , strWrap "[j/k/Arrows] Move   [Enter] Preview   [Esc] Issues"
-            ]))))
+            ])))))
   IssueContinuationPreview target source _ result ->
     center
       (borderWithLabel (str "Issue continuation preview")
@@ -211,7 +214,7 @@ drawIssueContinuation state = case state of
                 (case result of
                   Left _ -> "[Esc] Back   [Q] Quit"
                   Right _ -> "[Enter] Publish   [Esc] Back   [Q] Quit")
-            ]))))
+            ])))))
   IssueContinuationOutcome message ->
     center
       (borderWithLabel (str "Issue continuation")
@@ -636,8 +639,8 @@ prepareIssueContinuation context relationSource source target = do
   pure (relation, row, candidateSource)
 
 sameContinuation
-  :: HKernel.HouseholdIssue.IssueId
-  -> HKernel.HouseholdIssue.IssueId
+  :: IssueId
+  -> IssueId
   -> IssueRelationEvent
   -> Bool
 sameContinuation sourceId targetId relation =
@@ -648,11 +651,10 @@ sameContinuation sourceId targetId relation =
 
 generateContinuationEventId
   :: Day
-  -> HKernel.HouseholdIssue.IssueId
-  -> HKernel.HouseholdIssue.IssueId
+  -> IssueId
+  -> IssueId
   -> [IssueRelationEvent]
-  -> Either HKernel.HouseholdIssue.IssueRelationEventIdError
-      HKernel.HouseholdIssue.IssueRelationEventId
+  -> Either IssueRelationEventIdError IssueRelationEventId
 generateContinuationEventId recordedOn sourceId targetId existing = go (1 :: Int)
   where
     occupied = map
