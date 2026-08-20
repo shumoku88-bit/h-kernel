@@ -60,6 +60,7 @@ import HKernel.Editor.TUI.Model
   , contextHouseholdState
   , contextIssueCounts
   , contextIssueListL
+  , contextIssueRelationHistory
   , contextIssuesSource
   , reloadWorkspaceContext
   , setIssueWorkspaceFilter
@@ -75,6 +76,8 @@ import HKernel.HouseholdIssue
   ( HouseholdIssue
   , IssueClosed(..)
   , IssueDue(..)
+  , IssueRelation(..)
+  , IssueRelationEvent
   , IssueStatus(..)
   , householdIssueAmount
   , householdIssueClosed
@@ -85,6 +88,10 @@ import HKernel.HouseholdIssue
   , householdIssueStatus
   , householdIssueText
   , issueIdText
+  , issueRelationDetails
+  , issueRelationIssueId
+  , issueRelationMeaning
+  , issueRelationRecordedOn
   )
 import HKernel.Money
   ( Amount
@@ -96,6 +103,8 @@ import HKernel.Money
   , parseQuantity
   , renderQuantity
   )
+import HKernel.Plan (planIdText)
+import HKernel.Plan.Completion (actualTransactionIdText)
 
 data PreviewResult preview
   = PreviewRejected Text
@@ -568,7 +577,10 @@ renderIssueDueSummary observedOn status due = case due of
 renderSelectedIssue :: AppContext -> Widget Name
 renderSelectedIssue context = case L.listSelectedElement (contextIssueList context) of
   Nothing -> str "No issues recorded."
-  Just (_, issue) -> renderIssue issue
+  Just (_, issue) ->
+    renderIssue issue
+      <=> str " "
+      <=> renderIssueRelationHistory context issue
 
 renderIssue :: HouseholdIssue -> Widget Name
 renderIssue issue =
@@ -585,6 +597,53 @@ renderIssue issue =
         (householdIssueAmount issue)
     , txtWrap ("Details: " <> householdIssueDetails issue)
     ]
+
+renderIssueRelationHistory :: AppContext -> HouseholdIssue -> Widget Name
+renderIssueRelationHistory context issue =
+  case contextIssueRelationHistory (householdIssueId issue) context of
+    Left message ->
+      vBox
+        [ str "Relations:"
+        , withAttr (attrName "error")
+            (txtWrap ("  unavailable | " <> message))
+        ]
+    Right (outgoing, incoming)
+      | null outgoing && null incoming -> str "Relations: none"
+      | otherwise ->
+          vBox
+            (str "Relations:"
+              : map renderOutgoingRelation outgoing
+              <> map renderIncomingContinuation incoming)
+
+renderOutgoingRelation :: IssueRelationEvent -> Widget Name
+renderOutgoingRelation relation =
+  txtWrap
+    ("  " <> T.pack (show (issueRelationRecordedOn relation))
+      <> "  -> " <> renderRelationMeaning (issueRelationMeaning relation)
+      <> relationDetailsSuffix relation)
+
+renderIncomingContinuation :: IssueRelationEvent -> Widget Name
+renderIncomingContinuation relation = case issueRelationMeaning relation of
+  IssueContinuedAs _ ->
+    txtWrap
+      ("  " <> T.pack (show (issueRelationRecordedOn relation))
+        <> "  <- continued-from " <> issueIdText (issueRelationIssueId relation)
+        <> relationDetailsSuffix relation)
+  _ -> emptyWidget
+
+renderRelationMeaning :: IssueRelation -> Text
+renderRelationMeaning relation = case relation of
+  IssueConcernsPlan planId -> "concerns-plan " <> planIdText planId
+  IssuePlannedAs planId -> "planned-as " <> planIdText planId
+  IssuePlanningWithdrawn planId -> "planning-withdrawn " <> planIdText planId
+  IssueRealizedAs actualId -> "realized-as " <> actualTransactionIdText actualId
+  IssueFundedBy actualId -> "funded-by " <> actualTransactionIdText actualId
+  IssueContinuedAs targetIssueId -> "continued-as " <> issueIdText targetIssueId
+
+relationDetailsSuffix :: IssueRelationEvent -> Text
+relationDetailsSuffix relation
+  | T.null (issueRelationDetails relation) = ""
+  | otherwise = " | " <> issueRelationDetails relation
 
 handleWorkspaceEvent
   :: BrickEvent Name AppEvent
