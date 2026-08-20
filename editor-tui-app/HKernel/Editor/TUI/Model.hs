@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module HKernel.Editor.TUI.Model
   ( AppContext(..)
   , AppEvent
@@ -191,11 +193,6 @@ workspaceReloadFailureText failure = case failure of
     T.pack "Household reload failed: " <> T.pack (show errors)
   PostReloadValidationFailed message -> message
 
--- | Read-only Issue relation availability for the TUI. The canonical Household
--- remains the owner of its admitted accounting/Plan/Issue state; this adapter
--- reads the separate relation source and reuses the existing cross-source
--- admission boundary. Failure stays visibly unavailable rather than becoming an
--- empty relation history.
 data IssueRelationObservation
   = IssueRelationsAvailable [IssueRelationEvent]
   | IssueRelationsUnavailable Text
@@ -223,10 +220,6 @@ type AppEvent = ()
 contextHouseholdState :: AppContext -> HouseholdState
 contextHouseholdState = householdWriteSnapshotState . contextHouseholdSnapshot
 
--- | Lightweight temporal observations are derived from the admitted Household
--- and the explicit observation coordinate instead of being cached beside UI
--- state. This keeps one semantic owner and prevents stale duplicate values when
--- the context is projected differently by the shell.
 contextHouseholdCycleObservation
   :: AppContext
   -> Either (NonEmpty HouseholdCycleError) HouseholdCycleObservation
@@ -269,9 +262,6 @@ contextSourcePath :: AppContext -> FilePath
 contextSourcePath =
   householdActualJournalPath . householdStatePaths . contextHouseholdState
 
--- | Outgoing relation events from one Issue and incoming Issue-continuation
--- events that target it. Other relation kinds currently have Plan/Actual
--- targets, so they cannot be incoming Issue history.
 contextIssueRelationHistory
   :: IssueId
   -> AppContext
@@ -337,10 +327,6 @@ makeWorkspaceContext today snapshot =
       (Just . householdCycleCurrentPeriod)
       cycleObservation
 
--- | Refresh the read-only Issue relation observation from the configured
--- relation source. A missing file means no relation history yet, matching the
--- existing Issue-realization source contract. Other IO/admission failures stay
--- explicit and visible to the Issues pane.
 refreshIssueRelationObservation :: AppContext -> IO AppContext
 refreshIssueRelationObservation context = do
   result <- tryIOError (TIO.readFile path)
