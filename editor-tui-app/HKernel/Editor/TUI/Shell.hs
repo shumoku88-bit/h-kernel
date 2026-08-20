@@ -66,9 +66,12 @@ draw context selectedDay focus sectionBody =
 shellUsesStackedLayout :: Int -> Bool
 shellUsesStackedLayout width = width < 87
 
+-- | The shell body must be vertically greedy so Brick allocates fixed-height
+-- help below it first. A vertically Fixed body containing @padBottom Max@ can
+-- otherwise consume the terminal height and push the focus help off-screen.
 responsiveWhen :: (Int -> Bool) -> Widget name -> Widget name -> Widget name
 responsiveWhen useCompact compact wide =
-  Widget Greedy Fixed $ do
+  Widget Greedy Greedy $ do
     context <- getContext
     render $
       if useCompact (context ^. availWidthL)
