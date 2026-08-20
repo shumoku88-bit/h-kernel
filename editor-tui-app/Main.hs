@@ -11,31 +11,15 @@ import Graphics.Vty.CrossPlatform (mkVty)
 import Lens.Micro (Lens', Traversal', singular)
 import Lens.Micro.Mtl ()
 
-import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (Day)
 import Data.Time.LocalTime (getZonedTime, localDay, zonedTimeToLocalTime)
-import qualified Data.Vector as Vec
 import System.Directory (doesDirectoryExist)
 import System.Environment (getArgs)
 import System.Exit (die)
 import System.FilePath (takeDirectory)
-import System.IO.Error (tryIOError)
 
-import HKernel.Application.Config
-  ( HouseholdSourcePaths(..)
-  , mkHouseholdRoot
-  )
-import HKernel.Editor.HouseholdWorkspace (admitIssueRelationSource)
-import HKernel.Editor.SourcePublication
-  ( CandidateSource(..)
-  , ExpectedSource(..)
-  , WriteIntent(..)
-  , publishWithAdmission
-  )
+import HKernel.Application.Config (mkHouseholdRoot)
 import qualified HKernel.Editor.TUI.Actual as Actual
 import HKernel.Editor.TUI.DateUrgency
   ( dateDueTodayAttr
@@ -50,60 +34,20 @@ import HKernel.Editor.TUI.Model
   , Name(..)
   , ReportChoice(..)
   , WorkspaceReloadFailure
-  , contextHouseholdState
   , makeWorkspaceContext
   , refreshIssueRelationObservation
-  , reloadWorkspaceContext
   , workspaceReloadFailureText
   )
 import qualified HKernel.Editor.TUI.Plan as Plan
 import qualified HKernel.Editor.TUI.Report as Report
 import qualified HKernel.Editor.TUI.Settings as Settings
 import qualified HKernel.Editor.TUI.Shell as Shell
-import HKernel.Household.Application
-  ( HouseholdState(..)
-  , loadCanonicalHouseholdWriteSnapshot
-  )
+import HKernel.Household.Application (loadCanonicalHouseholdWriteSnapshot)
 import HKernel.Household.EnvelopeObservation (EnvelopeChangeBaseline(..))
-import HKernel.Household.Issue.Relation.TSV
-  ( issueRelationHeader
-  , renderIssueRelations
-  )
-import HKernel.HouseholdIssue
-  ( HouseholdIssue
-  , IssueId
-  , IssueRelation(..)
-  , IssueRelationEvent
-  , IssueRelationEventId
-  , IssueRelationEventIdError
-  , householdIssueId
-  , householdIssueRecordedOn
-  , householdIssueStatus
-  , householdIssueText
-  , issueIdText
-  , issueRelationEventId
-  , issueRelationEventIdText
-  , issueRelationIssueId
-  , issueRelationMeaning
-  , mkIssueRelationEvent
-  , mkIssueRelationEventId
-  )
 
 data ActualReturn
   = ActualReturnWorkspace Day
   | ActualReturnHome Day
-
-data IssueContinuationState
-  = IssueContinuationPicker
-      HouseholdIssue
-      Text
-      (L.List Name HouseholdIssue)
-  | IssueContinuationPreview
-      HouseholdIssue
-      HouseholdIssue
-      Text
-      (Either Text (IssueRelationEvent, Text, Text))
-  | IssueContinuationOutcome Text
 
 data UIState
   = Home Day (Maybe Day)
@@ -111,7 +55,6 @@ data UIState
   | ActualFlow ActualReturn (Actual.State AppEvent)
   | PlanFlow Day (Plan.State AppEvent)
   | MaintenanceFlow Day (Maintenance.State AppEvent)
-  | IssueContinuationFlow Day IssueContinuationState
   | ReportPicker Day Report.PickerState
   | ShowWorkspaceReloadFailure WorkspaceReloadFailure
 
@@ -132,16 +75,6 @@ zoomMaintenanceFlow f (AppWrapper context (MaintenanceFlow selectedDay state)) =
   (\updated -> AppWrapper context (MaintenanceFlow selectedDay updated)) <$> f state
 zoomMaintenanceFlow _ wrapper = pure wrapper
 
-zoomIssueContinuationList :: Traversal' AppWrapper (L.List Name HouseholdIssue)
-zoomIssueContinuationList f
-    (AppWrapper context
-      (IssueContinuationFlow selectedDay
-        (IssueContinuationPicker target source choices))) =
-  (\updated -> AppWrapper context
-      (IssueContinuationFlow selectedDay
-        (IssueContinuationPicker target source updated))) <$> f choices
-zoomIssueContinuationList _ wrapper = pure wrapper
-
 zoomReportPicker :: Traversal' AppWrapper Report.PickerState
 zoomReportPicker f (AppWrapper context (ReportPicker selectedDay choices)) =
   (\updated -> AppWrapper context (ReportPicker selectedDay updated)) <$> f choices
@@ -161,8 +94,6 @@ drawUI (AppWrapper context (Workspace selectedDay focus)) =
 drawUI (AppWrapper context (ActualFlow _ state)) = [Actual.drawFlow context state]
 drawUI (AppWrapper _ (PlanFlow _ state)) = [Plan.drawFlow state]
 drawUI (AppWrapper _ (MaintenanceFlow _ state)) = [Maintenance.drawFlow state]
-drawUI (AppWrapper _ (IssueContinuationFlow _ state)) =
-  [drawIssueContinuation state]
 drawUI (AppWrapper _ (ReportPicker _ choices)) = [Report.drawPicker choices]
 drawUI (AppWrapper _ (ShowWorkspaceReloadFailure failure)) =
   [ center
@@ -177,60 +108,6 @@ drawUI (AppWrapper _ (ShowWorkspaceReloadFailure failure)) =
               , strWrap "[Esc/Q] Quit"
               ]))))
   ]
-
-drawIssueContinuation :: IssueContinuationState -> Widget Name
-drawIssueContinuation state = case state of
-  IssueContinuationPicker target _ choices ->
-    center
-      (borderWithLabel (str "Issue continued from")
-        (hLimit 96 (vLimit 34 (padAll 1
-          (vBox
-            [ strWrap
-                ("Current Issue: "
-                  <> T.unpack (issueIdText (householdIssueId target))
-                  <> "  " <> T.unpack (householdIssueText target))
-            , str " "
-            , strWrap "Choose the earlier Issue. Candidates are newest first."
-            , str " "
-            , vLimit 20 (L.renderList renderContinuationChoice True choices)
-            , str " "
-            , strWrap "[j/k/Arrows] Move   [Enter] Preview   [Esc] Issues"
-            ])))))
-  IssueContinuationPreview target source _ result ->
-    center
-      (borderWithLabel (str "Issue continuation preview")
-        (hLimit 96 (vLimit 32 (padAll 1
-          (vBox
-            [ txtWrap
-                (issueIdText (householdIssueId source)
-                  <> "  -> continued-as ->  "
-                  <> issueIdText (householdIssueId target))
-            , str " "
-            , case result of
-                Left message -> withAttr (attrName "error") (txtWrap message)
-                Right (_, row, _) -> txtWrap row
-            , str " "
-            , strWrap
-                (case result of
-                  Left _ -> "[Esc] Back   [Q] Quit"
-                  Right _ -> "[Enter] Publish   [Esc] Back   [Q] Quit")
-            ])))))
-  IssueContinuationOutcome message ->
-    center
-      (borderWithLabel (str "Issue continuation")
-        (hLimit 88 (padAll 1
-          (txtWrap message <=> str " " <=> strWrap "[Esc] Issues   [Q] Quit"))))
-
-renderContinuationChoice :: Bool -> HouseholdIssue -> Widget Name
-renderContinuationChoice selected issue
-  | selected = withAttr L.listSelectedAttr row
-  | otherwise = row
-  where
-    row = txt
-      (T.pack (show (householdIssueRecordedOn issue))
-        <> "  [" <> T.pack (show (householdIssueStatus issue)) <> "]  "
-        <> issueIdText (householdIssueId issue)
-        <> "  " <> householdIssueText issue)
 
 drawCalendarRangeStatus :: Day -> Maybe Day -> Widget Name
 drawCalendarRangeStatus selectedDay rangeStart = case rangeStart of
@@ -257,9 +134,7 @@ drawSectionBody context = case contextCurrentSection context of
   PlansSection -> Plan.drawWorkspace context
   EntitlementSection -> Maintenance.drawEntitlementWorkspace context
   AccountsSection -> Maintenance.drawAccountsWorkspace context
-  IssuesSection ->
-    Maintenance.drawIssuesWorkspace context
-      <=> strWrap "[F] Continued from another Issue"
+  IssuesSection -> Maintenance.drawIssuesWorkspace context
   ReportsSection -> Report.drawWorkspace context
   SettingsSection -> Settings.drawWorkspace context
 
@@ -272,8 +147,6 @@ appEvent event = do
     ActualFlow returnTarget _ -> handleActualFlow context returnTarget event
     PlanFlow selectedDay _ -> handlePlanFlow context selectedDay event
     MaintenanceFlow selectedDay _ -> handleMaintenanceFlow context selectedDay event
-    IssueContinuationFlow selectedDay _ ->
-      handleIssueContinuation context selectedDay event
     ReportPicker selectedDay _ -> handleReportPicker context selectedDay event
     ShowWorkspaceReloadFailure _ -> handleExitOnlyEvent event
 
@@ -439,28 +312,25 @@ handleSectionSurfaceEvent context selectedDay event =
         Maintenance.AccountsActionStartAdd ->
           put (AppWrapper context
             (MaintenanceFlow selectedDay Maintenance.startAccountAdd))
-    IssuesSection -> case event of
-      VtyEvent (V.EvKey (V.KChar 'f') []) ->
-        startIssueContinuation context selectedDay
-      VtyEvent (V.EvKey (V.KChar 'F') []) ->
-        startIssueContinuation context selectedDay
-      _ -> do
-        action <- zoom zoomContext (Maintenance.handleIssuesWorkspaceEvent event)
-        AppWrapper currentContext _ <- get
-        case action of
-          Maintenance.IssuesActionMaintain -> pure ()
-          Maintenance.IssuesActionStartAdd ->
-            put (AppWrapper currentContext
-              (MaintenanceFlow selectedDay Maintenance.startIssueAdd))
-          Maintenance.IssuesActionStartDueUpdate flow ->
-            put (AppWrapper currentContext (MaintenanceFlow selectedDay flow))
-          Maintenance.IssuesActionStartClose flow ->
-            put (AppWrapper currentContext (MaintenanceFlow selectedDay flow))
-          Maintenance.IssuesActionStartRealize issue ->
-            case Actual.startIssueRealize (contextEntryDay currentContext) issue of
-              Nothing -> pure ()
-              Just flow -> put (AppWrapper currentContext
-                (ActualFlow (ActualReturnWorkspace selectedDay) flow))
+    IssuesSection -> do
+      action <- zoom zoomContext (Maintenance.handleIssuesWorkspaceEvent event)
+      AppWrapper currentContext _ <- get
+      case action of
+        Maintenance.IssuesActionMaintain -> pure ()
+        Maintenance.IssuesActionStartAdd ->
+          put (AppWrapper currentContext
+            (MaintenanceFlow selectedDay Maintenance.startIssueAdd))
+        Maintenance.IssuesActionStartDueUpdate flow ->
+          put (AppWrapper currentContext (MaintenanceFlow selectedDay flow))
+        Maintenance.IssuesActionStartClose flow ->
+          put (AppWrapper currentContext (MaintenanceFlow selectedDay flow))
+        Maintenance.IssuesActionStartContinuation flow ->
+          put (AppWrapper currentContext (MaintenanceFlow selectedDay flow))
+        Maintenance.IssuesActionStartRealize issue ->
+          case Actual.startIssueRealize (contextEntryDay currentContext) issue of
+            Nothing -> pure ()
+            Just flow -> put (AppWrapper currentContext
+              (ActualFlow (ActualReturnWorkspace selectedDay) flow))
     ReportsSection -> do
       action <- zoom zoomContext (Report.handleWorkspaceEvent event)
       case action of
@@ -470,264 +340,6 @@ handleSectionSurfaceEvent context selectedDay event =
             (ReportPicker selectedDay
               (Report.openPicker (contextSelectedReport context))))
     SettingsSection -> Settings.handleWorkspaceEvent event
-
-startIssueContinuation
-  :: AppContext
-  -> Day
-  -> EventM Name AppWrapper ()
-startIssueContinuation context selectedDay =
-  case L.listSelectedElement (contextIssueList context) of
-    Nothing -> pure ()
-    Just (_, target) -> do
-      let state = contextHouseholdState context
-          path = householdIssueRelationsPath (householdStatePaths state)
-      sourceResult <- suspendAndResume' (tryIOError (TIO.readFile path))
-      case sourceResult of
-        Left err ->
-          put (AppWrapper context
-            (IssueContinuationFlow selectedDay
-              (IssueContinuationOutcome
-                ("Cannot read issue-relations.tsv: " <> T.pack (show err)))))
-        Right relationSource ->
-          case admitIssueRelationSource
-              (householdStateActualJournal state)
-              (householdStatePlanJournal state)
-              (householdStateIssues state)
-              relationSource of
-            Left errors ->
-              put (AppWrapper context
-                (IssueContinuationFlow selectedDay
-                  (IssueContinuationOutcome
-                    ("Issue relation admission failed: "
-                      <> T.pack (show (NonEmpty.toList errors))))))
-            Right _ ->
-              let candidates = continuationCandidates
-                    target (householdStateIssues state)
-              in if null candidates
-                  then put (AppWrapper context
-                    (IssueContinuationFlow selectedDay
-                      (IssueContinuationOutcome
-                        "No earlier Issue is available as a continuation source.")))
-                  else put (AppWrapper context
-                    (IssueContinuationFlow selectedDay
-                      (IssueContinuationPicker
-                        target
-                        relationSource
-                        (L.list IssueList (Vec.fromList candidates) 1))))
-
-continuationCandidates
-  :: HouseholdIssue
-  -> [HouseholdIssue]
-  -> [HouseholdIssue]
-continuationCandidates target =
-  reverse
-    . sortOn householdIssueRecordedOn
-    . filter isCandidate
-  where
-    targetId = householdIssueId target
-    targetDay = householdIssueRecordedOn target
-    isCandidate issue =
-      householdIssueId issue /= targetId
-        && householdIssueRecordedOn issue <= targetDay
-
-handleIssueContinuation
-  :: AppContext
-  -> Day
-  -> BrickEvent Name AppEvent
-  -> EventM Name AppWrapper ()
-handleIssueContinuation context selectedDay event = do
-  AppWrapper _ current <- get
-  case current of
-    IssueContinuationFlow _ state -> case state of
-      IssueContinuationPicker target relationSource choices -> case event of
-        VtyEvent (V.EvKey V.KEsc []) -> returnToIssues
-        VtyEvent (V.EvKey V.KEnter []) ->
-          case L.listSelectedElement choices of
-            Nothing -> pure ()
-            Just (_, source) ->
-              put (AppWrapper context
-                (IssueContinuationFlow selectedDay
-                  (IssueContinuationPreview
-                    target
-                    source
-                    relationSource
-                    (prepareIssueContinuation context relationSource source target))))
-        MouseDown IssueList V.BLeft _ (Location (_, row)) ->
-          zoom zoomIssueContinuationList (modify (L.listMoveTo row))
-        VtyEvent (V.EvKey vtyKey vtyMods) ->
-          zoom zoomIssueContinuationList
-            (L.handleListEventVi L.handleListEvent (V.EvKey vtyKey vtyMods))
-        _ -> pure ()
-      IssueContinuationPreview target source relationSource result -> case event of
-        VtyEvent (V.EvKey V.KEsc []) ->
-          put (AppWrapper context
-            (IssueContinuationFlow selectedDay
-              (IssueContinuationPicker
-                target relationSource
-                (L.list IssueList
-                  (Vec.fromList
-                    (continuationCandidates
-                      target
-                      (householdStateIssues (contextHouseholdState context))))
-                  1))))
-        VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
-        VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
-        VtyEvent (V.EvKey V.KEnter []) -> case result of
-          Left _ -> pure ()
-          Right (_, _, candidateSource) ->
-            publishIssueContinuation context selectedDay relationSource candidateSource
-        _ -> pure ()
-      IssueContinuationOutcome _ -> case event of
-        VtyEvent (V.EvKey V.KEsc []) -> returnToIssues
-        VtyEvent (V.EvKey (V.KChar 'q') []) -> halt
-        VtyEvent (V.EvKey (V.KChar 'Q') []) -> halt
-        _ -> pure ()
-    _ -> pure ()
-  where
-    returnToIssues =
-      put (AppWrapper context (Workspace selectedDay Shell.SurfaceFocus))
-
-prepareIssueContinuation
-  :: AppContext
-  -> Text
-  -> HouseholdIssue
-  -> HouseholdIssue
-  -> Either Text (IssueRelationEvent, Text, Text)
-prepareIssueContinuation context relationSource source target = do
-  let household = contextHouseholdState context
-      recordedOn = contextEntryDay context
-      sourceId = householdIssueId source
-      targetId = householdIssueId target
-  if householdIssueRecordedOn source > householdIssueRecordedOn target
-    then Left "The continuation source must not be newer than the target Issue."
-    else Right ()
-  if recordedOn < householdIssueRecordedOn target
-    then Left "The relation date cannot precede the target Issue."
-    else Right ()
-  existing <- either
-    (Left . ("Issue relation admission failed: " <>)
-      . T.pack . show . NonEmpty.toList)
-    Right
-    (admitIssueRelationSource
-      (householdStateActualJournal household)
-      (householdStatePlanJournal household)
-      (householdStateIssues household)
-      relationSource)
-  if any (sameContinuation sourceId targetId) existing
-    then Left "This Issue continuation is already recorded."
-    else Right ()
-  eventId <- either (Left . T.pack . show) Right
-    (generateContinuationEventId recordedOn sourceId targetId existing)
-  relation <- either (Left . T.pack . show) Right
-    (mkIssueRelationEvent
-      eventId
-      recordedOn
-      sourceId
-      (IssueContinuedAs targetId)
-      "")
-  let row = renderSingleRelationRow relation
-      candidateSource = appendRelationRow relationSource row
-  _ <- either
-    (Left . ("Candidate relation rejected: " <>)
-      . T.pack . show . NonEmpty.toList)
-    Right
-    (admitIssueRelationSource
-      (householdStateActualJournal household)
-      (householdStatePlanJournal household)
-      (householdStateIssues household)
-      candidateSource)
-  pure (relation, row, candidateSource)
-
-sameContinuation
-  :: IssueId
-  -> IssueId
-  -> IssueRelationEvent
-  -> Bool
-sameContinuation sourceId targetId relation =
-  issueRelationIssueId relation == sourceId
-    && case issueRelationMeaning relation of
-      IssueContinuedAs existingTarget -> existingTarget == targetId
-      _ -> False
-
-generateContinuationEventId
-  :: Day
-  -> IssueId
-  -> IssueId
-  -> [IssueRelationEvent]
-  -> Either IssueRelationEventIdError IssueRelationEventId
-generateContinuationEventId recordedOn sourceId targetId existing = go (1 :: Int)
-  where
-    occupied = map
-      (issueRelationEventIdText . issueRelationEventId)
-      existing
-    base =
-      "REL-" <> T.pack (show recordedOn)
-        <> "-" <> issueIdText sourceId
-        <> "-continued-" <> issueIdText targetId
-    go index = do
-      let value
-            | index == 1 = base
-            | otherwise = base <> "-" <> T.pack (show index)
-      candidate <- mkIssueRelationEventId value
-      if value `elem` occupied
-        then go (index + 1)
-        else Right candidate
-
-renderSingleRelationRow :: IssueRelationEvent -> Text
-renderSingleRelationRow relation =
-  case T.lines (renderIssueRelations [relation]) of
-    _header : row : _ -> row
-    _ -> error "renderIssueRelations did not render one relation row"
-
-appendRelationRow :: Text -> Text -> Text
-appendRelationRow existing row
-  | noMeaningfulLines = issueRelationHeader <> "\n" <> row <> "\n"
-  | T.isSuffixOf "\n" existing = existing <> row <> "\n"
-  | otherwise = existing <> "\n" <> row <> "\n"
-  where
-    noMeaningfulLines = null
-      [ line
-      | line <- T.lines existing
-      , let stripped = T.strip line
-      , not (T.null stripped)
-      , not ("#" `T.isPrefixOf` stripped)
-      ]
-
-publishIssueContinuation
-  :: AppContext
-  -> Day
-  -> Text
-  -> Text
-  -> EventM Name AppWrapper ()
-publishIssueContinuation context selectedDay expectedSource candidateSource = do
-  let household = contextHouseholdState context
-      path = householdIssueRelationsPath (householdStatePaths household)
-      admission source = admitIssueRelationSource
-        (householdStateActualJournal household)
-        (householdStatePlanJournal household)
-        (householdStateIssues household)
-        source
-  result <- suspendAndResume'
-    (publishWithAdmission admission WriteIntent
-      { targetFilePath = path
-      , expectedOldBytes = ExpectedSource expectedSource
-      , candidateNewBytes = CandidateSource candidateSource
-      })
-  case result of
-    Left err ->
-      put (AppWrapper context
-        (IssueContinuationFlow selectedDay
-          (IssueContinuationOutcome
-            ("Issue continuation publication failed: " <> T.pack (show err)))))
-    Right () -> do
-      reloaded <- suspendAndResume' (reloadWorkspaceContext context)
-      case reloaded of
-        Left failure ->
-          put (AppWrapper context (ShowWorkspaceReloadFailure failure))
-        Right fresh ->
-          put (AppWrapper
-            (fresh { contextCurrentSection = IssuesSection })
-            (Workspace selectedDay Shell.SurfaceFocus))
 
 handleReportPicker
   :: AppContext
