@@ -42,6 +42,7 @@ import qualified HKernel.Editor.TUI.Report as Report
 import qualified HKernel.Editor.TUI.Settings as Settings
 import qualified HKernel.Editor.TUI.Shell as Shell
 import HKernel.Household.Application (loadCanonicalHouseholdWriteSnapshot)
+import HKernel.Household.EnvelopeObservation (EnvelopeChangeBaseline(..))
 
 data ActualReturn
   = ActualReturnWorkspace Day
@@ -111,7 +112,7 @@ drawCalendarRangeStatus :: Day -> Maybe Day -> Widget Name
 drawCalendarRangeStatus selectedDay rangeStart = case rangeStart of
   Nothing ->
     withAttr (attrName "shellMuted")
-      (strWrap "Observation range: [Space] mark FROM · move calendar cursor · [Enter] compare THROUGH")
+      (strWrap "Observation: [Enter] selected day → current observation · [Space] mark FROM for an explicit range")
   Just from
     | selectedDay < from ->
         withAttr (attrName "warning")
@@ -187,15 +188,19 @@ handleHomeEvent context selectedDay rangeStart event = case event of
         (Workspace selectedDay Shell.SectionFocus))
     chooseThrough day = chooseThroughWith context day
     chooseThroughWith currentContext through = case rangeStart of
-      Nothing -> pure ()
+      Nothing -> openChangeToCurrent currentContext through
       Just from -> openChange currentContext from through
-    openChange currentContext from through = do
+    openChangeToCurrent currentContext from =
+      openReport currentContext from (ReportEnvelopeChange (ExplicitDay from))
+    openChange currentContext from through =
+      openReport currentContext through (ReportEnvelopeChangeBetween from through)
+    openReport currentContext selected report = do
       put (AppWrapper
         (currentContext
           { contextCurrentSection = ReportsSection
-          , contextSelectedReport = ReportEnvelopeChangeBetween from through
+          , contextSelectedReport = report
           })
-        (Workspace through Shell.SurfaceFocus))
+        (Workspace selected Shell.SurfaceFocus))
       let reportsViewport = viewportScroll ReportsViewport
       vScrollToBeginning reportsViewport
       hScrollToBeginning reportsViewport
