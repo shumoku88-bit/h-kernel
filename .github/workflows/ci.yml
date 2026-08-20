@@ -69,7 +69,7 @@ jobs:
           cabal build all --dry-run
 
       - name: Restore cached dependencies
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         id: cache
         env:
           key: ${{ runner.os }}-ghc-${{ steps.setup.outputs.ghc-version }}-cabal-${{ steps.setup.outputs.cabal-version }}
@@ -86,7 +86,7 @@ jobs:
       # Save dependency work before compiling the repository itself, so a later
       # project failure does not throw away an otherwise useful cache.
       - name: Save cached dependencies
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         if: steps.cache.outputs.cache-hit != 'true'
         with:
           path: ${{ steps.setup.outputs.cabal-store }}
