@@ -179,6 +179,7 @@ test-suite h-kernel-editor-actual-workspace-test
                     , h-kernel
                     , h-kernel-editor
                     , text
+                    , time
 
 test-suite h-kernel-editor-actual-reverse-test
     import:           test-defaults
@@ -519,6 +520,7 @@ executable h-kernel-editor-tui
                     , HKernel.Editor.TUI.Actual.Record
                     , HKernel.Editor.TUI.Actual.Reverse
                     , HKernel.Editor.TUI.Actual.Workspace
+                    , HKernel.Editor.TUI.DateUrgency
                     , HKernel.Editor.TUI.Home
                     , HKernel.Editor.TUI.Maintenance
                     , HKernel.Editor.TUI.Maintenance.Accounts
@@ -661,6 +663,7 @@ test-suite h-kernel-editor-tui-issue-realize-test
                     , HKernel.Editor.TUI.Actual.Record
                     , HKernel.Editor.TUI.Actual.Reverse
                     , HKernel.Editor.TUI.Actual.Workspace
+                    , HKernel.Editor.TUI.DateUrgency
                     , HKernel.Editor.TUI.Home
                     , HKernel.Editor.TUI.Model
                     , HKernel.Editor.TUI.Scroll

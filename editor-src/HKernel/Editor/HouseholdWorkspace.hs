@@ -29,6 +29,7 @@ module HKernel.Editor.HouseholdWorkspace
   , issuesForWorkspace
   , workspaceAccounts
   , workspaceIssueCounts
+  , plansForWorkspace
   , workspaceOpenPlanObservationAt
   , workspaceOpenPlansAt
   , workspaceReportBookAt
@@ -138,6 +139,15 @@ workspaceOpenPlanObservationAt
   -> Either (NonEmpty PlanObservationError) [IdentifiedPlanTransaction]
 workspaceOpenPlanObservationAt = resolveOpenPlanTransactionsAt
 
+-- | Present open Plans in actionable due-date order without changing the
+-- parser or lifecycle observation order. Stable sorting preserves source order
+-- for Plans sharing a date.
+plansForWorkspace
+  :: [IdentifiedPlanTransaction]
+  -> [IdentifiedPlanTransaction]
+plansForWorkspace =
+  sortOn (transactionDate . identifiedPlanTransaction)
+
 -- | Compatibility projection for callers that can only consume a list.
 -- Observation failure intentionally exposes no mutation targets, but new Home
 -- and delivery code should retain the typed failure through
@@ -175,8 +185,10 @@ workspaceIssueCounts issues =
   , length (filter ((/= Open) . householdIssueStatus) issues)
   )
 
--- | Select one explicit workspace view and keep newest matters first. Stable
--- sorting preserves source order for ties without mutating issues.tsv.
+-- | Select one explicit workspace view. Open Issues put actionable dated work
+-- first in due-date order, followed by undetermined and absent due dates.
+-- Closed history remains newest-first. Stable sorting preserves source order
+-- for ties without mutating issues.tsv.
 issuesForWorkspace
   :: IssueWorkspaceFilter
   -> [HouseholdIssue]
@@ -184,13 +196,15 @@ issuesForWorkspace
 issuesForWorkspace visibility =
   sortOn issueWorkspaceKey . filter (visibleWith visibility)
   where
-    issueWorkspaceKey issue =
-      ( statusRank (householdIssueStatus issue)
-      , negate (toModifiedJulianDay (householdIssueRecordedOn issue))
-      )
-    statusRank Open = (0 :: Int)
-    statusRank Resolved = 1
-    statusRank Dropped = 1
+    issueWorkspaceKey issue = case householdIssueStatus issue of
+      Open -> case householdIssueDue issue of
+        DueOn day -> (0 :: Int, 0 :: Int, toModifiedJulianDay day)
+        DueUndetermined -> (0, 1, 0)
+        NoDueDate -> (0, 2, 0)
+      Resolved -> closedKey issue
+      Dropped -> closedKey issue
+    closedKey issue =
+      (1, 0, negate (toModifiedJulianDay (householdIssueRecordedOn issue)))
 
 visibleWith :: IssueWorkspaceFilter -> HouseholdIssue -> Bool
 visibleWith visibility issue = case visibility of

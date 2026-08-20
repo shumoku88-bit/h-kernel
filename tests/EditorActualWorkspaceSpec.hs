@@ -7,6 +7,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import Data.Time.Calendar (fromGregorian)
 import System.Exit (exitFailure, exitSuccess)
 
 import HKernel.Account
@@ -46,6 +47,7 @@ import HKernel.Editor.HouseholdWorkspace
   , HomeIssueObservationError(..)
   , homeActualObservationOn
   , homeIssueObservationOn
+  , plansForWorkspace
   , workspaceOpenPlanObservationAt
   , workspaceOpenPlansAt
   )
@@ -75,6 +77,7 @@ import HKernel.Plan.Completion
   )
 import HKernel.Plan.Journal
   ( PlanLifecycleError(..)
+  , identifiedPlanTransaction
   , parsePlanJournal
   )
 import HKernel.Plan.Open (PlanObservationError(..))
@@ -328,10 +331,13 @@ main = do
       invalidLifecyclePlanJournal = mustRight
         (parsePlanJournal invalidLifecyclePlanSource)
       openPlanAvailableResult =
-        ( "typed workspace Plan observation preserves available open Plans"
+        ( "workspace Plan projection presents open Plans due-date-first"
         , case workspaceOpenPlanObservationAt
             purchaseDay openPlanJournal reconciliationJournal of
-            Right [_] -> True
+            Right plans -> map
+              (transactionDate . identifiedPlanTransaction)
+              (plansForWorkspace plans)
+              == map (fromGregorian 2026 8) [18, 20, 25]
             _ -> False
         )
       openPlanAvailableEmptyResult =
@@ -499,8 +505,18 @@ emptyPlanSource = T.unlines
 openPlanSource :: Text
 openPlanSource = emptyPlanSource <> T.unlines
   [ ""
-  , "2026-08-20 Future household intent"
-  , "  ; plan-id: plan-open"
+  , "2026-08-25 Later household intent"
+  , "  ; plan-id: plan-later"
+  , "  assets:paypay  -250 JPY"
+  , "  expenses:food  250 JPY"
+  , ""
+  , "2026-08-18 Earlier household intent"
+  , "  ; plan-id: plan-earlier"
+  , "  assets:paypay  -180 JPY"
+  , "  expenses:food  180 JPY"
+  , ""
+  , "2026-08-20 Middle household intent"
+  , "  ; plan-id: plan-middle"
   , "  assets:paypay  -200 JPY"
   , "  expenses:food  200 JPY"
   ]

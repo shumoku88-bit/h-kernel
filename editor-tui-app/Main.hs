@@ -21,6 +21,10 @@ import System.FilePath (takeDirectory)
 
 import HKernel.Application.Config (mkHouseholdRoot)
 import qualified HKernel.Editor.TUI.Actual as Actual
+import HKernel.Editor.TUI.DateUrgency
+  ( dateDueTodayAttr
+  , dateOverdueAttr
+  )
 import qualified HKernel.Editor.TUI.Home as Home
 import qualified HKernel.Editor.TUI.Maintenance as Maintenance
 import HKernel.Editor.TUI.Model
@@ -460,6 +464,8 @@ app = App
         , (attrName "error", fg V.red)
         , (attrName "success", fg V.green)
         , (attrName "warning", fg V.yellow)
+        , (dateDueTodayAttr, V.withStyle (fg V.yellow) V.bold)
+        , (dateOverdueAttr, V.withStyle (fg V.red) V.bold)
         ])
   }
 

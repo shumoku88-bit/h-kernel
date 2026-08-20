@@ -39,6 +39,7 @@ import HKernel.Application.Config (HouseholdSourcePaths(..))
 import HKernel.Editor.HouseholdWorkspace
   ( IssueWorkspaceFilter(..)
   , issuesForWorkspace
+  , plansForWorkspace
   , workspaceAccounts
   , workspaceIssueCounts
   , workspaceOpenPlanObservationAt
@@ -281,7 +282,7 @@ makeWorkspaceContext today snapshot =
       planJournal
       (householdPolicyCycle (householdStatePolicy state))
     openPlanObservation = workspaceOpenPlanObservationAt today planJournal actualJournal
-    openPlans = either (const []) id openPlanObservation
+    openPlans = either (const []) plansForWorkspace openPlanObservation
     householdSurface = buildHouseholdReportSurfaceFromHousehold today state
     currentCycle = either
       (const Nothing)

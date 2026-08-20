@@ -13,8 +13,10 @@ import qualified Graphics.Vty as V
 
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as T
+import Data.Time.Calendar (Day)
 
 import HKernel.Account (accountName)
+import HKernel.Editor.TUI.DateUrgency (withDateUrgency)
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
   , AppEvent
@@ -71,7 +73,10 @@ drawWorkspace context = case contextOpenPlanObservation context of
     vBox
       [ borderWithLabel (str "Open Plans (plan.journal)")
           (vLimit 18
-            (L.renderList renderPlanItem True (contextPlanList context)))
+            (L.renderList
+              (renderPlanItem (contextObservationDay context))
+              True
+              (contextPlanList context)))
       , borderWithLabel (str "Selected Plan")
           (padAll 1 (renderSelectedPlan context))
       , strWrap "[j/k/Arrows/wheel] Move   [Enter/C] Complete & Advance   [A] Add   [E] Edit"
@@ -116,16 +121,18 @@ handleWorkspaceEvent event = do
           pure MaintainContext
         _ -> pure MaintainContext
 
-renderPlanItem :: Bool -> IdentifiedPlanTransaction -> Widget Name
-renderPlanItem selected identified
+renderPlanItem :: Day -> Bool -> IdentifiedPlanTransaction -> Widget Name
+renderPlanItem observedOn selected identified
   | selected = withAttr L.listSelectedAttr row
   | otherwise = row
   where
     transaction = identifiedPlanTransaction identified
-    row = txt
-      (T.pack (show (transactionDate transaction))
-        <> "  [" <> planIdText (identifiedPlanId identified) <> "]  "
-        <> transactionDescription transaction)
+    dueOn = transactionDate transaction
+    row = hBox
+      [ withDateUrgency observedOn dueOn (txt (T.pack (show dueOn)))
+      , txt ("  [" <> planIdText (identifiedPlanId identified) <> "]  "
+          <> transactionDescription transaction)
+      ]
 
 renderSelectedPlan :: AppContext -> Widget Name
 renderSelectedPlan context = case L.listSelectedElement (contextPlanList context) of
