@@ -103,6 +103,8 @@ parseMeaning lineNumber kind target = case kind of
   "funded-by" ->
     IssueFundedBy
       <$> mapLeft (errorAt lineNumber . tshow) (mkActualTransactionId target)
+  "continued-as" ->
+    IssueContinuedAs <$> mapLeft (errorAt lineNumber . tshow) (mkIssueId target)
   _ -> Left (errorAt lineNumber "unknown issue relation kind")
 
 parseDay :: Int -> Text -> Either IssueRelationTSVError Day
@@ -137,6 +139,7 @@ renderMeaning relation = case relation of
   IssuePlanningWithdrawn planId -> ("planning-withdrawn", planIdText planId)
   IssueRealizedAs actualId -> ("realized-as", actualTransactionIdText actualId)
   IssueFundedBy actualId -> ("funded-by", actualTransactionIdText actualId)
+  IssueContinuedAs targetIssueId -> ("continued-as", issueIdText targetIssueId)
 
 meaningfulLines :: Text -> [(Int, Text)]
 meaningfulLines =
