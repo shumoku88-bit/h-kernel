@@ -2,6 +2,7 @@ module HKernel.Editor.TUI.Model
   ( AppContext(..)
   , AppEvent
   , HouseholdSection(..)
+  , IssueRelationObservation(..)
   , Name(..)
   , ReportChoice(..)
   , WorkspaceFocus(..)
@@ -12,6 +13,7 @@ module HKernel.Editor.TUI.Model
   , contextHouseholdState
   , contextIssueCounts
   , contextIssueListL
+  , contextIssueRelationHistory
   , contextIssuesSource
   , contextOpenPlanObservation
   , contextPlanListL
@@ -21,6 +23,7 @@ module HKernel.Editor.TUI.Model
   , contextWorkspaceAccountsL
   , contextWorkspaceListL
   , makeWorkspaceContext
+  , refreshIssueRelationObservation
   , reloadWorkspaceContext
   , setIssueWorkspaceFilter
   , workspaceReloadFailureText
@@ -28,16 +31,20 @@ module HKernel.Editor.TUI.Model
 
 import qualified Brick.Widgets.List as L
 import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NonEmpty
 import Lens.Micro (Lens')
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import Data.Time.Calendar (Day)
 import qualified Data.Vector as Vec
+import System.IO.Error (isDoesNotExistError, tryIOError)
 
 import HKernel.Account (Account)
 import HKernel.Application.Config (HouseholdSourcePaths(..))
 import HKernel.Editor.HouseholdWorkspace
   ( IssueWorkspaceFilter(..)
+  , admitIssueRelationSource
   , issuesForWorkspace
   , plansForWorkspace
   , workspaceAccounts
@@ -63,7 +70,14 @@ import HKernel.Household.EnvelopeObservation (EnvelopeChangeBaseline)
 import HKernel.Household.Policy (householdPolicyCycle)
 import HKernel.Household.Report (HouseholdReportSurface)
 import HKernel.Household.Report.Render (HouseholdReportSection)
-import HKernel.HouseholdIssue (HouseholdIssue)
+import HKernel.HouseholdIssue
+  ( HouseholdIssue
+  , IssueId
+  , IssueRelation(..)
+  , IssueRelationEvent
+  , issueRelationIssueId
+  , issueRelationMeaning
+  )
 import HKernel.Ledger (Transaction)
 import HKernel.Plan.Journal (IdentifiedPlanTransaction)
 import HKernel.Plan.Open (PlanObservationError)
@@ -177,6 +191,16 @@ workspaceReloadFailureText failure = case failure of
     T.pack "Household reload failed: " <> T.pack (show errors)
   PostReloadValidationFailed message -> message
 
+-- | Read-only Issue relation availability for the TUI. The canonical Household
+-- remains the owner of its admitted accounting/Plan/Issue state; this adapter
+-- reads the separate relation source and reuses the existing cross-source
+-- admission boundary. Failure stays visibly unavailable rather than becoming an
+-- empty relation history.
+data IssueRelationObservation
+  = IssueRelationsAvailable [IssueRelationEvent]
+  | IssueRelationsUnavailable Text
+  deriving (Eq, Show)
+
 data AppContext = AppContext
   { contextHouseholdSnapshot          :: HouseholdWriteSnapshot
   , contextCurrentSection             :: HouseholdSection
@@ -191,6 +215,7 @@ data AppContext = AppContext
   , contextPlanList                   :: L.List Name IdentifiedPlanTransaction
   , contextIssueFilter                :: IssueWorkspaceFilter
   , contextIssueList                  :: L.List Name HouseholdIssue
+  , contextIssueRelationObservation   :: IssueRelationObservation
   }
 
 type AppEvent = ()
@@ -244,6 +269,28 @@ contextSourcePath :: AppContext -> FilePath
 contextSourcePath =
   householdActualJournalPath . householdStatePaths . contextHouseholdState
 
+-- | Outgoing relation events from one Issue and incoming Issue-continuation
+-- events that target it. Other relation kinds currently have Plan/Actual
+-- targets, so they cannot be incoming Issue history.
+contextIssueRelationHistory
+  :: IssueId
+  -> AppContext
+  -> Either Text ([IssueRelationEvent], [IssueRelationEvent])
+contextIssueRelationHistory issueId context = case contextIssueRelationObservation context of
+  IssueRelationsUnavailable message -> Left message
+  IssueRelationsAvailable relations -> Right
+    ( [ relation
+      | relation <- relations
+      , issueRelationIssueId relation == issueId
+      ]
+    , [ relation
+      | relation <- relations
+      , case issueRelationMeaning relation of
+          IssueContinuedAs targetIssueId -> targetIssueId == issueId
+          _ -> False
+      ]
+    )
+
 makeWorkspaceContext
   :: Day
   -> HouseholdWriteSnapshot
@@ -267,6 +314,7 @@ makeWorkspaceContext today snapshot =
     , contextIssueFilter = OpenIssueFilter
     , contextIssueList = L.list IssueList
         (Vec.fromList (issuesForWorkspace OpenIssueFilter issues)) 1
+    , contextIssueRelationObservation = IssueRelationsAvailable []
     }
   where
     state = householdWriteSnapshotState snapshot
@@ -289,24 +337,52 @@ makeWorkspaceContext today snapshot =
       (Just . householdCycleCurrentPeriod)
       cycleObservation
 
+-- | Refresh the read-only Issue relation observation from the configured
+-- relation source. A missing file means no relation history yet, matching the
+-- existing Issue-realization source contract. Other IO/admission failures stay
+-- explicit and visible to the Issues pane.
+refreshIssueRelationObservation :: AppContext -> IO AppContext
+refreshIssueRelationObservation context = do
+  result <- tryIOError (TIO.readFile path)
+  pure context
+    { contextIssueRelationObservation = case result of
+        Left err
+          | isDoesNotExistError err -> IssueRelationsAvailable []
+          | otherwise -> IssueRelationsUnavailable
+              ("Relation source read failed: " <> T.pack (show err))
+        Right source -> case admitIssueRelationSource
+            (householdStateActualJournal state)
+            (householdStatePlanJournal state)
+            (householdStateIssues state)
+            source of
+          Left errors -> IssueRelationsUnavailable
+            ("Issue relation admission failed: "
+              <> T.pack (show (NonEmpty.toList errors)))
+          Right relations -> IssueRelationsAvailable relations
+    }
+  where
+    state = contextHouseholdState context
+    path = householdIssueRelationsPath (householdStatePaths state)
+
 reloadWorkspaceContext
   :: AppContext
   -> IO (Either WorkspaceReloadFailure AppContext)
 reloadWorkspaceContext context = do
   let root = householdStateRoot (contextHouseholdState context)
   loadResult <- loadCanonicalHouseholdWriteSnapshot root
-  pure $ case loadResult of
-    Left errors -> Left (HouseholdReloadFailed errors)
-    Right snapshot ->
-      Right
-        (setIssueWorkspaceFilter
-          (contextIssueFilter context)
-          ((makeWorkspaceContext
-              (contextObservationDay context)
-              snapshot)
-            { contextEntryDay = contextEntryDay context
-            , contextCurrentSection = contextCurrentSection context
-            }))
+  case loadResult of
+    Left errors -> pure (Left (HouseholdReloadFailed errors))
+    Right snapshot -> do
+      let fresh =
+            setIssueWorkspaceFilter
+              (contextIssueFilter context)
+              ((makeWorkspaceContext
+                  (contextObservationDay context)
+                  snapshot)
+                { contextEntryDay = contextEntryDay context
+                , contextCurrentSection = contextCurrentSection context
+                })
+      Right <$> refreshIssueRelationObservation fresh
 
 contextWorkspaceAccountsL :: Lens' AppContext (L.List Name (Maybe Account))
 contextWorkspaceAccountsL f context =
