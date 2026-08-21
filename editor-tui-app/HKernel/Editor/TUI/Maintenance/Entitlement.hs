@@ -48,12 +48,7 @@ import HKernel.Envelope.Policy
 import HKernel.Editor.EntitlementTransferAppend
   ( EntitlementTransferAppendPreview(..)
   , prepareCurrentEntitlementTransferAppend
-  )
-import HKernel.Editor.SourcePublication
-  ( CandidateSource(..)
-  , ExpectedSource(..)
-  , WriteIntent(..)
-  , publishWithPathAdmission
+  , publishCurrentEntitlementTransferFromPreview
   )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
@@ -249,13 +244,14 @@ publishCandidate context preview = do
   let state = contextHouseholdState context
       paths = householdStatePaths state
       root = householdStateRoot state
-  result <- publishWithPathAdmission
+      envelopePolicy = householdStateEnvelopePolicy state
+      registry = householdEnvelopeRegistry (householdStateEnvelopeHistory state)
+  result <- publishCurrentEntitlementTransferFromPreview
     (\_ -> loadCanonicalHousehold root)
-    WriteIntent
-      { targetFilePath = householdEntitlementJournalPath paths
-      , expectedOldBytes = ExpectedSource (contextEntitlementSource context)
-      , candidateNewBytes = CandidateSource (entitlementCandidateCompleteSource preview)
-      }
+    (householdEntitlementJournalPath paths)
+    envelopePolicy
+    registry
+    preview
   case result of
     Left err -> pure (PublicationFailed (T.pack (show err)))
     Right () -> do

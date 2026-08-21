@@ -13,17 +13,14 @@ import System.Exit (exitFailure, exitSuccess)
 import HKernel.Editor.EntitlementTransferAppend
   ( EntitlementTransferAppendError(..)
   , EntitlementTransferAppendPreview(..)
+  , EntitlementTransferPublicationError(..)
   , prepareCurrentEntitlementTransferAppend
   , prepareEntitlementTransferAppend
+  , publishCurrentEntitlementTransferFromPreview
   )
 import HKernel.Editor.SourcePublication
-  ( CandidateSource(..)
-  , ExpectedSource(..)
-  , WriteError(..)
-  , WriteIntent(..)
-  , WriterFileSystem(..)
+  ( WriterFileSystem(..)
   , defaultWriterFileSystem
-  , publishWithPathAdmission
   )
 import HKernel.Envelope
   ( CurrentEnvelopePolicy
@@ -47,6 +44,8 @@ main = do
         [ ("testNativeEntitlementTransferAppend", pure testNativeEntitlementTransferAppend)
         , ("testCurrentWriterRejectsRetiredEnvelope", pure testCurrentWriterRejectsRetiredEnvelope)
         , ("testPathAwareJournalCommit", testPathAwareJournalCommit)
+        , ("testPublicationRechecksCurrentPolicy", testPublicationRechecksCurrentPolicy)
+        , ("testPublicationIgnoresPreviewCandidateBytes", testPublicationIgnoresPreviewCandidateBytes)
         ]
   results <- sequence [action | (_, action) <- tests]
   let namedResults = zip (map fst tests) results
@@ -68,6 +67,10 @@ testRegistry = mustRight (mkEnvelopeRegistry [currentEnv, retiredEnv])
 currentPolicy :: CurrentEnvelopePolicy
 currentPolicy = mustRight (mkCurrentEnvelopePolicy
   [defineEnvelope currentEnv (mustRight (mkEnvelopeLabel "Current")) Flex])
+
+retiredOnlyPolicy :: CurrentEnvelopePolicy
+retiredOnlyPolicy = mustRight (mkCurrentEnvelopePolicy
+  [defineEnvelope retiredEnv (mustRight (mkEnvelopeLabel "Retired")) Flex])
 
 testTransfer :: EnvelopeEntitlementTransfer
 testTransfer = mustRight (mkEnvelopeEntitlementTransfer
@@ -108,19 +111,71 @@ testPathAwareJournalCommit = do
   let targetPath = "tests/fixtures/test_editor_path_entitlement.journal"
   cleanup targetPath
   TIO.writeFile targetPath existingSource
-  let preview = mustRight (prepareCurrentEntitlementTransferAppend currentPolicy testRegistry existingSource testTransfer)
-  result <- publishWithPathAdmission
+  let preview = mustRight
+        (prepareCurrentEntitlementTransferAppend
+          currentPolicy testRegistry existingSource testTransfer)
+  result <- publishCurrentEntitlementTransferFromPreview
     (\p -> do
       content <- TIO.readFile p
       pure (admitEntitlementJournal testRegistry content))
-    WriteIntent
-      { targetFilePath = targetPath
-      , expectedOldBytes = ExpectedSource existingSource
-      , candidateNewBytes = CandidateSource (entitlementCandidateCompleteSource preview)
-      }
+    targetPath
+    currentPolicy
+    testRegistry
+    preview
   current <- TIO.readFile targetPath
   cleanup targetPath
-  pure (result == Right () && current == entitlementCandidateCompleteSource preview)
+  pure
+    (result == Right ()
+      && current == entitlementCandidateCompleteSource preview)
+
+testPublicationRechecksCurrentPolicy :: IO Bool
+testPublicationRechecksCurrentPolicy = do
+  let targetPath = "tests/fixtures/test_editor_policy_recheck_entitlement.journal"
+  cleanup targetPath
+  TIO.writeFile targetPath existingSource
+  let preview = mustRight
+        (prepareCurrentEntitlementTransferAppend
+          currentPolicy testRegistry existingSource testTransfer)
+  result <- publishCurrentEntitlementTransferFromPreview
+    (\p -> do
+      content <- TIO.readFile p
+      pure (admitEntitlementJournal testRegistry content))
+    targetPath
+    retiredOnlyPolicy
+    testRegistry
+    preview
+  current <- TIO.readFile targetPath
+  cleanup targetPath
+  pure $ case result of
+    Left
+      (EntitlementTransferPublicationPreparationFailed
+        (EntitlementTransferAppendRetiredEnvelope eid :| _)) ->
+          eid == currentEnv && current == existingSource
+    _ -> False
+
+testPublicationIgnoresPreviewCandidateBytes :: IO Bool
+testPublicationIgnoresPreviewCandidateBytes = do
+  let targetPath = "tests/fixtures/test_editor_preview_bytes_entitlement.journal"
+  cleanup targetPath
+  TIO.writeFile targetPath existingSource
+  let prepared = mustRight
+        (prepareCurrentEntitlementTransferAppend
+          currentPolicy testRegistry existingSource testTransfer)
+      expectedCandidate = entitlementCandidateCompleteSource prepared
+      tamperedPreview = prepared
+        { entitlementCandidateCompleteSource = "replacement bytes that are not an append"
+        }
+  result <- publishCurrentEntitlementTransferFromPreview
+    (\p -> do
+      content <- TIO.readFile p
+      pure (admitEntitlementJournal testRegistry content))
+    targetPath
+    currentPolicy
+    testRegistry
+    tamperedPreview
+  current <- TIO.readFile targetPath
+  cleanup targetPath
+  pure (result == Right () && current == expectedCandidate)
 
 mustRight :: Show error => Either error value -> value
 mustRight result = case result of
