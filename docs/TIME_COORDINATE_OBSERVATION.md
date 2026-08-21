@@ -112,14 +112,6 @@ A useful distinction to preserve:
 
 > A future event is not yet an Actual fact, while a present commitment toward that future can already be a fact.
 
-## Whole-path intuition
-
-There is a useful conceptual resemblance to variational descriptions such as Fermat's principle or the principle of stationary action: a whole path can be treated as an object on which a relation or condition is stated, instead of explaining meaning only through one local step after another.
-
-This is analogy only. It does not imply that household history follows a variational law, that the future is predetermined, or that h-kernel should import physics machinery.
-
-The useful question is simply whether some domain laws are clearer when stated over a temporal structure as a whole.
-
 ## Questions for the later observation
 
 Before changing code, inspect the repository across Plan, Actual, Issue, Envelope, Cycle, Report, provenance, and editor boundaries and ask:
