@@ -140,7 +140,7 @@ drawHelp context focus = withAttr (attrName "shellMuted") (strWrap message)
 surfaceHelp :: AppContext -> String
 surfaceHelp context = case contextCurrentSection context of
   ReportsSection ->
-    "Reports: Enter choose · t balances · b balance sheet · p P&L · d daily flow · m monthly · c cycle · T daily target · E envelope/backing · r/R next/previous · arrows/wheel scroll · Shift+wheel or Shift+←→ horizontal · PgUp/PgDn page · Home/End top/bottom · Tab/Shift-Tab focus · q quit"
+    "Reports: Enter choose · a account balances · b balance sheet · p P&L · d daily flow · m monthly · c cycle · t daily target · e envelope/backing · [ / ] previous/next · arrows/wheel scroll · Shift+wheel or Shift+←→ horizontal · PgUp/PgDn page · Home/End top/bottom · Tab/Shift-Tab focus · q quit"
   _ ->
     "Surface: pane controls are listed above · click selectable rows · wheel scroll/move · Tab next focus · Shift-Tab sections · q quit"
 

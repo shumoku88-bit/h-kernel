@@ -277,7 +277,7 @@ drawWorkspace context =
               , vBox (map renderEnvelopeDef
                   (currentEnvelopePolicyDefinitions (householdStateEnvelopePolicy state)))
               ])))
-    , strWrap "[Enter/M] New transfer   [wheel] Scroll"
+    , strWrap "[Enter/t] New transfer   [wheel] Scroll"
     ]
   where
     state = contextHouseholdState context
@@ -300,8 +300,8 @@ handleWorkspaceEvent event =
     Just scroll -> scroll >> pure WorkspaceMaintain
     Nothing -> case event of
       VtyEvent (V.EvKey V.KEnter []) -> pure WorkspaceStartTransfer
-      VtyEvent (V.EvKey (V.KChar 'm') []) -> pure WorkspaceStartTransfer
-      VtyEvent (V.EvKey (V.KChar 'M') []) -> pure WorkspaceStartTransfer
+      VtyEvent (V.EvKey (V.KChar 't') []) -> pure WorkspaceStartTransfer
+      VtyEvent (V.EvKey (V.KChar 'T') []) -> pure WorkspaceStartTransfer
       _ -> pure WorkspaceMaintain
 
 showText :: Show value => value -> Text

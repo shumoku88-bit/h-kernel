@@ -95,7 +95,7 @@ drawWorkspace context =
     , txtWrap ("Filter: " <> workspaceFilterText context)
     , vBox
         [ txtWrap "Navigate: [Left/Right] Pane  [j/k/Arrows/wheel] Move  [click] Select"
-        , txtWrap "Record:   [a] Expense  [i] Income  [r] General transaction"
+        , txtWrap "Record:   [e] Expense  [i] Income  [g] General transaction"
         , txtWrap ("Observe:  " <> workspaceReconcileHint context)
         , txtWrap ("Action:   " <> workspaceActionHint context)
         ]
@@ -121,12 +121,12 @@ handleWorkspaceEvent event =
         zoom contextWorkspaceListL (modify (L.listMoveTo row))
         modify (\ctx -> ctx { contextWorkspaceFocus = TransactionsFocus })
         pure MaintainContext
-      VtyEvent (V.EvKey (V.KChar 'a') []) -> pure OpenDaily
-      VtyEvent (V.EvKey (V.KChar 'A') []) -> pure OpenDaily
+      VtyEvent (V.EvKey (V.KChar 'e') []) -> pure OpenDaily
+      VtyEvent (V.EvKey (V.KChar 'E') []) -> pure OpenDaily
       VtyEvent (V.EvKey (V.KChar 'i') []) -> pure OpenIncome
       VtyEvent (V.EvKey (V.KChar 'I') []) -> pure OpenIncome
-      VtyEvent (V.EvKey (V.KChar 'r') []) -> pure OpenRecord
-      VtyEvent (V.EvKey (V.KChar 'R') []) -> pure OpenRecord
+      VtyEvent (V.EvKey (V.KChar 'g') []) -> pure OpenRecord
+      VtyEvent (V.EvKey (V.KChar 'G') []) -> pure OpenRecord
       VtyEvent (V.EvKey (V.KChar 'c') []) -> selectedReconcileAction
       VtyEvent (V.EvKey (V.KChar 'C') []) -> selectedReconcileAction
       VtyEvent (V.EvKey V.KEnter []) -> do

@@ -67,7 +67,7 @@ drawWorkspace context = case contextOpenPlanObservation context of
                 , txtWrap ("Reason: " <> T.pack (show errors))
                 , strWrap "Existing Plan mutation targets are hidden rather than treated as an empty set."
                 ])))
-      , strWrap "[A] Add Plan   Existing Plan Complete/Edit/Cancel/Replace unavailable"
+      , strWrap "[a] Add Plan   Existing Plan Complete/Edit/Cancel/Replace unavailable"
       ]
   Right _ ->
     vBox
@@ -79,8 +79,8 @@ drawWorkspace context = case contextOpenPlanObservation context of
               (contextPlanList context)))
       , borderWithLabel (str "Selected Plan")
           (padAll 1 (renderSelectedPlan context))
-      , strWrap "[j/k/Arrows/wheel] Move   [Enter/C] Complete & Advance   [A] Add   [E] Edit"
-      , strWrap "[X] Cancel   [R] Replace"
+      , strWrap "[j/k/Arrows/wheel] Move   [Enter/c] Complete & Advance   [a] Add   [e] Edit"
+      , strWrap "[x] Cancel   [r] Replace"
       ]
 
 handleWorkspaceEvent
