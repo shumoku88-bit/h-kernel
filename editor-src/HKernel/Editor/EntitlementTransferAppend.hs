@@ -9,7 +9,6 @@
 module HKernel.Editor.EntitlementTransferAppend
   ( EntitlementTransferAppendError(..)
   , EntitlementTransferAppendPreview(..)
-  , entitlementCandidateCompleteSource
   , EntitlementTransferPublicationError(..)
   , prepareEntitlementTransferAppend
   , prepareCurrentEntitlementTransferAppend
@@ -50,24 +49,19 @@ data EntitlementTransferAppendError
   | EntitlementTransferCandidateAdmitError EntitlementJournalError
   deriving (Eq, Show)
 
--- | A validated preview retains the observed source and typed operation, not a
--- pre-authorized replacement source. Delivery surfaces may render the block,
--- while publication reconstructs and re-admits the complete candidate inside
--- this domain owner.
+-- | A validated preview retains the observed source and typed operation.
+--
+-- 'entitlementCandidateCompleteSource' remains for compatibility with delivery
+-- adapters not yet migrated to operation-owned publication. It is deliberately
+-- non-authoritative: 'publishCurrentEntitlementTransferFromPreview' reconstructs
+-- a fresh candidate from the observed source plus typed transfer and never trusts
+-- these preview bytes as the transition being authorized.
 data EntitlementTransferAppendPreview = EntitlementTransferAppendPreview
-  { entitlementCandidateBlock   :: Text
-  , entitlementObservedSource   :: Text
-  , entitlementPreparedTransfer :: EnvelopeEntitlementTransfer
+  { entitlementCandidateBlock          :: Text
+  , entitlementCandidateCompleteSource :: Text
+  , entitlementObservedSource          :: Text
+  , entitlementPreparedTransfer        :: EnvelopeEntitlementTransfer
   } deriving (Eq, Show)
-
--- | Derive the complete append candidate from the observed source and the
--- domain-rendered block. Kept for compatibility with delivery adapters that
--- have not yet moved to operation-owned publication.
-entitlementCandidateCompleteSource :: EntitlementTransferAppendPreview -> Text
-entitlementCandidateCompleteSource preview =
-  appendSourceBlock
-    (entitlementObservedSource preview)
-    (SourceBlock (entitlementCandidateBlock preview))
 
 data EntitlementTransferPublicationError sourceError
   = EntitlementTransferPublicationPreparationFailed
@@ -83,16 +77,16 @@ prepareEntitlementTransferAppend
   -> Either (NonEmpty EntitlementTransferAppendError) EntitlementTransferAppendPreview
 prepareEntitlementTransferAppend registry existingSource transfer = do
   let block = renderEntitlementTransfer transfer
-      preview = EntitlementTransferAppendPreview
-        { entitlementCandidateBlock = block
-        , entitlementObservedSource = existingSource
-        , entitlementPreparedTransfer = transfer
-        }
-      completeSource = entitlementCandidateCompleteSource preview
+      completeSource = appendSourceBlock existingSource (SourceBlock block)
   case admitEntitlementJournal registry completeSource of
     Left errors ->
       Left (fmap EntitlementTransferCandidateAdmitError errors)
-    Right _ -> Right preview
+    Right _ -> Right EntitlementTransferAppendPreview
+      { entitlementCandidateBlock = block
+      , entitlementCandidateCompleteSource = completeSource
+      , entitlementObservedSource = existingSource
+      , entitlementPreparedTransfer = transfer
+      }
 
 -- | Prepare a candidate append enforcing that any spendable Envelope endpoint
 -- belongs to current writable policy.
@@ -108,10 +102,10 @@ prepareCurrentEntitlementTransferAppend policy registry existingSource transfer 
 
 -- | Publish one previously previewed typed transfer.
 --
--- The preview does not grant authority to install arbitrary complete source
--- bytes. Publication re-runs current-policy validation and candidate admission
--- from the exact observed source plus the typed transfer, then delegates only
--- filesystem safety and post-admission to 'SourcePublication'.
+-- Compatibility preview bytes do not grant authority to install an arbitrary
+-- complete source. Publication re-runs current-policy validation and candidate
+-- admission from the exact observed source plus typed transfer, then delegates
+-- only filesystem safety and post-admission to 'SourcePublication'.
 publishCurrentEntitlementTransferFromPreview
   :: (FilePath -> IO (Either (NonEmpty sourceError) admitted))
   -> FilePath
