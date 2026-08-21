@@ -44,6 +44,10 @@ import HKernel.Editor.HouseholdWorkspace
   , homePlannedTransactionsOn
   , workspaceOpenPlanObservationAt
   )
+import HKernel.Editor.TUI.DateUrgency
+  ( DateUrgency(..)
+  , dateUrgencyAt
+  )
 import HKernel.Editor.TUI.Model
   ( AppContext(..)
   , AppEvent
@@ -102,6 +106,7 @@ data CalendarMarkerRole
   | CalendarIssueDue
   | CalendarCycleEnd
   | CalendarMultiple
+  | CalendarMultipleWithPlan
   deriving (Eq, Show)
 
 -- | Calendar summary cells must distinguish a fully observed empty day from a
@@ -133,7 +138,11 @@ calendarMarkerObservation markers planDue issueDue cycleEnd =
         Just (CalendarIssueDue, calendarIssueDueMarker markers)
       (False, False, True) ->
         Just (CalendarCycleEnd, calendarCycleEndMarker markers)
-      _ -> Just (CalendarMultiple, calendarMultipleMarker markers)
+      _
+        | hasPlan ->
+            Just (CalendarMultipleWithPlan, calendarMultipleMarker markers)
+        | otherwise ->
+            Just (CalendarMultiple, calendarMultipleMarker markers)
 
 -- | Handle only interaction local to the calendar surface. Application-shell
 -- navigation remains in Main.
@@ -248,7 +257,15 @@ drawCalendarWithFocus focused context selectedDay =
           markerWidget = case markerObservationForDay context day of
             CalendarMarkerAvailable Nothing -> txt "   "
             CalendarMarkerAvailable (Just (role, marker)) ->
-              hBox [str " ", drawCalendarMarker role marker, str " "]
+              hBox
+                [ str " "
+                , drawCalendarMarkerAt
+                    (contextObservationDay context)
+                    day
+                    role
+                    marker
+                , str " "
+                ]
             CalendarMarkerUnavailable ->
               withAttr (attrName "warning") (txt " ? ")
           cell = clickable (CalendarDay day)
@@ -260,15 +277,45 @@ drawCalendarWithFocus focused context selectedDay =
     calendarLegend = padTop (Pad 1) (drawCalendarLegend markers)
 
 drawCalendarMarker :: CalendarMarkerRole -> CalendarMarker -> Widget Name
-drawCalendarMarker role marker =
+drawCalendarMarker = drawCalendarMarkerDecorated False
+
+drawCalendarMarkerAt
+  :: Day
+  -> Day
+  -> CalendarMarkerRole
+  -> CalendarMarker
+  -> Widget Name
+drawCalendarMarkerAt observedOn dueOn role =
+  drawCalendarMarkerDecorated overduePlan role
+  where
+    overduePlan = markerContainsPlan role
+      && dateUrgencyAt observedOn dueOn == DateOverdue
+
+markerContainsPlan :: CalendarMarkerRole -> Bool
+markerContainsPlan role = case role of
+  CalendarPlanDue -> True
+  CalendarMultipleWithPlan -> True
+  _ -> False
+
+drawCalendarMarkerDecorated
+  :: Bool
+  -> CalendarMarkerRole
+  -> CalendarMarker
+  -> Widget Name
+drawCalendarMarkerDecorated overduePlan role marker =
   modifyDefAttr decorate (txt (T.singleton (calendarMarkerValue marker)))
   where
-    decorate attr = case role of
-      CalendarPlanDue -> V.withForeColor attr V.cyan
-      CalendarIssueDue -> V.withForeColor attr V.yellow
-      CalendarCycleEnd -> V.withForeColor attr V.magenta
-      CalendarMultiple ->
-        V.withStyle (V.withForeColor attr V.white) V.bold
+    decorate attr
+      | overduePlan =
+          V.withStyle (V.withForeColor attr V.red) V.bold
+      | otherwise = case role of
+          CalendarPlanDue -> V.withForeColor attr V.cyan
+          CalendarIssueDue -> V.withForeColor attr V.yellow
+          CalendarCycleEnd -> V.withForeColor attr V.magenta
+          CalendarMultiple -> multipleMarker attr
+          CalendarMultipleWithPlan -> multipleMarker attr
+    multipleMarker attr =
+      V.withStyle (V.withForeColor attr V.white) V.bold
 
 drawCalendarLegend :: CalendarMarkers -> Widget Name
 drawCalendarLegend markers =
@@ -282,7 +329,12 @@ drawCalendarLegend markers =
         , str " Cycle"
         ]
     , hBox
-        [ drawCalendarMarker CalendarMultiple (calendarMultipleMarker markers)
+        [ drawCalendarMarkerDecorated
+            True
+            CalendarPlanDue
+            (calendarPlanDueMarker markers)
+        , str " Plan overdue  "
+        , drawCalendarMarker CalendarMultiple (calendarMultipleMarker markers)
         , str " Multi  "
         , withAttr (attrName "warning") (str "?")
         , str " Unavailable"
