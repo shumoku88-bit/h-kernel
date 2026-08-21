@@ -147,14 +147,24 @@ executeCommand commitMode command = case command of
         case EntitlementTransferAppend.prepareCurrentEntitlementTransferAppend
             envelopePolicy registry existingSource transfer of
           Left errors -> validationFailed errors
-          Right preview ->
-            executePreview
-              (publishWithPathAdmission (\_ -> loadCanonicalHousehold root))
-              targetFile
-              existingSource
-              (EntitlementTransferAppend.entitlementCandidateBlock preview)
-              (EntitlementTransferAppend.entitlementCandidateCompleteSource preview)
-              commitMode
+          Right preview -> do
+            TIO.putStrLn "--- Preview ---"
+            putPreviewBlock (EntitlementTransferAppend.entitlementCandidateBlock preview)
+            TIO.putStrLn "---------------"
+            case commitMode of
+              PreviewOnly ->
+                TIO.putStrLn
+                  "Run with --commit immediately after the command name to apply changes."
+              CommitRequested -> do
+                writeResult <- EntitlementTransferAppend.publishCurrentEntitlementTransferFromPreview
+                  (\_ -> loadCanonicalHousehold root)
+                  targetFile
+                  envelopePolicy
+                  registry
+                  preview
+                case writeResult of
+                  Right () -> TIO.putStrLn "Successfully updated source."
+                  Left writeError -> die ("Write failed: " <> show writeError)
 
   IssueCmd tsvFile intent -> do
     root <- case resolveHouseholdRoot tsvFile of
