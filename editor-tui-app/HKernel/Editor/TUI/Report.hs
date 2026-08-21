@@ -124,7 +124,7 @@ drawWorkspace context =
     [ borderWithLabel (txt ("Household Report: " <> reportChoiceLabel selected))
         (viewport ReportsViewport Both (renderSelectedReport context))
     , strWrap "[Enter] Choose report   [wheel/↑↓←→] Scroll   [Shift+wheel] Horizontal   [PgUp/PgDn] Page"
-    , strWrap "[Home/End] Top/Bottom   [Shift+←→] Horizontal page   [r/R] Next/Previous report"
+    , strWrap "[Home/End] Top/Bottom   [Shift+←→] Horizontal page   [ / ] Previous/Next report"
     ]
   where
     selected = contextSelectedReport context
@@ -403,16 +403,24 @@ reportChoiceAt row = case drop row reportChoices of
 -- remain local to the Report surface.
 reportSelectionForKey :: ReportChoice -> Char -> Maybe ReportChoice
 reportSelectionForKey current key = case key of
-  't' -> Just ReportTrialBalance
+  'a' -> Just ReportTrialBalance
+  'A' -> Just ReportTrialBalance
   'b' -> Just ReportBalanceSheet
+  'B' -> Just ReportBalanceSheet
   'p' -> Just ReportProfitAndLoss
+  'P' -> Just ReportProfitAndLoss
   'd' -> Just ReportDailyFlow
+  'D' -> Just ReportDailyFlow
   'm' -> Just ReportMonthlyAccounts
+  'M' -> Just ReportMonthlyAccounts
   'c' -> Just (ReportHousehold HouseholdCycleAccounts)
+  'C' -> Just (ReportHousehold HouseholdCycleAccounts)
+  't' -> Just (ReportHousehold HouseholdDailyTarget)
   'T' -> Just (ReportHousehold HouseholdDailyTarget)
+  'e' -> Just (ReportHousehold HouseholdEnvelopeBacking)
   'E' -> Just (ReportHousehold HouseholdEnvelopeBacking)
-  'r' -> Just (cycleReport current)
-  'R' -> Just (cycleReportBack current)
+  ']' -> Just (cycleReport current)
+  '[' -> Just (cycleReportBack current)
   _ -> Nothing
 
 reportChoiceLabel :: ReportChoice -> Text

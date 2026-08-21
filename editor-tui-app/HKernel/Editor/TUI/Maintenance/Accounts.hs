@@ -246,7 +246,7 @@ drawWorkspace context =
             (vBox (map renderAccountDecl
               (accountDeclarations
                 (householdStateAccountsRegistry (contextHouseholdState context)))))))
-    , strWrap "[Enter/A] Add Account   [wheel] Scroll"
+    , strWrap "[Enter/a] Add Account   [wheel] Scroll"
     ]
 
 renderAccountDecl :: AccountDeclaration -> Widget Name

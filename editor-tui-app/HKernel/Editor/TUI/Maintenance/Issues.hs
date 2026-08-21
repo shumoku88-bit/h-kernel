@@ -531,8 +531,8 @@ drawWorkspace context =
           ])
     , borderWithLabel (str "Selected Issue")
         (padAll 1 (renderSelectedIssue context))
-    , strWrap "[O] Open   [C] Closed   [L] All   [j/k/Arrows/wheel] Move"
-    , strWrap "[R] Realize as Actual (Open)   [Enter] Resolve/Drop   [U] Due   [A] Add Issue"
+    , strWrap "[o] Open   [c] Closed   [a] All   [j/k/Arrows/wheel] Move"
+    , strWrap "[r] Realize as Actual (Open)   [Enter] Resolve/Drop   [d] Due   [n] New Issue"
     ]
   where
     (openCount, closedCount) = contextIssueCounts context
@@ -660,12 +660,12 @@ handleWorkspaceEvent event = case Scroll.listWheelEvent IssueList event of
     VtyEvent (V.EvKey (V.KChar 'O') []) -> selectView OpenIssueFilter
     VtyEvent (V.EvKey (V.KChar 'c') []) -> selectView ClosedIssueFilter
     VtyEvent (V.EvKey (V.KChar 'C') []) -> selectView ClosedIssueFilter
-    VtyEvent (V.EvKey (V.KChar 'l') []) -> selectView AllIssueFilter
-    VtyEvent (V.EvKey (V.KChar 'L') []) -> selectView AllIssueFilter
-    VtyEvent (V.EvKey (V.KChar 'a') []) -> pure WorkspaceStartAdd
-    VtyEvent (V.EvKey (V.KChar 'A') []) -> pure WorkspaceStartAdd
-    VtyEvent (V.EvKey (V.KChar 'u') []) -> openSelectedIssueDueUpdate
-    VtyEvent (V.EvKey (V.KChar 'U') []) -> openSelectedIssueDueUpdate
+    VtyEvent (V.EvKey (V.KChar 'a') []) -> selectView AllIssueFilter
+    VtyEvent (V.EvKey (V.KChar 'A') []) -> selectView AllIssueFilter
+    VtyEvent (V.EvKey (V.KChar 'n') []) -> pure WorkspaceStartAdd
+    VtyEvent (V.EvKey (V.KChar 'N') []) -> pure WorkspaceStartAdd
+    VtyEvent (V.EvKey (V.KChar 'd') []) -> openSelectedIssueDueUpdate
+    VtyEvent (V.EvKey (V.KChar 'D') []) -> openSelectedIssueDueUpdate
     VtyEvent (V.EvKey (V.KChar 'r') []) -> openSelectedIssueRealize
     VtyEvent (V.EvKey (V.KChar 'R') []) -> openSelectedIssueRealize
     VtyEvent (V.EvKey V.KEnter []) -> openSelectedIssueClose
