@@ -43,8 +43,10 @@ import HKernel.Editor.ActualAppend
   , prepareActualAddPreviewFromResolvedJournal
   )
 import HKernel.Editor.EntitlementTransferAppend
-  ( EntitlementTransferAppendPreview(..)
+  ( EntitlementTransferAppendPreview
+  , entitlementCandidateBlock
   , prepareCurrentEntitlementTransferAppend
+  , publishCurrentEntitlementTransferFromPreview
   )
 import HKernel.Editor.Interaction.ActualAdd
   ( AccountSelectionTarget(..)
@@ -52,11 +54,7 @@ import HKernel.Editor.Interaction.ActualAdd
   , incomeAccountCandidates
   )
 import HKernel.Editor.SourcePublication
-  ( CandidateSource(..)
-  , ExpectedSource(..)
-  , WriteIntent(..)
-  , publishActualBlockWithPathAdmission
-  , publishWithPathAdmission
+  ( publishActualBlockWithPathAdmission
   )
 import HKernel.Envelope.EntitlementTransfer
   ( EnvelopeEndpoint(..)
@@ -359,17 +357,15 @@ publishEntitlement
 publishEntitlement root snapshot preview = do
   let state = householdWriteSnapshotState snapshot
       path = householdEntitlementJournalPath (householdStatePaths state)
-      expected = householdWriteSnapshotEntitlementSource snapshot
-      intent = WriteIntent
-        { targetFilePath = path
-        , expectedOldBytes = ExpectedSource expected
-        , candidateNewBytes = CandidateSource
-            (entitlementCandidateCompleteSource preview)
-        }
+      envelopePolicy = householdStateEnvelopePolicy state
+      registry = householdEnvelopeRegistry (householdStateEnvelopeHistory state)
   result <- liftIO
-    (publishWithPathAdmission
+    (publishCurrentEntitlementTransferFromPreview
       (\_ -> loadCanonicalHousehold root)
-      intent)
+      path
+      envelopePolicy
+      registry
+      preview)
   case result of
     Left err -> do
       outputStrLn ("Envelope movement publication failed: " <> show err)
