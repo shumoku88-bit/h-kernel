@@ -14,7 +14,6 @@ import HKernel.Editor.EntitlementTransferAppend
   ( EntitlementTransferAppendError(..)
   , EntitlementTransferAppendPreview(..)
   , EntitlementTransferPublicationError(..)
-  , entitlementCandidateCompleteSource
   , prepareCurrentEntitlementTransferAppend
   , prepareEntitlementTransferAppend
   , publishCurrentEntitlementTransferFromPreview
@@ -46,6 +45,7 @@ main = do
         , ("testCurrentWriterRejectsRetiredEnvelope", pure testCurrentWriterRejectsRetiredEnvelope)
         , ("testPathAwareJournalCommit", testPathAwareJournalCommit)
         , ("testPublicationRechecksCurrentPolicy", testPublicationRechecksCurrentPolicy)
+        , ("testPublicationIgnoresPreviewCandidateBytes", testPublicationIgnoresPreviewCandidateBytes)
         ]
   results <- sequence [action | (_, action) <- tests]
   let namedResults = zip (map fst tests) results
@@ -152,6 +152,30 @@ testPublicationRechecksCurrentPolicy = do
         (EntitlementTransferAppendRetiredEnvelope eid :| _)) ->
           eid == currentEnv && current == existingSource
     _ -> False
+
+testPublicationIgnoresPreviewCandidateBytes :: IO Bool
+testPublicationIgnoresPreviewCandidateBytes = do
+  let targetPath = "tests/fixtures/test_editor_preview_bytes_entitlement.journal"
+  cleanup targetPath
+  TIO.writeFile targetPath existingSource
+  let prepared = mustRight
+        (prepareCurrentEntitlementTransferAppend
+          currentPolicy testRegistry existingSource testTransfer)
+      expectedCandidate = entitlementCandidateCompleteSource prepared
+      tamperedPreview = prepared
+        { entitlementCandidateCompleteSource = "replacement bytes that are not an append"
+        }
+  result <- publishCurrentEntitlementTransferFromPreview
+    (\p -> do
+      content <- TIO.readFile p
+      pure (admitEntitlementJournal testRegistry content))
+    targetPath
+    currentPolicy
+    testRegistry
+    tamperedPreview
+  current <- TIO.readFile targetPath
+  cleanup targetPath
+  pure (result == Right () && current == expectedCandidate)
 
 mustRight :: Show error => Either error value -> value
 mustRight result = case result of
