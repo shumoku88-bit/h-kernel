@@ -9,6 +9,7 @@ import HKernel.Editor.TUI.Actual (State(..), startIssueRealize, startRecord)
 import HKernel.Editor.TUI.DateUrgency (DateUrgency(..), dateUrgencyAt)
 import HKernel.Editor.TUI.Home
   ( CalendarMarkerObservation(..)
+  , CalendarMarkerRole(..)
   , calendarMarkerObservation
   , homeUsesStackedLayout
   )
@@ -73,6 +74,7 @@ main = do
         , ("production shell remains side-by-side at 120 columns", not (shellUsesStackedLayout 120))
         , ("Actual workspace enters through Accounts", actualWorkspaceStartsWithAccounts)
         , ("calendar marker keeps unavailable distinct from observed-empty", calendarUnavailableDistinct)
+        , ("combined calendar marker retains whether it contains a Plan", calendarMultipleRetainsPlanPresence)
         , ("workspace dates distinguish overdue, today, and upcoming", dateUrgencyIsObservationRelative)
         , ("reload failure keeps diagnostic detail", reloadDiagnosticDetailRetained)
         , ("Issue relation history distinguishes outgoing from incoming continuation", issueRelationHistoryDirectional)
@@ -130,6 +132,19 @@ calendarUnavailableDistinct =
       , calendarMarkerObservation markers (Right False) (Right False) (Right False)
       ) of
     (CalendarMarkerUnavailable, CalendarMarkerAvailable Nothing) -> True
+    _ -> False
+  where
+    markers = presentationCalendarMarkers defaultPresentationConfig
+
+calendarMultipleRetainsPlanPresence :: Bool
+calendarMultipleRetainsPlanPresence =
+  case
+      ( calendarMarkerObservation markers (Right True) (Right True) (Right False)
+      , calendarMarkerObservation markers (Right False) (Right True) (Right True)
+      ) of
+    ( CalendarMarkerAvailable (Just (CalendarMultipleWithPlan, _))
+      , CalendarMarkerAvailable (Just (CalendarMultiple, _))
+      ) -> True
     _ -> False
   where
     markers = presentationCalendarMarkers defaultPresentationConfig
