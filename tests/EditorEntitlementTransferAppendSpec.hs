@@ -14,6 +14,7 @@ import HKernel.Editor.EntitlementTransferAppend
   ( EntitlementTransferAppendError(..)
   , EntitlementTransferAppendPreview(..)
   , EntitlementTransferPublicationError(..)
+  , entitlementCandidateCompleteSource
   , prepareCurrentEntitlementTransferAppend
   , prepareEntitlementTransferAppend
   , publishCurrentEntitlementTransferFromPreview
@@ -45,7 +46,7 @@ main = do
         , ("testCurrentWriterRejectsRetiredEnvelope", pure testCurrentWriterRejectsRetiredEnvelope)
         , ("testPathAwareJournalCommit", testPathAwareJournalCommit)
         , ("testPublicationRechecksCurrentPolicy", testPublicationRechecksCurrentPolicy)
-        , ("testPublicationIgnoresPreviewCandidateBytes", testPublicationIgnoresPreviewCandidateBytes)
+        , ("testPublicationIgnoresPreviewDisplayBlock", testPublicationIgnoresPreviewDisplayBlock)
         ]
   results <- sequence [action | (_, action) <- tests]
   let namedResults = zip (map fst tests) results
@@ -153,9 +154,9 @@ testPublicationRechecksCurrentPolicy = do
           eid == currentEnv && current == existingSource
     _ -> False
 
-testPublicationIgnoresPreviewCandidateBytes :: IO Bool
-testPublicationIgnoresPreviewCandidateBytes = do
-  let targetPath = "tests/fixtures/test_editor_preview_bytes_entitlement.journal"
+testPublicationIgnoresPreviewDisplayBlock :: IO Bool
+testPublicationIgnoresPreviewDisplayBlock = do
+  let targetPath = "tests/fixtures/test_editor_preview_block_entitlement.journal"
   cleanup targetPath
   TIO.writeFile targetPath existingSource
   let prepared = mustRight
@@ -163,7 +164,7 @@ testPublicationIgnoresPreviewCandidateBytes = do
           currentPolicy testRegistry existingSource testTransfer)
       expectedCandidate = entitlementCandidateCompleteSource prepared
       tamperedPreview = prepared
-        { entitlementCandidateCompleteSource = "replacement bytes that are not an append"
+        { entitlementCandidateBlock = "display text that is not the typed transfer"
         }
   result <- publishCurrentEntitlementTransferFromPreview
     (\p -> do
