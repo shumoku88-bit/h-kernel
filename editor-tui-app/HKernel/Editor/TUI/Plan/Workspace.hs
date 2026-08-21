@@ -123,13 +123,14 @@ handleWorkspaceEvent event = do
 
 renderPlanItem :: Day -> Bool -> IdentifiedPlanTransaction -> Widget Name
 renderPlanItem observedOn selected identified
-  | selected = withAttr L.listSelectedAttr row
-  | otherwise = row
+  | selected = withAttr L.listSelectedAttr (row dateWidget)
+  | otherwise = row (withDateUrgency observedOn dueOn dateWidget)
   where
     transaction = identifiedPlanTransaction identified
     dueOn = transactionDate transaction
-    row = hBox
-      [ withDateUrgency observedOn dueOn (txt (T.pack (show dueOn)))
+    dateWidget = txt (T.pack (show dueOn))
+    row renderedDate = hBox
+      [ renderedDate
       , txt ("  [" <> planIdText (identifiedPlanId identified) <> "]  "
           <> transactionDescription transaction)
       ]
